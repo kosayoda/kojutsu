@@ -1,0 +1,34 @@
+[package]
+name = "jujujutsu"
+version = "0.1.0"
+authors = ["Kieran Siek <git@siek.dev>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# UTF-8 Paths
+camino = "1.1.9"
+# Argument parser
+clap = { version = "4.5.27", features = ["derive"] }
+# Binary error handling
+color-eyre = "0.6.3"
+# Colored strings
+owo-colors = "4.1.0"
+# Library error types
+thiserror = "2.0.11"
+# Logging utilities
+time = { version = "0.3.37", features = ["formatting"] }
+tracing = "0.1.41"
+tracing-error = "0.2.1"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter", "time"] }
+
+# Build `backtrace` with optimizations for `color-eyre` performance
+[profile.dev.package.backtrace]
+opt-level = 3
+
+[profile.production]
+inherits = "release"
+# Enable link time optimization
+lto = true
+# Strip symbols
+strip = true
