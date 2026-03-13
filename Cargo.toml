@@ -6,8 +6,18 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
+# Argument parser
+clap = { version = "4.5", features = ["derive"] }
+# Date/time (for jj-lib's DatePatternContext)
+chrono = "0.4"
 # Binary error handling
 color-eyre = "0.6.3"
+# Date/time
+jiff = "0.2"
+# Jujutsu version control library
+jj-lib = { version = "0.39", features = ["git"] }
+# Block on async futures
+pollster = "0.4"
 # Terminal UI
 ratatui = "0.30"
 # Library error types
