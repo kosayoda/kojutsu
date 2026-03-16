@@ -25,7 +25,16 @@ use pollster::FutureExt as _;
 use futures::StreamExt as _;
 use jj_lib::matchers::EverythingMatcher;
 
-use crate::dag::{AuthorInfo, CommitInfo, DagEntry, Edge, EdgeKind, FileChange, FileStatus};
+use jj_lib::conflict_labels::ConflictLabels;
+use jj_lib::conflicts::{materialize_tree_value, ConflictMaterializeOptions};
+use jj_lib::diff_presentation::unified::{self, git_diff_part, DiffLineType};
+use jj_lib::merge::Diff;
+use jj_lib::repo_path::RepoPathBuf;
+
+use crate::dag::{
+    AuthorInfo, CommitInfo, DagEntry, DiffLine, DiffLineKind, Edge, EdgeKind, FileChange,
+    FileStatus,
+};
 
 /// Thin adapter around jj-lib. Owns the workspace and repo, converts
 /// jj-lib types into our domain types so nothing leaks out.
@@ -215,6 +224,98 @@ impl JjRepo {
         }
 
         Ok(changes)
+    }
+
+    /// Compute the line-level diff for a single file in a commit.
+    pub fn file_diff(&self, commit_hex_id: &str, path: &str) -> Result<Vec<DiffLine>> {
+        let repo = self.repo.as_ref();
+        let commit_id = CommitId::try_from_hex(commit_hex_id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
+        let commit = repo
+            .store()
+            .get_commit(&commit_id)
+            .wrap_err("failed to load commit for diff")?;
+
+        let parent_tree = commit.parent_tree(repo).block_on()?;
+        let commit_tree = commit.tree();
+        let repo_path = RepoPathBuf::from_internal_string(path)
+            .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
+        let labels = ConflictLabels::unlabeled();
+        let materialize_options = ConflictMaterializeOptions {
+            marker_style: jj_lib::conflicts::ConflictMarkerStyle::Git,
+            marker_len: None,
+            merge: jj_lib::tree_merge::MergeOptions {
+                hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
+                same_change: jj_lib::merge::SameChange::Accept,
+            },
+        };
+
+        let before_value = parent_tree.path_value(&repo_path)?;
+        let after_value = commit_tree.path_value(&repo_path)?;
+
+        let before_mat =
+            materialize_tree_value(repo.store(), &repo_path, before_value, &labels).block_on()?;
+        let after_mat =
+            materialize_tree_value(repo.store(), &repo_path, after_value, &labels).block_on()?;
+
+        let before_part = git_diff_part(&repo_path, before_mat, &materialize_options)
+            .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+        let after_part = git_diff_part(&repo_path, after_mat, &materialize_options)
+            .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+
+        if before_part.content.is_binary || after_part.content.is_binary {
+            return Ok(vec![DiffLine {
+                kind: DiffLineKind::Header,
+                content: "(binary file)".to_string(),
+            }]);
+        }
+
+        let contents = Diff::new(
+            before_part.content.contents.as_ref(),
+            after_part.content.contents.as_ref(),
+        );
+        let hunks = unified::unified_diff_hunks(
+            contents,
+            3, // context lines
+            Default::default(),
+        );
+
+        let mut lines = Vec::new();
+        for hunk in &hunks {
+            // Hunk header
+            lines.push(DiffLine {
+                kind: DiffLineKind::Header,
+                content: format!(
+                    "@@ -{},{} +{},{} @@",
+                    hunk.left_line_range.start + 1,
+                    hunk.left_line_range.len(),
+                    hunk.right_line_range.start + 1,
+                    hunk.right_line_range.len(),
+                ),
+            });
+
+            for (line_type, tokens) in &hunk.lines {
+                // Concatenate all tokens into a single string.
+                let text: String = tokens
+                    .iter()
+                    .map(|(_, bytes)| String::from_utf8_lossy(bytes))
+                    .collect::<String>()
+                    .trim_end_matches('\n')
+                    .to_string();
+
+                let kind = match line_type {
+                    DiffLineType::Context => DiffLineKind::Context,
+                    DiffLineType::Removed => DiffLineKind::Removed,
+                    DiffLineType::Added => DiffLineKind::Added,
+                };
+                lines.push(DiffLine {
+                    kind,
+                    content: text,
+                });
+            }
+        }
+
+        Ok(lines)
     }
 
     fn extract_commit_info(

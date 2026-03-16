@@ -61,3 +61,20 @@ pub enum FileStatus {
     Modified,
     Deleted,
 }
+
+/// A single line of a unified diff.
+pub struct DiffLine {
+    pub kind: DiffLineKind,
+    pub content: String,
+}
+
+pub enum DiffLineKind {
+    /// Unchanged context line.
+    Context,
+    /// Added line.
+    Added,
+    /// Removed line.
+    Removed,
+    /// Hunk header (e.g. `@@ -1,5 +1,7 @@`).
+    Header,
+}

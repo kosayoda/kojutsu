@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, DisplayRow};
-use crate::dag::{CommitInfo, FileChange, FileStatus};
+use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus};
 
 /// Render the full UI into the frame.
 pub fn draw(frame: &mut Frame, app: &App) {
@@ -65,7 +65,21 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
             } => {
                 let files = &app.file_cache[entry_idx];
                 let file = &files[*file_idx];
-                render_file_line(file)
+                let is_unfolded = app
+                    .file_unfolded
+                    .get(&(*entry_idx, *file_idx))
+                    .copied()
+                    .unwrap_or(false);
+                render_file_line(file, is_unfolded)
+            }
+            DisplayRow::DiffLine {
+                entry_idx,
+                file_idx,
+                line_idx,
+            } => {
+                let diff_lines = &app.diff_cache[&(*entry_idx, *file_idx)];
+                let diff_line = &diff_lines[*line_idx];
+                render_diff_line(diff_line)
             }
         })
         .collect();
@@ -169,20 +183,38 @@ fn render_commit_line<'a>(
     ListItem::new(Line::from(spans))
 }
 
-fn render_file_line(file: &FileChange) -> ListItem<'_> {
+fn render_file_line(file: &FileChange, is_unfolded: bool) -> ListItem<'_> {
     let (marker, color) = match file.status {
         FileStatus::Added => ("A", Color::Green),
         FileStatus::Modified => ("M", Color::Cyan),
         FileStatus::Deleted => ("D", Color::Red),
     };
 
+    let fold_char = if is_unfolded { "▾" } else { "▸" };
+
     ListItem::new(Line::from(vec![
         Span::raw("    "),
+        Span::styled(fold_char, Style::default().fg(Color::DarkGray)),
+        Span::raw(" "),
         Span::styled(
             marker,
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
         Span::styled(file.path.as_str(), Style::default().fg(Color::White)),
+    ]))
+}
+
+fn render_diff_line(diff_line: &DiffLine) -> ListItem<'_> {
+    let (prefix, style) = match diff_line.kind {
+        DiffLineKind::Header => ("      ", Style::default().fg(Color::Magenta)),
+        DiffLineKind::Context => ("       ", Style::default().fg(Color::DarkGray)),
+        DiffLineKind::Added => ("      +", Style::default().fg(Color::Green)),
+        DiffLineKind::Removed => ("      -", Style::default().fg(Color::Red)),
+    };
+
+    ListItem::new(Line::from(vec![
+        Span::styled(prefix, style),
+        Span::styled(diff_line.content.as_str(), style),
     ]))
 }

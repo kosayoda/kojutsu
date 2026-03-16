@@ -1,8 +1,17 @@
 use std::collections::HashMap;
 
-use crate::dag::{DagEntry, FileChange};
+use crate::dag::{DagEntry, DiffLine, FileChange};
 use crate::graph::{self, GraphLines};
 use crate::repo::JjRepo;
+
+/// Identifies a display row for cursor restore after rebuild.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum RowKey {
+    CommitNode(usize),
+    GraphLink(usize, usize),
+    FileChange(usize, usize),
+    DiffLine(usize, usize, usize),
+}
 
 /// One visual row in the list.
 pub enum DisplayRow {
@@ -12,6 +21,33 @@ pub enum DisplayRow {
     GraphLink { entry_idx: usize, line_idx: usize },
     /// A file change line (shown when commit is unfolded).
     FileChange { entry_idx: usize, file_idx: usize },
+    /// A diff hunk line (shown when a file is unfolded).
+    DiffLine {
+        entry_idx: usize,
+        file_idx: usize,
+        line_idx: usize,
+    },
+}
+
+impl DisplayRow {
+    pub fn key(&self) -> RowKey {
+        match *self {
+            DisplayRow::CommitNode { entry_idx } => RowKey::CommitNode(entry_idx),
+            DisplayRow::GraphLink {
+                entry_idx,
+                line_idx,
+            } => RowKey::GraphLink(entry_idx, line_idx),
+            DisplayRow::FileChange {
+                entry_idx,
+                file_idx,
+            } => RowKey::FileChange(entry_idx, file_idx),
+            DisplayRow::DiffLine {
+                entry_idx,
+                file_idx,
+                line_idx,
+            } => RowKey::DiffLine(entry_idx, file_idx, line_idx),
+        }
+    }
 }
 
 /// Application state. Pure data -- no I/O, no rendering.
@@ -26,8 +62,12 @@ pub struct App {
     pub repo_root: String,
     /// Per-commit fold state: true = unfolded (showing files).
     pub unfolded: Vec<bool>,
+    /// Per-file fold state: (entry_idx, file_idx) -> unfolded.
+    pub file_unfolded: HashMap<(usize, usize), bool>,
     /// Lazily loaded file changes, keyed by entry index.
     pub file_cache: HashMap<usize, Vec<FileChange>>,
+    /// Lazily loaded diff lines, keyed by (entry_idx, file_idx).
+    pub diff_cache: HashMap<(usize, usize), Vec<DiffLine>>,
 }
 
 impl App {
@@ -43,7 +83,9 @@ impl App {
             revset,
             repo_root,
             unfolded,
+            file_unfolded: HashMap::new(),
             file_cache: HashMap::new(),
+            diff_cache: HashMap::new(),
         };
         app.rebuild_rows();
         app
@@ -51,11 +93,8 @@ impl App {
 
     /// Rebuild the flattened row list from current fold state.
     pub fn rebuild_rows(&mut self) {
-        let selected_entry = self.rows.get(self.cursor).map(|r| match r {
-            DisplayRow::CommitNode { entry_idx }
-            | DisplayRow::GraphLink { entry_idx, .. }
-            | DisplayRow::FileChange { entry_idx, .. } => *entry_idx,
-        });
+        // Remember what the cursor was pointing at so we can restore it.
+        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
 
         self.rows.clear();
         for (entry_idx, gl) in self.graph.iter().enumerate() {
@@ -68,6 +107,24 @@ impl App {
                             entry_idx,
                             file_idx,
                         });
+
+                        // If this file is unfolded, show diff lines.
+                        if self
+                            .file_unfolded
+                            .get(&(entry_idx, file_idx))
+                            .copied()
+                            .unwrap_or(false)
+                        {
+                            if let Some(diff_lines) = self.diff_cache.get(&(entry_idx, file_idx)) {
+                                for line_idx in 0..diff_lines.len() {
+                                    self.rows.push(DisplayRow::DiffLine {
+                                        entry_idx,
+                                        file_idx,
+                                        line_idx,
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -80,45 +137,58 @@ impl App {
             }
         }
 
-        // Restore selection to the same commit if possible.
-        self.cursor = selected_entry
-            .and_then(|target| {
-                self.rows.iter().position(
-                    |r| matches!(r, DisplayRow::CommitNode { entry_idx } if *entry_idx == target),
-                )
-            })
+        // Restore cursor to the exact same row, or fall back to the commit.
+        self.cursor = prev_cursor
+            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
             .unwrap_or(0);
     }
 
-    /// Move selection to the previous commit node line.
+    /// Move selection to the previous commit or file node line.
     pub fn move_up(&mut self) {
         for j in (0..self.cursor).rev() {
-            if matches!(self.rows[j], DisplayRow::CommitNode { .. }) {
+            if matches!(
+                self.rows[j],
+                DisplayRow::CommitNode { .. } | DisplayRow::FileChange { .. }
+            ) {
                 self.cursor = j;
                 return;
             }
         }
     }
 
-    /// Move selection to the next commit node line.
+    /// Move selection to the next commit or file node line.
     pub fn move_down(&mut self) {
         for j in (self.cursor + 1)..self.rows.len() {
-            if matches!(self.rows[j], DisplayRow::CommitNode { .. }) {
+            if matches!(
+                self.rows[j],
+                DisplayRow::CommitNode { .. } | DisplayRow::FileChange { .. }
+            ) {
                 self.cursor = j;
                 return;
             }
         }
     }
 
-    /// Toggle fold on the currently selected commit, lazily loading file
-    /// changes from `jj` if needed.
+    /// Toggle fold on the currently selected row.
+    ///
+    /// - On a commit row: toggle showing file changes.
+    /// - On a file row: toggle showing diff hunks.
     pub fn toggle_fold(&mut self, jj: &JjRepo) {
-        let entry_idx = match self.rows.get(self.cursor) {
-            Some(DisplayRow::CommitNode { entry_idx }) => *entry_idx,
-            Some(DisplayRow::FileChange { entry_idx, .. }) => *entry_idx,
-            _ => return,
-        };
+        match self.rows.get(self.cursor) {
+            Some(DisplayRow::CommitNode { entry_idx }) => {
+                self.toggle_commit_fold(*entry_idx, jj);
+            }
+            Some(DisplayRow::FileChange {
+                entry_idx,
+                file_idx,
+            }) => {
+                self.toggle_file_fold(*entry_idx, *file_idx, jj);
+            }
+            _ => {}
+        }
+    }
 
+    fn toggle_commit_fold(&mut self, entry_idx: usize, jj: &JjRepo) {
         if self.unfolded[entry_idx] {
             self.unfolded[entry_idx] = false;
         } else {
@@ -129,7 +199,28 @@ impl App {
             }
             self.unfolded[entry_idx] = true;
         }
+        self.rebuild_rows();
+    }
 
+    fn toggle_file_fold(&mut self, entry_idx: usize, file_idx: usize, jj: &JjRepo) {
+        let key = (entry_idx, file_idx);
+        let currently_unfolded = self.file_unfolded.get(&key).copied().unwrap_or(false);
+
+        if currently_unfolded {
+            self.file_unfolded.insert(key, false);
+        } else {
+            // Lazy load diff lines.
+            if !self.diff_cache.contains_key(&key) {
+                if let Some(files) = self.file_cache.get(&entry_idx) {
+                    if let Some(file) = files.get(file_idx) {
+                        let graph_id = &self.entries[entry_idx].commit.graph_id;
+                        let diff_lines = jj.file_diff(graph_id, &file.path).unwrap_or_default();
+                        self.diff_cache.insert(key, diff_lines);
+                    }
+                }
+            }
+            self.file_unfolded.insert(key, true);
+        }
         self.rebuild_rows();
     }
 }
