@@ -17,7 +17,7 @@ pub struct GraphLines {
 pub fn render(entries: &[DagEntry]) -> Vec<GraphLines> {
     let mut renderer = GraphRowRenderer::new()
         .output()
-        .with_min_row_height(0)
+        .with_min_row_height(2)
         .build_box_drawing();
 
     entries

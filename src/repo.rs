@@ -33,8 +33,11 @@ use jj_lib::repo_path::RepoPathBuf;
 
 use crate::dag::{
     AuthorInfo, CommitInfo, DagEntry, DiffLine, DiffLineKind, Edge, EdgeKind, FileChange,
-    FileStatus,
+    FileStatus, ShortId,
 };
+
+/// Number of hex characters to show for change/commit IDs.
+const DISPLAY_ID_LEN: usize = 8;
 
 /// Thin adapter around jj-lib. Owns the workspace and repo, converts
 /// jj-lib types into our domain types so nothing leaks out.
@@ -325,25 +328,31 @@ impl JjRepo {
     ) -> Result<CommitInfo> {
         let repo = self.repo.as_ref();
 
-        // Shortest unique change ID prefix
-        let change_id_len = id_prefix_index
+        // Change ID: 8-char display with unique prefix highlighted
+        let change_prefix_len = id_prefix_index
             .shortest_change_prefix_len(repo, commit.change_id())
-            .unwrap_or(8);
+            .unwrap_or(DISPLAY_ID_LEN);
         let change_id_full = commit.change_id().reverse_hex();
-        let change_id = change_id_full
-            .get(..change_id_len)
-            .unwrap_or(&change_id_full)
-            .to_string();
+        let change_id = ShortId {
+            display: change_id_full
+                .get(..DISPLAY_ID_LEN)
+                .unwrap_or(&change_id_full)
+                .to_string(),
+            prefix_len: change_prefix_len.min(DISPLAY_ID_LEN),
+        };
 
-        // Shortest unique commit ID prefix
-        let commit_id_len = id_prefix_index
+        // Commit ID: 8-char display with unique prefix highlighted
+        let commit_prefix_len = id_prefix_index
             .shortest_commit_prefix_len(repo, commit.id())
-            .unwrap_or(8);
+            .unwrap_or(DISPLAY_ID_LEN);
         let commit_id_full = commit.id().hex();
-        let commit_id = commit_id_full
-            .get(..commit_id_len)
-            .unwrap_or(&commit_id_full)
-            .to_string();
+        let commit_id = ShortId {
+            display: commit_id_full
+                .get(..DISPLAY_ID_LEN)
+                .unwrap_or(&commit_id_full)
+                .to_string(),
+            prefix_len: commit_prefix_len.min(DISPLAY_ID_LEN),
+        };
 
         // Description
         let raw_desc = commit.description().trim();

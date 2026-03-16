@@ -5,7 +5,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, DisplayRow};
-use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus};
+use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, ShortId};
 
 /// The Y offset where the list starts (for mouse click translation).
 pub const HEADER_HEIGHT: u16 = 2;
@@ -23,7 +23,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     let header = vec![
         Line::from(vec![
-            Span::styled("repo: ", Style::default().fg(Color::DarkGray)),
+            Span::styled("repository: ", Style::default().fg(Color::DarkGray)),
             Span::styled(&app.repo_root, Style::default().fg(Color::White)),
         ]),
         Line::from(vec![
@@ -41,13 +41,11 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .map(|row| match row {
             DisplayRow::CommitNode { entry_idx } => {
                 let entry = &app.entries[*entry_idx];
-                let graph_str = app.graph[*entry_idx]
-                    .lines
-                    .first()
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
+                let gl = &app.graph[*entry_idx];
+                let graph_node = gl.lines.first().map(|s| s.as_str()).unwrap_or("");
+                let graph_cont = gl.lines.get(1).map(|s| s.as_str()).unwrap_or("│");
                 let is_unfolded = app.unfolded[*entry_idx];
-                render_commit_line(graph_str, &entry.commit, is_unfolded)
+                render_commit_item(graph_node, graph_cont, &entry.commit, is_unfolded)
             }
             DisplayRow::GraphLink {
                 entry_idx,
@@ -90,11 +88,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::NONE))
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(Style::default().bg(Color::Rgb(50, 50, 60)).add_modifier(Modifier::BOLD));
 
     // ListState is ephemeral -- we build it from app.cursor each frame.
     let mut list_state = ListState::default();
@@ -105,14 +99,18 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
     app.last_scroll_offset = list_state.offset();
 }
 
-fn render_commit_line<'a>(
-    graph_prefix: &str,
+/// Render a commit as a 2-line ListItem matching `jj log` default format:
+///
+/// ```text
+/// ○  change_id author timestamp bookmarks commit_id
+/// │  description
+/// ```
+fn render_commit_item<'a>(
+    graph_node: &str,
+    graph_cont: &str,
     c: &'a CommitInfo,
     is_unfolded: bool,
 ) -> ListItem<'a> {
-    let mut spans: Vec<Span<'a>> = Vec::new();
-
-    // Graph column
     let graph_color = if c.is_working_copy {
         Color::Green
     } else if c.has_conflict {
@@ -120,50 +118,43 @@ fn render_commit_line<'a>(
     } else {
         Color::Cyan
     };
-    spans.push(Span::styled(
-        format!("{graph_prefix} "),
-        Style::default().fg(graph_color),
-    ));
+    let graph_style = Style::default().fg(graph_color);
+
+    // --- Line 1: graph  change_id author timestamp bookmarks commit_id ---
+    let mut line1: Vec<Span<'a>> = Vec::new();
+
+    // Graph glyph
+    line1.push(Span::styled(format!("{graph_node}  "), graph_style));
 
     // Fold indicator
     let fold_char = if is_unfolded { "▾ " } else { "▸ " };
-    spans.push(Span::styled(
+    line1.push(Span::styled(
         fold_char,
         Style::default().fg(Color::DarkGray),
     ));
 
-    // Change ID
-    spans.push(Span::styled(
-        c.change_id.as_str(),
-        Style::default().fg(Color::Magenta),
-    ));
-    spans.push(Span::raw(" "));
+    // Change ID (prefix bright, rest dimmed)
+    push_short_id(&mut line1, &c.change_id, Color::Magenta);
+    line1.push(Span::raw(" "));
 
-    // Commit ID
-    spans.push(Span::styled(
-        c.commit_id.as_str(),
-        Style::default().fg(Color::Blue),
-    ));
-    spans.push(Span::raw(" "));
-
-    // Author email
-    spans.push(Span::styled(
+    // Author
+    line1.push(Span::styled(
         c.author.email.as_str(),
         Style::default().fg(Color::Yellow),
     ));
-    spans.push(Span::raw(" "));
+    line1.push(Span::raw(" "));
 
     // Timestamp
     let formatted = c.author.timestamp.strftime("%Y-%m-%d %H:%M:%S").to_string();
-    spans.push(Span::styled(
+    line1.push(Span::styled(
         formatted,
         Style::default().fg(Color::DarkGray),
     ));
 
     // Bookmarks
     for bm in &c.bookmarks {
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(
+        line1.push(Span::raw(" "));
+        line1.push(Span::styled(
             bm.as_str(),
             Style::default()
                 .fg(Color::Green)
@@ -171,23 +162,45 @@ fn render_commit_line<'a>(
         ));
     }
 
-    // Description
+    // Commit ID (at end, like jj log -- prefix bright, rest dimmed)
+    line1.push(Span::raw(" "));
+    push_short_id(&mut line1, &c.commit_id, Color::Blue);
+
+    // --- Line 2: graph_cont  [empty] description ---
+    let mut line2: Vec<Span<'a>> = Vec::new();
+
+    // Graph continuation
+    line2.push(Span::styled(
+        format!("{graph_cont}  "),
+        Style::default().fg(Color::DarkGray),
+    ));
+
     if let Some(desc) = &c.description {
-        spans.push(Span::raw(" "));
-        let style = if c.is_empty {
+        if c.is_empty {
+            line2.push(Span::styled(
+                "(empty) ",
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+        let desc_style = if c.is_empty {
             Style::default().fg(Color::DarkGray)
         } else {
             Style::default().fg(Color::White)
         };
-        spans.push(Span::styled(desc.as_str(), style));
+        line2.push(Span::styled(desc.as_str(), desc_style));
     } else {
-        spans.push(Span::styled(
-            " (empty)",
+        let placeholder = if c.is_empty {
+            "(empty)"
+        } else {
+            "(no description set)"
+        };
+        line2.push(Span::styled(
+            placeholder,
             Style::default().fg(Color::DarkGray),
         ));
     }
 
-    ListItem::new(Line::from(spans))
+    ListItem::new(vec![Line::from(line1), Line::from(line2)])
 }
 
 fn render_file_line(file: &FileChange, is_unfolded: bool) -> ListItem<'_> {
@@ -224,4 +237,18 @@ fn render_diff_line(diff_line: &DiffLine) -> ListItem<'_> {
         Span::styled(prefix, style),
         Span::styled(diff_line.content.as_str(), style),
     ]))
+}
+
+/// Push a `ShortId` as two spans: bright prefix + dimmed suffix.
+fn push_short_id<'a>(spans: &mut Vec<Span<'a>>, id: &'a ShortId, color: Color) {
+    let prefix = &id.display[..id.prefix_len.min(id.display.len())];
+    let suffix = &id.display[id.prefix_len.min(id.display.len())..];
+
+    spans.push(Span::styled(
+        prefix,
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    ));
+    if !suffix.is_empty() {
+        spans.push(Span::styled(suffix, Style::default().fg(Color::DarkGray)));
+    }
 }

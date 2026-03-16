@@ -132,7 +132,9 @@ impl App {
                 }
             }
 
-            for line_idx in 1..gl.lines.len() {
+            // Graph lines 0 and 1 are consumed by the 2-line CommitNode
+            // ListItem. Remaining lines are rendered as separate GraphLink rows.
+            for line_idx in 2..gl.lines.len() {
                 self.rows.push(DisplayRow::GraphLink {
                     entry_idx,
                     line_idx,

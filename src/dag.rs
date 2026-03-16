@@ -1,13 +1,25 @@
 use jiff::Timestamp;
 
+/// A short display ID with a unique prefix highlighted.
+///
+/// For example, if the full hex is `xvzwolmwrq...` and the shortest unique
+/// prefix is 4 chars, we store `display = "xvzwolmw"` (8 chars) and
+/// `prefix_len = 4`.  The UI renders the prefix bright and the rest dimmed.
+pub struct ShortId {
+    /// Fixed-length display string (e.g. first 8 chars of hex).
+    pub display: String,
+    /// Number of characters in `display` that form the unique prefix.
+    pub prefix_len: usize,
+}
+
 /// Commit metadata extracted from jj-lib, with no jj-lib types leaking out.
 pub struct CommitInfo {
     /// Full commit ID hex, used as stable key for graph rendering.
     pub graph_id: String,
-    /// Short unique change ID prefix (reverse hex).
-    pub change_id: String,
-    /// Short unique commit ID prefix (hex).
-    pub commit_id: String,
+    /// Short change ID (reverse hex) with unique prefix length.
+    pub change_id: ShortId,
+    /// Short commit ID (hex) with unique prefix length.
+    pub commit_id: ShortId,
     /// First line of description, or `None` if empty / "(no description set)".
     pub description: Option<String>,
     /// Author information.

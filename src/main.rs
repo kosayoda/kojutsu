@@ -23,7 +23,7 @@ struct Cli {
         short = 'r',
         long = "revisions",
         // default_value = "@ | ancestors(@, 10)"
-        default_value = "present(@) | ancestors((trunk() | tags() | untracked_remote_bookmarks()).., 2) | trunk()"
+        default_value = "present(@) | ancestors((tags() | untracked_remote_bookmarks()).., 2)"
     )]
     revisions: String,
 }
