@@ -2,6 +2,8 @@ use jiff::Timestamp;
 
 /// Commit metadata extracted from jj-lib, with no jj-lib types leaking out.
 pub struct CommitInfo {
+    /// Full commit ID hex, used as stable key for graph rendering.
+    pub graph_id: String,
     /// Short unique change ID prefix (reverse hex).
     pub change_id: String,
     /// Short unique commit ID prefix (hex).
@@ -14,6 +16,8 @@ pub struct CommitInfo {
     pub is_working_copy: bool,
     /// Whether this commit is empty (no diff from parent).
     pub is_empty: bool,
+    /// Whether this commit has unresolved conflicts.
+    pub has_conflict: bool,
     /// Bookmark names pointing at this commit.
     pub bookmarks: Vec<String>,
 }

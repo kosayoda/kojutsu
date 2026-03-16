@@ -152,17 +152,13 @@ impl JjRepo {
             let info = self.extract_commit_info(&commit, &id_prefix_index)?;
             let dag_edges = edges
                 .into_iter()
-                .map(|e| {
-                    let target_hex = e.target.hex();
-                    let target_short = target_hex.get(..8).unwrap_or(&target_hex).to_string();
-                    Edge {
-                        target: target_short,
-                        kind: match e.edge_type {
-                            GraphEdgeType::Direct => EdgeKind::Direct,
-                            GraphEdgeType::Indirect => EdgeKind::Indirect,
-                            GraphEdgeType::Missing => EdgeKind::Missing,
-                        },
-                    }
+                .map(|e| Edge {
+                    target: e.target.hex(),
+                    kind: match e.edge_type {
+                        GraphEdgeType::Direct => EdgeKind::Direct,
+                        GraphEdgeType::Indirect => EdgeKind::Indirect,
+                        GraphEdgeType::Missing => EdgeKind::Missing,
+                    },
                 })
                 .collect();
 
@@ -231,6 +227,9 @@ impl JjRepo {
         // Empty
         let is_empty = commit.is_empty(repo).unwrap_or(false);
 
+        // Conflicts
+        let has_conflict = commit.has_conflict();
+
         // Bookmarks
         let bookmarks: Vec<String> = repo
             .view()
@@ -238,13 +237,18 @@ impl JjRepo {
             .map(|(name, _)| name.as_str().to_string())
             .collect();
 
+        // Full commit ID hex for graph rendering (stable key).
+        let graph_id = commit.id().hex();
+
         Ok(CommitInfo {
+            graph_id,
             change_id,
             commit_id,
             description,
             author,
             is_working_copy,
             is_empty,
+            has_conflict,
             bookmarks,
         })
     }

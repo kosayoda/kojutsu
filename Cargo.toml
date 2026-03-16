@@ -18,6 +18,8 @@ jiff = "0.2"
 jj-lib = { version = "0.39", features = ["git"] }
 # Block on async futures
 pollster = "0.4"
+# DAG graph rendering (same library jj uses)
+sapling-renderdag = "0.1"
 # Terminal UI
 ratatui = "0.30"
 # Library error types
