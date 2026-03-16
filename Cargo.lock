@@ -1920,9 +1920,11 @@ dependencies = [
  "futures",
  "jiff",
  "jj-lib",
+ "keymap",
  "pollster",
  "ratatui",
  "sapling-renderdag",
+ "serde",
  "thiserror 2.0.18",
  "time",
  "tracing",
@@ -1939,6 +1941,41 @@ dependencies = [
  "hashbrown 0.16.1",
  "portable-atomic",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "keymap"
+version = "1.0.0-rc.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "152a0071441d3db4a82a1c113f487ba95bb1b14a962af9bc390fdcdd19bbb11a"
+dependencies = [
+ "crossterm",
+ "keymap_derive",
+ "keymap_parser",
+ "serde",
+]
+
+[[package]]
+name = "keymap_derive"
+version = "1.0.0-rc.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40dbcdf6ec60de2075204b7e7b958a90963fed334aebd7a08ea5b6a376a142d0"
+dependencies = [
+ "keymap_parser",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "keymap_parser"
+version = "1.0.0-rc.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bad2762b3b75cfd246622ed16c98d64831675258648b9e02d3b43d030921e8a6"
+dependencies = [
+ "serde",
+ "strum",
+ "strum_macros",
 ]
 
 [[package]]

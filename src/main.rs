@@ -7,6 +7,7 @@ use ratatui::crossterm::event::{self, Event};
 
 use jujujutsu::app::App;
 use jujujutsu::input::{self, Action};
+use jujujutsu::keymap;
 use jujujutsu::repo::JjRepo;
 use jujujutsu::ui;
 
@@ -21,7 +22,8 @@ struct Cli {
     #[arg(
         short = 'r',
         long = "revisions",
-        default_value = "@ | ancestors(@, 10)"
+        // default_value = "@ | ancestors(@, 10)"
+        default_value = "present(@) | ancestors((trunk() | tags() | untracked_remote_bookmarks()).., 2) | trunk()"
     )]
     revisions: String,
 }
@@ -34,6 +36,7 @@ fn main() -> Result<()> {
     let jj = JjRepo::open(&repo_path)?;
     let entries = jj.evaluate_revset(&cli.revisions)?;
     let repo_root = jj.workspace_root().display().to_string();
+    let keys = keymap::load_keymap();
 
     let mut app = App::new(entries, cli.revisions, repo_root);
     let mut terminal = jujujutsu::terminal::init()?;
@@ -45,7 +48,7 @@ fn main() -> Result<()> {
             let ev = event::read()?;
             let action = match ev {
                 Event::Key(key) if key.kind == event::KeyEventKind::Press => {
-                    input::handle_key(&mut app, &jj, key)
+                    input::handle_key(&mut app, &jj, &keys, key)
                 }
                 Event::Mouse(mouse) => input::handle_mouse(&mut app, &jj, mouse, ui::HEADER_HEIGHT),
                 _ => Action::None,

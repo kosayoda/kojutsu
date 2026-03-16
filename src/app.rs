@@ -151,26 +151,40 @@ impl App {
         self.last_scroll_offset
     }
 
-    /// Move selection to the previous commit or file node line.
+    /// Move selection to the previous selectable row (commit, file, or diff line).
     pub fn move_up(&mut self) {
         for j in (0..self.cursor).rev() {
-            if matches!(
-                self.rows[j],
-                DisplayRow::CommitNode { .. } | DisplayRow::FileChange { .. }
-            ) {
+            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
                 self.cursor = j;
                 return;
             }
         }
     }
 
-    /// Move selection to the next commit or file node line.
+    /// Move selection to the next selectable row (commit, file, or diff line).
     pub fn move_down(&mut self) {
         for j in (self.cursor + 1)..self.rows.len() {
-            if matches!(
-                self.rows[j],
-                DisplayRow::CommitNode { .. } | DisplayRow::FileChange { .. }
-            ) {
+            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+                self.cursor = j;
+                return;
+            }
+        }
+    }
+
+    /// Move selection to the previous commit node (section jump).
+    pub fn move_up_section(&mut self) {
+        for j in (0..self.cursor).rev() {
+            if matches!(self.rows[j], DisplayRow::CommitNode { .. }) {
+                self.cursor = j;
+                return;
+            }
+        }
+    }
+
+    /// Move selection to the next commit node (section jump).
+    pub fn move_down_section(&mut self) {
+        for j in (self.cursor + 1)..self.rows.len() {
+            if matches!(self.rows[j], DisplayRow::CommitNode { .. }) {
                 self.cursor = j;
                 return;
             }
@@ -229,25 +243,17 @@ impl App {
     }
 
     /// Select a specific row index (e.g. from mouse click), snapping to the
-    /// nearest selectable row at or after `row`.
+    /// nearest non-graph-link row at or after `row`.
     pub fn select_row(&mut self, row: usize) {
         let target = row.min(self.rows.len().saturating_sub(1));
-        // Try to snap to the nearest selectable row at or after target.
         for j in target..self.rows.len() {
-            if matches!(
-                self.rows[j],
-                DisplayRow::CommitNode { .. } | DisplayRow::FileChange { .. }
-            ) {
+            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
                 self.cursor = j;
                 return;
             }
         }
-        // Fall back to nearest selectable row before target.
         for j in (0..target).rev() {
-            if matches!(
-                self.rows[j],
-                DisplayRow::CommitNode { .. } | DisplayRow::FileChange { .. }
-            ) {
+            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
                 self.cursor = j;
                 return;
             }
