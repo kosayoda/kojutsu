@@ -7,10 +7,14 @@ use ratatui::Frame;
 use crate::app::{App, DisplayRow};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus};
 
+/// The Y offset where the list starts (for mouse click translation).
+pub const HEADER_HEIGHT: u16 = 2;
+
 /// Render the full UI into the frame.
-pub fn draw(frame: &mut Frame, app: &App) {
+pub fn draw(frame: &mut Frame, app: &mut App) {
     let [header_area, list_area] =
-        Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(frame.area());
+        Layout::vertical([Constraint::Length(HEADER_HEIGHT), Constraint::Fill(1)])
+            .areas(frame.area());
 
     draw_header(frame, header_area, app);
     draw_list(frame, list_area, app);
@@ -30,7 +34,7 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(header), area);
 }
 
-fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
+fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let items: Vec<ListItem> = app
         .rows
         .iter()
@@ -96,6 +100,9 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &App) {
     let mut list_state = ListState::default();
     list_state.select(Some(app.cursor));
     frame.render_stateful_widget(list, area, &mut list_state);
+
+    // Save scroll offset for mouse click translation.
+    app.last_scroll_offset = list_state.offset();
 }
 
 fn render_commit_line<'a>(

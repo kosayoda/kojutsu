@@ -39,16 +39,19 @@ fn main() -> Result<()> {
     let mut terminal = jujujutsu::terminal::init()?;
 
     loop {
-        terminal.draw(|frame| ui::draw(frame, &app))?;
+        terminal.draw(|frame| ui::draw(frame, &mut app))?;
 
         if event::poll(Duration::from_millis(200))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != event::KeyEventKind::Press {
-                    continue;
+            let ev = event::read()?;
+            let action = match ev {
+                Event::Key(key) if key.kind == event::KeyEventKind::Press => {
+                    input::handle_key(&mut app, &jj, key)
                 }
-                if matches!(input::handle_key(&mut app, &jj, key), Action::Quit) {
-                    break;
-                }
+                Event::Mouse(mouse) => input::handle_mouse(&mut app, &jj, mouse, ui::HEADER_HEIGHT),
+                _ => Action::None,
+            };
+            if matches!(action, Action::Quit) {
+                break;
             }
         }
     }

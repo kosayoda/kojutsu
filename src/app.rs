@@ -58,6 +58,8 @@ pub struct App {
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
     pub cursor: usize,
+    /// Scroll offset of the list from the last render (set by ui::draw).
+    pub last_scroll_offset: usize,
     pub revset: String,
     pub repo_root: String,
     /// Per-commit fold state: true = unfolded (showing files).
@@ -80,6 +82,7 @@ impl App {
             graph,
             rows: Vec::new(),
             cursor: 0,
+            last_scroll_offset: 0,
             revset,
             repo_root,
             unfolded,
@@ -143,6 +146,11 @@ impl App {
             .unwrap_or(0);
     }
 
+    /// Get the scroll offset from the last render.
+    pub fn scroll_offset(&self) -> usize {
+        self.last_scroll_offset
+    }
+
     /// Move selection to the previous commit or file node line.
     pub fn move_up(&mut self) {
         for j in (0..self.cursor).rev() {
@@ -185,6 +193,78 @@ impl App {
                 self.toggle_file_fold(*entry_idx, *file_idx, jj);
             }
             _ => {}
+        }
+    }
+
+    /// Jump to the working copy commit (`@`).
+    pub fn jump_to_working_copy(&mut self) {
+        if let Some(pos) = self.rows.iter().position(|r| {
+            matches!(r, DisplayRow::CommitNode { entry_idx }
+                if self.entries[*entry_idx].commit.is_working_copy)
+        }) {
+            self.cursor = pos;
+        }
+    }
+
+    /// Move cursor up by `n` selectable rows (commits or files).
+    pub fn page_up(&mut self, n: usize) {
+        for _ in 0..n {
+            let prev = self.cursor;
+            self.move_up();
+            if self.cursor == prev {
+                break;
+            }
+        }
+    }
+
+    /// Move cursor down by `n` selectable rows (commits or files).
+    pub fn page_down(&mut self, n: usize) {
+        for _ in 0..n {
+            let prev = self.cursor;
+            self.move_down();
+            if self.cursor == prev {
+                break;
+            }
+        }
+    }
+
+    /// Select a specific row index (e.g. from mouse click), snapping to the
+    /// nearest selectable row at or after `row`.
+    pub fn select_row(&mut self, row: usize) {
+        let target = row.min(self.rows.len().saturating_sub(1));
+        // Try to snap to the nearest selectable row at or after target.
+        for j in target..self.rows.len() {
+            if matches!(
+                self.rows[j],
+                DisplayRow::CommitNode { .. } | DisplayRow::FileChange { .. }
+            ) {
+                self.cursor = j;
+                return;
+            }
+        }
+        // Fall back to nearest selectable row before target.
+        for j in (0..target).rev() {
+            if matches!(
+                self.rows[j],
+                DisplayRow::CommitNode { .. } | DisplayRow::FileChange { .. }
+            ) {
+                self.cursor = j;
+                return;
+            }
+        }
+    }
+
+    /// Reload DAG data from the repo.
+    pub fn refresh(&mut self, jj: &JjRepo, revset: &str) {
+        if let Ok(entries) = jj.evaluate_revset(revset) {
+            self.graph = graph::render(&entries);
+            self.unfolded = vec![false; entries.len()];
+            self.file_unfolded.clear();
+            self.file_cache.clear();
+            self.diff_cache.clear();
+            self.entries = entries;
+            self.cursor = 0;
+            self.rebuild_rows();
         }
     }
 
