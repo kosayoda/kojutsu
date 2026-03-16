@@ -49,3 +49,15 @@ pub enum EdgeKind {
     /// Parent is outside the revset or missing.
     Missing,
 }
+
+/// A file changed in a commit.
+pub struct FileChange {
+    pub path: String,
+    pub status: FileStatus,
+}
+
+pub enum FileStatus {
+    Added,
+    Modified,
+    Deleted,
+}

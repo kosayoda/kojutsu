@@ -22,7 +22,10 @@ use jj_lib::time_util::DatePatternContext;
 use jj_lib::workspace::{default_working_copy_factories, Workspace};
 use pollster::FutureExt as _;
 
-use crate::dag::{AuthorInfo, CommitInfo, DagEntry, Edge, EdgeKind};
+use futures::StreamExt as _;
+use jj_lib::matchers::EverythingMatcher;
+
+use crate::dag::{AuthorInfo, CommitInfo, DagEntry, Edge, EdgeKind, FileChange, FileStatus};
 
 /// Thin adapter around jj-lib. Owns the workspace and repo, converts
 /// jj-lib types into our domain types so nothing leaks out.
@@ -169,6 +172,49 @@ impl JjRepo {
         }
 
         Ok(entries)
+    }
+
+    /// Compute the file-level changes for a commit (diff against parent tree).
+    pub fn file_changes(&self, commit_hex_id: &str) -> Result<Vec<FileChange>> {
+        let repo = self.repo.as_ref();
+        let commit_id = CommitId::try_from_hex(commit_hex_id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
+        let commit = repo
+            .store()
+            .get_commit(&commit_id)
+            .wrap_err("failed to load commit for diff")?;
+
+        let parent_tree = commit
+            .parent_tree(repo)
+            .block_on()
+            .wrap_err("failed to get parent tree")?;
+        let commit_tree = commit.tree();
+
+        let mut changes = Vec::new();
+        let mut diff_stream = parent_tree.diff_stream(&commit_tree, &EverythingMatcher);
+
+        // Collect the stream synchronously.
+        while let Some(entry) = diff_stream.next().block_on() {
+            let path = entry.path.as_internal_file_string().to_string();
+            let values = match entry.values {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let before_present = values.before.is_present();
+            let after_present = values.after.is_present();
+
+            let status = match (before_present, after_present) {
+                (false, true) => FileStatus::Added,
+                (true, false) => FileStatus::Deleted,
+                (true, true) => FileStatus::Modified,
+                (false, false) => continue, // shouldn't happen
+            };
+
+            changes.push(FileChange { path, status });
+        }
+
+        Ok(changes)
     }
 
     fn extract_commit_info(

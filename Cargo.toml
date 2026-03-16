@@ -12,6 +12,8 @@ clap = { version = "4.5", features = ["derive"] }
 chrono = "0.4"
 # Binary error handling
 color-eyre = "0.6.3"
+# Async stream collection
+futures = "0.3"
 # Date/time
 jiff = "0.2"
 # Jujutsu version control library

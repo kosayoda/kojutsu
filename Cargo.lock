@@ -1917,6 +1917,7 @@ dependencies = [
  "chrono",
  "clap",
  "color-eyre",
+ "futures",
  "jiff",
  "jj-lib",
  "pollster",
