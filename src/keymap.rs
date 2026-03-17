@@ -26,6 +26,10 @@ pub enum AppAction {
     DescribeInEditorIgnoreImmutable,
     Edit,
     EditIgnoreImmutable,
+    New,
+    NewInsertAfter,
+    NewInsertBefore,
+    NewNoEdit,
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +154,17 @@ impl Default for Keymap {
                 vec![
                     bind("e", AppAction::Edit, "edit"),
                     bind("i", AppAction::EditIgnoreImmutable, "ignore immutable"),
+                ],
+            ),
+            // New submenu
+            prefix(
+                "n",
+                "new",
+                vec![
+                    bind("n", AppAction::New, "new"),
+                    bind("a", AppAction::NewInsertAfter, "insert after"),
+                    bind("b", AppAction::NewInsertBefore, "insert before"),
+                    bind("e", AppAction::NewNoEdit, "no-edit"),
                 ],
             ),
         ];

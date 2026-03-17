@@ -24,6 +24,12 @@ pub enum JJCommand {
         change_id: String,
         ignore_immutable: bool,
     },
+    New {
+        change_id: String,
+        insert_after: bool,
+        insert_before: bool,
+        no_edit: bool,
+    },
 }
 
 /// The result of running a jj command.
@@ -87,6 +93,25 @@ impl JJCommand {
                 let mut args = vec!["edit".to_string()];
                 if *ignore_immutable {
                     args.push("--ignore-immutable".to_string());
+                }
+                args.push(change_id.clone());
+                args
+            }
+            JJCommand::New {
+                change_id,
+                insert_after,
+                insert_before,
+                no_edit,
+            } => {
+                let mut args = vec!["new".to_string()];
+                if *insert_after {
+                    args.push("--insert-after".to_string());
+                }
+                if *insert_before {
+                    args.push("--insert-before".to_string());
+                }
+                if *no_edit {
+                    args.push("--no-edit".to_string());
                 }
                 args.push(change_id.clone());
                 args

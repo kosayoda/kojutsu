@@ -125,6 +125,10 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction) -> Action {
         AppAction::DescribeInEditorIgnoreImmutable => make_describe_editor_command(app, true),
         AppAction::Edit => make_edit_command(app, false),
         AppAction::EditIgnoreImmutable => make_edit_command(app, true),
+        AppAction::New => make_new_command(app, false, false, false),
+        AppAction::NewInsertAfter => make_new_command(app, true, false, false),
+        AppAction::NewInsertBefore => make_new_command(app, false, true, false),
+        AppAction::NewNoEdit => make_new_command(app, false, false, true),
     }
 }
 
@@ -146,6 +150,18 @@ fn make_edit_command(app: &App, ignore_immutable: bool) -> Action {
     Action::RunJj(JJCommand::Edit {
         change_id: change_id.to_string(),
         ignore_immutable,
+    })
+}
+
+fn make_new_command(app: &App, insert_after: bool, insert_before: bool, no_edit: bool) -> Action {
+    let Some(change_id) = app.selected_change_id() else {
+        return Action::None;
+    };
+    Action::RunJj(JJCommand::New {
+        change_id: change_id.to_string(),
+        insert_after,
+        insert_before,
+        no_edit,
     })
 }
 
