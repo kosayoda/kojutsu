@@ -19,6 +19,8 @@ pub enum Action {
     RunJj(JJCommand),
     /// Suspend the TUI, run an interactive jj command, then resume.
     SuspendAndRunJj(JJCommand),
+    /// Snapshot the working copy and reload the DAG.
+    Refresh,
 }
 
 /// Handle a key press, dispatching through the keymap trie and app mode.
@@ -113,11 +115,7 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction) -> Action {
             app.toggle_fold(jj);
             Action::None
         }
-        AppAction::Refresh => {
-            let revset = app.revset.clone();
-            app.refresh(jj, &revset);
-            Action::None
-        }
+        AppAction::Refresh => Action::Refresh,
         AppAction::Abandon => make_abandon_command(app, false, false),
         AppAction::AbandonKeepBookmarks => make_abandon_command(app, true, false),
         AppAction::AbandonRestoreDescendants => make_abandon_command(app, false, true),

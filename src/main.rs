@@ -33,6 +33,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let repo_path = cli.repository.canonicalize().unwrap_or(cli.repository);
+    JjRepo::snapshot(&repo_path);
     let mut jj = JjRepo::open(&repo_path)?;
     let entries = jj.evaluate_revset(&cli.revisions)?;
     let repo_root = jj.workspace_root().display().to_string();
@@ -61,6 +62,9 @@ fn main() -> Result<()> {
                 Action::SuspendAndRunJj(cmd) => {
                     suspend_and_run(&mut app, &mut jj, &repo_path, &mut terminal, cmd);
                 }
+                Action::Refresh => {
+                    refresh_app(&mut app, &mut jj, &repo_path);
+                }
                 Action::None => {}
             }
         }
@@ -68,6 +72,15 @@ fn main() -> Result<()> {
 
     jujujutsu::terminal::restore()?;
     Ok(())
+}
+
+fn refresh_app(app: &mut App, jj: &mut JjRepo, repo_path: &std::path::Path) {
+    JjRepo::snapshot(repo_path);
+    if let Ok(new_jj) = JjRepo::open(repo_path) {
+        *jj = new_jj;
+        let revset = app.revset.clone();
+        app.refresh(jj, &revset);
+    }
 }
 
 fn suspend_and_run(

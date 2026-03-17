@@ -50,6 +50,19 @@ pub struct JjRepo {
 }
 
 impl JjRepo {
+    /// Trigger a working copy snapshot so the repo reflects the current
+    /// filesystem state. Shells out to `jj status` which snapshots as a
+    /// side effect.
+    pub fn snapshot(repo_path: &Path) {
+        let _ = std::process::Command::new("jj")
+            .arg("status")
+            .arg("-R")
+            .arg(repo_path)
+            .arg("--quiet")
+            .arg("--color=never")
+            .output();
+    }
+
     /// Open the jj workspace rooted at `path`.
     pub fn open(path: &Path) -> Result<Self> {
         let config = Self::load_config(path)?;
