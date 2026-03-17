@@ -9,6 +9,17 @@ pub enum JJCommand {
         retain_bookmarks: bool,
         restore_descendants: bool,
     },
+    /// Describe with an inline message (non-interactive).
+    Describe {
+        change_id: String,
+        message: String,
+        ignore_immutable: bool,
+    },
+    /// Describe via jj's configured editor (interactive -- needs terminal).
+    DescribeInEditor {
+        change_id: String,
+        ignore_immutable: bool,
+    },
 }
 
 /// The result of running a jj command.
@@ -40,6 +51,31 @@ impl JJCommand {
                 args.push(change_id.clone());
                 args
             }
+            JJCommand::Describe {
+                change_id,
+                message,
+                ignore_immutable,
+            } => {
+                let mut args = vec!["describe".to_string()];
+                if *ignore_immutable {
+                    args.push("--ignore-immutable".to_string());
+                }
+                args.push("-m".to_string());
+                args.push(message.clone());
+                args.push(change_id.clone());
+                args
+            }
+            JJCommand::DescribeInEditor {
+                change_id,
+                ignore_immutable,
+            } => {
+                let mut args = vec!["describe".to_string()];
+                if *ignore_immutable {
+                    args.push("--ignore-immutable".to_string());
+                }
+                args.push(change_id.clone());
+                args
+            }
         }
     }
 
@@ -49,7 +85,43 @@ impl JJCommand {
         format!("$ jj {}", args.join(" "))
     }
 
-    /// Execute the command against a repository path.
+    /// Whether this command needs an interactive terminal (editor).
+    pub fn is_interactive(&self) -> bool {
+        matches!(self, JJCommand::DescribeInEditor { .. })
+    }
+
+    /// Execute an interactive command that inherits the terminal.
+    ///
+    /// The caller must restore the terminal before calling this and
+    /// re-initialize it after.
+    pub fn run_interactive(&self, repo_path: &Path) -> JJCommandResult {
+        let args = self.args();
+        let display = self.display();
+
+        let result = Command::new("jj")
+            .args(&args)
+            .arg("-R")
+            .arg(repo_path)
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::inherit())
+            .status();
+
+        match result {
+            Ok(status) => JJCommandResult {
+                display,
+                output: Vec::new(), // output went to the terminal directly
+                success: status.success(),
+            },
+            Err(e) => JJCommandResult {
+                display,
+                output: format!("failed to run jj: {e}").into_bytes(),
+                success: false,
+            },
+        }
+    }
+
+    /// Execute the command against a repository path (captured output).
     pub fn run(&self, repo_path: &Path) -> JJCommandResult {
         let args = self.args();
         let display = self.display();

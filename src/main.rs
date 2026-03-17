@@ -58,6 +58,9 @@ fn main() -> Result<()> {
                 Action::RunJj(cmd) => {
                     run_jj_command(&mut app, &mut jj, &repo_path, cmd);
                 }
+                Action::SuspendAndRunJj(cmd) => {
+                    suspend_and_run(&mut app, &mut jj, &repo_path, &mut terminal, cmd);
+                }
                 Action::None => {}
             }
         }
@@ -65,6 +68,38 @@ fn main() -> Result<()> {
 
     jujujutsu::terminal::restore()?;
     Ok(())
+}
+
+fn suspend_and_run(
+    app: &mut App,
+    jj: &mut JjRepo,
+    repo_path: &std::path::Path,
+    terminal: &mut jujujutsu::terminal::Term,
+    cmd: JJCommand,
+) {
+    // Leave the alternate screen so the editor can use the terminal.
+    let _ = jujujutsu::terminal::restore();
+    let result = cmd.run_interactive(repo_path);
+
+    // Re-enter the TUI.
+    *terminal = jujujutsu::terminal::init().expect("failed to re-init terminal");
+
+    if result.success {
+        if let Ok(new_jj) = JjRepo::open(repo_path) {
+            *jj = new_jj;
+            let revset = app.revset.clone();
+            app.refresh(jj, &revset);
+        }
+    }
+
+    // If there was output (e.g. error), show it. Otherwise stay in Normal mode.
+    if !result.output.is_empty() {
+        app.mode = AppMode::CommandOutput {
+            command: result.display,
+            output: result.output,
+            success: result.success,
+        };
+    }
 }
 
 fn run_jj_command(app: &mut App, jj: &mut JjRepo, repo_path: &std::path::Path, cmd: JJCommand) {

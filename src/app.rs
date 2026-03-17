@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
+use tui_input::Input;
+
 use crate::dag::{DagEntry, DiffLine, FileChange};
 use crate::graph::{self, GraphLines};
+use crate::jj_command::JJCommand;
 use crate::keymap::KeymapNode;
 use crate::repo::JjRepo;
 
@@ -24,6 +27,36 @@ pub enum AppMode {
         /// Whether the command succeeded.
         success: bool,
     },
+    /// Single-line text input in the bottom bar.
+    TextInput {
+        prompt: String,
+        input: Input,
+        on_submit: PendingCommand,
+    },
+}
+
+/// What to do when a TextInput is submitted.
+pub enum PendingCommand {
+    Describe {
+        change_id: String,
+        ignore_immutable: bool,
+    },
+}
+
+impl PendingCommand {
+    /// Convert to a `JJCommand` given the user's input text.
+    pub fn into_jj_command(self, message: String) -> JJCommand {
+        match self {
+            PendingCommand::Describe {
+                change_id,
+                ignore_immutable,
+            } => JJCommand::Describe {
+                change_id,
+                message,
+                ignore_immutable,
+            },
+        }
+    }
 }
 
 /// Identifies a display row for cursor restore after rebuild.
@@ -186,6 +219,17 @@ impl App {
         };
         let id = &self.entries[entry_idx].commit.change_id;
         Some(&id.display[..id.prefix_len.min(id.display.len())])
+    }
+
+    /// Get the description of the commit the cursor is on.
+    pub fn selected_description(&self) -> Option<&str> {
+        let entry_idx = match self.rows.get(self.cursor)? {
+            DisplayRow::CommitNode { entry_idx }
+            | DisplayRow::GraphLink { entry_idx, .. }
+            | DisplayRow::FileChange { entry_idx, .. }
+            | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,
+        };
+        self.entries[entry_idx].commit.description.as_deref()
     }
 
     /// Get the scroll offset from the last render.

@@ -1,6 +1,10 @@
-use ratatui::crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use ratatui::crossterm::event::{
+    Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind,
+};
+use tui_input::backend::crossterm::EventHandler;
+use tui_input::Input;
 
-use crate::app::{App, AppMode};
+use crate::app::{App, AppMode, PendingCommand};
 use crate::jj_command::JJCommand;
 use crate::keymap::{self, AppAction, Keymap, LookupResult};
 use crate::repo::JjRepo;
@@ -11,8 +15,10 @@ pub enum Action {
     Quit,
     /// No action needed (already handled by mutating App).
     None,
-    /// Run a jj CLI command, then refresh the DAG.
+    /// Run a jj CLI command (captured output), then refresh the DAG.
     RunJj(JJCommand),
+    /// Suspend the TUI, run an interactive jj command, then resume.
+    SuspendAndRunJj(JJCommand),
 }
 
 /// Handle a key press, dispatching through the keymap trie and app mode.
@@ -31,6 +37,7 @@ pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyE
             app.mode = AppMode::Normal;
             Action::None
         }
+        AppMode::TextInput { .. } => handle_text_input(app, key),
     }
 }
 
@@ -114,6 +121,10 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction) -> Action {
         AppAction::Abandon => make_abandon_command(app, false, false),
         AppAction::AbandonKeepBookmarks => make_abandon_command(app, true, false),
         AppAction::AbandonRestoreDescendants => make_abandon_command(app, false, true),
+        AppAction::Describe => enter_describe_input(app, false),
+        AppAction::DescribeIgnoreImmutable => enter_describe_input(app, true),
+        AppAction::DescribeInEditor => make_describe_editor_command(app, false),
+        AppAction::DescribeInEditorIgnoreImmutable => make_describe_editor_command(app, true),
     }
 }
 
@@ -126,6 +137,66 @@ fn make_abandon_command(app: &App, retain_bookmarks: bool, restore_descendants: 
         retain_bookmarks,
         restore_descendants,
     })
+}
+
+fn enter_describe_input(app: &mut App, ignore_immutable: bool) -> Action {
+    let Some(change_id) = app.selected_change_id() else {
+        return Action::None;
+    };
+    let current_desc = app.selected_description().unwrap_or("").to_string();
+    let change_id = change_id.to_string();
+
+    app.mode = AppMode::TextInput {
+        prompt: "describe: ".to_string(),
+        input: Input::new(current_desc),
+        on_submit: PendingCommand::Describe {
+            change_id,
+            ignore_immutable,
+        },
+    };
+    Action::None
+}
+
+fn make_describe_editor_command(app: &App, ignore_immutable: bool) -> Action {
+    let Some(change_id) = app.selected_change_id() else {
+        return Action::None;
+    };
+    Action::SuspendAndRunJj(JJCommand::DescribeInEditor {
+        change_id: change_id.to_string(),
+        ignore_immutable,
+    })
+}
+
+fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
+    match key.code {
+        // Enter: submit
+        KeyCode::Enter => {
+            // Take ownership of the TextInput fields.
+            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+            if let AppMode::TextInput {
+                input, on_submit, ..
+            } = mode
+            {
+                let message = input.to_string();
+                let cmd = on_submit.into_jj_command(message);
+                Action::RunJj(cmd)
+            } else {
+                Action::None
+            }
+        }
+        // Esc: cancel
+        KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+            Action::None
+        }
+        // Everything else: forward to tui-input
+        _ => {
+            if let AppMode::TextInput { input, .. } = &mut app.mode {
+                input.handle_event(&Event::Key(key));
+            }
+            Action::None
+        }
+    }
 }
 
 /// Handle a mouse event.

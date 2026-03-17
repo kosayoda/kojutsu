@@ -33,12 +33,16 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             output,
             success,
         } => {
-            // Count output lines + 1 for command + 1 for border + 1 for bottom padding.
             let output_lines = output.iter().filter(|&&b| b == b'\n').count().max(1);
             let height = (output_lines as u16 + 3).min(list_area.height / 2).max(3);
             let overlay = overlay_area(list_area, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_command_output(frame, overlay, command, output, *success);
+        }
+        AppMode::TextInput { prompt, input, .. } => {
+            let overlay = overlay_area(list_area, 1);
+            frame.render_widget(ratatui::widgets::Clear, overlay);
+            draw_text_input(frame, overlay, prompt, input);
         }
     }
 }
@@ -172,6 +176,30 @@ fn draw_submenu(
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn draw_text_input(frame: &mut Frame, area: Rect, prompt: &str, input: &tui_input::Input) {
+    let prompt_width = prompt.len() as u16;
+    let input_width = area.width.saturating_sub(prompt_width);
+
+    let scroll = input.visual_scroll(input_width.saturating_sub(1) as usize);
+
+    let spans = vec![
+        Span::styled(
+            prompt,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(&input.value()[scroll..], Style::default().fg(Color::White)),
+    ];
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+
+    // Place the cursor.
+    let cursor_x = area.x + prompt_width + (input.visual_cursor() - scroll) as u16;
+    let cursor_y = area.y;
+    frame.set_cursor_position((cursor_x, cursor_y));
 }
 
 fn draw_command_output(

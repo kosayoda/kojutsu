@@ -32,6 +32,8 @@ serde = { version = "1", features = ["derive"] }
 ratatui = "0.30"
 # Library error types
 thiserror = "2.0.11"
+# Single-line text input widget for ratatui
+tui-input = "0.15"
 # Logging utilities
 time = { version = "0.3.37", features = ["formatting"] }
 tracing = "0.1.41"

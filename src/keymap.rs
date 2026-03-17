@@ -20,6 +20,10 @@ pub enum AppAction {
     Abandon,
     AbandonKeepBookmarks,
     AbandonRestoreDescendants,
+    Describe,
+    DescribeInEditor,
+    DescribeIgnoreImmutable,
+    DescribeInEditorIgnoreImmutable,
 }
 
 // ---------------------------------------------------------------------------
@@ -109,6 +113,21 @@ impl Default for Keymap {
             bind("tab", AppAction::ToggleFold, "toggle fold"),
             // Refresh
             bind("ctrl-r", AppAction::Refresh, "refresh"),
+            // Describe submenu
+            prefix(
+                "d",
+                "describe",
+                vec![
+                    bind("d", AppAction::Describe, "describe"),
+                    bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR"),
+                    bind("i", AppAction::DescribeIgnoreImmutable, "ignore immutable"),
+                    bind(
+                        "shift-i",
+                        AppAction::DescribeInEditorIgnoreImmutable,
+                        "ignore immutable in $EDITOR",
+                    ),
+                ],
+            ),
             // Abandon submenu
             prefix(
                 "a",
@@ -163,6 +182,13 @@ pub fn key_event_to_node(key: &KeyEvent) -> Option<Node> {
         KeyCode::BackTab => Key::BackTab,
         KeyCode::Backspace => Key::Backspace,
         KeyCode::Char(' ') => Key::Space,
+        // Crossterm reports Shift+d as Char('D') + SHIFT modifier.
+        // Normalize to lowercase so it matches keymap_parser's "shift-d".
+        KeyCode::Char(c)
+            if key.modifiers.contains(KeyModifiers::SHIFT) && c.is_ascii_uppercase() =>
+        {
+            Key::Char(c.to_ascii_lowercase())
+        }
         KeyCode::Char(c) => Key::Char(c),
         KeyCode::Delete => Key::Delete,
         KeyCode::Down => Key::Down,
