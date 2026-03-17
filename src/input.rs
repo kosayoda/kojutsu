@@ -1,8 +1,7 @@
-use keymap::Config;
 use ratatui::crossterm::event::{KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
-use crate::app::App;
-use crate::keymap::AppAction;
+use crate::app::{App, AppMode};
+use crate::keymap::{self, AppAction, Keymap, LookupResult};
 use crate::repo::JjRepo;
 
 /// Result of handling an input event.
@@ -13,12 +12,65 @@ pub enum Action {
     None,
 }
 
-/// Handle a key press by looking it up in the keymap and dispatching.
-pub fn handle_key(app: &mut App, jj: &JjRepo, keys: &Config<AppAction>, key: KeyEvent) -> Action {
-    let Some(action) = keys.get(&key) else {
+/// Handle a key press, dispatching through the keymap trie and app mode.
+pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyEvent) -> Action {
+    let Some(node) = keymap::key_event_to_node(&key) else {
         return Action::None;
     };
 
+    match &app.mode {
+        AppMode::Normal => handle_normal_key(app, jj, keymap, &node),
+        AppMode::Submenu { children, .. } => {
+            // Copy the static reference before mutating app.mode.
+            let children = *children;
+            handle_submenu_key(app, jj, children, &node)
+        }
+    }
+}
+
+fn handle_normal_key(
+    app: &mut App,
+    jj: &JjRepo,
+    keymap: &'static Keymap,
+    node: &keymap_parser::Node,
+) -> Action {
+    match keymap.lookup(node) {
+        LookupResult::Action(action) => dispatch_action(app, jj, action),
+        LookupResult::Prefix { label, children } => {
+            app.mode = AppMode::Submenu { label, children };
+            Action::None
+        }
+        LookupResult::Unbound => Action::None,
+    }
+}
+
+fn handle_submenu_key(
+    app: &mut App,
+    jj: &JjRepo,
+    children: &'static [(keymap_parser::Node, keymap::KeymapNode)],
+    node: &keymap_parser::Node,
+) -> Action {
+    // Esc always cancels the submenu.
+    if node.key == keymap_parser::Key::Esc {
+        app.mode = AppMode::Normal;
+        return Action::None;
+    }
+
+    let result = Keymap::lookup_in(children, node);
+    // Any key press exits the submenu, whether it matched or not.
+    app.mode = AppMode::Normal;
+
+    match result {
+        LookupResult::Action(action) => dispatch_action(app, jj, action),
+        LookupResult::Prefix { .. } => {
+            // Nested submenus not supported yet.
+            Action::None
+        }
+        LookupResult::Unbound => Action::None,
+    }
+}
+
+fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction) -> Action {
     match action {
         AppAction::Quit => Action::Quit,
         AppAction::MoveDown => {
@@ -63,6 +115,9 @@ pub fn handle_key(app: &mut App, jj: &JjRepo, keys: &Config<AppAction>, key: Key
 
 /// Handle a mouse event.
 pub fn handle_mouse(app: &mut App, jj: &JjRepo, mouse: MouseEvent, list_offset: u16) -> Action {
+    // Mouse events cancel any pending submenu.
+    app.mode = AppMode::Normal;
+
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             let row = (mouse.row.saturating_sub(list_offset)) as usize + app.scroll_offset();

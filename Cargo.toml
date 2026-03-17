@@ -18,13 +18,13 @@ futures = "0.3"
 jiff = "0.2"
 # Jujutsu version control library
 jj-lib = { version = "0.39", features = ["git"] }
-# Declarative keybinding system with trie-based multi-key sequences
-keymap = { version = "1.0.0-rc.4", features = ["crossterm"] }
+# Key string parser (e.g. "ctrl-a", "shift-j", "a b")
+keymap_parser = "1.0.0-rc.4"
 # Block on async futures
 pollster = "0.4"
 # DAG graph rendering (same library jj uses)
 sapling-renderdag = "0.1"
-# Serialization (required by keymap derive macro)
+# Serialization (required by keymap_parser, future config files)
 serde = { version = "1", features = ["derive"] }
 # Terminal UI
 ratatui = "0.30"

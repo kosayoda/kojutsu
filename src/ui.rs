@@ -4,20 +4,33 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, DisplayRow};
+use crate::app::{App, AppMode, DisplayRow};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, ShortId};
+use crate::keymap::{self, KeymapNode};
 
 /// The Y offset where the list starts (for mouse click translation).
 pub const HEADER_HEIGHT: u16 = 2;
 
 /// Render the full UI into the frame.
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let [header_area, list_area] =
-        Layout::vertical([Constraint::Length(HEADER_HEIGHT), Constraint::Fill(1)])
-            .areas(frame.area());
+    let bottom_height = match &app.mode {
+        AppMode::Normal => 0,
+        AppMode::Submenu { .. } => 1,
+    };
+
+    let [header_area, list_area, bottom_area] = Layout::vertical([
+        Constraint::Length(HEADER_HEIGHT),
+        Constraint::Fill(1),
+        Constraint::Length(bottom_height),
+    ])
+    .areas(frame.area());
 
     draw_header(frame, header_area, app);
     draw_list(frame, list_area, app);
+
+    if let AppMode::Submenu { label, children } = &app.mode {
+        draw_submenu(frame, bottom_area, label, children);
+    }
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
@@ -88,7 +101,11 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::NONE))
-        .highlight_style(Style::default().bg(Color::Rgb(50, 50, 60)).add_modifier(Modifier::BOLD));
+        .highlight_style(
+            Style::default()
+                .bg(Color::Rgb(50, 50, 60))
+                .add_modifier(Modifier::BOLD),
+        );
 
     // ListState is ephemeral -- we build it from app.cursor each frame.
     let mut list_state = ListState::default();
@@ -97,6 +114,43 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
     // Save scroll offset for mouse click translation.
     app.last_scroll_offset = list_state.offset();
+}
+
+fn draw_submenu(
+    frame: &mut Frame,
+    area: Rect,
+    label: &str,
+    children: &[(keymap_parser::Node, KeymapNode)],
+) {
+    let mut spans = vec![Span::styled(
+        format!("{label}: "),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )];
+
+    for (i, (key_node, child)) in children.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        let key_str = keymap::display_key(key_node);
+        let desc = match child {
+            KeymapNode::Action { description, .. } => *description,
+            KeymapNode::Prefix { label, .. } => label,
+        };
+        spans.push(Span::styled(
+            format!("({key_str})"),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::styled(
+            format!(" {desc}"),
+            Style::default().fg(Color::White),
+        ));
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 /// Render a commit as a 2-line ListItem matching `jj log` default format:

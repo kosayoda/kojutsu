@@ -2,7 +2,20 @@ use std::collections::HashMap;
 
 use crate::dag::{DagEntry, DiffLine, FileChange};
 use crate::graph::{self, GraphLines};
+use crate::keymap::KeymapNode;
 use crate::repo::JjRepo;
+
+/// The current interaction mode.
+pub enum AppMode {
+    /// Normal browsing.
+    Normal,
+    /// A prefix key was pressed; showing submenu options in the bottom bar.
+    /// References point into the leaked `&'static Keymap`.
+    Submenu {
+        label: &'static str,
+        children: &'static [(keymap_parser::Node, KeymapNode)],
+    },
+}
 
 /// Identifies a display row for cursor restore after rebuild.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -62,6 +75,8 @@ pub struct App {
     pub last_scroll_offset: usize,
     pub revset: String,
     pub repo_root: String,
+    /// Current interaction mode.
+    pub mode: AppMode,
     /// Per-commit fold state: true = unfolded (showing files).
     pub unfolded: Vec<bool>,
     /// Per-file fold state: (entry_idx, file_idx) -> unfolded.
@@ -85,6 +100,7 @@ impl App {
             last_scroll_offset: 0,
             revset,
             repo_root,
+            mode: AppMode::Normal,
             unfolded,
             file_unfolded: HashMap::new(),
             file_cache: HashMap::new(),
