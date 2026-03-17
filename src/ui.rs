@@ -6,7 +6,7 @@ use ratatui::Frame;
 
 use crate::app::{App, AppMode, DisplayRow};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, ShortId};
-use crate::keymap::{self, KeymapNode};
+use crate::keymap::{self, CommandFlags, KeymapNode};
 
 /// The Y offset where the list starts (for mouse click translation).
 pub const HEADER_HEIGHT: u16 = 2;
@@ -23,10 +23,18 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Overlays render on top of the list area (bottom-aligned).
     match &app.mode {
         AppMode::Normal => {}
-        AppMode::Submenu { label, children } => {
-            let overlay = overlay_area(list_area, 1);
+        AppMode::Submenu {
+            label,
+            children,
+            flags,
+        } => {
+            let has_toggles = children
+                .iter()
+                .any(|(_, n)| matches!(n, KeymapNode::Toggle { .. }));
+            let height = if has_toggles { 2 } else { 1 };
+            let overlay = overlay_area(list_area, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
-            draw_submenu(frame, overlay, label, children);
+            draw_submenu(frame, overlay, label, children, *flags);
         }
         AppMode::CommandOutput {
             command,
@@ -146,36 +154,80 @@ fn draw_submenu(
     area: Rect,
     label: &str,
     children: &[(keymap_parser::Node, KeymapNode)],
+    flags: CommandFlags,
 ) {
-    let mut spans = vec![Span::styled(
-        format!("{label}: "),
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD),
-    )];
+    let mut lines = Vec::new();
 
-    for (i, (key_node, child)) in children.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw("  "));
+    // Line 1: toggles (if any).
+    let mut toggle_spans: Vec<Span> = Vec::new();
+    for (key_node, child) in children.iter() {
+        if let KeymapNode::Toggle { flag, description } = child {
+            if !toggle_spans.is_empty() {
+                toggle_spans.push(Span::raw("  "));
+            }
+            let active = flags.contains(*flag);
+            let key_str = keymap::display_key(key_node);
+            let style = if active {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            };
+            toggle_spans.push(Span::styled(format!("[{key_str}]"), style));
+            toggle_spans.push(Span::styled(format!(" {description}"), style));
         }
-        let key_str = keymap::display_key(key_node);
+    }
+    if !toggle_spans.is_empty() {
+        let mut line = vec![Span::styled(
+            format!("{label}: "),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )];
+        line.extend(toggle_spans);
+        lines.push(Line::from(line));
+    }
+
+    // Line 2 (or line 1 if no toggles): actions.
+    let mut action_spans: Vec<Span> = Vec::new();
+    // If toggles took line 1, indent actions to align; otherwise show the label here.
+    if lines.is_empty() {
+        action_spans.push(Span::styled(
+            format!("{label}: "),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        // Indent to align with the label on the toggle line.
+        let pad = " ".repeat(label.len() + 2);
+        action_spans.push(Span::raw(pad));
+    }
+    for (key_node, child) in children.iter() {
         let desc = match child {
             KeymapNode::Action { description, .. } => *description,
-            KeymapNode::Prefix { label, .. } => label,
+            KeymapNode::Prefix { label, .. } => *label,
+            KeymapNode::Toggle { .. } => continue,
         };
-        spans.push(Span::styled(
+        if action_spans.len() > 1 {
+            action_spans.push(Span::raw("  "));
+        }
+        let key_str = keymap::display_key(key_node);
+        action_spans.push(Span::styled(
             format!("({key_str})"),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled(
+        action_spans.push(Span::styled(
             format!(" {desc}"),
             Style::default().fg(Color::White),
         ));
     }
+    lines.push(Line::from(action_spans));
 
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn draw_text_input(frame: &mut Frame, area: Rect, prompt: &str, input: &tui_input::Input) {

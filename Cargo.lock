@@ -1928,6 +1928,7 @@ name = "jujujutsu"
 version = "0.1.0"
 dependencies = [
  "ansi-to-tui",
+ "bitflags 2.11.0",
  "chrono",
  "clap",
  "color-eyre",

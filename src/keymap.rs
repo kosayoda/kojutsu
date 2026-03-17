@@ -2,7 +2,22 @@ use keymap_parser::{Key, Modifier, Node};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 // ---------------------------------------------------------------------------
+// CommandFlags -- toggleable flags that modify command behavior.
+// ---------------------------------------------------------------------------
+
+bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct CommandFlags: u16 {
+        const IGNORE_IMMUTABLE    = 1 << 0;
+        const NO_EDIT             = 1 << 1;
+        const RETAIN_BOOKMARKS    = 1 << 2;
+        const RESTORE_DESCENDANTS = 1 << 3;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // AppAction -- every action the application supports.
+// Flag-specific variants are gone; flags are toggled separately.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -18,18 +33,12 @@ pub enum AppAction {
     ToggleFold,
     Refresh,
     Abandon,
-    AbandonKeepBookmarks,
-    AbandonRestoreDescendants,
     Describe,
     DescribeInEditor,
-    DescribeIgnoreImmutable,
-    DescribeInEditorIgnoreImmutable,
     Edit,
-    EditIgnoreImmutable,
     New,
     NewInsertAfter,
     NewInsertBefore,
-    NewNoEdit,
 }
 
 // ---------------------------------------------------------------------------
@@ -48,6 +57,11 @@ pub enum KeymapNode {
         label: &'static str,
         children: Vec<(Node, KeymapNode)>,
     },
+    /// Toggle: this key flips a command flag and stays in the submenu.
+    Toggle {
+        flag: CommandFlags,
+        description: &'static str,
+    },
 }
 
 /// The top-level keymap: a list of (key, node) pairs forming the root of the trie.
@@ -64,6 +78,8 @@ pub enum LookupResult<'a> {
         label: &'a str,
         children: &'a [(Node, KeymapNode)],
     },
+    /// Toggled a command flag.
+    Toggle(CommandFlags),
     /// Key not bound.
     Unbound,
 }
@@ -83,6 +99,7 @@ impl Keymap {
                     KeymapNode::Prefix { label, children } => {
                         LookupResult::Prefix { label, children }
                     }
+                    KeymapNode::Toggle { flag, .. } => LookupResult::Toggle(*flag),
                 };
             }
         }
@@ -124,14 +141,9 @@ impl Default for Keymap {
                 "d",
                 "describe",
                 vec![
+                    toggle("i", CommandFlags::IGNORE_IMMUTABLE, "ignore immutable"),
                     bind("d", AppAction::Describe, "describe"),
                     bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR"),
-                    bind("i", AppAction::DescribeIgnoreImmutable, "ignore immutable"),
-                    bind(
-                        "shift-i",
-                        AppAction::DescribeInEditorIgnoreImmutable,
-                        "ignore immutable in $EDITOR",
-                    ),
                 ],
             ),
             // Abandon submenu
@@ -139,21 +151,23 @@ impl Default for Keymap {
                 "a",
                 "abandon",
                 vec![
-                    bind("a", AppAction::Abandon, "abandon"),
-                    bind("b", AppAction::AbandonKeepBookmarks, "keep bookmarks"),
-                    bind(
+                    toggle("b", CommandFlags::RETAIN_BOOKMARKS, "keep bookmarks"),
+                    toggle(
                         "d",
-                        AppAction::AbandonRestoreDescendants,
+                        CommandFlags::RESTORE_DESCENDANTS,
                         "restore descendants",
                     ),
+                    toggle("i", CommandFlags::IGNORE_IMMUTABLE, "ignore immutable"),
+                    bind("a", AppAction::Abandon, "abandon"),
                 ],
             ),
+            // Edit submenu
             prefix(
                 "e",
                 "edit",
                 vec![
+                    toggle("i", CommandFlags::IGNORE_IMMUTABLE, "ignore immutable"),
                     bind("e", AppAction::Edit, "edit"),
-                    bind("i", AppAction::EditIgnoreImmutable, "ignore immutable"),
                 ],
             ),
             // New submenu
@@ -161,10 +175,11 @@ impl Default for Keymap {
                 "n",
                 "new",
                 vec![
+                    toggle("e", CommandFlags::NO_EDIT, "no-edit"),
+                    toggle("i", CommandFlags::IGNORE_IMMUTABLE, "ignore immutable"),
                     bind("n", AppAction::New, "new"),
                     bind("a", AppAction::NewInsertAfter, "insert after"),
                     bind("b", AppAction::NewInsertBefore, "insert before"),
-                    bind("e", AppAction::NewNoEdit, "no-edit"),
                 ],
             ),
         ];
@@ -193,6 +208,12 @@ pub fn prefix(
 ) -> (Node, KeymapNode) {
     let node = keymap_parser::parse(key_str).expect("valid key string in default keymap");
     (node, KeymapNode::Prefix { label, children })
+}
+
+/// Helper: create a (Node, KeymapNode::Toggle) pair for a flag toggle.
+fn toggle(key_str: &str, flag: CommandFlags, description: &'static str) -> (Node, KeymapNode) {
+    let node = keymap_parser::parse(key_str).expect("valid key string in default keymap");
+    (node, KeymapNode::Toggle { flag, description })
 }
 
 // ---------------------------------------------------------------------------

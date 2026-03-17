@@ -8,6 +8,8 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 # ANSI escape codes → ratatui styled text
 ansi-to-tui = "8.0"
+# Bitflags for command flag toggles
+bitflags = "2"
 # Argument parser
 clap = { version = "4.5", features = ["derive"] }
 # Date/time (for jj-lib's DatePatternContext)

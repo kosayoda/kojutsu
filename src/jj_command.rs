@@ -1,34 +1,35 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+use crate::keymap::CommandFlags;
+
 /// A typesafe representation of a jj CLI command.
 #[derive(Debug, Clone)]
 pub enum JJCommand {
     Abandon {
         change_id: String,
-        retain_bookmarks: bool,
-        restore_descendants: bool,
+        flags: CommandFlags,
     },
     /// Describe with an inline message (non-interactive).
     Describe {
         change_id: String,
         message: String,
-        ignore_immutable: bool,
+        flags: CommandFlags,
     },
     /// Describe via jj's configured editor (interactive -- needs terminal).
     DescribeInEditor {
         change_id: String,
-        ignore_immutable: bool,
+        flags: CommandFlags,
     },
     Edit {
         change_id: String,
-        ignore_immutable: bool,
+        flags: CommandFlags,
     },
     New {
         change_id: String,
         insert_after: bool,
         insert_before: bool,
-        no_edit: bool,
+        flags: CommandFlags,
     },
 }
 
@@ -46,54 +47,53 @@ impl JJCommand {
     /// Build the CLI arguments for `jj`.
     pub fn args(&self) -> Vec<String> {
         match self {
-            JJCommand::Abandon {
-                change_id,
-                retain_bookmarks,
-                restore_descendants,
-            } => {
+            JJCommand::Abandon { change_id, flags } => {
                 let mut args = vec!["abandon".to_string()];
-                if *retain_bookmarks {
-                    args.push("--retain-bookmarks".to_string());
-                }
-                if *restore_descendants {
-                    args.push("--restore-descendants".to_string());
-                }
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[
+                        (CommandFlags::RETAIN_BOOKMARKS, "--retain-bookmarks"),
+                        (CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
+                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
+                    ],
+                );
                 args.push(change_id.clone());
                 args
             }
             JJCommand::Describe {
                 change_id,
                 message,
-                ignore_immutable,
+                flags,
             } => {
                 let mut args = vec!["describe".to_string()];
-                if *ignore_immutable {
-                    args.push("--ignore-immutable".to_string());
-                }
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
                 args.push("-m".to_string());
                 args.push(message.clone());
                 args.push(change_id.clone());
                 args
             }
-            JJCommand::DescribeInEditor {
-                change_id,
-                ignore_immutable,
-            } => {
+            JJCommand::DescribeInEditor { change_id, flags } => {
                 let mut args = vec!["describe".to_string()];
-                if *ignore_immutable {
-                    args.push("--ignore-immutable".to_string());
-                }
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
                 args.push(change_id.clone());
                 args
             }
-            JJCommand::Edit {
-                change_id,
-                ignore_immutable,
-            } => {
+            JJCommand::Edit { change_id, flags } => {
                 let mut args = vec!["edit".to_string()];
-                if *ignore_immutable {
-                    args.push("--ignore-immutable".to_string());
-                }
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
                 args.push(change_id.clone());
                 args
             }
@@ -101,7 +101,7 @@ impl JJCommand {
                 change_id,
                 insert_after,
                 insert_before,
-                no_edit,
+                flags,
             } => {
                 let mut args = vec!["new".to_string()];
                 if *insert_after {
@@ -110,10 +110,15 @@ impl JJCommand {
                 if *insert_before {
                     args.push("--insert-before".to_string());
                 }
-                if *no_edit {
-                    args.push("--no-edit".to_string());
-                }
                 args.push(change_id.clone());
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[
+                        (CommandFlags::NO_EDIT, "--no-edit"),
+                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
+                    ],
+                );
                 args
             }
         }
@@ -129,7 +134,7 @@ impl JJCommand {
             .iter()
             .map(|a| {
                 if a.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c)) {
-                    format!("{:?}", a) // Rust debug-prints with quotes and escapes
+                    format!("{:?}", a)
                 } else {
                     a.clone()
                 }
@@ -163,7 +168,7 @@ impl JJCommand {
         match result {
             Ok(status) => JJCommandResult {
                 display,
-                output: Vec::new(), // output went to the terminal directly
+                output: Vec::new(),
                 success: status.success(),
             },
             Err(e) => JJCommandResult {
@@ -210,6 +215,15 @@ impl JJCommand {
                 output: format!("failed to run jj: {e}").into_bytes(),
                 success: false,
             },
+        }
+    }
+}
+
+/// Push CLI flag arguments for any active flags in the bitset.
+fn push_flags(args: &mut Vec<String>, flags: CommandFlags, mapping: &[(CommandFlags, &str)]) {
+    for (flag, arg) in mapping {
+        if flags.contains(*flag) {
+            args.push(arg.to_string());
         }
     }
 }

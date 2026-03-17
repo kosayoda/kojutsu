@@ -6,7 +6,7 @@ use tui_input::Input;
 
 use crate::app::{App, AppMode, PendingCommand};
 use crate::jj_command::JJCommand;
-use crate::keymap::{self, AppAction, Keymap, LookupResult};
+use crate::keymap::{self, AppAction, CommandFlags, Keymap, LookupResult};
 use crate::repo::JjRepo;
 
 /// Result of handling an input event.
@@ -31,9 +31,12 @@ pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyE
 
     match &app.mode {
         AppMode::Normal => handle_normal_key(app, jj, keymap, &node),
-        AppMode::Submenu { children, .. } => {
+        AppMode::Submenu {
+            children, flags, ..
+        } => {
             let children = *children;
-            handle_submenu_key(app, jj, children, &node)
+            let flags = *flags;
+            handle_submenu_key(app, jj, children, flags, &node)
         }
         AppMode::CommandOutput { .. } => {
             app.mode = AppMode::Normal;
@@ -50,11 +53,16 @@ fn handle_normal_key(
     node: &keymap_parser::Node,
 ) -> Action {
     match keymap.lookup(node) {
-        LookupResult::Action(action) => dispatch_action(app, jj, action),
+        LookupResult::Action(action) => dispatch_action(app, jj, action, CommandFlags::empty()),
         LookupResult::Prefix { label, children } => {
-            app.mode = AppMode::Submenu { label, children };
+            app.mode = AppMode::Submenu {
+                label,
+                children,
+                flags: CommandFlags::empty(),
+            };
             Action::None
         }
+        LookupResult::Toggle(_) => Action::None, // toggles only work inside submenus
         LookupResult::Unbound => Action::None,
     }
 }
@@ -63,6 +71,7 @@ fn handle_submenu_key(
     app: &mut App,
     jj: &JjRepo,
     children: &'static [(keymap_parser::Node, keymap::KeymapNode)],
+    flags: CommandFlags,
     node: &keymap_parser::Node,
 ) -> Action {
     if node.key == keymap_parser::Key::Esc {
@@ -71,17 +80,33 @@ fn handle_submenu_key(
     }
 
     let result = Keymap::lookup_in(children, node);
-    app.mode = AppMode::Normal;
 
     match result {
-        LookupResult::Action(action) => dispatch_action(app, jj, action),
-        LookupResult::Prefix { .. } => Action::None,
-        LookupResult::Unbound => Action::None,
+        LookupResult::Action(action) => {
+            app.mode = AppMode::Normal;
+            dispatch_action(app, jj, action, flags)
+        }
+        LookupResult::Toggle(flag) => {
+            // Flip the flag, stay in submenu.
+            if let AppMode::Submenu { flags, .. } = &mut app.mode {
+                flags.toggle(flag);
+            }
+            Action::None
+        }
+        LookupResult::Prefix { .. } => {
+            app.mode = AppMode::Normal;
+            Action::None
+        }
+        LookupResult::Unbound => {
+            app.mode = AppMode::Normal;
+            Action::None
+        }
     }
 }
 
-fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction) -> Action {
+fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: CommandFlags) -> Action {
     match action {
+        // Navigation -- flags are ignored
         AppAction::Quit => Action::Quit,
         AppAction::MoveDown => {
             app.move_down();
@@ -116,56 +141,56 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction) -> Action {
             Action::None
         }
         AppAction::Refresh => Action::Refresh,
-        AppAction::Abandon => make_abandon_command(app, false, false),
-        AppAction::AbandonKeepBookmarks => make_abandon_command(app, true, false),
-        AppAction::AbandonRestoreDescendants => make_abandon_command(app, false, true),
-        AppAction::Describe => enter_describe_input(app, false),
-        AppAction::DescribeIgnoreImmutable => enter_describe_input(app, true),
-        AppAction::DescribeInEditor => make_describe_editor_command(app, false),
-        AppAction::DescribeInEditorIgnoreImmutable => make_describe_editor_command(app, true),
-        AppAction::Edit => make_edit_command(app, false),
-        AppAction::EditIgnoreImmutable => make_edit_command(app, true),
-        AppAction::New => make_new_command(app, false, false, false),
-        AppAction::NewInsertAfter => make_new_command(app, true, false, false),
-        AppAction::NewInsertBefore => make_new_command(app, false, true, false),
-        AppAction::NewNoEdit => make_new_command(app, false, false, true),
+
+        // Commands -- flags are passed through
+        AppAction::Abandon => make_command(app, |id| JJCommand::Abandon {
+            change_id: id,
+            flags,
+        }),
+        AppAction::Describe => enter_describe_input(app, flags),
+        AppAction::DescribeInEditor => make_command(app, |id| JJCommand::DescribeInEditor {
+            change_id: id,
+            flags,
+        }),
+        AppAction::Edit => make_command(app, |id| JJCommand::Edit {
+            change_id: id,
+            flags,
+        }),
+        AppAction::New => make_command(app, |id| JJCommand::New {
+            change_id: id,
+            insert_after: false,
+            insert_before: false,
+            flags,
+        }),
+        AppAction::NewInsertAfter => make_command(app, |id| JJCommand::New {
+            change_id: id,
+            insert_after: true,
+            insert_before: false,
+            flags,
+        }),
+        AppAction::NewInsertBefore => make_command(app, |id| JJCommand::New {
+            change_id: id,
+            insert_after: false,
+            insert_before: true,
+            flags,
+        }),
     }
 }
 
-fn make_abandon_command(app: &App, retain_bookmarks: bool, restore_descendants: bool) -> Action {
+/// Helper: build a command action from the selected change ID.
+fn make_command(app: &App, build: impl FnOnce(String) -> JJCommand) -> Action {
     let Some(change_id) = app.selected_change_id() else {
         return Action::None;
     };
-    Action::RunJj(JJCommand::Abandon {
-        change_id: change_id.to_string(),
-        retain_bookmarks,
-        restore_descendants,
-    })
+    let cmd = build(change_id.to_string());
+    if cmd.is_interactive() {
+        Action::SuspendAndRunJj(cmd)
+    } else {
+        Action::RunJj(cmd)
+    }
 }
 
-fn make_edit_command(app: &App, ignore_immutable: bool) -> Action {
-    let Some(change_id) = app.selected_change_id() else {
-        return Action::None;
-    };
-    Action::RunJj(JJCommand::Edit {
-        change_id: change_id.to_string(),
-        ignore_immutable,
-    })
-}
-
-fn make_new_command(app: &App, insert_after: bool, insert_before: bool, no_edit: bool) -> Action {
-    let Some(change_id) = app.selected_change_id() else {
-        return Action::None;
-    };
-    Action::RunJj(JJCommand::New {
-        change_id: change_id.to_string(),
-        insert_after,
-        insert_before,
-        no_edit,
-    })
-}
-
-fn enter_describe_input(app: &mut App, ignore_immutable: bool) -> Action {
+fn enter_describe_input(app: &mut App, flags: CommandFlags) -> Action {
     let Some(change_id) = app.selected_change_id() else {
         return Action::None;
     };
@@ -175,29 +200,14 @@ fn enter_describe_input(app: &mut App, ignore_immutable: bool) -> Action {
     app.mode = AppMode::TextInput {
         prompt: "describe: ".to_string(),
         input: Input::new(current_desc),
-        on_submit: PendingCommand::Describe {
-            change_id,
-            ignore_immutable,
-        },
+        on_submit: PendingCommand::Describe { change_id, flags },
     };
     Action::None
 }
 
-fn make_describe_editor_command(app: &App, ignore_immutable: bool) -> Action {
-    let Some(change_id) = app.selected_change_id() else {
-        return Action::None;
-    };
-    Action::SuspendAndRunJj(JJCommand::DescribeInEditor {
-        change_id: change_id.to_string(),
-        ignore_immutable,
-    })
-}
-
 fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
     match key.code {
-        // Enter: submit
         KeyCode::Enter => {
-            // Take ownership of the TextInput fields.
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::TextInput {
                 input, on_submit, ..
@@ -210,12 +220,10 @@ fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
                 Action::None
             }
         }
-        // Esc: cancel
         KeyCode::Esc => {
             app.mode = AppMode::Normal;
             Action::None
         }
-        // Everything else: forward to tui-input
         _ => {
             if let AppMode::TextInput { input, .. } = &mut app.mode {
                 input.handle_event(&Event::Key(key));

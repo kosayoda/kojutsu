@@ -5,7 +5,7 @@ use tui_input::Input;
 use crate::dag::{DagEntry, DiffLine, FileChange};
 use crate::graph::{self, GraphLines};
 use crate::jj_command::JJCommand;
-use crate::keymap::KeymapNode;
+use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo::JjRepo;
 
 /// The current interaction mode.
@@ -17,6 +17,7 @@ pub enum AppMode {
     Submenu {
         label: &'static str,
         children: &'static [(keymap_parser::Node, KeymapNode)],
+        flags: CommandFlags,
     },
     /// Showing the result of a shell command. Dismissed on next keypress.
     CommandOutput {
@@ -39,7 +40,7 @@ pub enum AppMode {
 pub enum PendingCommand {
     Describe {
         change_id: String,
-        ignore_immutable: bool,
+        flags: CommandFlags,
     },
 }
 
@@ -47,13 +48,10 @@ impl PendingCommand {
     /// Convert to a `JJCommand` given the user's input text.
     pub fn into_jj_command(self, message: String) -> JJCommand {
         match self {
-            PendingCommand::Describe {
-                change_id,
-                ignore_immutable,
-            } => JJCommand::Describe {
+            PendingCommand::Describe { change_id, flags } => JJCommand::Describe {
                 change_id,
                 message,
-                ignore_immutable,
+                flags,
             },
         }
     }
