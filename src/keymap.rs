@@ -24,6 +24,8 @@ pub enum AppAction {
     DescribeInEditor,
     DescribeIgnoreImmutable,
     DescribeInEditorIgnoreImmutable,
+    Edit,
+    EditIgnoreImmutable,
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +142,14 @@ impl Default for Keymap {
                         AppAction::AbandonRestoreDescendants,
                         "restore descendants",
                     ),
+                ],
+            ),
+            prefix(
+                "e",
+                "edit",
+                vec![
+                    bind("e", AppAction::Edit, "edit"),
+                    bind("i", AppAction::EditIgnoreImmutable, "ignore immutable"),
                 ],
             ),
         ];

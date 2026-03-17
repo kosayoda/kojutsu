@@ -20,6 +20,10 @@ pub enum JJCommand {
         change_id: String,
         ignore_immutable: bool,
     },
+    Edit {
+        change_id: String,
+        ignore_immutable: bool,
+    },
 }
 
 /// The result of running a jj command.
@@ -70,6 +74,14 @@ impl JJCommand {
                 ignore_immutable,
             } => {
                 let mut args = vec!["describe".to_string()];
+                if *ignore_immutable {
+                    args.push("--ignore-immutable".to_string());
+                }
+                args.push(change_id.clone());
+                args
+            }
+            JJCommand::Edit { change_id, ignore_immutable } => {
+                let mut args = vec!["edit".to_string()];
                 if *ignore_immutable {
                     args.push("--ignore-immutable".to_string());
                 }

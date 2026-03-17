@@ -123,6 +123,8 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction) -> Action {
         AppAction::DescribeIgnoreImmutable => enter_describe_input(app, true),
         AppAction::DescribeInEditor => make_describe_editor_command(app, false),
         AppAction::DescribeInEditorIgnoreImmutable => make_describe_editor_command(app, true),
+        AppAction::Edit => make_edit_command(app, false),
+        AppAction::EditIgnoreImmutable => make_edit_command(app, true),
     }
 }
 
@@ -134,6 +136,16 @@ fn make_abandon_command(app: &App, retain_bookmarks: bool, restore_descendants: 
         change_id: change_id.to_string(),
         retain_bookmarks,
         restore_descendants,
+    })
+}
+
+fn make_edit_command(app: &App, ignore_immutable: bool) -> Action {
+    let Some(change_id) = app.selected_change_id() else {
+        return Action::None;
+    };
+    Action::RunJj(JJCommand::Edit {
+        change_id: change_id.to_string(),
+        ignore_immutable,
     })
 }
 
