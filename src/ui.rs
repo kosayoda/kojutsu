@@ -33,8 +33,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             output,
             success,
         } => {
-            // +2: one for border, one for the command line itself.
-            let height = (output.len() as u16 + 2).min(list_area.height / 2).max(2);
+            // Count output lines + 1 for command + 1 for border + 1 for bottom padding.
+            let output_lines = output.iter().filter(|&&b| b == b'\n').count().max(1);
+            let height = (output_lines as u16 + 3).min(list_area.height / 2).max(3);
             let overlay = overlay_area(list_area, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_command_output(frame, overlay, command, output, *success);
@@ -177,31 +178,34 @@ fn draw_command_output(
     frame: &mut Frame,
     area: Rect,
     command: &str,
-    output: &[String],
-    success: bool,
+    output: &[u8],
+    _success: bool,
 ) {
-    let mut lines = Vec::new();
+    use ansi_to_tui::IntoText;
+    use ratatui::widgets::Padding;
 
-    // Command line
-    lines.push(Line::from(Span::styled(
+    let mut lines = vec![Line::from(Span::styled(
         command,
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
-    )));
+    ))];
 
-    // Output lines
-    let output_color = if success { Color::White } else { Color::Red };
-    for line in output {
-        lines.push(Line::from(Span::styled(
-            line.as_str(),
-            Style::default().fg(output_color),
-        )));
+    // Convert ANSI-colored output to ratatui styled text.
+    if let Ok(styled) = output.into_text() {
+        lines.extend(styled.lines);
+    } else {
+        // Fallback: render as plain text.
+        let text = String::from_utf8_lossy(output);
+        for line in text.lines() {
+            lines.push(Line::from(Span::raw(line.to_string())));
+        }
     }
 
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(Color::DarkGray))
+        .padding(Padding::new(1, 1, 0, 0));
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
