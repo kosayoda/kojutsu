@@ -1924,7 +1924,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "jujujutsu"
+name = "kasuari"
+version = "0.4.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fe90c1150662e858c7d5f945089b7517b0a80d8bf7ba4b1b5ffc984e7230a5b"
+dependencies = [
+ "hashbrown 0.16.1",
+ "portable-atomic",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "keymap_parser"
+version = "1.0.0-rc.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bad2762b3b75cfd246622ed16c98d64831675258648b9e02d3b43d030921e8a6"
+dependencies = [
+ "serde",
+ "strum",
+ "strum_macros",
+]
+
+[[package]]
+name = "kodoku"
 version = "0.1.0"
 dependencies = [
  "ansi-to-tui",
@@ -1946,28 +1968,6 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "tui-input",
-]
-
-[[package]]
-name = "kasuari"
-version = "0.4.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fe90c1150662e858c7d5f945089b7517b0a80d8bf7ba4b1b5ffc984e7230a5b"
-dependencies = [
- "hashbrown 0.16.1",
- "portable-atomic",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "keymap_parser"
-version = "1.0.0-rc.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bad2762b3b75cfd246622ed16c98d64831675258648b9e02d3b43d030921e8a6"
-dependencies = [
- "serde",
- "strum",
- "strum_macros",
 ]
 
 [[package]]
