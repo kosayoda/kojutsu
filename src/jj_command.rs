@@ -80,7 +80,10 @@ impl JJCommand {
                 args.push(change_id.clone());
                 args
             }
-            JJCommand::Edit { change_id, ignore_immutable } => {
+            JJCommand::Edit {
+                change_id,
+                ignore_immutable,
+            } => {
                 let mut args = vec!["edit".to_string()];
                 if *ignore_immutable {
                     args.push("--ignore-immutable".to_string());
@@ -92,9 +95,22 @@ impl JJCommand {
     }
 
     /// Human-readable display string shown in the command output overlay.
+    ///
+    /// Arguments containing spaces or special characters are quoted so the
+    /// display looks like a valid shell command the user could copy-paste.
     pub fn display(&self) -> String {
         let args = self.args();
-        format!("$ jj {}", args.join(" "))
+        let quoted: Vec<String> = args
+            .iter()
+            .map(|a| {
+                if a.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c)) {
+                    format!("{:?}", a) // Rust debug-prints with quotes and escapes
+                } else {
+                    a.clone()
+                }
+            })
+            .collect();
+        format!("$ jj {}", quoted.join(" "))
     }
 
     /// Whether this command needs an interactive terminal (editor).
