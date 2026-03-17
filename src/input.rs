@@ -10,6 +10,11 @@ pub enum Action {
     Quit,
     /// No action needed (already handled by mutating App).
     None,
+    /// Run a jj CLI command, then refresh the DAG.
+    RunJj {
+        args: Vec<String>,
+        display_cmd: String,
+    },
 }
 
 /// Handle a key press, dispatching through the keymap trie and app mode.
@@ -24,6 +29,11 @@ pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyE
             // Copy the static reference before mutating app.mode.
             let children = *children;
             handle_submenu_key(app, jj, children, &node)
+        }
+        AppMode::CommandOutput { .. } => {
+            // Any keypress dismisses the command output.
+            app.mode = AppMode::Normal;
+            Action::None
         }
     }
 }
@@ -110,7 +120,26 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction) -> Action {
             app.refresh(jj, &revset);
             Action::None
         }
+        AppAction::Abandon => abandon_action(app, &[]),
+        AppAction::AbandonKeepBookmarks => abandon_action(app, &["--retain-bookmarks"]),
+        AppAction::AbandonRestoreDescendants => abandon_action(app, &["--restore-descendants"]),
     }
+}
+
+fn abandon_action(app: &App, extra_args: &[&str]) -> Action {
+    let Some(change_id) = app.selected_change_id() else {
+        return Action::None;
+    };
+    let change_id = change_id.to_string();
+
+    let mut args = vec!["abandon".to_string()];
+    for arg in extra_args {
+        args.push(arg.to_string());
+    }
+    args.push(change_id.clone());
+
+    let display_cmd = format!("$ jj {}", args.join(" "));
+    Action::RunJj { args, display_cmd }
 }
 
 /// Handle a mouse event.

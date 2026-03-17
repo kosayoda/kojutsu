@@ -17,6 +17,9 @@ pub enum AppAction {
     JumpToWorkingCopy,
     ToggleFold,
     Refresh,
+    Abandon,
+    AbandonKeepBookmarks,
+    AbandonRestoreDescendants,
 }
 
 // ---------------------------------------------------------------------------
@@ -106,6 +109,20 @@ impl Default for Keymap {
             bind("tab", AppAction::ToggleFold, "toggle fold"),
             // Refresh
             bind("ctrl-r", AppAction::Refresh, "refresh"),
+            // Abandon submenu
+            prefix(
+                "a",
+                "abandon",
+                vec![
+                    bind("a", AppAction::Abandon, "abandon"),
+                    bind("b", AppAction::AbandonKeepBookmarks, "keep bookmarks"),
+                    bind(
+                        "d",
+                        AppAction::AbandonRestoreDescendants,
+                        "restore descendants",
+                    ),
+                ],
+            ),
         ];
 
         Keymap { root }

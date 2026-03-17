@@ -13,23 +13,43 @@ pub const HEADER_HEIGHT: u16 = 2;
 
 /// Render the full UI into the frame.
 pub fn draw(frame: &mut Frame, app: &mut App) {
-    let bottom_height = match &app.mode {
-        AppMode::Normal => 0,
-        AppMode::Submenu { .. } => 1,
-    };
-
-    let [header_area, list_area, bottom_area] = Layout::vertical([
-        Constraint::Length(HEADER_HEIGHT),
-        Constraint::Fill(1),
-        Constraint::Length(bottom_height),
-    ])
-    .areas(frame.area());
+    let [header_area, list_area] =
+        Layout::vertical([Constraint::Length(HEADER_HEIGHT), Constraint::Fill(1)])
+            .areas(frame.area());
 
     draw_header(frame, header_area, app);
     draw_list(frame, list_area, app);
 
-    if let AppMode::Submenu { label, children } = &app.mode {
-        draw_submenu(frame, bottom_area, label, children);
+    // Overlays render on top of the list area (bottom-aligned).
+    match &app.mode {
+        AppMode::Normal => {}
+        AppMode::Submenu { label, children } => {
+            let overlay = overlay_area(list_area, 1);
+            frame.render_widget(ratatui::widgets::Clear, overlay);
+            draw_submenu(frame, overlay, label, children);
+        }
+        AppMode::CommandOutput {
+            command,
+            output,
+            success,
+        } => {
+            // +2: one for border, one for the command line itself.
+            let height = (output.len() as u16 + 2).min(list_area.height / 2).max(2);
+            let overlay = overlay_area(list_area, height);
+            frame.render_widget(ratatui::widgets::Clear, overlay);
+            draw_command_output(frame, overlay, command, output, *success);
+        }
+    }
+}
+
+/// Compute an overlay area at the bottom of `area` with the given height.
+fn overlay_area(area: Rect, height: u16) -> Rect {
+    let h = height.min(area.height);
+    Rect {
+        x: area.x,
+        y: area.y + area.height - h,
+        width: area.width,
+        height: h,
     }
 }
 
@@ -151,6 +171,38 @@ fn draw_submenu(
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn draw_command_output(
+    frame: &mut Frame,
+    area: Rect,
+    command: &str,
+    output: &[String],
+    success: bool,
+) {
+    let mut lines = Vec::new();
+
+    // Command line
+    lines.push(Line::from(Span::styled(
+        command,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )));
+
+    // Output lines
+    let output_color = if success { Color::White } else { Color::Red };
+    for line in output {
+        lines.push(Line::from(Span::styled(
+            line.as_str(),
+            Style::default().fg(output_color),
+        )));
+    }
+
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 /// Render a commit as a 2-line ListItem matching `jj log` default format:

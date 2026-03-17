@@ -15,6 +15,15 @@ pub enum AppMode {
         label: &'static str,
         children: &'static [(keymap_parser::Node, KeymapNode)],
     },
+    /// Showing the result of a shell command. Dismissed on next keypress.
+    CommandOutput {
+        /// The command that was run, e.g. `"$ jj abandon xvzwolmw"`.
+        command: String,
+        /// Lines of stdout/stderr output.
+        output: Vec<String>,
+        /// Whether the command succeeded.
+        success: bool,
+    },
 }
 
 /// Identifies a display row for cursor restore after rebuild.
@@ -162,6 +171,21 @@ impl App {
         self.cursor = prev_cursor
             .and_then(|key| self.rows.iter().position(|r| r.key() == key))
             .unwrap_or(0);
+    }
+
+    /// Get the change ID (unique prefix) of the commit the cursor is on.
+    ///
+    /// Works from any row type -- files and diff lines resolve to their
+    /// parent commit.
+    pub fn selected_change_id(&self) -> Option<&str> {
+        let entry_idx = match self.rows.get(self.cursor)? {
+            DisplayRow::CommitNode { entry_idx }
+            | DisplayRow::GraphLink { entry_idx, .. }
+            | DisplayRow::FileChange { entry_idx, .. }
+            | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,
+        };
+        let id = &self.entries[entry_idx].commit.change_id;
+        Some(&id.display[..id.prefix_len.min(id.display.len())])
     }
 
     /// Get the scroll offset from the last render.
