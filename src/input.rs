@@ -40,7 +40,11 @@ pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyE
         }
         AppMode::CommandOutput { .. } => {
             app.mode = AppMode::Normal;
-            Action::None
+            handle_normal_key(app, jj, keymap, &node)
+        }
+        AppMode::Help => {
+            app.mode = AppMode::Normal;
+            handle_normal_key(app, jj, keymap, &node)
         }
         AppMode::TextInput { .. } => handle_text_input(app, key),
     }
@@ -141,6 +145,10 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             Action::None
         }
         AppAction::Refresh => Action::Refresh,
+        AppAction::ShowHelp => {
+            app.mode = AppMode::Help;
+            Action::None
+        }
 
         // Commands -- flags are passed through
         AppAction::Abandon => make_command(app, |id| JJCommand::Abandon {

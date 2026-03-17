@@ -28,6 +28,8 @@ pub enum AppMode {
         /// Whether the command succeeded.
         success: bool,
     },
+    /// Help overlay showing all keybindings.
+    Help,
     /// Single-line text input in the bottom bar.
     TextInput {
         prompt: String,

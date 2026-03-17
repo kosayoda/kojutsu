@@ -1,18 +1,18 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::app::{App, AppMode, DisplayRow};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, ShortId};
-use crate::keymap::{self, CommandFlags, KeymapNode};
+use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, Keymap, KeymapNode};
 
 /// The Y offset where the list starts (for mouse click translation).
 pub const HEADER_HEIGHT: u16 = 2;
 
 /// Render the full UI into the frame.
-pub fn draw(frame: &mut Frame, app: &mut App) {
+pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
     let [header_area, list_area] =
         Layout::vertical([Constraint::Length(HEADER_HEIGHT), Constraint::Fill(1)])
             .areas(frame.area());
@@ -46,6 +46,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
             let overlay = overlay_area(list_area, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_command_output(frame, overlay, command, output, *success);
+        }
+        AppMode::Help => {
+            let groups = keymap::help_entries(keymap);
+            // We need to balance first to compute the correct height.
+            let (left, right) = balance_help_groups(&groups);
+            let left_h: usize = left.iter().map(|(_, e)| e.len() + 1).sum();
+            let right_h: usize = right
+                .iter()
+                .enumerate()
+                .map(|(i, (_, e))| e.len() + 1 + if i > 0 { 1 } else { 0 }) // blank between groups
+                .sum();
+            let max_col = left_h.max(right_h);
+            // +2 for border + breathing room.
+            let height = (max_col as u16 + 2).min(list_area.height * 7 / 10).max(4);
+            let overlay = overlay_area(list_area, height);
+            frame.render_widget(ratatui::widgets::Clear, overlay);
+            draw_help(frame, overlay, &left, &right);
         }
         AppMode::TextInput { prompt, input, .. } => {
             let overlay = overlay_area(list_area, 1);
@@ -149,6 +166,91 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
     app.last_scroll_offset = list_state.offset();
 }
 
+type HelpColumn<'a> = Vec<&'a (HelpGroup, Vec<HelpEntry>)>;
+
+/// Balance help groups into two columns, keeping groups intact.
+fn balance_help_groups(groups: &[(HelpGroup, Vec<HelpEntry>)]) -> (HelpColumn<'_>, HelpColumn<'_>) {
+    let group_rows: Vec<usize> = groups.iter().map(|(_, e)| e.len() + 1).collect();
+    let total: usize = group_rows.iter().sum();
+    let half = total / 2;
+
+    let mut left = Vec::new();
+    let mut right = Vec::new();
+    let mut left_count = 0usize;
+
+    for (i, group) in groups.iter().enumerate() {
+        if i == 0 || left_count + group_rows[i] <= half {
+            left.push(group);
+            left_count += group_rows[i];
+        } else {
+            right.push(group);
+        }
+    }
+
+    (left, right)
+}
+
+fn draw_help(
+    frame: &mut Frame,
+    area: Rect,
+    left_groups: &[&(HelpGroup, Vec<HelpEntry>)],
+    right_groups: &[&(HelpGroup, Vec<HelpEntry>)],
+) {
+    use ratatui::widgets::Padding;
+
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(" ? Help ")
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .padding(Padding::new(1, 1, 0, 0));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let [left_area, right_area] =
+        Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(inner);
+
+    render_help_column(frame, left_area, left_groups);
+    render_help_column(frame, right_area, right_groups);
+}
+
+fn render_help_column(frame: &mut Frame, area: Rect, groups: &[&(HelpGroup, Vec<HelpEntry>)]) {
+    let header_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
+    let key_style = Style::default()
+        .fg(Color::Yellow)
+        .add_modifier(Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::White);
+
+    let mut rows: Vec<Row> = Vec::new();
+
+    for (i, (group, entries)) in groups.iter().enumerate() {
+        if i > 0 {
+            rows.push(Row::new(vec![Cell::from(""), Cell::from("")]));
+        }
+        rows.push(Row::new(vec![
+            Cell::from(group.label()).style(header_style),
+            Cell::from(""),
+        ]));
+        for entry in entries.iter() {
+            rows.push(Row::new(vec![
+                Cell::from(format!("  {}", entry.keys)).style(key_style),
+                Cell::from(entry.description.as_str()).style(desc_style),
+            ]));
+        }
+    }
+
+    let widths = [Constraint::Length(20), Constraint::Fill(1)];
+    let table = Table::new(rows, widths);
+    frame.render_widget(table, area);
+}
+
 fn draw_submenu(
     frame: &mut Frame,
     area: Rect,
@@ -168,9 +270,7 @@ fn draw_submenu(
             let active = flags.contains(*flag);
             let key_str = keymap::display_key(key_node);
             let style = if active {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                Style::default().add_modifier(Modifier::BOLD)
             } else {
                 Style::default().fg(Color::DarkGray)
             };

@@ -133,7 +133,7 @@ impl JJCommand {
         let quoted: Vec<String> = args
             .iter()
             .map(|a| {
-                if a.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c)) {
+                if a.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c)) || a.is_empty() {
                     format!("{:?}", a)
                 } else {
                     a.clone()

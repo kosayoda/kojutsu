@@ -43,7 +43,7 @@ fn main() -> Result<()> {
     let mut terminal = jujujutsu::terminal::init()?;
 
     loop {
-        terminal.draw(|frame| ui::draw(frame, &mut app))?;
+        terminal.draw(|frame| ui::draw(frame, &mut app, keymap))?;
 
         if event::poll(Duration::from_millis(200))? {
             let ev = event::read()?;

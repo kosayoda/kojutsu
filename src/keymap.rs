@@ -39,6 +39,7 @@ pub enum AppAction {
     New,
     NewInsertAfter,
     NewInsertBefore,
+    ShowHelp,
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +137,8 @@ impl Default for Keymap {
             bind("tab", AppAction::ToggleFold, "toggle fold"),
             // Refresh
             bind("ctrl-r", AppAction::Refresh, "refresh"),
+            // Help
+            bind("?", AppAction::ShowHelp, "help"),
             // Describe submenu
             prefix(
                 "d",
@@ -281,4 +284,123 @@ fn convert_modifiers(mods: &KeyModifiers) -> keymap_parser::Modifiers {
 /// Format a `Node` as a human-readable key string for display in the bottom bar.
 pub fn display_key(node: &Node) -> String {
     format!("{node}")
+}
+
+// ---------------------------------------------------------------------------
+// Help generation
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HelpGroup {
+    Navigation,
+    Commands,
+    General,
+}
+
+impl HelpGroup {
+    pub fn label(self) -> &'static str {
+        match self {
+            HelpGroup::Navigation => "Navigation",
+            HelpGroup::Commands => "Commands",
+            HelpGroup::General => "General",
+        }
+    }
+}
+
+pub struct HelpEntry {
+    pub keys: String,
+    pub description: String,
+    pub group: HelpGroup,
+}
+
+fn classify_action(action: AppAction) -> HelpGroup {
+    match action {
+        AppAction::MoveDown
+        | AppAction::MoveUp
+        | AppAction::MoveDownSection
+        | AppAction::MoveUpSection
+        | AppAction::PageDown
+        | AppAction::PageUp
+        | AppAction::JumpToWorkingCopy
+        | AppAction::ToggleFold
+        | AppAction::Refresh => HelpGroup::Navigation,
+
+        AppAction::Abandon
+        | AppAction::Describe
+        | AppAction::DescribeInEditor
+        | AppAction::Edit
+        | AppAction::New
+        | AppAction::NewInsertAfter
+        | AppAction::NewInsertBefore => HelpGroup::Commands,
+
+        AppAction::Quit | AppAction::ShowHelp => HelpGroup::General,
+    }
+}
+
+/// Generate grouped help entries from the keymap trie.
+///
+/// Returns groups in order, each with its entries. Duplicate actions
+/// (multiple keys for the same action) are merged into one entry
+/// with keys joined by ` / `.
+pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
+    // Collect raw entries, merging duplicate actions.
+    let mut action_keys: Vec<(AppAction, Vec<String>, &'static str)> = Vec::new();
+    let mut prefix_entries: Vec<HelpEntry> = Vec::new();
+
+    for (node, km_node) in &keymap.root {
+        let key_str = display_key(node);
+        match km_node {
+            KeymapNode::Action {
+                action,
+                description,
+            } => {
+                if let Some(existing) = action_keys.iter_mut().find(|(a, _, _)| a == action) {
+                    existing.1.push(key_str);
+                } else {
+                    action_keys.push((*action, vec![key_str], description));
+                }
+            }
+            KeymapNode::Prefix { label, .. } => {
+                prefix_entries.push(HelpEntry {
+                    keys: format!("{key_str} ..."),
+                    description: label.to_string(),
+                    group: HelpGroup::Commands,
+                });
+            }
+            KeymapNode::Toggle { .. } => {} // toggles don't appear at root
+        }
+    }
+
+    // Convert action_keys into HelpEntries.
+    let mut entries: Vec<HelpEntry> = action_keys
+        .into_iter()
+        .map(|(action, keys, desc)| HelpEntry {
+            keys: keys.join(" / "),
+            description: desc.to_string(),
+            group: classify_action(action),
+        })
+        .collect();
+    entries.extend(prefix_entries);
+
+    // Sort by group, then by description within group.
+    entries.sort_by(|a, b| {
+        a.group
+            .cmp(&b.group)
+            .then_with(|| a.description.cmp(&b.description))
+    });
+
+    // Group into (HelpGroup, Vec<HelpEntry>).
+    let mut groups: Vec<(HelpGroup, Vec<HelpEntry>)> = Vec::new();
+    for entry in entries {
+        if let Some(last) = groups.last_mut() {
+            if last.0 == entry.group {
+                last.1.push(entry);
+                continue;
+            }
+        }
+        let group = entry.group;
+        groups.push((group, vec![entry]));
+    }
+
+    groups
 }
