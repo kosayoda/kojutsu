@@ -46,6 +46,9 @@ pub enum AppAction {
     SquashOnto,
     SquashAfter,
     SquashBefore,
+    RebaseRevision,
+    RebaseSource,
+    RebaseBranch,
     ShowHelp,
     Undo,
     Redo,
@@ -224,6 +227,21 @@ impl Default for Keymap {
                     bind("b", AppAction::NewInsertBefore, "insert before"),
                 ],
             ),
+            // Rebase submenu
+            prefix(
+                "r",
+                "rebase",
+                vec![
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
+                    bind("r", AppAction::RebaseRevision, "revision..."),
+                    bind("s", AppAction::RebaseSource, "source..."),
+                    bind("b", AppAction::RebaseBranch, "branch..."),
+                ],
+            ),
             // Squash submenu
             prefix(
                 "s",
@@ -395,7 +413,10 @@ fn classify_action(action: AppAction) -> HelpGroup {
         | AppAction::SquashAfter
         | AppAction::SquashBefore
         | AppAction::Undo
-        | AppAction::Redo => HelpGroup::Commands,
+        | AppAction::Redo
+        | AppAction::RebaseRevision
+        | AppAction::RebaseSource
+        | AppAction::RebaseBranch => HelpGroup::Commands,
         AppAction::Quit | AppAction::ShowHelp => HelpGroup::General,
     }
 }

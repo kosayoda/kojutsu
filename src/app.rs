@@ -104,6 +104,9 @@ pub enum TargetOperation {
     SquashOnto,
     SquashAfter,
     SquashBefore,
+    RebaseRevision,
+    RebaseSource,
+    RebaseBranch,
 }
 
 impl TargetOperation {
@@ -113,6 +116,9 @@ impl TargetOperation {
             TargetOperation::SquashOnto => "squash onto",
             TargetOperation::SquashAfter => "squash after",
             TargetOperation::SquashBefore => "squash before",
+            TargetOperation::RebaseRevision => "rebase revision",
+            TargetOperation::RebaseSource => "rebase source",
+            TargetOperation::RebaseBranch => "rebase branch",
         }
     }
 
@@ -123,13 +129,30 @@ impl TargetOperation {
         target: String,
         flags: CommandFlags,
     ) -> Vec<FollowUpOption> {
-        let squash_target = match self {
-            TargetOperation::SquashInto => SquashTarget::Into(target),
-            TargetOperation::SquashOnto => SquashTarget::Onto(target),
-            TargetOperation::SquashAfter => SquashTarget::After(target),
-            TargetOperation::SquashBefore => SquashTarget::Before(target),
-        };
-        squash_follow_up(source, Some(squash_target), flags)
+        match self {
+            TargetOperation::SquashInto
+            | TargetOperation::SquashOnto
+            | TargetOperation::SquashAfter
+            | TargetOperation::SquashBefore => {
+                let squash_target = match self {
+                    TargetOperation::SquashInto => SquashTarget::Into(target),
+                    TargetOperation::SquashOnto => SquashTarget::Onto(target),
+                    TargetOperation::SquashAfter => SquashTarget::After(target),
+                    TargetOperation::SquashBefore => SquashTarget::Before(target),
+                    _ => unreachable!(),
+                };
+                squash_follow_up(source, Some(squash_target), flags)
+            }
+            TargetOperation::RebaseRevision => {
+                rebase_follow_up(source, target, RebaseSourceMode::Revision, flags)
+            }
+            TargetOperation::RebaseSource => {
+                rebase_follow_up(source, target, RebaseSourceMode::Source, flags)
+            }
+            TargetOperation::RebaseBranch => {
+                rebase_follow_up(source, target, RebaseSourceMode::Branch, flags)
+            }
+        }
     }
 }
 
@@ -171,6 +194,69 @@ fn squash_follow_up(
             key: 'u',
             label: "use dest message",
             action: FollowUpAction::Execute(use_dest_cmd),
+        },
+    ]
+}
+
+/// How the source was specified for rebase (-r, -s, -b).
+#[derive(Debug, Clone, Copy)]
+pub enum RebaseSourceMode {
+    /// -r: single revision, descendants rebased onto parent.
+    Revision,
+    /// -s: revision + all descendants.
+    Source,
+    /// -b: whole branch.
+    Branch,
+}
+
+/// Where to rebase to (-d, -A, -B).
+#[derive(Debug, Clone)]
+pub enum RebaseDestMode {
+    /// -d/--onto: onto the target.
+    Onto(String),
+    /// -A/--insert-after: after the target.
+    After(String),
+    /// -B/--insert-before: before the target.
+    Before(String),
+}
+
+/// Build follow-up options for a rebase command (destination mode choice).
+fn rebase_follow_up(
+    source: String,
+    target: String,
+    source_mode: RebaseSourceMode,
+    flags: CommandFlags,
+) -> Vec<FollowUpOption> {
+    vec![
+        FollowUpOption {
+            key: 'd',
+            label: "onto",
+            action: FollowUpAction::Execute(JJCommand::Rebase {
+                change_id: source.clone(),
+                source_mode,
+                dest: RebaseDestMode::Onto(target.clone()),
+                flags,
+            }),
+        },
+        FollowUpOption {
+            key: 'a',
+            label: "after",
+            action: FollowUpAction::Execute(JJCommand::Rebase {
+                change_id: source.clone(),
+                source_mode,
+                dest: RebaseDestMode::After(target.clone()),
+                flags,
+            }),
+        },
+        FollowUpOption {
+            key: 'b',
+            label: "before",
+            action: FollowUpAction::Execute(JJCommand::Rebase {
+                change_id: source,
+                source_mode,
+                dest: RebaseDestMode::Before(target),
+                flags,
+            }),
         },
     ]
 }

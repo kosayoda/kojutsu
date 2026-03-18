@@ -191,6 +191,13 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         AppAction::SquashOnto => enter_target_select(app, TargetOperation::SquashOnto, flags),
         AppAction::SquashAfter => enter_target_select(app, TargetOperation::SquashAfter, flags),
         AppAction::SquashBefore => enter_target_select(app, TargetOperation::SquashBefore, flags),
+        // Rebase -- target selection
+        AppAction::RebaseRevision => {
+            enter_target_select(app, TargetOperation::RebaseRevision, flags)
+        }
+        AppAction::RebaseSource => enter_target_select(app, TargetOperation::RebaseSource, flags),
+        AppAction::RebaseBranch => enter_target_select(app, TargetOperation::RebaseBranch, flags),
+
         AppAction::Undo => make_command(app, |_| JJCommand::Undo { flags }),
         AppAction::Redo => make_command(app, |_| JJCommand::Redo { flags }),
     }

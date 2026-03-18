@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use crate::app::{MessageMode, SquashTarget};
+use crate::app::{MessageMode, RebaseDestMode, RebaseSourceMode, SquashTarget};
 use crate::keymap::CommandFlags;
 
 /// A typesafe representation of a jj CLI command.
@@ -36,6 +36,12 @@ pub enum JJCommand {
         change_id: String,
         target: Option<SquashTarget>,
         message: MessageMode,
+        flags: CommandFlags,
+    },
+    Rebase {
+        change_id: String,
+        source_mode: RebaseSourceMode,
+        dest: RebaseDestMode,
         flags: CommandFlags,
     },
     Undo {
@@ -132,6 +138,48 @@ impl JJCommand {
                         (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
                     ],
                 );
+                args
+            }
+            JJCommand::Rebase {
+                change_id,
+                source_mode,
+                dest,
+                flags,
+            } => {
+                let mut args = vec!["rebase".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                // Source mode.
+                match source_mode {
+                    RebaseSourceMode::Revision => {
+                        args.push("-r".to_string());
+                    }
+                    RebaseSourceMode::Source => {
+                        args.push("-s".to_string());
+                    }
+                    RebaseSourceMode::Branch => {
+                        args.push("-b".to_string());
+                    }
+                }
+                args.push(change_id.clone());
+                // Destination mode.
+                match dest {
+                    RebaseDestMode::Onto(t) => {
+                        args.push("-d".to_string());
+                        args.push(t.clone());
+                    }
+                    RebaseDestMode::After(t) => {
+                        args.push("-A".to_string());
+                        args.push(t.clone());
+                    }
+                    RebaseDestMode::Before(t) => {
+                        args.push("-B".to_string());
+                        args.push(t.clone());
+                    }
+                }
                 args
             }
             JJCommand::Undo { flags } => {
