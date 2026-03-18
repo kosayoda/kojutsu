@@ -1962,6 +1962,7 @@ dependencies = [
  "ratatui",
  "sapling-renderdag",
  "serde",
+ "tempfile",
  "thiserror 2.0.18",
  "time",
  "tracing",

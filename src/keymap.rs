@@ -49,6 +49,8 @@ pub enum AppAction {
     RebaseRevision,
     RebaseSource,
     RebaseBranch,
+    EditRevset,
+    EditRevsetInEditor,
     ShowHelp,
     Undo,
     Redo,
@@ -261,6 +263,19 @@ impl Default for Keymap {
                     bind("b", AppAction::SquashBefore, "before..."),
                 ],
             ),
+            // Command palette
+            prefix(
+                ";",
+                "command",
+                vec![
+                    bind("r", AppAction::EditRevset, "edit revset"),
+                    bind(
+                        "shift-r",
+                        AppAction::EditRevsetInEditor,
+                        "edit revset in $EDITOR",
+                    ),
+                ],
+            ),
         ];
 
         Keymap { root }
@@ -417,7 +432,10 @@ fn classify_action(action: AppAction) -> HelpGroup {
         | AppAction::RebaseRevision
         | AppAction::RebaseSource
         | AppAction::RebaseBranch => HelpGroup::Commands,
-        AppAction::Quit | AppAction::ShowHelp => HelpGroup::General,
+        AppAction::Quit
+        | AppAction::ShowHelp
+        | AppAction::EditRevset
+        | AppAction::EditRevsetInEditor => HelpGroup::General,
     }
 }
 

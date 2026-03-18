@@ -32,6 +32,8 @@ sapling-renderdag = "0.1"
 serde = { version = "1", features = ["derive"] }
 # Terminal UI
 ratatui = "0.30"
+# Temporary files (for $EDITOR workflows)
+tempfile = "3"
 # Library error types
 thiserror = "2.0.11"
 # Single-line text input widget for ratatui

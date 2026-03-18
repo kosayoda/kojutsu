@@ -65,6 +65,12 @@ fn main() -> Result<()> {
                 Action::Refresh => {
                     refresh_app(&mut app, &mut jj, &repo_path);
                 }
+                Action::UpdateRevset(revset_str) => {
+                    update_revset(&mut app, &jj, revset_str);
+                }
+                Action::EditRevsetInEditor => {
+                    edit_revset_in_editor(&mut app, &jj, &mut terminal);
+                }
                 Action::None => {}
             }
         }
@@ -112,6 +118,81 @@ fn suspend_and_run(
             output: result.output,
             success: result.success,
         };
+    }
+}
+
+fn update_revset(app: &mut App, jj: &JjRepo, revset_str: String) {
+    match app.try_refresh(jj, &revset_str) {
+        Ok(()) => {
+            app.revset = revset_str;
+            app.revset_draft = None;
+        }
+        Err(err) => {
+            app.revset_draft = Some(revset_str);
+            app.mode = AppMode::CommandOutput {
+                command: "revset error".to_string(),
+                output: err.into_bytes(),
+                success: false,
+            };
+        }
+    }
+}
+
+fn edit_revset_in_editor(app: &mut App, jj: &JjRepo, terminal: &mut kojutsu::terminal::Term) {
+    use std::io::Write;
+
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    let revset_text = app.revset_input_text();
+
+    // Write current revset to a temp file.
+    let mut tmpfile = match tempfile::NamedTempFile::new() {
+        Ok(f) => f,
+        Err(e) => {
+            app.mode = AppMode::CommandOutput {
+                command: "revset editor".to_string(),
+                output: format!("failed to create temp file: {e}").into_bytes(),
+                success: false,
+            };
+            return;
+        }
+    };
+    let _ = writeln!(tmpfile, "{revset_text}");
+    let path = tmpfile.path().to_path_buf();
+
+    // Suspend TUI and open editor.
+    let _ = kojutsu::terminal::restore();
+    let status = std::process::Command::new(&editor).arg(&path).status();
+    *terminal = kojutsu::terminal::init().expect("failed to re-init terminal");
+
+    match status {
+        Ok(s) if s.success() => {
+            // Read back the edited revset.
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    let new_revset = content.trim().to_string();
+                    if !new_revset.is_empty() {
+                        update_revset(app, jj, new_revset);
+                    }
+                }
+                Err(e) => {
+                    app.mode = AppMode::CommandOutput {
+                        command: "revset editor".to_string(),
+                        output: format!("failed to read temp file: {e}").into_bytes(),
+                        success: false,
+                    };
+                }
+            }
+        }
+        Ok(_) => {
+            // Editor exited with non-zero -- user cancelled.
+        }
+        Err(e) => {
+            app.mode = AppMode::CommandOutput {
+                command: "revset editor".to_string(),
+                output: format!("failed to run {editor}: {e}").into_bytes(),
+                success: false,
+            };
+        }
     }
 }
 

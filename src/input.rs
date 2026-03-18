@@ -21,6 +21,10 @@ pub enum Action {
     SuspendAndRunJj(JJCommand),
     /// Snapshot the working copy and reload the DAG.
     Refresh,
+    /// Evaluate a new revset and refresh the view.
+    UpdateRevset(String),
+    /// Suspend TUI and open $EDITOR to edit the revset.
+    EditRevsetInEditor,
 }
 
 /// Handle a key press, dispatching through the keymap trie and app mode.
@@ -146,6 +150,16 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             Action::None
         }
         AppAction::Refresh => Action::Refresh,
+        AppAction::EditRevset => {
+            let prefill = app.revset_input_text().to_string();
+            app.mode = AppMode::TextInput {
+                prompt: "revset: ".to_string(),
+                input: Input::new(prefill),
+                on_submit: PendingCommand::Revset,
+            };
+            Action::None
+        }
+        AppAction::EditRevsetInEditor => Action::EditRevsetInEditor,
         AppAction::ShowHelp => {
             app.mode = AppMode::Help;
             Action::None
@@ -239,9 +253,11 @@ fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
                 input, on_submit, ..
             } = mode
             {
-                let message = input.to_string();
-                let cmd = on_submit.into_jj_command(message);
-                Action::RunJj(cmd)
+                let text = input.to_string();
+                match on_submit {
+                    PendingCommand::Revset => Action::UpdateRevset(text),
+                    cmd => Action::RunJj(cmd.into_jj_command(text)),
+                }
             } else {
                 Action::None
             }

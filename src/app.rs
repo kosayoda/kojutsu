@@ -79,10 +79,14 @@ pub enum PendingCommand {
         builder: ReadyCommand,
         flags: CommandFlags,
     },
+    /// The text is a revset expression to evaluate.
+    Revset,
 }
 
 impl PendingCommand {
     /// Convert to a `JJCommand` given the user's input text.
+    ///
+    /// Panics if called on `Revset` -- that variant is handled separately.
     pub fn into_jj_command(self, message: String) -> JJCommand {
         match self {
             PendingCommand::Describe { change_id, flags } => JJCommand::Describe {
@@ -92,6 +96,9 @@ impl PendingCommand {
             },
             PendingCommand::SquashWithMessage { builder, flags } => {
                 builder.build_with_message(message, flags)
+            }
+            PendingCommand::Revset => {
+                unreachable!("Revset pending command should not be converted to JJCommand")
             }
         }
     }
@@ -385,6 +392,8 @@ pub struct App {
     /// Scroll offset of the list from the last render (set by ui::draw).
     pub last_scroll_offset: usize,
     pub revset: String,
+    /// Last failed revset attempt (pre-fills the input on retry).
+    pub revset_draft: Option<String>,
     pub repo_root: String,
     /// Current interaction mode.
     pub mode: AppMode,
@@ -410,6 +419,7 @@ impl App {
             cursor: 0,
             last_scroll_offset: 0,
             revset,
+            revset_draft: None,
             repo_root,
             mode: AppMode::Normal,
             unfolded,
@@ -615,18 +625,29 @@ impl App {
         }
     }
 
+    /// Get the text to pre-fill the revset input with.
+    /// Uses the last failed draft if one exists, otherwise the current revset.
+    pub fn revset_input_text(&self) -> &str {
+        self.revset_draft.as_deref().unwrap_or(&self.revset)
+    }
+
     /// Reload DAG data from the repo.
     pub fn refresh(&mut self, jj: &JjRepo, revset: &str) {
-        if let Ok(entries) = jj.evaluate_revset(revset) {
-            self.graph = graph::render(&entries);
-            self.unfolded = vec![false; entries.len()];
-            self.file_unfolded.clear();
-            self.file_cache.clear();
-            self.diff_cache.clear();
-            self.entries = entries;
-            self.cursor = 0;
-            self.rebuild_rows();
-        }
+        let _ = self.try_refresh(jj, revset);
+    }
+
+    /// Try to reload DAG data. Returns an error string on failure.
+    pub fn try_refresh(&mut self, jj: &JjRepo, revset: &str) -> Result<(), String> {
+        let entries = jj.evaluate_revset(revset).map_err(|e| format!("{e:#}"))?;
+        self.graph = graph::render(&entries);
+        self.unfolded = vec![false; entries.len()];
+        self.file_unfolded.clear();
+        self.file_cache.clear();
+        self.diff_cache.clear();
+        self.entries = entries;
+        self.cursor = 0;
+        self.rebuild_rows();
+        Ok(())
     }
 
     fn toggle_commit_fold(&mut self, entry_idx: usize, jj: &JjRepo) {
