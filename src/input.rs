@@ -254,21 +254,26 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         AppAction::Undo => make_command(app, |_| JJCommand::Undo { flags }),
         AppAction::Redo => make_command(app, |_| JJCommand::Redo { flags }),
 
-        // Git commands
-        AppAction::GitFetch => Action::RunJj(JJCommand::GitFetch {
+        // Git commands (network ops suspend TUI for SSH auth / progress)
+        AppAction::GitFetch => Action::SuspendAndRunJj(JJCommand::GitFetch {
             all_remotes: false,
             flags,
         }),
-        AppAction::GitFetchAllRemotes => Action::RunJj(JJCommand::GitFetch {
+        AppAction::GitFetchAllRemotes => Action::SuspendAndRunJj(JJCommand::GitFetch {
             all_remotes: true,
             flags,
         }),
-        AppAction::GitPush => Action::RunJj(JJCommand::GitPush { all: false, flags }),
-        AppAction::GitPushAll => Action::RunJj(JJCommand::GitPush { all: true, flags }),
-        AppAction::GitPushChange => make_command(app, |id| JJCommand::GitPushChange {
-            change_id: id,
-            flags,
-        }),
+        AppAction::GitPush => Action::SuspendAndRunJj(JJCommand::GitPush { all: false, flags }),
+        AppAction::GitPushAll => Action::SuspendAndRunJj(JJCommand::GitPush { all: true, flags }),
+        AppAction::GitPushChange => {
+            let Some(change_id) = app.selected_change_id() else {
+                return Action::None;
+            };
+            Action::SuspendAndRunJj(JJCommand::GitPushChange {
+                change_id: change_id.to_string(),
+                flags,
+            })
+        }
         AppAction::GitExport => Action::RunJj(JJCommand::GitExport { flags }),
         AppAction::GitImport => Action::RunJj(JJCommand::GitImport { flags }),
     }
