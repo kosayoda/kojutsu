@@ -467,11 +467,7 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
     entries.extend(prefix_entries);
 
     // Sort by group, then by description within group.
-    entries.sort_by(|a, b| {
-        a.group
-            .cmp(&b.group)
-            .then_with(|| a.description.cmp(&b.description))
-    });
+    entries.sort_by(|a, b| a.group.cmp(&b.group));
 
     // Group into (HelpGroup, Vec<HelpEntry>).
     let mut groups: Vec<(HelpGroup, Vec<HelpEntry>)> = Vec::new();
