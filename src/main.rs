@@ -5,15 +5,15 @@ use clap::Parser;
 use color_eyre::Result;
 use ratatui::crossterm::event::{self, Event};
 
-use kodoku::app::{App, AppMode};
-use kodoku::input::{self, Action};
-use kodoku::jj_command::JJCommand;
-use kodoku::keymap::Keymap;
-use kodoku::repo::JjRepo;
-use kodoku::ui;
+use kojutsu::app::{App, AppMode};
+use kojutsu::input::{self, Action};
+use kojutsu::jj_command::JJCommand;
+use kojutsu::keymap::Keymap;
+use kojutsu::repo::JjRepo;
+use kojutsu::ui;
 
 #[derive(Parser)]
-#[command(name = "kodoku", about = "TUI for Jujutsu version control")]
+#[command(name = "kojutsu", about = "TUI for Jujutsu version control")]
 struct Cli {
     /// Path to the repository (default: current directory)
     #[arg(short = 'R', long = "repository", default_value = ".")]
@@ -40,7 +40,7 @@ fn main() -> Result<()> {
     let keymap: &'static Keymap = Box::leak(Box::new(Keymap::default()));
 
     let mut app = App::new(entries, cli.revisions, repo_root);
-    let mut terminal = kodoku::terminal::init()?;
+    let mut terminal = kojutsu::terminal::init()?;
 
     loop {
         terminal.draw(|frame| ui::draw(frame, &mut app, keymap))?;
@@ -70,7 +70,7 @@ fn main() -> Result<()> {
         }
     }
 
-    kodoku::terminal::restore()?;
+    kojutsu::terminal::restore()?;
     Ok(())
 }
 
@@ -87,15 +87,15 @@ fn suspend_and_run(
     app: &mut App,
     jj: &mut JjRepo,
     repo_path: &std::path::Path,
-    terminal: &mut kodoku::terminal::Term,
+    terminal: &mut kojutsu::terminal::Term,
     cmd: JJCommand,
 ) {
     // Leave the alternate screen so the editor can use the terminal.
-    let _ = kodoku::terminal::restore();
+    let _ = kojutsu::terminal::restore();
     let result = cmd.run_interactive(repo_path);
 
     // Re-enter the TUI.
-    *terminal = kodoku::terminal::init().expect("failed to re-init terminal");
+    *terminal = kojutsu::terminal::init().expect("failed to re-init terminal");
 
     if result.success {
         if let Ok(new_jj) = JjRepo::open(repo_path) {
