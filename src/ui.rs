@@ -69,6 +69,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_text_input(frame, overlay, prompt, input);
         }
+        AppMode::TargetSelect { prompt, source, .. } => {
+            let overlay = overlay_area(list_area, 1);
+            frame.render_widget(ratatui::widgets::Clear, overlay);
+            draw_target_select(frame, overlay, prompt, source);
+        }
+        AppMode::MessageChoice { prompt, .. } => {
+            let overlay = overlay_area(list_area, 1);
+            frame.render_widget(ratatui::widgets::Clear, overlay);
+            draw_message_choice(frame, overlay, prompt);
+        }
     }
 }
 
@@ -98,6 +108,12 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
+    // If in target selection mode, get the source change_id for highlighting.
+    let target_select_source: Option<&str> = match &app.mode {
+        AppMode::TargetSelect { source, .. } => Some(source.as_str()),
+        _ => None,
+    };
+
     let items: Vec<ListItem> = app
         .rows
         .iter()
@@ -108,7 +124,18 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 let graph_node = gl.lines.first().map(|s| s.as_str()).unwrap_or("");
                 let graph_cont = gl.lines.get(1).map(|s| s.as_str()).unwrap_or("│");
                 let is_unfolded = app.unfolded[*entry_idx];
-                render_commit_item(graph_node, graph_cont, &entry.commit, is_unfolded)
+                let is_source = target_select_source.is_some_and(|src| {
+                    let id = &entry.commit.change_id;
+                    id.display.starts_with(src)
+                        || src.starts_with(&id.display[..id.prefix_len.min(id.display.len())])
+                });
+                render_commit_item(
+                    graph_node,
+                    graph_cont,
+                    &entry.commit,
+                    is_unfolded,
+                    is_source,
+                )
             }
             DisplayRow::GraphLink {
                 entry_idx,
@@ -354,6 +381,61 @@ fn draw_text_input(frame: &mut Frame, area: Rect, prompt: &str, input: &tui_inpu
     frame.set_cursor_position((cursor_x, cursor_y));
 }
 
+fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, source: &str) {
+    let spans = vec![
+        Span::styled(
+            format!("{prompt} "),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("from {source}"),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            " → select target (Enter = confirm, Esc = cancel)",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn draw_message_choice(frame: &mut Frame, area: Rect, prompt: &str) {
+    let spans = vec![
+        Span::styled(
+            format!("{prompt} "),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "(s)",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" squash  ", Style::default().fg(Color::White)),
+        Span::styled(
+            "(m)",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" with message  ", Style::default().fg(Color::White)),
+        Span::styled(
+            "(u)",
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(" use dest message", Style::default().fg(Color::White)),
+    ];
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
 fn draw_command_output(
     frame: &mut Frame,
     area: Rect,
@@ -400,8 +482,11 @@ fn render_commit_item<'a>(
     graph_cont: &str,
     c: &'a CommitInfo,
     is_unfolded: bool,
+    is_source: bool,
 ) -> ListItem<'a> {
-    let graph_color = if c.is_working_copy {
+    let graph_color = if is_source {
+        Color::Yellow
+    } else if c.is_working_copy {
         Color::Green
     } else if c.has_conflict {
         Color::Red
@@ -412,6 +497,11 @@ fn render_commit_item<'a>(
 
     // --- Line 1: graph  change_id author timestamp bookmarks commit_id ---
     let mut line1: Vec<Span<'a>> = Vec::new();
+
+    // Source marker for target selection mode.
+    if is_source {
+        line1.push(Span::styled("► ", Style::default().fg(Color::Yellow)));
+    }
 
     // Graph glyph
     line1.push(Span::styled(format!("{graph_node}  "), graph_style));

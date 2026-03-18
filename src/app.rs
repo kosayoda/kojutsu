@@ -36,12 +36,30 @@ pub enum AppMode {
         input: Input,
         on_submit: PendingCommand,
     },
+    /// Navigating to select a target commit for a two-commit operation.
+    TargetSelect {
+        prompt: &'static str,
+        source: String,
+        restore_cursor: usize,
+        operation: TargetOperation,
+        flags: CommandFlags,
+    },
+    /// Choosing message behavior after a target has been selected.
+    MessageChoice {
+        prompt: String,
+        builder: ReadyCommand,
+        flags: CommandFlags,
+    },
 }
 
 /// What to do when a TextInput is submitted.
 pub enum PendingCommand {
     Describe {
         change_id: String,
+        flags: CommandFlags,
+    },
+    SquashWithMessage {
+        builder: ReadyCommand,
         flags: CommandFlags,
     },
 }
@@ -55,8 +73,112 @@ impl PendingCommand {
                 message,
                 flags,
             },
+            PendingCommand::SquashWithMessage { builder, flags } => {
+                builder.build_with_message(message, flags)
+            }
         }
     }
+}
+
+/// What kind of two-commit target selection we're doing.
+#[derive(Debug, Clone, Copy)]
+pub enum TargetOperation {
+    SquashInto,
+    SquashOnto,
+    SquashAfter,
+    SquashBefore,
+}
+
+impl TargetOperation {
+    pub fn label(self) -> &'static str {
+        match self {
+            TargetOperation::SquashInto => "squash into",
+            TargetOperation::SquashOnto => "squash onto",
+            TargetOperation::SquashAfter => "squash after",
+            TargetOperation::SquashBefore => "squash before",
+        }
+    }
+
+    /// Build a `ReadyCommand` given source and target.
+    pub fn build(self, source: String, target: String) -> ReadyCommand {
+        let target = match self {
+            TargetOperation::SquashInto => SquashTarget::Into(target),
+            TargetOperation::SquashOnto => SquashTarget::Onto(target),
+            TargetOperation::SquashAfter => SquashTarget::After(target),
+            TargetOperation::SquashBefore => SquashTarget::Before(target),
+        };
+        ReadyCommand::Squash {
+            source,
+            target: Some(target),
+        }
+    }
+}
+
+/// The target type for a targeted squash.
+#[derive(Debug, Clone)]
+pub enum SquashTarget {
+    Into(String),
+    Onto(String),
+    After(String),
+    Before(String),
+}
+
+/// A command that's ready to execute, possibly with a message choice.
+#[derive(Debug, Clone)]
+pub enum ReadyCommand {
+    Squash {
+        source: String,
+        target: Option<SquashTarget>,
+    },
+}
+
+impl ReadyCommand {
+    /// Build with default message behavior (jj handles it).
+    pub fn build_default(self, flags: CommandFlags) -> JJCommand {
+        match self {
+            ReadyCommand::Squash { source, target } => JJCommand::Squash {
+                change_id: source,
+                target,
+                message: MessageMode::Default,
+                flags,
+            },
+        }
+    }
+
+    /// Build with an inline message.
+    pub fn build_with_message(self, message: String, flags: CommandFlags) -> JJCommand {
+        match self {
+            ReadyCommand::Squash { source, target } => JJCommand::Squash {
+                change_id: source,
+                target,
+                message: MessageMode::Inline(message),
+                flags,
+            },
+        }
+    }
+
+    /// Build with --use-destination-message.
+    pub fn build_use_dest_message(self, flags: CommandFlags) -> JJCommand {
+        match self {
+            ReadyCommand::Squash { source, target } => JJCommand::Squash {
+                change_id: source,
+                target,
+                message: MessageMode::UseDestination,
+                flags,
+            },
+        }
+    }
+}
+
+/// How to handle the commit message during squash.
+#[derive(Debug, Clone)]
+pub enum MessageMode {
+    /// Let jj handle it (auto-merge, opens editor if needed).
+    Default,
+    /// Use -m "message".
+    Inline(String),
+    /// Use --use-destination-message.
+    UseDestination,
 }
 
 /// Identifies a display row for cursor restore after rebuild.

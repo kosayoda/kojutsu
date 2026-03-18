@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
+use crate::app::{MessageMode, SquashTarget};
 use crate::keymap::CommandFlags;
 
 /// A typesafe representation of a jj CLI command.
@@ -29,6 +30,12 @@ pub enum JJCommand {
         change_id: String,
         insert_after: bool,
         insert_before: bool,
+        flags: CommandFlags,
+    },
+    Squash {
+        change_id: String,
+        target: Option<SquashTarget>,
+        message: MessageMode,
         flags: CommandFlags,
     },
 }
@@ -121,6 +128,63 @@ impl JJCommand {
                 );
                 args
             }
+            JJCommand::Squash {
+                change_id,
+                target,
+                message,
+                flags,
+            } => {
+                let mut args = vec!["squash".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[
+                        (CommandFlags::INTERACTIVE, "--interactive"),
+                        (CommandFlags::KEEP_EMPTIED, "--keep-emptied"),
+                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
+                    ],
+                );
+                match message {
+                    MessageMode::Default => {}
+                    MessageMode::Inline(msg) => {
+                        args.push("-m".to_string());
+                        args.push(msg.clone());
+                    }
+                    MessageMode::UseDestination => {
+                        args.push("--use-destination-message".to_string());
+                    }
+                }
+                match target {
+                    None => {
+                        // Squash into parent.
+                        args.push("-r".to_string());
+                        args.push(change_id.clone());
+                    }
+                    Some(t) => {
+                        args.push("--from".to_string());
+                        args.push(change_id.clone());
+                        match t {
+                            SquashTarget::Into(id) => {
+                                args.push("--into".to_string());
+                                args.push(id.clone());
+                            }
+                            SquashTarget::Onto(id) => {
+                                args.push("--onto".to_string());
+                                args.push(id.clone());
+                            }
+                            SquashTarget::After(id) => {
+                                args.push("--insert-after".to_string());
+                                args.push(id.clone());
+                            }
+                            SquashTarget::Before(id) => {
+                                args.push("--insert-before".to_string());
+                                args.push(id.clone());
+                            }
+                        }
+                    }
+                }
+                args
+            }
         }
     }
 
@@ -133,7 +197,9 @@ impl JJCommand {
         let quoted: Vec<String> = args
             .iter()
             .map(|a| {
-                if a.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c)) || a.is_empty() {
+                if a.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c))
+                    || a.is_empty()
+                {
                     format!("{:?}", a)
                 } else {
                     a.clone()
@@ -143,9 +209,13 @@ impl JJCommand {
         format!("$ jj {}", quoted.join(" "))
     }
 
-    /// Whether this command needs an interactive terminal (editor).
+    /// Whether this command needs an interactive terminal (editor/diff tool).
     pub fn is_interactive(&self) -> bool {
-        matches!(self, JJCommand::DescribeInEditor { .. })
+        match self {
+            JJCommand::DescribeInEditor { .. } => true,
+            JJCommand::Squash { flags, .. } => flags.contains(CommandFlags::INTERACTIVE),
+            _ => false,
+        }
     }
 
     /// Execute an interactive command that inherits the terminal.

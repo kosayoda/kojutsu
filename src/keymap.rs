@@ -12,6 +12,8 @@ bitflags::bitflags! {
         const NO_EDIT             = 1 << 1;
         const RETAIN_BOOKMARKS    = 1 << 2;
         const RESTORE_DESCENDANTS = 1 << 3;
+        const INTERACTIVE         = 1 << 4;
+        const KEEP_EMPTIED        = 1 << 5;
     }
 }
 
@@ -39,6 +41,11 @@ pub enum AppAction {
     New,
     NewInsertAfter,
     NewInsertBefore,
+    Squash,
+    SquashInto,
+    SquashOnto,
+    SquashAfter,
+    SquashBefore,
     ShowHelp,
 }
 
@@ -144,7 +151,11 @@ impl Default for Keymap {
                 "d",
                 "describe",
                 vec![
-                    toggle("i", CommandFlags::IGNORE_IMMUTABLE, "ignore immutable"),
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
                     bind("d", AppAction::Describe, "describe"),
                     bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR"),
                 ],
@@ -160,7 +171,11 @@ impl Default for Keymap {
                         CommandFlags::RESTORE_DESCENDANTS,
                         "restore descendants",
                     ),
-                    toggle("i", CommandFlags::IGNORE_IMMUTABLE, "ignore immutable"),
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
                     bind("a", AppAction::Abandon, "abandon"),
                 ],
             ),
@@ -169,7 +184,11 @@ impl Default for Keymap {
                 "e",
                 "edit",
                 vec![
-                    toggle("i", CommandFlags::IGNORE_IMMUTABLE, "ignore immutable"),
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
                     bind("e", AppAction::Edit, "edit"),
                 ],
             ),
@@ -179,10 +198,33 @@ impl Default for Keymap {
                 "new",
                 vec![
                     toggle("e", CommandFlags::NO_EDIT, "no-edit"),
-                    toggle("i", CommandFlags::IGNORE_IMMUTABLE, "ignore immutable"),
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
                     bind("n", AppAction::New, "new"),
                     bind("a", AppAction::NewInsertAfter, "insert after"),
                     bind("b", AppAction::NewInsertBefore, "insert before"),
+                ],
+            ),
+            // Squash submenu
+            prefix(
+                "s",
+                "squash",
+                vec![
+                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                    toggle("k", CommandFlags::KEEP_EMPTIED, "keep emptied"),
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
+                    bind("s", AppAction::Squash, "into parent"),
+                    bind("t", AppAction::SquashInto, "into..."),
+                    bind("o", AppAction::SquashOnto, "onto..."),
+                    bind("a", AppAction::SquashAfter, "after..."),
+                    bind("b", AppAction::SquashBefore, "before..."),
                 ],
             ),
         ];
@@ -331,7 +373,12 @@ fn classify_action(action: AppAction) -> HelpGroup {
         | AppAction::Edit
         | AppAction::New
         | AppAction::NewInsertAfter
-        | AppAction::NewInsertBefore => HelpGroup::Commands,
+        | AppAction::NewInsertBefore
+        | AppAction::Squash
+        | AppAction::SquashInto
+        | AppAction::SquashOnto
+        | AppAction::SquashAfter
+        | AppAction::SquashBefore => HelpGroup::Commands,
 
         AppAction::Quit | AppAction::ShowHelp => HelpGroup::General,
     }

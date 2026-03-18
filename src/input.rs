@@ -4,7 +4,7 @@ use ratatui::crossterm::event::{
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
-use crate::app::{App, AppMode, PendingCommand};
+use crate::app::{App, AppMode, MessageMode, PendingCommand, TargetOperation};
 use crate::jj_command::JJCommand;
 use crate::keymap::{self, AppAction, CommandFlags, Keymap, LookupResult};
 use crate::repo::JjRepo;
@@ -47,6 +47,8 @@ pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyE
             handle_normal_key(app, jj, keymap, &node)
         }
         AppMode::TextInput { .. } => handle_text_input(app, key),
+        AppMode::TargetSelect { .. } => handle_target_select(app, key),
+        AppMode::MessageChoice { .. } => handle_message_choice(app, key),
     }
 }
 
@@ -182,6 +184,20 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             insert_before: true,
             flags,
         }),
+
+        // Squash -- immediate (into parent)
+        AppAction::Squash => make_command(app, |id| JJCommand::Squash {
+            change_id: id,
+            target: None,
+            message: MessageMode::Default,
+            flags,
+        }),
+
+        // Squash -- target selection
+        AppAction::SquashInto => enter_target_select(app, TargetOperation::SquashInto, flags),
+        AppAction::SquashOnto => enter_target_select(app, TargetOperation::SquashOnto, flags),
+        AppAction::SquashAfter => enter_target_select(app, TargetOperation::SquashAfter, flags),
+        AppAction::SquashBefore => enter_target_select(app, TargetOperation::SquashBefore, flags),
     }
 }
 
@@ -238,6 +254,128 @@ fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
             }
             Action::None
         }
+    }
+}
+
+fn enter_target_select(app: &mut App, operation: TargetOperation, flags: CommandFlags) -> Action {
+    let Some(source) = app.selected_change_id() else {
+        return Action::None;
+    };
+    let source = source.to_string();
+    let restore_cursor = app.cursor;
+    app.mode = AppMode::TargetSelect {
+        prompt: operation.label(),
+        source,
+        restore_cursor,
+        operation,
+        flags,
+    };
+    Action::None
+}
+
+fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
+    match key.code {
+        // Confirm target selection.
+        KeyCode::Enter => {
+            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+            if let AppMode::TargetSelect {
+                source,
+                operation,
+                flags,
+                ..
+            } = mode
+            {
+                let Some(target) = app.selected_change_id() else {
+                    return Action::None;
+                };
+                let target = target.to_string();
+                let builder = operation.build(source, target.clone());
+                let prompt = format!("{} {}:", operation.label(), target);
+                app.mode = AppMode::MessageChoice {
+                    prompt,
+                    builder,
+                    flags,
+                };
+            }
+            Action::None
+        }
+        // Cancel.
+        KeyCode::Esc => {
+            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+            if let AppMode::TargetSelect { restore_cursor, .. } = mode {
+                app.cursor = restore_cursor;
+            }
+            Action::None
+        }
+        // Navigation keys pass through normally.
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.move_down();
+            Action::None
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.move_up();
+            Action::None
+        }
+        KeyCode::Char('J') => {
+            app.move_down_section();
+            Action::None
+        }
+        KeyCode::Char('K') => {
+            app.move_up_section();
+            Action::None
+        }
+        _ => Action::None,
+    }
+}
+
+fn handle_message_choice(app: &mut App, key: KeyEvent) -> Action {
+    match key.code {
+        // Default message behavior.
+        KeyCode::Char('s') => {
+            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+            if let AppMode::MessageChoice { builder, flags, .. } = mode {
+                let cmd = builder.build_default(flags);
+                if cmd.is_interactive() {
+                    Action::SuspendAndRunJj(cmd)
+                } else {
+                    Action::RunJj(cmd)
+                }
+            } else {
+                Action::None
+            }
+        }
+        // With inline message.
+        KeyCode::Char('m') => {
+            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+            if let AppMode::MessageChoice { builder, flags, .. } = mode {
+                app.mode = AppMode::TextInput {
+                    prompt: "message: ".to_string(),
+                    input: Input::new(String::new()),
+                    on_submit: PendingCommand::SquashWithMessage { builder, flags },
+                };
+            }
+            Action::None
+        }
+        // Use destination message.
+        KeyCode::Char('u') => {
+            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+            if let AppMode::MessageChoice { builder, flags, .. } = mode {
+                let cmd = builder.build_use_dest_message(flags);
+                if cmd.is_interactive() {
+                    Action::SuspendAndRunJj(cmd)
+                } else {
+                    Action::RunJj(cmd)
+                }
+            } else {
+                Action::None
+            }
+        }
+        // Cancel.
+        KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+            Action::None
+        }
+        _ => Action::None,
     }
 }
 
