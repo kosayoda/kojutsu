@@ -177,6 +177,20 @@ impl Default for Keymap {
             bind("tab", AppAction::ToggleFold, "toggle fold"),
             // Refresh
             bind("ctrl-r", AppAction::Refresh, "refresh"),
+            // Absorb submenu
+            prefix(
+                "a",
+                "absorb",
+                HelpGroup::Commands,
+                vec![
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
+                    bind("a", AppAction::Absorb, "absorb"),
+                ],
+            ),
             // Bookmark submenu
             prefix(
                 "b",
@@ -200,50 +214,6 @@ impl Default for Keymap {
                     bind("u", AppAction::BookmarkUntrack, "untrack"),
                 ],
             ),
-            // Describe submenu
-            prefix(
-                "d",
-                "describe",
-                HelpGroup::Commands,
-                vec![
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
-                    bind("d", AppAction::Describe, "describe"),
-                    bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR"),
-                ],
-            ),
-            // Undo submenu
-            prefix(
-                "u",
-                "undo/redo",
-                HelpGroup::Commands,
-                vec![
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
-                    bind("u", AppAction::Undo, "undo"),
-                    bind("r", AppAction::Redo, "redo"),
-                ],
-            ),
-            // Absorb submenu
-            prefix(
-                "a",
-                "absorb",
-                HelpGroup::Commands,
-                vec![
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
-                    bind("a", AppAction::Absorb, "absorb"),
-                ],
-            ),
             // Commit submenu
             prefix(
                 "c",
@@ -260,24 +230,19 @@ impl Default for Keymap {
                     bind("m", AppAction::CommitWithMessage, "with message"),
                 ],
             ),
-            // Abandon submenu
+            // Describe submenu
             prefix(
-                "x",
-                "abandon",
+                "d",
+                "describe",
                 HelpGroup::Commands,
                 vec![
-                    toggle("b", CommandFlags::RETAIN_BOOKMARKS, "keep bookmarks"),
-                    toggle(
-                        "d",
-                        CommandFlags::RESTORE_DESCENDANTS,
-                        "restore descendants",
-                    ),
                     toggle(
                         "shift-i",
                         CommandFlags::IGNORE_IMMUTABLE,
                         "ignore immutable",
                     ),
-                    bind("x", AppAction::Abandon, "abandon"),
+                    bind("d", AppAction::Describe, "describe"),
+                    bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR"),
                 ],
             ),
             // Edit submenu
@@ -292,6 +257,26 @@ impl Default for Keymap {
                         "ignore immutable",
                     ),
                     bind("e", AppAction::Edit, "edit"),
+                ],
+            ),
+            // Git submenu
+            prefix(
+                "g",
+                "git",
+                HelpGroup::Commands,
+                vec![
+                    toggle("d", CommandFlags::DRY_RUN, "dry run (push only)"),
+                    bind("f", AppAction::GitFetch, "fetch"),
+                    bind(
+                        "shift-f",
+                        AppAction::GitFetchAllRemotes,
+                        "fetch all remotes",
+                    ),
+                    bind("p", AppAction::GitPush, "push"),
+                    bind("shift-p", AppAction::GitPushAll, "push all bookmarks"),
+                    bind("c", AppAction::GitPushChange, "push change"),
+                    bind("e", AppAction::GitExport, "export (jj→git)"),
+                    bind("i", AppAction::GitImport, "import (git→jj)"),
                 ],
             ),
             // New submenu
@@ -347,6 +332,41 @@ impl Default for Keymap {
                     bind("b", AppAction::SquashBefore, "before..."),
                 ],
             ),
+            // Undo submenu
+            prefix(
+                "u",
+                "undo/redo",
+                HelpGroup::Commands,
+                vec![
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
+                    bind("u", AppAction::Undo, "undo"),
+                    bind("r", AppAction::Redo, "redo"),
+                ],
+            ),
+            // Abandon submenu
+            prefix(
+                "x",
+                "abandon",
+                HelpGroup::Commands,
+                vec![
+                    toggle("b", CommandFlags::RETAIN_BOOKMARKS, "keep bookmarks"),
+                    toggle(
+                        "d",
+                        CommandFlags::RESTORE_DESCENDANTS,
+                        "restore descendants",
+                    ),
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
+                    bind("x", AppAction::Abandon, "abandon"),
+                ],
+            ),
             // Duplicate submenu
             prefix(
                 "shift-d",
@@ -360,26 +380,6 @@ impl Default for Keymap {
                     ),
                     bind("shift-d", AppAction::Duplicate, "duplicate"),
                     bind("t", AppAction::DuplicateOnto, "onto..."),
-                ],
-            ),
-            // Git submenu
-            prefix(
-                "g",
-                "git",
-                HelpGroup::Commands,
-                vec![
-                    toggle("d", CommandFlags::DRY_RUN, "dry run (push only)"),
-                    bind("f", AppAction::GitFetch, "fetch"),
-                    bind(
-                        "shift-f",
-                        AppAction::GitFetchAllRemotes,
-                        "fetch all remotes",
-                    ),
-                    bind("p", AppAction::GitPush, "push"),
-                    bind("shift-p", AppAction::GitPushAll, "push all bookmarks"),
-                    bind("c", AppAction::GitPushChange, "push change"),
-                    bind("e", AppAction::GitExport, "export (jj→git)"),
-                    bind("i", AppAction::GitImport, "import (git→jj)"),
                 ],
             ),
             // Command palette
