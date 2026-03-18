@@ -560,6 +560,7 @@ fn render_commit_item<'a>(
         match c.glyph() {
             crate::dag::Glyph::WorkingCopy => Color::Green,
             crate::dag::Glyph::Conflict => Color::Red,
+            crate::dag::Glyph::Immutable => Color::Cyan,
             crate::dag::Glyph::Normal => Color::Cyan,
         }
     };

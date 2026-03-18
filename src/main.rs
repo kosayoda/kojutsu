@@ -19,13 +19,9 @@ struct Cli {
     #[arg(short = 'R', long = "repository", default_value = ".")]
     repository: PathBuf,
 
-    /// Revset expression to display
-    #[arg(
-        short = 'r',
-        long = "revisions",
-        default_value = "present(@) | ancestors((tags() | untracked_remote_bookmarks()).., 2)"
-    )]
-    revisions: String,
+    /// Revset expression to display (default: from jj config `revsets.log`)
+    #[arg(short = 'r', long = "revisions")]
+    revisions: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -35,11 +31,12 @@ fn main() -> Result<()> {
     let repo_path = cli.repository.canonicalize().unwrap_or(cli.repository);
     JjRepo::snapshot(&repo_path);
     let mut jj = JjRepo::open(&repo_path)?;
-    let entries = jj.evaluate_revset(&cli.revisions)?;
+    let revset = cli.revisions.unwrap_or_else(|| jj.default_revset());
+    let entries = jj.evaluate_revset(&revset)?;
     let repo_root = jj.workspace_root().display().to_string();
     let keymap: &'static Keymap = Box::leak(Box::new(Keymap::default()));
 
-    let mut app = App::new(entries, cli.revisions, repo_root);
+    let mut app = App::new(entries, revset, repo_root);
     let mut terminal = kojutsu::terminal::init()?;
 
     loop {

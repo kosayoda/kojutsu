@@ -5,7 +5,7 @@ use color_eyre::eyre::Context;
 use color_eyre::Result;
 use jj_lib::backend::CommitId;
 use jj_lib::commit::Commit;
-use jj_lib::config::{ConfigSource, StackedConfig};
+use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
 use jj_lib::fileset::FilesetAliasesMap;
 use jj_lib::graph::{GraphEdgeType, GraphNode};
 use jj_lib::id_prefix::IdPrefixContext;
@@ -39,10 +39,19 @@ use crate::dag::{
 /// Number of hex characters to show for change/commit IDs.
 const DISPLAY_ID_LEN: usize = 8;
 
+/// Vendored jj-cli default revset configuration.
+/// Contains `[revsets]` (default log revset, etc.) and `[revset-aliases]`
+/// (trunk(), immutable_heads(), immutable(), mutable(), etc.).
+const DEFAULT_REVSETS_TOML: &str = include_str!("config/revsets.toml");
+
 /// Thin adapter around jj-lib. Owns the workspace and repo, converts
 /// jj-lib types into our domain types so nothing leaks out.
 pub struct JjRepo {
     repo: Arc<ReadonlyRepo>,
+    /// User settings (for user_email, config access).
+    settings: UserSettings,
+    /// Revset aliases loaded from vendored defaults + user/repo config.
+    aliases_map: RevsetAliasesMap,
     /// Workspace name, needed for `@` resolution.
     workspace_name: WorkspaceNameBuf,
     /// Root path of the workspace (for display / path conversion).
@@ -68,6 +77,7 @@ impl JjRepo {
         let config = Self::load_config(path)?;
         let settings = UserSettings::from_config(config)
             .wrap_err("failed to create jj settings from config")?;
+        let aliases_map = Self::load_revset_aliases(&settings)?;
         let workspace = Workspace::load(
             &settings,
             path,
@@ -86,14 +96,22 @@ impl JjRepo {
 
         Ok(Self {
             repo,
+            settings,
+            aliases_map,
             workspace_name,
             workspace_root,
         })
     }
 
-    /// Build a minimal config: jj-lib defaults + user config file if present.
+    /// Build config stack: jj-lib defaults + vendored CLI defaults + user + repo.
     fn load_config(workspace_path: &Path) -> Result<StackedConfig> {
         let mut config = StackedConfig::with_defaults();
+
+        // Add vendored jj-cli defaults (revset aliases, default log revset, etc.)
+        // as a Default layer so user/repo config can override them.
+        let cli_defaults = ConfigLayer::parse(ConfigSource::Default, DEFAULT_REVSETS_TOML)
+            .wrap_err("failed to parse vendored revsets.toml")?;
+        config.add_layer(cli_defaults);
 
         // Try loading user config (~/.config/jj/config.toml or platform equivalent)
         if let Some(config_dir) = dirs_next_config_dir() {
@@ -112,8 +130,68 @@ impl JjRepo {
         Ok(config)
     }
 
+    /// Build the revset aliases map from all config layers.
+    ///
+    /// Iterates config layers in precedence order. Higher-precedence layers
+    /// (User, Repo) override lower ones (Default), matching jj-cli behavior.
+    fn load_revset_aliases(settings: &UserSettings) -> Result<RevsetAliasesMap> {
+        let mut aliases_map = RevsetAliasesMap::new();
+
+        for layer in settings.config().layers() {
+            let table = match layer.look_up_table("revset-aliases") {
+                Ok(Some(table)) => table,
+                Ok(None) => continue,
+                Err(_) => continue, // not a table, skip
+            };
+            for (decl, item) in table.iter() {
+                if let Some(defn) = item.as_str() {
+                    // Silently ignore malformed declarations; they'll error
+                    // when the alias is actually used in a revset.
+                    let _ = aliases_map.insert(decl, defn);
+                }
+            }
+        }
+
+        Ok(aliases_map)
+    }
+
     pub fn workspace_root(&self) -> &Path {
         &self.workspace_root
+    }
+
+    /// Return the default log revset from config (`revsets.log`), falling back
+    /// to a sensible built-in default if not configured.
+    pub fn default_revset(&self) -> String {
+        self.settings
+            .config()
+            .get::<String>("revsets.log")
+            .unwrap_or_else(|_| {
+                "present(@) | ancestors(immutable_heads().., 2) | trunk()".to_string()
+            })
+    }
+
+    /// Build a [`RevsetParseContext`] with loaded aliases and proper user email.
+    fn revset_parse_context<'a>(
+        &'a self,
+        extensions: &'a RevsetExtensions,
+        fileset_aliases_map: &'a FilesetAliasesMap,
+        path_converter: &'a RepoPathUiConverter,
+    ) -> RevsetParseContext<'a> {
+        let workspace_ctx = RevsetWorkspaceContext {
+            path_converter,
+            workspace_name: &self.workspace_name,
+        };
+        RevsetParseContext {
+            aliases_map: &self.aliases_map,
+            local_variables: Default::default(),
+            user_email: self.settings.user_email(),
+            date_pattern_context: DatePatternContext::from(chrono::Local::now()),
+            default_ignored_remote: None,
+            fileset_aliases_map,
+            use_glob_by_default: true,
+            extensions,
+            workspace: Some(workspace_ctx),
+        }
     }
 
     /// Evaluate a revset string and return DAG entries in topological order
@@ -121,31 +199,16 @@ impl JjRepo {
     pub fn evaluate_revset(&self, revset_str: &str) -> Result<Vec<DagEntry>> {
         let repo = self.repo.as_ref();
 
-        // Build parse context
-        let aliases_map = RevsetAliasesMap::new();
+        // Shared context pieces
         let extensions = RevsetExtensions::default();
         let fileset_aliases_map = FilesetAliasesMap::new();
         let path_converter = RepoPathUiConverter::Fs {
             cwd: self.workspace_root.clone(),
             base: self.workspace_root.clone(),
         };
-        let workspace_ctx = RevsetWorkspaceContext {
-            path_converter: &path_converter,
-            workspace_name: &self.workspace_name,
-        };
-        let context = RevsetParseContext {
-            aliases_map: &aliases_map,
-            local_variables: Default::default(),
-            user_email: "",
-            date_pattern_context: DatePatternContext::from(chrono::Local::now()),
-            default_ignored_remote: None,
-            fileset_aliases_map: &fileset_aliases_map,
-            use_glob_by_default: true,
-            extensions: &extensions,
-            workspace: Some(workspace_ctx),
-        };
+        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
 
-        // Parse -> Resolve -> Evaluate
+        // Parse -> Resolve -> Evaluate the user's revset
         let mut diagnostics = RevsetDiagnostics::new();
         let parsed = jj_lib::revset::parse(&mut diagnostics, revset_str, &context)
             .wrap_err_with(|| format!("failed to parse revset: {revset_str}"))?;
@@ -160,6 +223,11 @@ impl JjRepo {
         let revset = resolved
             .evaluate(repo)
             .wrap_err("failed to evaluate revset")?;
+
+        // Evaluate the immutable() revset for tagging commits.
+        // The evaluated revset must stay alive for containing_fn() to borrow from.
+        let immutable_revset = self.evaluate_immutable(&context, &symbol_resolver);
+        let is_immutable = immutable_revset.as_ref().map(|r| r.containing_fn());
 
         // Set up ID prefix index for shortest unique prefixes
         let id_prefix_context = IdPrefixContext::default();
@@ -177,7 +245,12 @@ impl JjRepo {
                 .get_commit(&commit_id)
                 .wrap_err("failed to load commit")?;
 
-            let info = self.extract_commit_info(&commit, &id_prefix_index)?;
+            let immutable = is_immutable
+                .as_ref()
+                .and_then(|check| check(&commit_id).ok())
+                .unwrap_or(false);
+
+            let info = self.extract_commit_info(&commit, &id_prefix_index, immutable)?;
             let dag_edges = edges
                 .into_iter()
                 .map(|e| Edge {
@@ -197,6 +270,22 @@ impl JjRepo {
         }
 
         Ok(entries)
+    }
+
+    /// Evaluate the `immutable()` revset. Returns `None` if it can't be
+    /// evaluated (e.g. alias not defined). The caller keeps the returned
+    /// `Box<dyn Revset>` alive and calls `.containing_fn()` on it.
+    fn evaluate_immutable(
+        &self,
+        context: &RevsetParseContext<'_>,
+        symbol_resolver: &SymbolResolver,
+    ) -> Option<Box<dyn jj_lib::revset::Revset + '_>> {
+        let repo = self.repo.as_ref();
+        let mut diagnostics = RevsetDiagnostics::new();
+
+        let parsed = jj_lib::revset::parse(&mut diagnostics, "immutable()", context).ok()?;
+        let resolved = parsed.resolve_user_expression(repo, symbol_resolver).ok()?;
+        resolved.evaluate(repo).ok()
     }
 
     /// Compute the file-level changes for a commit (diff against parent tree).
@@ -338,6 +427,7 @@ impl JjRepo {
         &self,
         commit: &Commit,
         id_prefix_index: &jj_lib::id_prefix::IdPrefixIndex<'_>,
+        is_immutable: bool,
     ) -> Result<CommitInfo> {
         let repo = self.repo.as_ref();
 
@@ -418,6 +508,7 @@ impl JjRepo {
             is_working_copy,
             is_empty,
             has_conflict,
+            is_immutable,
             bookmarks,
         })
     }

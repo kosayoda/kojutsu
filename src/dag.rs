@@ -30,6 +30,8 @@ pub struct CommitInfo {
     pub is_empty: bool,
     /// Whether this commit has unresolved conflicts.
     pub has_conflict: bool,
+    /// Whether this commit is immutable (ancestor of immutable_heads).
+    pub is_immutable: bool,
     /// Bookmark names pointing at this commit.
     pub bookmarks: Vec<String>,
 }
@@ -38,6 +40,7 @@ pub struct CommitInfo {
 pub enum Glyph {
     WorkingCopy,
     Conflict,
+    Immutable,
     Normal,
 }
 
@@ -52,6 +55,7 @@ impl From<Glyph> for char {
         match value {
             Glyph::WorkingCopy => '@',
             Glyph::Conflict => '×',
+            Glyph::Immutable => '◆',
             Glyph::Normal => '○',
         }
     }
@@ -64,6 +68,7 @@ impl TryFrom<char> for Glyph {
         match value {
             '@' => Ok(Self::WorkingCopy),
             '×' => Ok(Self::Conflict),
+            '◆' => Ok(Self::Immutable),
             '○' => Ok(Self::Normal),
             _ => Err(()),
         }
@@ -76,6 +81,8 @@ impl CommitInfo {
             Glyph::WorkingCopy
         } else if self.has_conflict {
             Glyph::Conflict
+        } else if self.is_immutable {
+            Glyph::Immutable
         } else {
             Glyph::Normal
         }
