@@ -384,28 +384,30 @@ fn handle_follow_up(app: &mut App, key: KeyEvent) -> Action {
 
 /// Handle a mouse event.
 pub fn handle_mouse(app: &mut App, jj: &JjRepo, mouse: MouseEvent, list_offset: u16) -> Action {
-    app.mode = AppMode::Normal;
-
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
+            app.mode = AppMode::Normal;
             let row = (mouse.row.saturating_sub(list_offset)) as usize + app.scroll_offset();
             app.select_row(row);
             Action::None
         }
         MouseEventKind::Down(MouseButton::Right) => {
+            app.mode = AppMode::Normal;
             let row = (mouse.row.saturating_sub(list_offset)) as usize + app.scroll_offset();
             app.select_row(row);
             app.toggle_fold(jj);
             Action::None
         }
         MouseEventKind::ScrollUp => {
+            app.mode = AppMode::Normal;
             app.move_up();
             Action::None
         }
         MouseEventKind::ScrollDown => {
+            app.mode = AppMode::Normal;
             app.move_down();
             Action::None
         }
-        _ => Action::None,
+        _ => Action::None, // Mouse move, drag, etc. -- don't dismiss overlays.
     }
 }

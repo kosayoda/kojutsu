@@ -70,6 +70,7 @@ pub enum KeymapNode {
     /// Branch: this key opens a submenu with further options.
     Prefix {
         label: &'static str,
+        group: HelpGroup,
         children: Vec<(Node, KeymapNode)>,
     },
     /// Toggle: this key flips a command flag and stays in the submenu.
@@ -111,9 +112,9 @@ impl Keymap {
             if k == key {
                 return match node {
                     KeymapNode::Action { action, .. } => LookupResult::Action(*action),
-                    KeymapNode::Prefix { label, children } => {
-                        LookupResult::Prefix { label, children }
-                    }
+                    KeymapNode::Prefix {
+                        label, children, ..
+                    } => LookupResult::Prefix { label, children },
                     KeymapNode::Toggle { flag, .. } => LookupResult::Toggle(*flag),
                 };
             }
@@ -129,6 +130,8 @@ impl Keymap {
 impl Default for Keymap {
     fn default() -> Self {
         let root = vec![
+            // Help
+            bind("?", AppAction::ShowHelp, "help"),
             // Quit
             bind("q", AppAction::Quit, "quit"),
             bind("ctrl-c", AppAction::Quit, "quit"),
@@ -151,12 +154,11 @@ impl Default for Keymap {
             bind("tab", AppAction::ToggleFold, "toggle fold"),
             // Refresh
             bind("ctrl-r", AppAction::Refresh, "refresh"),
-            // Help
-            bind("?", AppAction::ShowHelp, "help"),
             // Describe submenu
             prefix(
                 "d",
                 "describe",
+                HelpGroup::Commands,
                 vec![
                     toggle(
                         "shift-i",
@@ -171,6 +173,7 @@ impl Default for Keymap {
             prefix(
                 "u",
                 "undo/redo",
+                HelpGroup::Commands,
                 vec![
                     toggle(
                         "shift-i",
@@ -185,6 +188,7 @@ impl Default for Keymap {
             prefix(
                 "a",
                 "abandon",
+                HelpGroup::Commands,
                 vec![
                     toggle("b", CommandFlags::RETAIN_BOOKMARKS, "keep bookmarks"),
                     toggle(
@@ -204,6 +208,7 @@ impl Default for Keymap {
             prefix(
                 "e",
                 "edit",
+                HelpGroup::Commands,
                 vec![
                     toggle(
                         "shift-i",
@@ -217,6 +222,7 @@ impl Default for Keymap {
             prefix(
                 "n",
                 "new",
+                HelpGroup::Commands,
                 vec![
                     toggle("e", CommandFlags::NO_EDIT, "no-edit"),
                     toggle(
@@ -233,6 +239,7 @@ impl Default for Keymap {
             prefix(
                 "r",
                 "rebase",
+                HelpGroup::Commands,
                 vec![
                     toggle(
                         "shift-i",
@@ -248,6 +255,7 @@ impl Default for Keymap {
             prefix(
                 "s",
                 "squash",
+                HelpGroup::Commands,
                 vec![
                     toggle("i", CommandFlags::INTERACTIVE, "interactive"),
                     toggle("k", CommandFlags::KEEP_EMPTIED, "keep emptied"),
@@ -267,6 +275,7 @@ impl Default for Keymap {
             prefix(
                 ";",
                 "command",
+                HelpGroup::General,
                 vec![
                     bind("r", AppAction::EditRevset, "edit revset"),
                     bind(
@@ -298,10 +307,18 @@ fn bind(key_str: &str, action: AppAction, description: &'static str) -> (Node, K
 pub fn prefix(
     key_str: &str,
     label: &'static str,
+    group: HelpGroup,
     children: Vec<(Node, KeymapNode)>,
 ) -> (Node, KeymapNode) {
     let node = keymap_parser::parse(key_str).expect("valid key string in default keymap");
-    (node, KeymapNode::Prefix { label, children })
+    (
+        node,
+        KeymapNode::Prefix {
+            label,
+            group,
+            children,
+        },
+    )
 }
 
 /// Helper: create a (Node, KeymapNode::Toggle) pair for a flag toggle.
@@ -462,11 +479,11 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
                     action_keys.push((*action, vec![key_str], description));
                 }
             }
-            KeymapNode::Prefix { label, .. } => {
+            KeymapNode::Prefix { label, group, .. } => {
                 prefix_entries.push(HelpEntry {
                     keys: format!("{key_str} ..."),
                     description: label.to_string(),
-                    group: HelpGroup::Commands,
+                    group: *group,
                 });
             }
             KeymapNode::Toggle { .. } => {} // toggles don't appear at root
@@ -484,7 +501,7 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
         .collect();
     entries.extend(prefix_entries);
 
-    // Sort by group, then by description within group.
+    // Sort by group
     entries.sort_by(|a, b| a.group.cmp(&b.group));
 
     // Group into (HelpGroup, Vec<HelpEntry>).
