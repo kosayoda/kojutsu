@@ -127,6 +127,10 @@ pub enum PendingCommand {
         old_name: String,
         flags: CommandFlags,
     },
+    /// Track a remote bookmark (text is "name@remote").
+    BookmarkTrack { flags: CommandFlags },
+    /// Untrack a remote bookmark (text is "name@remote").
+    BookmarkUntrack { flags: CommandFlags },
 }
 
 impl PendingCommand {
@@ -161,6 +165,12 @@ impl PendingCommand {
                 new_name: text,
                 flags,
             },
+            PendingCommand::BookmarkTrack { flags } => {
+                JJCommand::BookmarkTrack { name: text, flags }
+            }
+            PendingCommand::BookmarkUntrack { flags } => {
+                JJCommand::BookmarkUntrack { name: text, flags }
+            }
         }
     }
 }

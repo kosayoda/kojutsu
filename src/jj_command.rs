@@ -72,6 +72,18 @@ pub enum JJCommand {
         new_name: String,
         flags: CommandFlags,
     },
+    BookmarkAdvance {
+        change_id: Option<String>,
+        flags: CommandFlags,
+    },
+    BookmarkTrack {
+        name: String,
+        flags: CommandFlags,
+    },
+    BookmarkUntrack {
+        name: String,
+        flags: CommandFlags,
+    },
     Undo {
         flags: CommandFlags,
     },
@@ -297,6 +309,39 @@ impl JJCommand {
                 );
                 args.push(old_name.clone());
                 args.push(new_name.clone());
+                args
+            }
+            JJCommand::BookmarkAdvance { change_id, flags } => {
+                let mut args = vec!["bookmark".to_string(), "advance".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                if let Some(id) = change_id {
+                    args.push("--to".to_string());
+                    args.push(id.clone());
+                }
+                args
+            }
+            JJCommand::BookmarkTrack { name, flags } => {
+                let mut args = vec!["bookmark".to_string(), "track".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args.push(name.clone());
+                args
+            }
+            JJCommand::BookmarkUntrack { name, flags } => {
+                let mut args = vec!["bookmark".to_string(), "untrack".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args.push(name.clone());
                 args
             }
             JJCommand::Undo { flags } => {

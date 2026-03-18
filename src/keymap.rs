@@ -58,6 +58,9 @@ pub enum AppAction {
     BookmarkForget,
     BookmarkMove,
     BookmarkRename,
+    BookmarkAdvance,
+    BookmarkTrack,
+    BookmarkUntrack,
     ShowHelp,
     Undo,
     Redo,
@@ -179,6 +182,9 @@ impl Default for Keymap {
                     bind("f", AppAction::BookmarkForget, "forget"),
                     bind("m", AppAction::BookmarkMove, "move..."),
                     bind("r", AppAction::BookmarkRename, "rename"),
+                    bind("a", AppAction::BookmarkAdvance, "advance"),
+                    bind("t", AppAction::BookmarkTrack, "track"),
+                    bind("u", AppAction::BookmarkUntrack, "untrack"),
                 ],
             ),
             // Describe submenu
@@ -481,7 +487,10 @@ fn classify_action(action: AppAction) -> HelpGroup {
         | AppAction::BookmarkDelete
         | AppAction::BookmarkForget
         | AppAction::BookmarkMove
-        | AppAction::BookmarkRename => HelpGroup::Commands,
+        | AppAction::BookmarkRename
+        | AppAction::BookmarkAdvance
+        | AppAction::BookmarkTrack
+        | AppAction::BookmarkUntrack => HelpGroup::Commands,
         AppAction::Quit
         | AppAction::ShowHelp
         | AppAction::EditRevset

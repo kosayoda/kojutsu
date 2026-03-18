@@ -31,7 +31,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             let has_toggles = children
                 .iter()
                 .any(|(_, n)| matches!(n, KeymapNode::Toggle { .. }));
-            let height = if has_toggles { 2 } else { 1 };
+            // +1 for top border.
+            let height = if has_toggles { 3 } else { 2 };
             let overlay = overlay_area(list_area, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_submenu(frame, overlay, label, children, *flags);
@@ -65,17 +66,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             draw_help(frame, overlay, &left, &right);
         }
         AppMode::TextInput { prompt, input, .. } => {
-            let overlay = overlay_area(list_area, 1);
+            let overlay = overlay_area(list_area, 2);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_text_input(frame, overlay, prompt, input);
         }
         AppMode::TargetSelect { prompt, source, .. } => {
-            let overlay = overlay_area(list_area, 1);
+            let overlay = overlay_area(list_area, 2);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_target_select(frame, overlay, prompt, source);
         }
         AppMode::FollowUp { prompt, options } => {
-            let overlay = overlay_area(list_area, 1);
+            let overlay = overlay_area(list_area, 2);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_follow_up(frame, overlay, prompt, options);
         }
@@ -366,12 +367,21 @@ fn draw_submenu(
     }
     lines.push(Line::from(action_spans));
 
-    frame.render_widget(Paragraph::new(lines), area);
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn draw_text_input(frame: &mut Frame, area: Rect, prompt: &str, input: &tui_input::Input) {
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     let prompt_width = prompt.len() as u16;
-    let input_width = area.width.saturating_sub(prompt_width);
+    let input_width = inner.width.saturating_sub(prompt_width);
 
     let scroll = input.visual_scroll(input_width.saturating_sub(1) as usize);
 
@@ -385,15 +395,21 @@ fn draw_text_input(frame: &mut Frame, area: Rect, prompt: &str, input: &tui_inpu
         Span::styled(&input.value()[scroll..], Style::default().fg(Color::White)),
     ];
 
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 
     // Place the cursor.
-    let cursor_x = area.x + prompt_width + (input.visual_cursor() - scroll) as u16;
-    let cursor_y = area.y;
+    let cursor_x = inner.x + prompt_width + (input.visual_cursor() - scroll) as u16;
+    let cursor_y = inner.y;
     frame.set_cursor_position((cursor_x, cursor_y));
 }
 
 fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, source: &str) {
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     let spans = vec![
         Span::styled(
             format!("{prompt} "),
@@ -412,7 +428,7 @@ fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, source: &str)
             Style::default().fg(Color::DarkGray),
         ),
     ];
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
 fn draw_follow_up(
@@ -421,6 +437,12 @@ fn draw_follow_up(
     prompt: &str,
     options: &[crate::app::FollowUpOption],
 ) {
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
     let mut spans = vec![Span::styled(
         format!("{prompt} "),
         Style::default()
@@ -444,7 +466,7 @@ fn draw_follow_up(
         ));
     }
 
-    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
 fn draw_select_list(frame: &mut Frame, area: Rect, title: &str, items: &[String], selected: usize) {

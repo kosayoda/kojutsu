@@ -5,7 +5,8 @@ use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
 use crate::app::{
-    App, AppMode, FollowUpAction, MessageMode, PendingCommand, PendingSelection, TargetOperation,
+    App, AppMode, FollowUpAction, FollowUpOption, MessageMode, PendingCommand, PendingSelection,
+    TargetOperation,
 };
 use crate::jj_command::JJCommand;
 use crate::keymap::{self, AppAction, CommandFlags, Keymap, LookupResult};
@@ -232,6 +233,23 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         AppAction::BookmarkRename => {
             enter_bookmark_select(app, flags, PendingSelectionKind::Rename)
         }
+        AppAction::BookmarkAdvance => enter_bookmark_advance(app, flags),
+        AppAction::BookmarkTrack => {
+            app.mode = AppMode::TextInput {
+                prompt: "track bookmark: ".to_string(),
+                input: Input::new(String::new()),
+                on_submit: PendingCommand::BookmarkTrack { flags },
+            };
+            Action::None
+        }
+        AppAction::BookmarkUntrack => {
+            app.mode = AppMode::TextInput {
+                prompt: "untrack bookmark: ".to_string(),
+                input: Input::new(String::new()),
+                on_submit: PendingCommand::BookmarkUntrack { flags },
+            };
+            Action::None
+        }
 
         AppAction::Undo => make_command(app, |_| JJCommand::Undo { flags }),
         AppAction::Redo => make_command(app, |_| JJCommand::Redo { flags }),
@@ -439,6 +457,58 @@ enum PendingSelectionKind {
     Forget,
     Move,
     Rename,
+}
+
+fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
+    let Some(change_id) = app.selected_change_id() else {
+        return Action::None;
+    };
+    let change_id = change_id.to_string();
+
+    // Check if the selected commit is the working copy.
+    let is_wc = app.selected_bookmarks().is_some_and(|_| {
+        // Check via the entries
+        let entry_idx = match app.rows.get(app.cursor) {
+            Some(crate::app::DisplayRow::CommitNode { entry_idx }) => Some(*entry_idx),
+            Some(crate::app::DisplayRow::GraphLink { entry_idx, .. }) => Some(*entry_idx),
+            Some(crate::app::DisplayRow::FileChange { entry_idx, .. }) => Some(*entry_idx),
+            Some(crate::app::DisplayRow::DiffLine { entry_idx, .. }) => Some(*entry_idx),
+            None => None,
+        };
+        entry_idx.is_some_and(|idx| app.entries[idx].commit.is_working_copy)
+    });
+
+    if is_wc {
+        // On working copy: advance immediately (jj default = advance to @).
+        Action::RunJj(JJCommand::BookmarkAdvance {
+            change_id: None,
+            flags,
+        })
+    } else {
+        // Not on working copy: show follow-up to choose between selected and @.
+        app.mode = AppMode::FollowUp {
+            prompt: "advance bookmarks to:".to_string(),
+            options: vec![
+                FollowUpOption {
+                    key: 's',
+                    label: "selected",
+                    action: FollowUpAction::Execute(JJCommand::BookmarkAdvance {
+                        change_id: Some(change_id),
+                        flags,
+                    }),
+                },
+                FollowUpOption {
+                    key: '@',
+                    label: "working copy",
+                    action: FollowUpAction::Execute(JJCommand::BookmarkAdvance {
+                        change_id: None,
+                        flags,
+                    }),
+                },
+            ],
+        };
+        Action::None
+    }
 }
 
 fn enter_bookmark_text_input(
