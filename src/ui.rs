@@ -74,10 +74,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_target_select(frame, overlay, prompt, source);
         }
-        AppMode::MessageChoice { prompt, .. } => {
+        AppMode::FollowUp { prompt, options } => {
             let overlay = overlay_area(list_area, 1);
             frame.render_widget(ratatui::widgets::Clear, overlay);
-            draw_message_choice(frame, overlay, prompt);
+            draw_follow_up(frame, overlay, prompt, options);
         }
     }
 }
@@ -403,36 +403,35 @@ fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, source: &str)
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_message_choice(frame: &mut Frame, area: Rect, prompt: &str) {
-    let spans = vec![
-        Span::styled(
-            format!("{prompt} "),
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            "(s)",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" squash  ", Style::default().fg(Color::White)),
-        Span::styled(
-            "(m)",
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" with message  ", Style::default().fg(Color::White)),
-        Span::styled(
-            "(u)",
+fn draw_follow_up(
+    frame: &mut Frame,
+    area: Rect,
+    prompt: &str,
+    options: &[crate::app::FollowUpOption],
+) {
+    let mut spans = vec![Span::styled(
+        format!("{prompt} "),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )];
+
+    for (i, opt) in options.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw("  "));
+        }
+        spans.push(Span::styled(
+            format!("({})", opt.key),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" use dest message", Style::default().fg(Color::White)),
-    ];
+        ));
+        spans.push(Span::styled(
+            format!(" {}", opt.label),
+            Style::default().fg(Color::White),
+        ));
+    }
+
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 

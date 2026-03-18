@@ -44,11 +44,28 @@ pub enum AppMode {
         operation: TargetOperation,
         flags: CommandFlags,
     },
-    /// Choosing message behavior after a target has been selected.
-    MessageChoice {
+    /// Choosing from a set of follow-up options after target selection.
+    FollowUp {
         prompt: String,
-        builder: ReadyCommand,
-        flags: CommandFlags,
+        options: Vec<FollowUpOption>,
+    },
+}
+
+/// An option in a follow-up prompt (shown after target selection).
+pub struct FollowUpOption {
+    pub key: char,
+    pub label: &'static str,
+    pub action: FollowUpAction,
+}
+
+/// What happens when a follow-up option is selected.
+pub enum FollowUpAction {
+    /// Execute a command immediately.
+    Execute(JJCommand),
+    /// Enter a text input, then execute.
+    TextInput {
+        prompt: String,
+        pending: PendingCommand,
     },
 }
 
@@ -99,19 +116,63 @@ impl TargetOperation {
         }
     }
 
-    /// Build a `ReadyCommand` given source and target.
-    pub fn build(self, source: String, target: String) -> ReadyCommand {
-        let target = match self {
+    /// Build follow-up options given source and target.
+    pub fn follow_up(
+        self,
+        source: String,
+        target: String,
+        flags: CommandFlags,
+    ) -> Vec<FollowUpOption> {
+        let squash_target = match self {
             TargetOperation::SquashInto => SquashTarget::Into(target),
             TargetOperation::SquashOnto => SquashTarget::Onto(target),
             TargetOperation::SquashAfter => SquashTarget::After(target),
             TargetOperation::SquashBefore => SquashTarget::Before(target),
         };
-        ReadyCommand::Squash {
-            source,
-            target: Some(target),
-        }
+        squash_follow_up(source, Some(squash_target), flags)
     }
+}
+
+/// Build follow-up options for a squash command.
+fn squash_follow_up(
+    source: String,
+    target: Option<SquashTarget>,
+    flags: CommandFlags,
+) -> Vec<FollowUpOption> {
+    let default_cmd = JJCommand::Squash {
+        change_id: source.clone(),
+        target: target.clone(),
+        message: MessageMode::Default,
+        flags,
+    };
+    let use_dest_cmd = JJCommand::Squash {
+        change_id: source.clone(),
+        target: target.clone(),
+        message: MessageMode::UseDestination,
+        flags,
+    };
+    let builder = ReadyCommand::Squash { source, target };
+
+    vec![
+        FollowUpOption {
+            key: 's',
+            label: "squash",
+            action: FollowUpAction::Execute(default_cmd),
+        },
+        FollowUpOption {
+            key: 'm',
+            label: "with message",
+            action: FollowUpAction::TextInput {
+                prompt: "message: ".to_string(),
+                pending: PendingCommand::SquashWithMessage { builder, flags },
+            },
+        },
+        FollowUpOption {
+            key: 'u',
+            label: "use dest message",
+            action: FollowUpAction::Execute(use_dest_cmd),
+        },
+    ]
 }
 
 /// The target type for a targeted squash.

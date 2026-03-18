@@ -4,7 +4,7 @@ use ratatui::crossterm::event::{
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
-use crate::app::{App, AppMode, MessageMode, PendingCommand, TargetOperation};
+use crate::app::{App, AppMode, FollowUpAction, MessageMode, PendingCommand, TargetOperation};
 use crate::jj_command::JJCommand;
 use crate::keymap::{self, AppAction, CommandFlags, Keymap, LookupResult};
 use crate::repo::JjRepo;
@@ -48,7 +48,7 @@ pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyE
         }
         AppMode::TextInput { .. } => handle_text_input(app, key),
         AppMode::TargetSelect { .. } => handle_target_select(app, key),
-        AppMode::MessageChoice { .. } => handle_message_choice(app, key),
+        AppMode::FollowUp { .. } => handle_follow_up(app, key),
     }
 }
 
@@ -284,13 +284,9 @@ fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
                     return Action::None;
                 };
                 let target = target.to_string();
-                let builder = operation.build(source, target.clone());
+                let options = operation.follow_up(source, target.clone(), flags);
                 let prompt = format!("{} {}:", operation.label(), target);
-                app.mode = AppMode::MessageChoice {
-                    prompt,
-                    builder,
-                    flags,
-                };
+                app.mode = AppMode::FollowUp { prompt, options };
             }
             Action::None
         }
@@ -323,54 +319,43 @@ fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
     }
 }
 
-fn handle_message_choice(app: &mut App, key: KeyEvent) -> Action {
-    match key.code {
-        // Default message behavior.
-        KeyCode::Char('s') => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::MessageChoice { builder, flags, .. } = mode {
-                let cmd = builder.build_default(flags);
-                if cmd.is_interactive() {
-                    Action::SuspendAndRunJj(cmd)
-                } else {
-                    Action::RunJj(cmd)
-                }
+fn handle_follow_up(app: &mut App, key: KeyEvent) -> Action {
+    if key.code == KeyCode::Esc {
+        app.mode = AppMode::Normal;
+        return Action::None;
+    }
+
+    let c = match key.code {
+        KeyCode::Char(c) => c,
+        _ => return Action::None,
+    };
+
+    let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+    let AppMode::FollowUp { options, .. } = mode else {
+        return Action::None;
+    };
+
+    // Find the matching option.
+    let Some(option) = options.into_iter().find(|o| o.key == c) else {
+        return Action::None;
+    };
+
+    match option.action {
+        FollowUpAction::Execute(cmd) => {
+            if cmd.is_interactive() {
+                Action::SuspendAndRunJj(cmd)
             } else {
-                Action::None
+                Action::RunJj(cmd)
             }
         }
-        // With inline message.
-        KeyCode::Char('m') => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::MessageChoice { builder, flags, .. } = mode {
-                app.mode = AppMode::TextInput {
-                    prompt: "message: ".to_string(),
-                    input: Input::new(String::new()),
-                    on_submit: PendingCommand::SquashWithMessage { builder, flags },
-                };
-            }
+        FollowUpAction::TextInput { prompt, pending } => {
+            app.mode = AppMode::TextInput {
+                prompt,
+                input: Input::new(String::new()),
+                on_submit: pending,
+            };
             Action::None
         }
-        // Use destination message.
-        KeyCode::Char('u') => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::MessageChoice { builder, flags, .. } = mode {
-                let cmd = builder.build_use_dest_message(flags);
-                if cmd.is_interactive() {
-                    Action::SuspendAndRunJj(cmd)
-                } else {
-                    Action::RunJj(cmd)
-                }
-            } else {
-                Action::None
-            }
-        }
-        // Cancel.
-        KeyCode::Esc => {
-            app.mode = AppMode::Normal;
-            Action::None
-        }
-        _ => Action::None,
     }
 }
 
