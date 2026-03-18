@@ -253,6 +253,24 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
 
         AppAction::Undo => make_command(app, |_| JJCommand::Undo { flags }),
         AppAction::Redo => make_command(app, |_| JJCommand::Redo { flags }),
+
+        // Git commands
+        AppAction::GitFetch => Action::RunJj(JJCommand::GitFetch {
+            all_remotes: false,
+            flags,
+        }),
+        AppAction::GitFetchAllRemotes => Action::RunJj(JJCommand::GitFetch {
+            all_remotes: true,
+            flags,
+        }),
+        AppAction::GitPush => Action::RunJj(JJCommand::GitPush { all: false, flags }),
+        AppAction::GitPushAll => Action::RunJj(JJCommand::GitPush { all: true, flags }),
+        AppAction::GitPushChange => make_command(app, |id| JJCommand::GitPushChange {
+            change_id: id,
+            flags,
+        }),
+        AppAction::GitExport => Action::RunJj(JJCommand::GitExport { flags }),
+        AppAction::GitImport => Action::RunJj(JJCommand::GitImport { flags }),
     }
 }
 

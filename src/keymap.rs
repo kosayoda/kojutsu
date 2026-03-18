@@ -15,6 +15,7 @@ bitflags::bitflags! {
         const INTERACTIVE         = 1 << 4;
         const KEEP_EMPTIED        = 1 << 5;
         const ALLOW_BACKWARDS     = 1 << 6;
+        const DRY_RUN             = 1 << 7;
     }
 }
 
@@ -64,6 +65,13 @@ pub enum AppAction {
     ShowHelp,
     Undo,
     Redo,
+    GitFetch,
+    GitFetchAllRemotes,
+    GitPush,
+    GitPushAll,
+    GitPushChange,
+    GitExport,
+    GitImport,
 }
 
 // ---------------------------------------------------------------------------
@@ -304,6 +312,26 @@ impl Default for Keymap {
                     bind("b", AppAction::SquashBefore, "before..."),
                 ],
             ),
+            // Git submenu
+            prefix(
+                "g",
+                "git",
+                HelpGroup::Commands,
+                vec![
+                    toggle("d", CommandFlags::DRY_RUN, "dry run (push only)"),
+                    bind("f", AppAction::GitFetch, "fetch"),
+                    bind(
+                        "shift-f",
+                        AppAction::GitFetchAllRemotes,
+                        "fetch all remotes",
+                    ),
+                    bind("p", AppAction::GitPush, "push"),
+                    bind("shift-p", AppAction::GitPushAll, "push all bookmarks"),
+                    bind("c", AppAction::GitPushChange, "push change"),
+                    bind("e", AppAction::GitExport, "export (jj→git)"),
+                    bind("i", AppAction::GitImport, "import (git→jj)"),
+                ],
+            ),
             // Command palette
             prefix(
                 ";",
@@ -490,7 +518,14 @@ fn classify_action(action: AppAction) -> HelpGroup {
         | AppAction::BookmarkRename
         | AppAction::BookmarkAdvance
         | AppAction::BookmarkTrack
-        | AppAction::BookmarkUntrack => HelpGroup::Commands,
+        | AppAction::BookmarkUntrack
+        | AppAction::GitFetch
+        | AppAction::GitFetchAllRemotes
+        | AppAction::GitPush
+        | AppAction::GitPushAll
+        | AppAction::GitPushChange
+        | AppAction::GitExport
+        | AppAction::GitImport => HelpGroup::Commands,
         AppAction::Quit
         | AppAction::ShowHelp
         | AppAction::EditRevset

@@ -90,6 +90,24 @@ pub enum JJCommand {
     Redo {
         flags: CommandFlags,
     },
+    GitFetch {
+        all_remotes: bool,
+        flags: CommandFlags,
+    },
+    GitPush {
+        all: bool,
+        flags: CommandFlags,
+    },
+    GitPushChange {
+        change_id: String,
+        flags: CommandFlags,
+    },
+    GitExport {
+        flags: CommandFlags,
+    },
+    GitImport {
+        flags: CommandFlags,
+    },
 }
 
 /// The result of running a jj command.
@@ -355,6 +373,65 @@ impl JJCommand {
             }
             JJCommand::Redo { flags } => {
                 let mut args = vec!["redo".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args
+            }
+            JJCommand::GitFetch { all_remotes, flags } => {
+                let mut args = vec!["git".to_string(), "fetch".to_string()];
+                if *all_remotes {
+                    args.push("--all-remotes".to_string());
+                }
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args
+            }
+            JJCommand::GitPush { all, flags } => {
+                let mut args = vec!["git".to_string(), "push".to_string()];
+                if *all {
+                    args.push("--all".to_string());
+                }
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[
+                        (CommandFlags::DRY_RUN, "--dry-run"),
+                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
+                    ],
+                );
+                args
+            }
+            JJCommand::GitPushChange { change_id, flags } => {
+                let mut args = vec!["git".to_string(), "push".to_string()];
+                args.push("-c".to_string());
+                args.push(change_id.clone());
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[
+                        (CommandFlags::DRY_RUN, "--dry-run"),
+                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
+                    ],
+                );
+                args
+            }
+            JJCommand::GitExport { flags } => {
+                let mut args = vec!["git".to_string(), "export".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args
+            }
+            JJCommand::GitImport { flags } => {
+                let mut args = vec!["git".to_string(), "import".to_string()];
                 push_flags(
                     &mut args,
                     *flags,
