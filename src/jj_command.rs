@@ -108,6 +108,22 @@ pub enum JJCommand {
     GitImport {
         flags: CommandFlags,
     },
+    Absorb {
+        /// Source revision. `None` = default (absorb from @).
+        from: Option<String>,
+        flags: CommandFlags,
+    },
+    Commit {
+        /// Inline message. `None` = open $EDITOR.
+        message: Option<String>,
+        flags: CommandFlags,
+    },
+    Duplicate {
+        change_id: String,
+        /// Target revision for `--onto`. `None` = duplicate onto same parents.
+        onto: Option<String>,
+        flags: CommandFlags,
+    },
 }
 
 /// The result of running a jj command.
@@ -439,6 +455,53 @@ impl JJCommand {
                 );
                 args
             }
+            JJCommand::Absorb { from, flags } => {
+                let mut args = vec!["absorb".to_string()];
+                if let Some(id) = from {
+                    args.push("--from".to_string());
+                    args.push(id.clone());
+                }
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args
+            }
+            JJCommand::Commit { message, flags } => {
+                let mut args = vec!["commit".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[
+                        (CommandFlags::INTERACTIVE, "--interactive"),
+                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
+                    ],
+                );
+                if let Some(msg) = message {
+                    args.push("-m".to_string());
+                    args.push(msg.clone());
+                }
+                args
+            }
+            JJCommand::Duplicate {
+                change_id,
+                onto,
+                flags,
+            } => {
+                let mut args = vec!["duplicate".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args.push(change_id.clone());
+                if let Some(target) = onto {
+                    args.push("--onto".to_string());
+                    args.push(target.clone());
+                }
+                args
+            }
             JJCommand::Squash {
                 change_id,
                 target,
@@ -525,6 +588,9 @@ impl JJCommand {
         match self {
             JJCommand::DescribeInEditor { .. } => true,
             JJCommand::Squash { flags, .. } => flags.contains(CommandFlags::INTERACTIVE),
+            JJCommand::Commit { message, flags } => {
+                message.is_none() || flags.contains(CommandFlags::INTERACTIVE)
+            }
             _ => false,
         }
     }

@@ -172,6 +172,25 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             change_id: id,
             flags,
         }),
+        AppAction::Absorb => make_command(app, |id| JJCommand::Absorb {
+            from: Some(id),
+            flags,
+        }),
+        AppAction::Commit => {
+            let cmd = JJCommand::Commit {
+                message: None,
+                flags,
+            };
+            Action::SuspendAndRunJj(cmd)
+        }
+        AppAction::CommitWithMessage => {
+            app.mode = AppMode::TextInput {
+                prompt: "commit message: ".to_string(),
+                input: Input::new(String::new()),
+                on_submit: PendingCommand::Commit { flags },
+            };
+            Action::None
+        }
         AppAction::Describe => enter_describe_input(app, flags),
         AppAction::DescribeInEditor => make_command(app, |id| JJCommand::DescribeInEditor {
             change_id: id,
@@ -276,6 +295,14 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         }
         AppAction::GitExport => Action::RunJj(JJCommand::GitExport { flags }),
         AppAction::GitImport => Action::RunJj(JJCommand::GitImport { flags }),
+
+        // Duplicate
+        AppAction::Duplicate => make_command(app, |id| JJCommand::Duplicate {
+            change_id: id,
+            onto: None,
+            flags,
+        }),
+        AppAction::DuplicateOnto => enter_target_select(app, TargetOperation::DuplicateOnto, flags),
     }
 }
 

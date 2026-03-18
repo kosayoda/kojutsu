@@ -131,6 +131,8 @@ pub enum PendingCommand {
     BookmarkTrack { flags: CommandFlags },
     /// Untrack a remote bookmark (text is "name@remote").
     BookmarkUntrack { flags: CommandFlags },
+    /// Commit with inline message (text is the message).
+    Commit { flags: CommandFlags },
 }
 
 impl PendingCommand {
@@ -171,6 +173,10 @@ impl PendingCommand {
             PendingCommand::BookmarkUntrack { flags } => {
                 JJCommand::BookmarkUntrack { name: text, flags }
             }
+            PendingCommand::Commit { flags } => JJCommand::Commit {
+                message: Some(text),
+                flags,
+            },
         }
     }
 }
@@ -186,6 +192,7 @@ pub enum TargetOperation {
     RebaseSource,
     RebaseBranch,
     BookmarkMove { bookmark_name: String },
+    DuplicateOnto,
 }
 
 impl TargetOperation {
@@ -199,6 +206,7 @@ impl TargetOperation {
             TargetOperation::RebaseSource => "rebase source",
             TargetOperation::RebaseBranch => "rebase branch",
             TargetOperation::BookmarkMove { .. } => "move bookmark",
+            TargetOperation::DuplicateOnto => "duplicate onto",
         }
     }
 
@@ -240,6 +248,18 @@ impl TargetOperation {
                     action: FollowUpAction::Execute(JJCommand::BookmarkMove {
                         name: bookmark_name.clone(),
                         target,
+                        flags,
+                    }),
+                }]
+            }
+            TargetOperation::DuplicateOnto => {
+                // Duplicate onto executes immediately -- single option, auto-executed.
+                vec![FollowUpOption {
+                    key: ' ',
+                    label: "duplicate",
+                    action: FollowUpAction::Execute(JJCommand::Duplicate {
+                        change_id: source,
+                        onto: Some(target),
                         flags,
                     }),
                 }]

@@ -37,6 +37,9 @@ pub enum AppAction {
     ToggleFold,
     Refresh,
     Abandon,
+    Absorb,
+    Commit,
+    CommitWithMessage,
     Describe,
     DescribeInEditor,
     Edit,
@@ -72,6 +75,8 @@ pub enum AppAction {
     GitPushChange,
     GitExport,
     GitImport,
+    Duplicate,
+    DuplicateOnto,
 }
 
 // ---------------------------------------------------------------------------
@@ -225,9 +230,39 @@ impl Default for Keymap {
                     bind("r", AppAction::Redo, "redo"),
                 ],
             ),
-            // Abandon submenu
+            // Absorb submenu
             prefix(
                 "a",
+                "absorb",
+                HelpGroup::Commands,
+                vec![
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
+                    bind("a", AppAction::Absorb, "absorb"),
+                ],
+            ),
+            // Commit submenu
+            prefix(
+                "c",
+                "commit",
+                HelpGroup::Commands,
+                vec![
+                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
+                    bind("c", AppAction::Commit, "commit (in $EDITOR)"),
+                    bind("m", AppAction::CommitWithMessage, "with message"),
+                ],
+            ),
+            // Abandon submenu
+            prefix(
+                "x",
                 "abandon",
                 HelpGroup::Commands,
                 vec![
@@ -242,7 +277,7 @@ impl Default for Keymap {
                         CommandFlags::IGNORE_IMMUTABLE,
                         "ignore immutable",
                     ),
-                    bind("a", AppAction::Abandon, "abandon"),
+                    bind("x", AppAction::Abandon, "abandon"),
                 ],
             ),
             // Edit submenu
@@ -310,6 +345,21 @@ impl Default for Keymap {
                     bind("o", AppAction::SquashOnto, "onto..."),
                     bind("a", AppAction::SquashAfter, "after..."),
                     bind("b", AppAction::SquashBefore, "before..."),
+                ],
+            ),
+            // Duplicate submenu
+            prefix(
+                "shift-d",
+                "duplicate",
+                HelpGroup::Commands,
+                vec![
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
+                    bind("shift-d", AppAction::Duplicate, "duplicate"),
+                    bind("t", AppAction::DuplicateOnto, "onto..."),
                 ],
             ),
             // Git submenu
@@ -494,6 +544,9 @@ fn classify_action(action: AppAction) -> HelpGroup {
         | AppAction::ToggleFold
         | AppAction::Refresh => HelpGroup::Navigation,
         AppAction::Abandon
+        | AppAction::Absorb
+        | AppAction::Commit
+        | AppAction::CommitWithMessage
         | AppAction::Describe
         | AppAction::DescribeInEditor
         | AppAction::Edit
@@ -525,7 +578,9 @@ fn classify_action(action: AppAction) -> HelpGroup {
         | AppAction::GitPushAll
         | AppAction::GitPushChange
         | AppAction::GitExport
-        | AppAction::GitImport => HelpGroup::Commands,
+        | AppAction::GitImport
+        | AppAction::Duplicate
+        | AppAction::DuplicateOnto => HelpGroup::Commands,
         AppAction::Quit
         | AppAction::ShowHelp
         | AppAction::EditRevset
