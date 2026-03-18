@@ -38,6 +38,12 @@ pub enum JJCommand {
         message: MessageMode,
         flags: CommandFlags,
     },
+    Undo {
+        flags: CommandFlags,
+    },
+    Redo {
+        flags: CommandFlags,
+    },
 }
 
 /// The result of running a jj command.
@@ -125,6 +131,24 @@ impl JJCommand {
                         (CommandFlags::NO_EDIT, "--no-edit"),
                         (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
                     ],
+                );
+                args
+            }
+            JJCommand::Undo { flags } => {
+                let mut args = vec!["undo".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args
+            }
+            JJCommand::Redo { flags } => {
+                let mut args = vec!["redo".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
                 );
                 args
             }

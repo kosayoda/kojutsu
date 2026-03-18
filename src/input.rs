@@ -112,7 +112,6 @@ fn handle_submenu_key(
 
 fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: CommandFlags) -> Action {
     match action {
-        // Navigation -- flags are ignored
         AppAction::Quit => Action::Quit,
         AppAction::MoveDown => {
             app.move_down();
@@ -151,8 +150,6 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             app.mode = AppMode::Help;
             Action::None
         }
-
-        // Commands -- flags are passed through
         AppAction::Abandon => make_command(app, |id| JJCommand::Abandon {
             change_id: id,
             flags,
@@ -184,20 +181,18 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             insert_before: true,
             flags,
         }),
-
-        // Squash -- immediate (into parent)
         AppAction::Squash => make_command(app, |id| JJCommand::Squash {
             change_id: id,
             target: None,
             message: MessageMode::Default,
             flags,
         }),
-
-        // Squash -- target selection
         AppAction::SquashInto => enter_target_select(app, TargetOperation::SquashInto, flags),
         AppAction::SquashOnto => enter_target_select(app, TargetOperation::SquashOnto, flags),
         AppAction::SquashAfter => enter_target_select(app, TargetOperation::SquashAfter, flags),
         AppAction::SquashBefore => enter_target_select(app, TargetOperation::SquashBefore, flags),
+        AppAction::Undo => make_command(app, |_| JJCommand::Undo { flags }),
+        AppAction::Redo => make_command(app, |_| JJCommand::Redo { flags }),
     }
 }
 

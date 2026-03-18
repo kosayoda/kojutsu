@@ -47,6 +47,8 @@ pub enum AppAction {
     SquashAfter,
     SquashBefore,
     ShowHelp,
+    Undo,
+    Redo,
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +160,20 @@ impl Default for Keymap {
                     ),
                     bind("d", AppAction::Describe, "describe"),
                     bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR"),
+                ],
+            ),
+            // Undo submenu
+            prefix(
+                "u",
+                "undo/redo",
+                vec![
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
+                    bind("u", AppAction::Undo, "undo"),
+                    bind("r", AppAction::Redo, "redo"),
                 ],
             ),
             // Abandon submenu
@@ -366,7 +382,6 @@ fn classify_action(action: AppAction) -> HelpGroup {
         | AppAction::JumpToWorkingCopy
         | AppAction::ToggleFold
         | AppAction::Refresh => HelpGroup::Navigation,
-
         AppAction::Abandon
         | AppAction::Describe
         | AppAction::DescribeInEditor
@@ -378,8 +393,9 @@ fn classify_action(action: AppAction) -> HelpGroup {
         | AppAction::SquashInto
         | AppAction::SquashOnto
         | AppAction::SquashAfter
-        | AppAction::SquashBefore => HelpGroup::Commands,
-
+        | AppAction::SquashBefore
+        | AppAction::Undo
+        | AppAction::Redo => HelpGroup::Commands,
         AppAction::Quit | AppAction::ShowHelp => HelpGroup::General,
     }
 }
