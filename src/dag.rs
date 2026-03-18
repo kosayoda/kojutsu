@@ -34,6 +34,54 @@ pub struct CommitInfo {
     pub bookmarks: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Glyph {
+    WorkingCopy,
+    Conflict,
+    Normal,
+}
+
+impl std::fmt::Display for Glyph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", char::from(*self))
+    }
+}
+
+impl From<Glyph> for char {
+    fn from(value: Glyph) -> Self {
+        match value {
+            Glyph::WorkingCopy => '@',
+            Glyph::Conflict => '×',
+            Glyph::Normal => '○',
+        }
+    }
+}
+
+impl TryFrom<char> for Glyph {
+    type Error = ();
+
+    fn try_from(value: char) -> Result<Self, Self::Error> {
+        match value {
+            '@' => Ok(Self::WorkingCopy),
+            '×' => Ok(Self::Conflict),
+            '○' => Ok(Self::Normal),
+            _ => Err(()),
+        }
+    }
+}
+
+impl CommitInfo {
+    pub fn glyph(&self) -> Glyph {
+        if self.is_working_copy {
+            Glyph::WorkingCopy
+        } else if self.has_conflict {
+            Glyph::Conflict
+        } else {
+            Glyph::Normal
+        }
+    }
+}
+
 pub struct AuthorInfo {
     pub name: String,
     pub email: String,

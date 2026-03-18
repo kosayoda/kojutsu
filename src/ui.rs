@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -547,7 +548,7 @@ fn draw_command_output(
 /// │  description
 /// ```
 fn render_commit_item<'a>(
-    graph_node: &str,
+    graph_node: &'a str,
     graph_cont: &str,
     c: &'a CommitInfo,
     is_unfolded: bool,
@@ -555,13 +556,14 @@ fn render_commit_item<'a>(
 ) -> ListItem<'a> {
     let graph_color = if is_source {
         Color::Yellow
-    } else if c.is_working_copy {
-        Color::Green
-    } else if c.has_conflict {
-        Color::Red
     } else {
-        Color::Cyan
+        match c.glyph() {
+            crate::dag::Glyph::WorkingCopy => Color::Green,
+            crate::dag::Glyph::Conflict => Color::Red,
+            crate::dag::Glyph::Normal => Color::Cyan,
+        }
     };
+
     let graph_style = Style::default().fg(graph_color);
 
     // --- Line 1: graph  change_id author timestamp bookmarks commit_id ---
@@ -573,7 +575,25 @@ fn render_commit_item<'a>(
     }
 
     // Graph glyph
-    line1.push(Span::styled(format!("{graph_node}  "), graph_style));
+    for (is_glyph, group) in graph_node
+        .char_indices()
+        .chunk_by(|&(_, c)| crate::dag::Glyph::try_from(c).is_ok())
+        .into_iter()
+    {
+        let mut iter = group.into_iter();
+        let (start, c) = iter.next().unwrap();
+        let end = {
+            let (end, c) = iter.last().unwrap_or((start, c));
+            end + c.len_utf8()
+        };
+        let span = &graph_node[start..end];
+        if is_glyph {
+            line1.push(Span::styled(span, graph_style));
+        } else {
+            line1.push(Span::styled(span, Style::default().fg(Color::DarkGray)));
+        }
+    }
+    line1.push("  ".into());
 
     // Fold indicator
     let fold_char = if is_unfolded { "▾ " } else { "▸ " };

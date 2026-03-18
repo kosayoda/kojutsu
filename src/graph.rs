@@ -33,7 +33,7 @@ pub fn render(entries: &[DagEntry]) -> Vec<GraphLines> {
                 })
                 .collect();
 
-            let glyph = choose_glyph(&entry.commit);
+            let glyph = entry.commit.glyph();
 
             // Pass the full commit ID as the node identifier (used by the
             // renderer to track column positions) and an empty message so the
@@ -61,14 +61,4 @@ pub fn render(entries: &[DagEntry]) -> Vec<GraphLines> {
             }
         })
         .collect()
-}
-
-fn choose_glyph(commit: &crate::dag::CommitInfo) -> &'static str {
-    if commit.is_working_copy {
-        "@"
-    } else if commit.has_conflict {
-        "×"
-    } else {
-        "○"
-    }
 }

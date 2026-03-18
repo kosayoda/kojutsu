@@ -30,6 +30,8 @@ pollster = "0.4"
 sapling-renderdag = "0.1"
 # Serialization (required by keymap_parser, future config files)
 serde = { version = "1", features = ["derive"] }
+# Enum utilities
+strum = { version = "0.28.0", features = ["derive"] }
 # Terminal UI
 ratatui = "0.30"
 # Temporary files (for $EDITOR workflows)
@@ -43,6 +45,8 @@ time = { version = "0.3.37", features = ["formatting"] }
 tracing = "0.1.41"
 tracing-error = "0.2.1"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "time"] }
+# Iterator utilities
+itertools = "0.14.0"
 
 # Build `backtrace` with optimizations for `color-eyre` performance
 [profile.dev.package.backtrace]
