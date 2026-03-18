@@ -2,6 +2,7 @@ use std::io::{self, stdout, Stdout};
 use std::panic;
 
 use ratatui::backend::CrosstermBackend;
+use ratatui::crossterm::cursor::{Hide, Show};
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
@@ -16,14 +17,14 @@ pub type Term = Terminal<CrosstermBackend<Stdout>>;
 pub fn init() -> io::Result<Term> {
     install_panic_hook();
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture, Hide)?;
     Terminal::new(CrosstermBackend::new(stdout()))
 }
 
 /// Leave the alternate screen, disable raw mode and mouse capture.
 pub fn restore() -> io::Result<()> {
     disable_raw_mode()?;
-    execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(stdout(), LeaveAlternateScreen, DisableMouseCapture, Show)?;
     Ok(())
 }
 
