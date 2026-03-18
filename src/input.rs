@@ -4,7 +4,9 @@ use ratatui::crossterm::event::{
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
-use crate::app::{App, AppMode, FollowUpAction, MessageMode, PendingCommand, TargetOperation};
+use crate::app::{
+    App, AppMode, FollowUpAction, MessageMode, PendingCommand, PendingSelection, TargetOperation,
+};
 use crate::jj_command::JJCommand;
 use crate::keymap::{self, AppAction, CommandFlags, Keymap, LookupResult};
 use crate::repo::JjRepo;
@@ -53,6 +55,7 @@ pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyE
         AppMode::TextInput { .. } => handle_text_input(app, key),
         AppMode::TargetSelect { .. } => handle_target_select(app, key),
         AppMode::FollowUp { .. } => handle_follow_up(app, key),
+        AppMode::SelectFromList { .. } => handle_select_from_list(app, key),
     }
 }
 
@@ -212,6 +215,24 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         AppAction::RebaseSource => enter_target_select(app, TargetOperation::RebaseSource, flags),
         AppAction::RebaseBranch => enter_target_select(app, TargetOperation::RebaseBranch, flags),
 
+        // Bookmark commands
+        AppAction::BookmarkCreate => {
+            enter_bookmark_text_input(app, flags, "create bookmark: ", BookmarkTextAction::Create)
+        }
+        AppAction::BookmarkSet => {
+            enter_bookmark_text_input(app, flags, "set bookmark: ", BookmarkTextAction::Set)
+        }
+        AppAction::BookmarkDelete => {
+            enter_bookmark_select(app, flags, PendingSelectionKind::Delete)
+        }
+        AppAction::BookmarkForget => {
+            enter_bookmark_select(app, flags, PendingSelectionKind::Forget)
+        }
+        AppAction::BookmarkMove => enter_bookmark_select(app, flags, PendingSelectionKind::Move),
+        AppAction::BookmarkRename => {
+            enter_bookmark_select(app, flags, PendingSelectionKind::Rename)
+        }
+
         AppAction::Undo => make_command(app, |_| JJCommand::Undo { flags }),
         AppAction::Redo => make_command(app, |_| JJCommand::Redo { flags }),
     }
@@ -307,8 +328,30 @@ fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
                     return Action::None;
                 };
                 let target = target.to_string();
-                let options = operation.follow_up(source, target.clone(), flags);
-                let prompt = format!("{} {}:", operation.label(), target);
+                let label = operation.label();
+                let mut options = operation.follow_up(source, target.clone(), flags);
+                // If there's exactly one option, execute immediately.
+                if options.len() == 1 {
+                    let opt = options.remove(0);
+                    return match opt.action {
+                        FollowUpAction::Execute(cmd) => {
+                            if cmd.is_interactive() {
+                                Action::SuspendAndRunJj(cmd)
+                            } else {
+                                Action::RunJj(cmd)
+                            }
+                        }
+                        FollowUpAction::TextInput { prompt, pending } => {
+                            app.mode = AppMode::TextInput {
+                                prompt,
+                                input: Input::new(String::new()),
+                                on_submit: pending,
+                            };
+                            Action::None
+                        }
+                    };
+                }
+                let prompt = format!("{label} {target}:");
                 app.mode = AppMode::FollowUp { prompt, options };
             }
             Action::None
@@ -376,6 +419,171 @@ fn handle_follow_up(app: &mut App, key: KeyEvent) -> Action {
                 prompt,
                 input: Input::new(String::new()),
                 on_submit: pending,
+            };
+            Action::None
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bookmark helpers
+// ---------------------------------------------------------------------------
+
+enum BookmarkTextAction {
+    Create,
+    Set,
+}
+
+enum PendingSelectionKind {
+    Delete,
+    Forget,
+    Move,
+    Rename,
+}
+
+fn enter_bookmark_text_input(
+    app: &mut App,
+    flags: CommandFlags,
+    prompt: &str,
+    action: BookmarkTextAction,
+) -> Action {
+    let Some(change_id) = app.selected_change_id() else {
+        return Action::None;
+    };
+    let change_id = change_id.to_string();
+
+    let on_submit = match action {
+        BookmarkTextAction::Create => PendingCommand::BookmarkCreate { change_id, flags },
+        BookmarkTextAction::Set => PendingCommand::BookmarkSet { change_id, flags },
+    };
+
+    app.mode = AppMode::TextInput {
+        prompt: prompt.to_string(),
+        input: Input::new(String::new()),
+        on_submit,
+    };
+    Action::None
+}
+
+fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelectionKind) -> Action {
+    let Some(change_id) = app.selected_change_id() else {
+        return Action::None;
+    };
+    let bookmarks = app.selected_bookmarks().unwrap_or(&[]);
+    if bookmarks.is_empty() {
+        return Action::None;
+    }
+    let change_id = change_id.to_string();
+
+    let on_select = match kind {
+        PendingSelectionKind::Delete => PendingSelection::BookmarkDelete { change_id, flags },
+        PendingSelectionKind::Forget => PendingSelection::BookmarkForget { change_id, flags },
+        PendingSelectionKind::Move => PendingSelection::BookmarkMove { change_id, flags },
+        PendingSelectionKind::Rename => PendingSelection::BookmarkRename { change_id, flags },
+    };
+
+    let title = match kind {
+        PendingSelectionKind::Delete => "delete bookmark",
+        PendingSelectionKind::Forget => "forget bookmark",
+        PendingSelectionKind::Move => "move bookmark",
+        PendingSelectionKind::Rename => "rename bookmark",
+    };
+
+    let items: Vec<String> = bookmarks.to_vec();
+
+    // Skip selection if only one bookmark.
+    if items.len() == 1 {
+        return resolve_bookmark_selection(app, on_select, items.into_iter().next().unwrap());
+    }
+
+    app.mode = AppMode::SelectFromList {
+        title: title.to_string(),
+        items,
+        selected: 0,
+        on_select,
+    };
+    Action::None
+}
+
+fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => {
+            if let AppMode::SelectFromList {
+                selected, items, ..
+            } = &mut app.mode
+            {
+                if *selected + 1 < items.len() {
+                    *selected += 1;
+                }
+            }
+            Action::None
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if let AppMode::SelectFromList { selected, .. } = &mut app.mode {
+                *selected = selected.saturating_sub(1);
+            }
+            Action::None
+        }
+        KeyCode::Enter => {
+            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+            if let AppMode::SelectFromList {
+                items,
+                selected,
+                on_select,
+                ..
+            } = mode
+            {
+                let name = items.into_iter().nth(selected).unwrap_or_default();
+                resolve_bookmark_selection(app, on_select, name)
+            } else {
+                Action::None
+            }
+        }
+        KeyCode::Esc => {
+            app.mode = AppMode::Normal;
+            Action::None
+        }
+        _ => Action::None,
+    }
+}
+
+/// After a bookmark has been selected (from list or auto-selected), decide
+/// what to do next based on the `PendingSelection`.
+fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: String) -> Action {
+    match on_select {
+        PendingSelection::BookmarkDelete { flags, .. } => {
+            let cmd = JJCommand::BookmarkDelete { name, flags };
+            Action::RunJj(cmd)
+        }
+        PendingSelection::BookmarkForget { flags, .. } => {
+            let cmd = JJCommand::BookmarkForget { name, flags };
+            Action::RunJj(cmd)
+        }
+        PendingSelection::BookmarkMove {
+            change_id, flags, ..
+        } => {
+            // Enter target selection mode. We'll store the bookmark name
+            // in a new TargetOperation variant.
+            app.mode = AppMode::TargetSelect {
+                prompt: "move bookmark",
+                source: change_id,
+                restore_cursor: app.cursor,
+                operation: TargetOperation::BookmarkMove {
+                    bookmark_name: name,
+                },
+                flags,
+            };
+            Action::None
+        }
+        PendingSelection::BookmarkRename { flags, .. } => {
+            // Enter text input for new name, pre-fill with old name.
+            app.mode = AppMode::TextInput {
+                prompt: "rename to: ".to_string(),
+                input: Input::new(name.clone()),
+                on_submit: PendingCommand::BookmarkRename {
+                    old_name: name,
+                    flags,
+                },
             };
             Action::None
         }

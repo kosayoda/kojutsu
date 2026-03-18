@@ -79,6 +79,18 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_follow_up(frame, overlay, prompt, options);
         }
+        AppMode::SelectFromList {
+            title,
+            items,
+            selected,
+            ..
+        } => {
+            // +2 for top border + bottom padding.
+            let height = (items.len() as u16 + 2).min(list_area.height / 2).max(3);
+            let overlay = overlay_area(list_area, height);
+            frame.render_widget(ratatui::widgets::Clear, overlay);
+            draw_select_list(frame, overlay, title, items, *selected);
+        }
     }
 }
 
@@ -433,6 +445,42 @@ fn draw_follow_up(
     }
 
     frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn draw_select_list(frame: &mut Frame, area: Rect, title: &str, items: &[String], selected: usize) {
+    use ratatui::widgets::Padding;
+
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title(format!(" {title} "))
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .padding(Padding::new(1, 1, 0, 0));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let lines: Vec<Line> = items
+        .iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let marker = if i == selected { "▸ " } else { "  " };
+            let style = if i == selected {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            Line::from(Span::styled(format!("{marker}{item}"), style))
+        })
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 fn draw_command_output(

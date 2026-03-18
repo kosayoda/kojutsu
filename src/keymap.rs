@@ -14,6 +14,7 @@ bitflags::bitflags! {
         const RESTORE_DESCENDANTS = 1 << 3;
         const INTERACTIVE         = 1 << 4;
         const KEEP_EMPTIED        = 1 << 5;
+        const ALLOW_BACKWARDS     = 1 << 6;
     }
 }
 
@@ -51,6 +52,12 @@ pub enum AppAction {
     RebaseBranch,
     EditRevset,
     EditRevsetInEditor,
+    BookmarkCreate,
+    BookmarkSet,
+    BookmarkDelete,
+    BookmarkForget,
+    BookmarkMove,
+    BookmarkRename,
     ShowHelp,
     Undo,
     Redo,
@@ -154,6 +161,26 @@ impl Default for Keymap {
             bind("tab", AppAction::ToggleFold, "toggle fold"),
             // Refresh
             bind("ctrl-r", AppAction::Refresh, "refresh"),
+            // Bookmark submenu
+            prefix(
+                "b",
+                "bookmark",
+                HelpGroup::Commands,
+                vec![
+                    toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
+                    toggle(
+                        "shift-i",
+                        CommandFlags::IGNORE_IMMUTABLE,
+                        "ignore immutable",
+                    ),
+                    bind("c", AppAction::BookmarkCreate, "create"),
+                    bind("s", AppAction::BookmarkSet, "set"),
+                    bind("d", AppAction::BookmarkDelete, "delete"),
+                    bind("f", AppAction::BookmarkForget, "forget"),
+                    bind("m", AppAction::BookmarkMove, "move..."),
+                    bind("r", AppAction::BookmarkRename, "rename"),
+                ],
+            ),
             // Describe submenu
             prefix(
                 "d",
@@ -448,7 +475,13 @@ fn classify_action(action: AppAction) -> HelpGroup {
         | AppAction::Redo
         | AppAction::RebaseRevision
         | AppAction::RebaseSource
-        | AppAction::RebaseBranch => HelpGroup::Commands,
+        | AppAction::RebaseBranch
+        | AppAction::BookmarkCreate
+        | AppAction::BookmarkSet
+        | AppAction::BookmarkDelete
+        | AppAction::BookmarkForget
+        | AppAction::BookmarkMove
+        | AppAction::BookmarkRename => HelpGroup::Commands,
         AppAction::Quit
         | AppAction::ShowHelp
         | AppAction::EditRevset

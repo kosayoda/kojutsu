@@ -44,6 +44,34 @@ pub enum JJCommand {
         dest: RebaseDestMode,
         flags: CommandFlags,
     },
+    BookmarkCreate {
+        name: String,
+        change_id: String,
+        flags: CommandFlags,
+    },
+    BookmarkSet {
+        name: String,
+        change_id: String,
+        flags: CommandFlags,
+    },
+    BookmarkDelete {
+        name: String,
+        flags: CommandFlags,
+    },
+    BookmarkForget {
+        name: String,
+        flags: CommandFlags,
+    },
+    BookmarkMove {
+        name: String,
+        target: String,
+        flags: CommandFlags,
+    },
+    BookmarkRename {
+        old_name: String,
+        new_name: String,
+        flags: CommandFlags,
+    },
     Undo {
         flags: CommandFlags,
     },
@@ -180,6 +208,95 @@ impl JJCommand {
                         args.push(t.clone());
                     }
                 }
+                args
+            }
+            JJCommand::BookmarkCreate {
+                name,
+                change_id,
+                flags,
+            } => {
+                let mut args = vec!["bookmark".to_string(), "create".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args.push("-r".to_string());
+                args.push(change_id.clone());
+                args.push(name.clone());
+                args
+            }
+            JJCommand::BookmarkSet {
+                name,
+                change_id,
+                flags,
+            } => {
+                let mut args = vec!["bookmark".to_string(), "set".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[
+                        (CommandFlags::ALLOW_BACKWARDS, "--allow-backwards"),
+                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
+                    ],
+                );
+                args.push("-r".to_string());
+                args.push(change_id.clone());
+                args.push(name.clone());
+                args
+            }
+            JJCommand::BookmarkDelete { name, flags } => {
+                let mut args = vec!["bookmark".to_string(), "delete".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args.push(name.clone());
+                args
+            }
+            JJCommand::BookmarkForget { name, flags } => {
+                let mut args = vec!["bookmark".to_string(), "forget".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args.push(name.clone());
+                args
+            }
+            JJCommand::BookmarkMove {
+                name,
+                target,
+                flags,
+            } => {
+                let mut args = vec!["bookmark".to_string(), "move".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[
+                        (CommandFlags::ALLOW_BACKWARDS, "--allow-backwards"),
+                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
+                    ],
+                );
+                args.push("--to".to_string());
+                args.push(target.clone());
+                args.push(name.clone());
+                args
+            }
+            JJCommand::BookmarkRename {
+                old_name,
+                new_name,
+                flags,
+            } => {
+                let mut args = vec!["bookmark".to_string(), "rename".to_string()];
+                push_flags(
+                    &mut args,
+                    *flags,
+                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
+                );
+                args.push(old_name.clone());
+                args.push(new_name.clone());
                 args
             }
             JJCommand::Undo { flags } => {

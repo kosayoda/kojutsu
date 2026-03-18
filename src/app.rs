@@ -49,6 +49,37 @@ pub enum AppMode {
         prompt: String,
         options: Vec<FollowUpOption>,
     },
+    /// Selecting an item from a list (e.g. picking a bookmark).
+    SelectFromList {
+        title: String,
+        items: Vec<String>,
+        selected: usize,
+        on_select: PendingSelection,
+    },
+}
+
+/// What to do after selecting an item from a list.
+pub enum PendingSelection {
+    /// Delete a bookmark on the selected commit.
+    BookmarkDelete {
+        change_id: String,
+        flags: CommandFlags,
+    },
+    /// Forget a bookmark on the selected commit.
+    BookmarkForget {
+        change_id: String,
+        flags: CommandFlags,
+    },
+    /// Move a bookmark to a target commit (enters TargetSelect after selection).
+    BookmarkMove {
+        change_id: String,
+        flags: CommandFlags,
+    },
+    /// Rename a bookmark (enters TextInput after selection).
+    BookmarkRename {
+        change_id: String,
+        flags: CommandFlags,
+    },
 }
 
 /// An option in a follow-up prompt (shown after target selection).
@@ -81,31 +112,61 @@ pub enum PendingCommand {
     },
     /// The text is a revset expression to evaluate.
     Revset,
+    /// Create a bookmark with the given name.
+    BookmarkCreate {
+        change_id: String,
+        flags: CommandFlags,
+    },
+    /// Set (create or update) a bookmark.
+    BookmarkSet {
+        change_id: String,
+        flags: CommandFlags,
+    },
+    /// Rename a bookmark (old name already selected, text is new name).
+    BookmarkRename {
+        old_name: String,
+        flags: CommandFlags,
+    },
 }
 
 impl PendingCommand {
     /// Convert to a `JJCommand` given the user's input text.
     ///
     /// Panics if called on `Revset` -- that variant is handled separately.
-    pub fn into_jj_command(self, message: String) -> JJCommand {
+    pub fn into_jj_command(self, text: String) -> JJCommand {
         match self {
             PendingCommand::Describe { change_id, flags } => JJCommand::Describe {
                 change_id,
-                message,
+                message: text,
                 flags,
             },
             PendingCommand::SquashWithMessage { builder, flags } => {
-                builder.build_with_message(message, flags)
+                builder.build_with_message(text, flags)
             }
             PendingCommand::Revset => {
                 unreachable!("Revset pending command should not be converted to JJCommand")
             }
+            PendingCommand::BookmarkCreate { change_id, flags } => JJCommand::BookmarkCreate {
+                name: text,
+                change_id,
+                flags,
+            },
+            PendingCommand::BookmarkSet { change_id, flags } => JJCommand::BookmarkSet {
+                name: text,
+                change_id,
+                flags,
+            },
+            PendingCommand::BookmarkRename { old_name, flags } => JJCommand::BookmarkRename {
+                old_name,
+                new_name: text,
+                flags,
+            },
         }
     }
 }
 
 /// What kind of two-commit target selection we're doing.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum TargetOperation {
     SquashInto,
     SquashOnto,
@@ -114,10 +175,11 @@ pub enum TargetOperation {
     RebaseRevision,
     RebaseSource,
     RebaseBranch,
+    BookmarkMove { bookmark_name: String },
 }
 
 impl TargetOperation {
-    pub fn label(self) -> &'static str {
+    pub fn label(&self) -> &'static str {
         match self {
             TargetOperation::SquashInto => "squash into",
             TargetOperation::SquashOnto => "squash onto",
@@ -126,6 +188,7 @@ impl TargetOperation {
             TargetOperation::RebaseRevision => "rebase revision",
             TargetOperation::RebaseSource => "rebase source",
             TargetOperation::RebaseBranch => "rebase branch",
+            TargetOperation::BookmarkMove { .. } => "move bookmark",
         }
     }
 
@@ -158,6 +221,18 @@ impl TargetOperation {
             }
             TargetOperation::RebaseBranch => {
                 rebase_follow_up(source, target, RebaseSourceMode::Branch, flags)
+            }
+            TargetOperation::BookmarkMove { bookmark_name } => {
+                // Bookmark move executes immediately -- no follow-up choice.
+                vec![FollowUpOption {
+                    key: ' ', // won't be shown; auto-executed below
+                    label: "move",
+                    action: FollowUpAction::Execute(JJCommand::BookmarkMove {
+                        name: bookmark_name.clone(),
+                        target,
+                        flags,
+                    }),
+                }]
             }
         }
     }
@@ -498,6 +573,17 @@ impl App {
         };
         let id = &self.entries[entry_idx].commit.change_id;
         Some(&id.display[..id.prefix_len.min(id.display.len())])
+    }
+
+    /// Get the bookmarks of the commit the cursor is on.
+    pub fn selected_bookmarks(&self) -> Option<&[String]> {
+        let entry_idx = match self.rows.get(self.cursor)? {
+            DisplayRow::CommitNode { entry_idx }
+            | DisplayRow::GraphLink { entry_idx, .. }
+            | DisplayRow::FileChange { entry_idx, .. }
+            | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,
+        };
+        Some(&self.entries[entry_idx].commit.bookmarks)
     }
 
     /// Get the description of the commit the cursor is on.
