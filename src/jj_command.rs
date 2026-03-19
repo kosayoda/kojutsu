@@ -587,7 +587,9 @@ impl JJCommand {
     pub fn is_interactive(&self) -> bool {
         match self {
             JJCommand::DescribeInEditor { .. } => true,
-            JJCommand::Squash { flags, .. } => flags.contains(CommandFlags::INTERACTIVE),
+            JJCommand::Squash { message, flags, .. } => {
+                flags.contains(CommandFlags::INTERACTIVE) || matches!(message, MessageMode::Default)
+            }
             JJCommand::Commit { message, flags } => {
                 message.is_none() || flags.contains(CommandFlags::INTERACTIVE)
             }
@@ -636,6 +638,9 @@ impl JJCommand {
             .arg("-R")
             .arg(repo_path)
             .arg("--color=always")
+            // Safety: use a no-op editor so that if jj unexpectedly opens
+            // an editor in captured mode, it won't hang waiting for input.
+            .env("JJ_EDITOR", ":")
             .output();
 
         match result {

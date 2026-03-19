@@ -574,9 +574,9 @@ impl App {
                 }
             }
 
-            // Graph lines 0 and 1 are consumed by the 2-line CommitNode
-            // ListItem. Remaining lines are rendered as separate GraphLink rows.
-            for line_idx in 2..gl.lines.len() {
+            // Extra graph lines (link/pad/term) are rendered as separate
+            // GraphLink rows between commits.
+            for line_idx in 0..gl.extra.len() {
                 self.rows.push(DisplayRow::GraphLink {
                     entry_idx,
                     line_idx,

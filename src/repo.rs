@@ -7,7 +7,7 @@ use jj_lib::backend::CommitId;
 use jj_lib::commit::Commit;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
 use jj_lib::fileset::FilesetAliasesMap;
-use jj_lib::graph::{GraphEdgeType, GraphNode};
+use jj_lib::graph::{GraphEdgeType, GraphNode, TopoGroupedGraphIterator};
 use jj_lib::id_prefix::IdPrefixContext;
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::WorkspaceNameBuf;
@@ -229,6 +229,29 @@ impl JjRepo {
         let immutable_revset = self.evaluate_immutable(&context, &symbol_resolver);
         let is_immutable = immutable_revset.as_ref().map(|r| r.containing_fn());
 
+        // Collect the set of commit IDs in the log revset so we can safely
+        // filter the prioritize revset (prioritize_branch panics if given an
+        // ID that doesn't exist in the input iterator).
+        let log_commit_ids: std::collections::HashSet<CommitId> = revset.iter().flatten().collect();
+
+        // Wrap the graph iterator with TopoGroupedGraphIterator for proper
+        // branch grouping, then prioritize branches matching the config
+        // (default: present(@)) so they appear on the leftmost column.
+        let graph_iter = revset.iter_graph();
+        let mut topo_iter: TopoGroupedGraphIterator<CommitId, CommitId, _, _> =
+            TopoGroupedGraphIterator::new(graph_iter, |id| id);
+
+        // Evaluate the log-graph-prioritize revset and call prioritize_branch()
+        // only for commits that are actually in the log revset.
+        let prioritize_revset = self.evaluate_prioritize(&context, &symbol_resolver);
+        if let Some(ref prio) = prioritize_revset {
+            for commit_id in prio.iter().flatten() {
+                if log_commit_ids.contains(&commit_id) {
+                    topo_iter.prioritize_branch(commit_id);
+                }
+            }
+        }
+
         // Set up ID prefix index for shortest unique prefixes
         let id_prefix_context = IdPrefixContext::default();
         let id_prefix_index = id_prefix_context
@@ -237,7 +260,7 @@ impl JjRepo {
 
         // Iterate graph nodes
         let mut entries = Vec::new();
-        for node_result in revset.iter_graph() {
+        for node_result in topo_iter {
             let (commit_id, edges): GraphNode<CommitId> =
                 node_result.wrap_err("error iterating revset graph")?;
             let commit = repo
@@ -270,6 +293,31 @@ impl JjRepo {
         }
 
         Ok(entries)
+    }
+
+    /// Return the `revsets.log-graph-prioritize` revset from config, falling
+    /// back to `"present(@)"`.
+    fn prioritize_revset_str(&self) -> String {
+        self.settings
+            .config()
+            .get::<String>("revsets.log-graph-prioritize")
+            .unwrap_or_else(|_| "present(@)".to_string())
+    }
+
+    /// Evaluate the graph-prioritize revset. Returns `None` if it can't be
+    /// evaluated.
+    fn evaluate_prioritize(
+        &self,
+        context: &RevsetParseContext<'_>,
+        symbol_resolver: &SymbolResolver,
+    ) -> Option<Box<dyn jj_lib::revset::Revset + '_>> {
+        let repo = self.repo.as_ref();
+        let mut diagnostics = RevsetDiagnostics::new();
+        let revset_str = self.prioritize_revset_str();
+
+        let parsed = jj_lib::revset::parse(&mut diagnostics, &revset_str, context).ok()?;
+        let resolved = parsed.resolve_user_expression(repo, symbol_resolver).ok()?;
+        resolved.evaluate(repo).ok()
     }
 
     /// Evaluate the `immutable()` revset. Returns `None` if it can't be

@@ -2,18 +2,30 @@ use renderdag::{Ancestor, GraphRowRenderer, Renderer};
 
 use crate::dag::{DagEntry, EdgeKind};
 
+/// Sentinel characters used to identify line roles in the renderer output.
+/// We pass these as a 2-line "message" to the renderer, then identify which
+/// output line is the node line vs continuation line by looking for the sentinel.
+const NODE_SENTINEL: char = '\x01';
+const CONT_SENTINEL: char = '\x02';
+
 /// Pre-rendered graph lines for a single commit node.
 ///
-/// The first line is the node line (contains the glyph), subsequent lines
-/// are link/pad lines connecting to the next node.
+/// Each field contains the graph prefix (glyphs + padding) already formatted
+/// by the renderer to the correct column width.
 pub struct GraphLines {
-    pub lines: Vec<String>,
+    /// Graph prefix for the node line (contains the glyph character).
+    pub node: String,
+    /// Graph prefix for the continuation/description line.
+    pub cont: String,
+    /// Additional graph-only lines (link, pad, term lines between commits).
+    pub extra: Vec<String>,
 }
 
 /// Render the DAG graph column for all entries using `BoxDrawingRenderer`.
 ///
 /// Returns one [`GraphLines`] per entry, in the same order as the input.
-/// Each `GraphLines` contains the multi-line graph prefix for that commit.
+/// Each `GraphLines` contains properly-padded graph prefixes that the UI
+/// can directly concatenate with styled content.
 pub fn render(entries: &[DagEntry]) -> Vec<GraphLines> {
     let mut renderer = GraphRowRenderer::new()
         .output()
@@ -35,30 +47,37 @@ pub fn render(entries: &[DagEntry]) -> Vec<GraphLines> {
 
             let glyph = entry.commit.glyph();
 
-            // Pass the full commit ID as the node identifier (used by the
-            // renderer to track column positions) and an empty message so the
-            // output contains only graph characters.
+            // Pass a 2-line message with different sentinel characters so we
+            // can identify which output line is the node line vs continuation
+            // line. The renderer may insert extra pad/link/term lines and
+            // prepend an extra_pad_line from the previous entry, so we can't
+            // rely on positional indexing.
+            let message = format!("{NODE_SENTINEL}\n{CONT_SENTINEL}");
             let row = renderer.next_row(
                 entry.commit.graph_id.clone(),
                 parents,
                 glyph.to_string(),
-                String::new(),
+                message,
             );
 
-            // The renderer returns a multi-line string. Split into individual
-            // lines, stripping trailing whitespace.
-            let lines: Vec<String> = row
-                .lines()
-                .map(|l: &str| l.trim_end().to_string())
-                .collect();
+            let mut node = String::new();
+            let mut cont = String::new();
+            let mut extra = Vec::new();
 
-            GraphLines {
-                lines: if lines.is_empty() {
-                    vec![String::new()]
+            for line in row.lines() {
+                if let Some(idx) = line.find(NODE_SENTINEL) {
+                    // Node line: everything before the sentinel is the graph prefix
+                    node = line[..idx].to_string();
+                } else if let Some(idx) = line.find(CONT_SENTINEL) {
+                    // Continuation line: everything before the sentinel
+                    cont = line[..idx].to_string();
                 } else {
-                    lines
-                },
+                    // Pure graph line (link, pad, term, extra_pad)
+                    extra.push(line.trim_end().to_string());
+                }
             }
+
+            GraphLines { node, cont, extra }
         })
         .collect()
 }

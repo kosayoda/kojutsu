@@ -135,28 +135,21 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
             DisplayRow::CommitNode { entry_idx } => {
                 let entry = &app.entries[*entry_idx];
                 let gl = &app.graph[*entry_idx];
-                let graph_node = gl.lines.first().map(|s| s.as_str()).unwrap_or("");
-                let graph_cont = gl.lines.get(1).map(|s| s.as_str()).unwrap_or("│");
-                let is_unfolded = app.unfolded[*entry_idx];
+                let graph_node = gl.node.as_str();
+                let graph_cont = gl.cont.as_str();
                 let is_source = target_select_source.is_some_and(|src| {
                     let id = &entry.commit.change_id;
                     id.display.starts_with(src)
                         || src.starts_with(&id.display[..id.prefix_len.min(id.display.len())])
                 });
-                render_commit_item(
-                    graph_node,
-                    graph_cont,
-                    &entry.commit,
-                    is_unfolded,
-                    is_source,
-                )
+                render_commit_item(graph_node, graph_cont, &entry.commit, is_source)
             }
             DisplayRow::GraphLink {
                 entry_idx,
                 line_idx,
             } => {
                 let graph_str = app.graph[*entry_idx]
-                    .lines
+                    .extra
                     .get(*line_idx)
                     .map(|s| s.as_str())
                     .unwrap_or("");
@@ -551,7 +544,6 @@ fn render_commit_item<'a>(
     graph_node: &'a str,
     graph_cont: &str,
     c: &'a CommitInfo,
-    is_unfolded: bool,
     is_source: bool,
 ) -> ListItem<'a> {
     let graph_color = if is_source {
@@ -575,7 +567,8 @@ fn render_commit_item<'a>(
         line1.push(Span::styled("► ", Style::default().fg(Color::Yellow)));
     }
 
-    // Graph glyph
+    // Graph prefix (properly padded by the renderer).
+    // Split into glyph characters vs connector characters for coloring.
     for (is_glyph, group) in graph_node
         .char_indices()
         .chunk_by(|&(_, c)| crate::dag::Glyph::try_from(c).is_ok())
@@ -594,14 +587,6 @@ fn render_commit_item<'a>(
             line1.push(Span::styled(span, Style::default().fg(Color::DarkGray)));
         }
     }
-    line1.push("  ".into());
-
-    // Fold indicator
-    let fold_char = if is_unfolded { "▾ " } else { "▸ " };
-    line1.push(Span::styled(
-        fold_char,
-        Style::default().fg(Color::DarkGray),
-    ));
 
     // Change ID (prefix bright, rest dimmed)
     push_short_id(&mut line1, &c.change_id, Color::Magenta);
@@ -636,12 +621,12 @@ fn render_commit_item<'a>(
     line1.push(Span::raw(" "));
     push_short_id(&mut line1, &c.commit_id, Color::Blue);
 
-    // --- Line 2: graph_cont  [empty] description ---
+    // --- Line 2: graph_cont  description ---
     let mut line2: Vec<Span<'a>> = Vec::new();
 
-    // Graph continuation
+    // Graph continuation prefix (properly padded by the renderer).
     line2.push(Span::styled(
-        format!("{graph_cont}  "),
+        graph_cont.to_string(),
         Style::default().fg(Color::DarkGray),
     ));
 
