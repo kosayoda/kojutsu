@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -10,7 +11,7 @@ use jj_lib::fileset::FilesetAliasesMap;
 use jj_lib::graph::{GraphEdgeType, GraphNode, TopoGroupedGraphIterator};
 use jj_lib::id_prefix::IdPrefixContext;
 use jj_lib::object_id::ObjectId;
-use jj_lib::ref_name::WorkspaceNameBuf;
+use jj_lib::ref_name::{RefName, WorkspaceNameBuf};
 use jj_lib::repo::{ReadonlyRepo, Repo, StoreFactories};
 use jj_lib::repo_path::RepoPathUiConverter;
 use jj_lib::revset::{
@@ -32,8 +33,8 @@ use jj_lib::merge::Diff;
 use jj_lib::repo_path::RepoPathBuf;
 
 use crate::dag::{
-    AuthorInfo, CommitInfo, DagEntry, DiffLine, DiffLineKind, Edge, EdgeKind, FileChange,
-    FileStatus, ShortId,
+    AuthorInfo, BookmarkInfo, CommitInfo, DagEntry, DiffLine, DiffLineKind, Edge, EdgeKind,
+    FileChange, FileStatus, ShortId,
 };
 
 /// Number of hex characters to show for change/commit IDs.
@@ -252,11 +253,32 @@ impl JjRepo {
             }
         }
 
-        // Set up ID prefix index for shortest unique prefixes
-        let id_prefix_context = IdPrefixContext::default();
+        // Set up ID prefix index for shortest unique prefixes.
+        // Scope disambiguation to the log revset so prefixes only need to be
+        // unique among visible commits (matching jj-cli behavior).
+        let id_prefix_context = {
+            let mut diag = RevsetDiagnostics::new();
+            if let Ok(expression) = jj_lib::revset::parse(&mut diag, revset_str, &context) {
+                IdPrefixContext::default().disambiguate_within(expression)
+            } else {
+                IdPrefixContext::default()
+            }
+        };
         let id_prefix_index = id_prefix_context
             .populate(repo)
             .wrap_err("failed to populate ID prefix index")?;
+
+        // Pre-build the set of local bookmarks that differ from their tracked
+        // remote counterpart (O(M) once, then O(1) per bookmark lookup).
+        let dirty_bookmarks: HashSet<&RefName> = repo
+            .view()
+            .all_remote_bookmarks()
+            .filter(|(symbol, remote_ref)| {
+                remote_ref.is_tracked()
+                    && *repo.view().get_local_bookmark(symbol.name) != remote_ref.target
+            })
+            .map(|(symbol, _)| symbol.name)
+            .collect();
 
         // Iterate graph nodes
         let mut entries = Vec::new();
@@ -273,7 +295,8 @@ impl JjRepo {
                 .and_then(|check| check(&commit_id).ok())
                 .unwrap_or(false);
 
-            let info = self.extract_commit_info(&commit, &id_prefix_index, immutable)?;
+            let info =
+                self.extract_commit_info(&commit, &id_prefix_index, immutable, &dirty_bookmarks)?;
             let dag_edges = edges
                 .into_iter()
                 .map(|e| Edge {
@@ -476,6 +499,7 @@ impl JjRepo {
         commit: &Commit,
         id_prefix_index: &jj_lib::id_prefix::IdPrefixIndex<'_>,
         is_immutable: bool,
+        dirty_bookmarks: &HashSet<&RefName>,
     ) -> Result<CommitInfo> {
         let repo = self.repo.as_ref();
 
@@ -537,12 +561,22 @@ impl JjRepo {
         // Conflicts
         let has_conflict = commit.has_conflict();
 
-        // Bookmarks
-        let bookmarks: Vec<String> = repo
+        // Bookmarks (with dirty/tracking status)
+        let bookmarks: Vec<BookmarkInfo> = repo
             .view()
             .local_bookmarks_for_commit(commit.id())
-            .map(|(name, _)| name.as_str().to_string())
+            .map(|(name, _)| BookmarkInfo {
+                name: name.as_str().to_string(),
+                is_dirty: dirty_bookmarks.contains(name),
+            })
             .collect();
+
+        // Divergence: multiple visible commits share the same change ID
+        let is_divergent = repo
+            .resolve_change_id(commit.change_id())
+            .ok()
+            .flatten()
+            .is_some_and(|targets| targets.is_divergent());
 
         // Full commit ID hex for graph rendering (stable key).
         let graph_id = commit.id().hex();
@@ -557,6 +591,7 @@ impl JjRepo {
             is_empty,
             has_conflict,
             is_immutable,
+            is_divergent,
             bookmarks,
         })
     }

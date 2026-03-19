@@ -606,7 +606,7 @@ impl App {
     }
 
     /// Get the bookmarks of the commit the cursor is on.
-    pub fn selected_bookmarks(&self) -> Option<&[String]> {
+    pub fn selected_bookmarks(&self) -> Option<&[crate::dag::BookmarkInfo]> {
         let entry_idx = match self.rows.get(self.cursor)? {
             DisplayRow::CommitNode { entry_idx }
             | DisplayRow::GraphLink { entry_idx, .. }

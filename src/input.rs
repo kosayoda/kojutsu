@@ -609,7 +609,7 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
         PendingSelectionKind::Rename => "rename bookmark",
     };
 
-    let items: Vec<String> = bookmarks.to_vec();
+    let items: Vec<String> = bookmarks.iter().map(|b| b.name.clone()).collect();
 
     // Skip selection if only one bookmark.
     if items.len() == 1 {

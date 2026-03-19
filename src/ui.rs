@@ -588,8 +588,19 @@ fn render_commit_item<'a>(
         }
     }
 
-    // Change ID (prefix bright, rest dimmed)
-    push_short_id(&mut line1, &c.change_id, Color::Magenta);
+    // Change ID (prefix bright, rest dimmed; red if divergent)
+    let change_color = if c.is_divergent {
+        Color::Red
+    } else {
+        Color::Magenta
+    };
+    push_short_id(&mut line1, &c.change_id, change_color);
+    if c.is_divergent {
+        line1.push(Span::styled(
+            "??",
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+        ));
+    }
     line1.push(Span::raw(" "));
 
     // Author
@@ -606,11 +617,16 @@ fn render_commit_item<'a>(
         Style::default().fg(Color::DarkGray),
     ));
 
-    // Bookmarks
+    // Bookmarks (with * suffix if dirty)
     for bm in &c.bookmarks {
         line1.push(Span::raw(" "));
+        let display = if bm.is_dirty {
+            format!("{}*", bm.name)
+        } else {
+            bm.name.clone()
+        };
         line1.push(Span::styled(
-            bm.as_str(),
+            display,
             Style::default()
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),

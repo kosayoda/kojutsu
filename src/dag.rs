@@ -32,8 +32,18 @@ pub struct CommitInfo {
     pub has_conflict: bool,
     /// Whether this commit is immutable (ancestor of immutable_heads).
     pub is_immutable: bool,
-    /// Bookmark names pointing at this commit.
-    pub bookmarks: Vec<String>,
+    /// Whether this commit is divergent (multiple visible commits share the same change ID).
+    pub is_divergent: bool,
+    /// Bookmarks pointing at this commit.
+    pub bookmarks: Vec<BookmarkInfo>,
+}
+
+/// A local bookmark with its tracking status.
+pub struct BookmarkInfo {
+    /// Bookmark name.
+    pub name: String,
+    /// Whether the local bookmark differs from its tracked remote counterpart.
+    pub is_dirty: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
