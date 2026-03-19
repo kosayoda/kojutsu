@@ -1,11 +1,11 @@
 use itertools::Itertools;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table};
 use ratatui::Frame;
 
-use crate::app::{App, AppMode, DisplayRow};
+use crate::app::{App, AppMode, DisplayRow, GLOBAL_TOGGLES};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, ShortId};
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, Keymap, KeymapNode};
 
@@ -27,15 +27,27 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
         2
     };
 
-    let [header_area, list_area] =
-        Layout::vertical([Constraint::Length(header_height), Constraint::Fill(1)])
-            .areas(frame.area());
+    let [header_area, main_area, status_area] = Layout::vertical([
+        Constraint::Length(header_height),
+        Constraint::Fill(1),
+        Constraint::Length(2),
+    ])
+    .areas(frame.area());
 
     app.last_header_height = header_height;
     draw_header(frame, header_area, app);
-    draw_list(frame, list_area, app);
+    draw_list(frame, main_area, app);
+    draw_status_bar(frame, status_area, app);
 
-    // Overlays render on top of the list area (bottom-aligned).
+    // Overlays render on top of the main + status area (bottom-aligned).
+    // This means overlays cover the status bar too.
+    let overlay_base = Rect {
+        x: main_area.x,
+        y: main_area.y,
+        width: main_area.width,
+        height: main_area.height + status_area.height,
+    };
+
     match &app.mode {
         AppMode::Normal => {}
         AppMode::Submenu {
@@ -48,7 +60,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
                 .any(|(_, n)| matches!(n, KeymapNode::Toggle { .. }));
             // +1 for top border.
             let height = if has_toggles { 3 } else { 2 };
-            let overlay = overlay_area(list_area, height);
+            let overlay = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_submenu(frame, overlay, label, children, *flags);
         }
@@ -58,8 +70,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             success,
         } => {
             let output_lines = output.iter().filter(|&&b| b == b'\n').count().max(1);
-            let height = (output_lines as u16 + 3).min(list_area.height / 2).max(3);
-            let overlay = overlay_area(list_area, height);
+            let height = (output_lines as u16 + 3)
+                .min(overlay_base.height / 2)
+                .max(3);
+            let overlay = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_command_output(frame, overlay, command, output, *success);
         }
@@ -75,23 +89,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
                 .sum();
             let max_col = left_h.max(right_h);
             // +2 for border + breathing room.
-            let height = (max_col as u16 + 2).min(list_area.height * 7 / 10).max(4);
-            let overlay = overlay_area(list_area, height);
+            let height = (max_col as u16 + 2)
+                .min(overlay_base.height * 7 / 10)
+                .max(4);
+            let overlay = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_help(frame, overlay, &left, &right);
         }
         AppMode::TextInput { prompt, input, .. } => {
-            let overlay = overlay_area(list_area, 2);
+            let overlay = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_text_input(frame, overlay, prompt, input);
         }
         AppMode::TargetSelect { prompt, source, .. } => {
-            let overlay = overlay_area(list_area, 2);
+            let overlay = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_target_select(frame, overlay, prompt, source);
         }
         AppMode::FollowUp { prompt, options } => {
-            let overlay = overlay_area(list_area, 2);
+            let overlay = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_follow_up(frame, overlay, prompt, options);
         }
@@ -102,8 +118,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             ..
         } => {
             // +2 for top border + bottom padding.
-            let height = (items.len() as u16 + 2).min(list_area.height / 2).max(3);
-            let overlay = overlay_area(list_area, height);
+            let height = (items.len() as u16 + 2).min(overlay_base.height / 2).max(3);
+            let overlay = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_select_list(frame, overlay, title, items, *selected);
         }
@@ -144,6 +160,48 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
         ]
     };
     frame.render_widget(Paragraph::new(header), area);
+}
+
+fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+    // Build toggle indicators for the title bar.
+    let mut toggle_spans: Vec<Span> = Vec::new();
+    for toggle in GLOBAL_TOGGLES {
+        let active = app.toggles.contains(toggle.flag);
+        let style = if active {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        toggle_spans.push(Span::styled(
+            format!(" [{}] {} ", toggle.hint, toggle.label),
+            style,
+        ));
+    }
+
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray))
+        // Empty title as left padding for Status
+        .title("")
+        .title(" Status ")
+        .title(Line::from(Span::styled(" [?] Help ", Style::default().fg(Color::DarkGray))))
+        .title_style(Style::default().fg(Color::White))
+        .title_alignment(Alignment::Left)
+        .title(Line::from(toggle_spans));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Show last command in the status bar content area.
+    if let Some(cmd) = &app.last_command {
+        let line = Line::from(Span::styled(
+            cmd.as_str(),
+            Style::default().fg(Color::DarkGray),
+        ));
+        frame.render_widget(Paragraph::new(line), inner);
+    }
 }
 
 fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {

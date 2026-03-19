@@ -1,6 +1,8 @@
 use keymap_parser::{Key, Modifier, Node};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::app::GLOBAL_TOGGLES;
+
 // ---------------------------------------------------------------------------
 // CommandFlags -- toggleable flags that modify command behavior.
 // ---------------------------------------------------------------------------
@@ -9,13 +11,15 @@ bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct CommandFlags: u16 {
         const IGNORE_IMMUTABLE    = 1 << 0;
-        const NO_EDIT             = 1 << 1;
-        const RETAIN_BOOKMARKS    = 1 << 2;
-        const RESTORE_DESCENDANTS = 1 << 3;
-        const INTERACTIVE         = 1 << 4;
-        const KEEP_EMPTIED        = 1 << 5;
-        const ALLOW_BACKWARDS     = 1 << 6;
-        const DRY_RUN             = 1 << 7;
+        const IGNORE_WORKING_COPY = 1 << 1;
+        const DEBUG               = 1 << 2;
+        const NO_EDIT             = 1 << 3;
+        const RETAIN_BOOKMARKS    = 1 << 4;
+        const RESTORE_DESCENDANTS = 1 << 5;
+        const INTERACTIVE         = 1 << 6;
+        const KEEP_EMPTIED        = 1 << 7;
+        const ALLOW_BACKWARDS     = 1 << 8;
+        const DRY_RUN             = 1 << 9;
     }
 }
 
@@ -79,6 +83,9 @@ pub enum AppAction {
     GitImport,
     Duplicate,
     DuplicateOnto,
+    ToggleIgnoreImmutable,
+    ToggleIgnoreWorkingCopy,
+    ToggleDebug,
 }
 
 // ---------------------------------------------------------------------------
@@ -179,6 +186,18 @@ impl Default for Keymap {
             bind("$", AppAction::MoveToBottom, "go to bottom"),
             // Fold
             bind("tab", AppAction::ToggleFold, "toggle fold"),
+            // Global toggles
+            bind(
+                "shift-i",
+                AppAction::ToggleIgnoreImmutable,
+                "toggle ignore-immutable",
+            ),
+            bind(
+                "shift-w",
+                AppAction::ToggleIgnoreWorkingCopy,
+                "toggle ignore-working-copy",
+            ),
+            bind("shift-d", AppAction::ToggleDebug, "toggle debug"),
             // Refresh
             bind("ctrl-r", AppAction::Refresh, "refresh"),
             // Absorb submenu
@@ -186,14 +205,7 @@ impl Default for Keymap {
                 "a",
                 "absorb",
                 HelpGroup::Commands,
-                vec![
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
-                    bind("a", AppAction::Absorb, "absorb"),
-                ],
+                vec![bind("a", AppAction::Absorb, "absorb")],
             ),
             // Bookmark submenu
             prefix(
@@ -202,11 +214,6 @@ impl Default for Keymap {
                 HelpGroup::Commands,
                 vec![
                     toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
                     bind("c", AppAction::BookmarkCreate, "create"),
                     bind("s", AppAction::BookmarkSet, "set"),
                     bind("d", AppAction::BookmarkDelete, "delete"),
@@ -225,11 +232,6 @@ impl Default for Keymap {
                 HelpGroup::Commands,
                 vec![
                     toggle("i", CommandFlags::INTERACTIVE, "interactive"),
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
                     bind("c", AppAction::Commit, "commit (in $EDITOR)"),
                     bind("m", AppAction::CommitWithMessage, "with message"),
                 ],
@@ -240,11 +242,6 @@ impl Default for Keymap {
                 "describe",
                 HelpGroup::Commands,
                 vec![
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
                     bind("d", AppAction::Describe, "describe"),
                     bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR"),
                 ],
@@ -254,14 +251,7 @@ impl Default for Keymap {
                 "e",
                 "edit",
                 HelpGroup::Commands,
-                vec![
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
-                    bind("e", AppAction::Edit, "edit"),
-                ],
+                vec![bind("e", AppAction::Edit, "edit")],
             ),
             // Git submenu
             prefix(
@@ -290,11 +280,6 @@ impl Default for Keymap {
                 HelpGroup::Commands,
                 vec![
                     toggle("e", CommandFlags::NO_EDIT, "no-edit"),
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
                     bind("n", AppAction::New, "new"),
                     bind("a", AppAction::NewInsertAfter, "insert after"),
                     bind("b", AppAction::NewInsertBefore, "insert before"),
@@ -306,11 +291,6 @@ impl Default for Keymap {
                 "rebase",
                 HelpGroup::Commands,
                 vec![
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
                     bind("r", AppAction::RebaseRevision, "revision..."),
                     bind("s", AppAction::RebaseSource, "source..."),
                     bind("b", AppAction::RebaseBranch, "branch..."),
@@ -324,11 +304,6 @@ impl Default for Keymap {
                 vec![
                     toggle("i", CommandFlags::INTERACTIVE, "interactive"),
                     toggle("k", CommandFlags::KEEP_EMPTIED, "keep emptied"),
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
                     bind("s", AppAction::Squash, "into parent"),
                     bind("t", AppAction::SquashInto, "into..."),
                     bind("o", AppAction::SquashOnto, "onto..."),
@@ -342,11 +317,6 @@ impl Default for Keymap {
                 "undo/redo",
                 HelpGroup::Commands,
                 vec![
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
                     bind("u", AppAction::Undo, "undo"),
                     bind("r", AppAction::Redo, "redo"),
                 ],
@@ -363,11 +333,6 @@ impl Default for Keymap {
                         CommandFlags::RESTORE_DESCENDANTS,
                         "restore descendants",
                     ),
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
                     bind("x", AppAction::Abandon, "abandon"),
                 ],
             ),
@@ -377,11 +342,6 @@ impl Default for Keymap {
                 "duplicate",
                 HelpGroup::Commands,
                 vec![
-                    toggle(
-                        "shift-i",
-                        CommandFlags::IGNORE_IMMUTABLE,
-                        "ignore immutable",
-                    ),
                     bind("y", AppAction::Duplicate, "duplicate"),
                     bind("t", AppAction::DuplicateOnto, "onto..."),
                 ],
@@ -590,8 +550,26 @@ fn classify_action(action: AppAction) -> HelpGroup {
         AppAction::Quit
         | AppAction::ShowHelp
         | AppAction::EditRevset
-        | AppAction::EditRevsetInEditor => HelpGroup::General,
+        | AppAction::EditRevsetInEditor
+        | AppAction::ToggleIgnoreImmutable
+        | AppAction::ToggleIgnoreWorkingCopy
+        | AppAction::ToggleDebug => HelpGroup::General,
     }
+}
+
+/// Map toggle actions to their hint character from `GLOBAL_TOGGLES`.
+/// Returns `Some("I")` for `ToggleIgnoreImmutable`, etc.
+fn toggle_hint(action: AppAction) -> Option<&'static str> {
+    let flag = match action {
+        AppAction::ToggleIgnoreImmutable => CommandFlags::IGNORE_IMMUTABLE,
+        AppAction::ToggleIgnoreWorkingCopy => CommandFlags::IGNORE_WORKING_COPY,
+        AppAction::ToggleDebug => CommandFlags::DEBUG,
+        _ => return None,
+    };
+    GLOBAL_TOGGLES
+        .iter()
+        .find(|t| t.flag == flag)
+        .map(|t| t.hint)
 }
 
 /// Generate grouped help entries from the keymap trie.
@@ -605,12 +583,15 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
     let mut prefix_entries: Vec<HelpEntry> = Vec::new();
 
     for (node, km_node) in &keymap.root {
-        let key_str = display_key(node);
         match km_node {
             KeymapNode::Action {
                 action,
                 description,
             } => {
+                // Use the hint character for global toggle actions (e.g., "I" instead of "shift-i").
+                let key_str = toggle_hint(*action)
+                    .map(|h| h.to_string())
+                    .unwrap_or_else(|| display_key(node));
                 if let Some(existing) = action_keys.iter_mut().find(|(a, _, _)| a == action) {
                     existing.1.push(key_str);
                 } else {
@@ -618,8 +599,9 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
                 }
             }
             KeymapNode::Prefix { label, group, .. } => {
+                let key_str = display_key(node);
                 prefix_entries.push(HelpEntry {
-                    keys: format!("{key_str} ..."),
+                    keys: format!("{key_str} …"),
                     description: label.to_string(),
                     group: *group,
                 });

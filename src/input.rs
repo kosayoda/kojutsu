@@ -119,6 +119,9 @@ fn handle_submenu_key(
 }
 
 fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: CommandFlags) -> Action {
+    // Merge global toggles into the command flags.
+    let flags = flags | app.toggles;
+
     match action {
         AppAction::Quit => Action::Quit,
         AppAction::MoveDown => {
@@ -159,6 +162,18 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         }
         AppAction::ToggleFold => {
             app.toggle_fold(jj);
+            Action::None
+        }
+        AppAction::ToggleIgnoreImmutable => {
+            app.toggles ^= CommandFlags::IGNORE_IMMUTABLE;
+            Action::None
+        }
+        AppAction::ToggleIgnoreWorkingCopy => {
+            app.toggles ^= CommandFlags::IGNORE_WORKING_COPY;
+            Action::None
+        }
+        AppAction::ToggleDebug => {
+            app.toggles ^= CommandFlags::DEBUG;
             Action::None
         }
         AppAction::Refresh => Action::Refresh,

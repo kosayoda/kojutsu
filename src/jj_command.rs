@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use crate::app::{MessageMode, RebaseDestMode, RebaseSourceMode, SquashTarget};
+use crate::app::{MessageMode, RebaseDestMode, RebaseSourceMode, SquashTarget, GLOBAL_TOGGLES};
 use crate::keymap::CommandFlags;
 
 /// A typesafe representation of a jj CLI command.
@@ -137,64 +137,75 @@ pub struct JJCommandResult {
 }
 
 impl JJCommand {
+    /// Extract the `CommandFlags` from any variant.
+    fn flags(&self) -> CommandFlags {
+        match self {
+            JJCommand::Abandon { flags, .. }
+            | JJCommand::Describe { flags, .. }
+            | JJCommand::DescribeInEditor { flags, .. }
+            | JJCommand::Edit { flags, .. }
+            | JJCommand::New { flags, .. }
+            | JJCommand::Rebase { flags, .. }
+            | JJCommand::BookmarkCreate { flags, .. }
+            | JJCommand::BookmarkSet { flags, .. }
+            | JJCommand::BookmarkDelete { flags, .. }
+            | JJCommand::BookmarkForget { flags, .. }
+            | JJCommand::BookmarkMove { flags, .. }
+            | JJCommand::BookmarkRename { flags, .. }
+            | JJCommand::BookmarkAdvance { flags, .. }
+            | JJCommand::BookmarkTrack { flags, .. }
+            | JJCommand::BookmarkUntrack { flags, .. }
+            | JJCommand::Undo { flags, .. }
+            | JJCommand::Redo { flags, .. }
+            | JJCommand::GitFetch { flags, .. }
+            | JJCommand::GitPush { flags, .. }
+            | JJCommand::GitPushChange { flags, .. }
+            | JJCommand::GitExport { flags, .. }
+            | JJCommand::GitImport { flags, .. }
+            | JJCommand::Absorb { flags, .. }
+            | JJCommand::Commit { flags, .. }
+            | JJCommand::Duplicate { flags, .. }
+            | JJCommand::Squash { flags, .. } => *flags,
+        }
+    }
+
     /// Build the CLI arguments for `jj`.
     pub fn args(&self) -> Vec<String> {
-        match self {
-            JJCommand::Abandon { change_id, flags } => {
+        let flags = self.flags();
+        let mut args = match self {
+            JJCommand::Abandon { change_id, .. } => {
                 let mut args = vec!["abandon".to_string()];
                 push_flags(
                     &mut args,
-                    *flags,
+                    flags,
                     &[
                         (CommandFlags::RETAIN_BOOKMARKS, "--retain-bookmarks"),
                         (CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
-                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
                     ],
                 );
                 args.push(change_id.clone());
                 args
             }
             JJCommand::Describe {
-                change_id,
-                message,
-                flags,
+                change_id, message, ..
             } => {
                 let mut args = vec!["describe".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
                 args.push("-m".to_string());
                 args.push(message.clone());
                 args.push(change_id.clone());
                 args
             }
-            JJCommand::DescribeInEditor { change_id, flags } => {
-                let mut args = vec!["describe".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args.push(change_id.clone());
-                args
+            JJCommand::DescribeInEditor { change_id, .. } => {
+                vec!["describe".to_string(), change_id.clone()]
             }
-            JJCommand::Edit { change_id, flags } => {
-                let mut args = vec!["edit".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args.push(change_id.clone());
-                args
+            JJCommand::Edit { change_id, .. } => {
+                vec!["edit".to_string(), change_id.clone()]
             }
             JJCommand::New {
                 change_id,
                 insert_after,
                 insert_before,
-                flags,
+                ..
             } => {
                 let mut args = vec!["new".to_string()];
                 if *insert_after {
@@ -204,42 +215,22 @@ impl JJCommand {
                     args.push("--insert-before".to_string());
                 }
                 args.push(change_id.clone());
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[
-                        (CommandFlags::NO_EDIT, "--no-edit"),
-                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
-                    ],
-                );
+                push_flags(&mut args, flags, &[(CommandFlags::NO_EDIT, "--no-edit")]);
                 args
             }
             JJCommand::Rebase {
                 change_id,
                 source_mode,
                 dest,
-                flags,
+                ..
             } => {
                 let mut args = vec!["rebase".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                // Source mode.
                 match source_mode {
-                    RebaseSourceMode::Revision => {
-                        args.push("-r".to_string());
-                    }
-                    RebaseSourceMode::Source => {
-                        args.push("-s".to_string());
-                    }
-                    RebaseSourceMode::Branch => {
-                        args.push("-b".to_string());
-                    }
+                    RebaseSourceMode::Revision => args.push("-r".to_string()),
+                    RebaseSourceMode::Source => args.push("-s".to_string()),
+                    RebaseSourceMode::Branch => args.push("-b".to_string()),
                 }
                 args.push(change_id.clone());
-                // Destination mode.
                 match dest {
                     RebaseDestMode::Onto(t) => {
                         args.push("-d".to_string());
@@ -257,73 +248,42 @@ impl JJCommand {
                 args
             }
             JJCommand::BookmarkCreate {
-                name,
-                change_id,
-                flags,
+                name, change_id, ..
             } => {
-                let mut args = vec!["bookmark".to_string(), "create".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args.push("-r".to_string());
-                args.push(change_id.clone());
-                args.push(name.clone());
-                args
+                vec![
+                    "bookmark".to_string(),
+                    "create".to_string(),
+                    "-r".to_string(),
+                    change_id.clone(),
+                    name.clone(),
+                ]
             }
             JJCommand::BookmarkSet {
-                name,
-                change_id,
-                flags,
+                name, change_id, ..
             } => {
                 let mut args = vec!["bookmark".to_string(), "set".to_string()];
                 push_flags(
                     &mut args,
-                    *flags,
-                    &[
-                        (CommandFlags::ALLOW_BACKWARDS, "--allow-backwards"),
-                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
-                    ],
+                    flags,
+                    &[(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
                 );
                 args.push("-r".to_string());
                 args.push(change_id.clone());
                 args.push(name.clone());
                 args
             }
-            JJCommand::BookmarkDelete { name, flags } => {
-                let mut args = vec!["bookmark".to_string(), "delete".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args.push(name.clone());
-                args
+            JJCommand::BookmarkDelete { name, .. } => {
+                vec!["bookmark".to_string(), "delete".to_string(), name.clone()]
             }
-            JJCommand::BookmarkForget { name, flags } => {
-                let mut args = vec!["bookmark".to_string(), "forget".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args.push(name.clone());
-                args
+            JJCommand::BookmarkForget { name, .. } => {
+                vec!["bookmark".to_string(), "forget".to_string(), name.clone()]
             }
-            JJCommand::BookmarkMove {
-                name,
-                target,
-                flags,
-            } => {
+            JJCommand::BookmarkMove { name, target, .. } => {
                 let mut args = vec!["bookmark".to_string(), "move".to_string()];
                 push_flags(
                     &mut args,
-                    *flags,
-                    &[
-                        (CommandFlags::ALLOW_BACKWARDS, "--allow-backwards"),
-                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
-                    ],
+                    flags,
+                    &[(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
                 );
                 args.push("--to".to_string());
                 args.push(target.clone());
@@ -331,152 +291,69 @@ impl JJCommand {
                 args
             }
             JJCommand::BookmarkRename {
-                old_name,
-                new_name,
-                flags,
+                old_name, new_name, ..
             } => {
-                let mut args = vec!["bookmark".to_string(), "rename".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args.push(old_name.clone());
-                args.push(new_name.clone());
-                args
+                vec![
+                    "bookmark".to_string(),
+                    "rename".to_string(),
+                    old_name.clone(),
+                    new_name.clone(),
+                ]
             }
-            JJCommand::BookmarkAdvance { change_id, flags } => {
+            JJCommand::BookmarkAdvance { change_id, .. } => {
                 let mut args = vec!["bookmark".to_string(), "advance".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
                 if let Some(id) = change_id {
                     args.push("--to".to_string());
                     args.push(id.clone());
                 }
                 args
             }
-            JJCommand::BookmarkTrack { name, flags } => {
-                let mut args = vec!["bookmark".to_string(), "track".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args.push(name.clone());
-                args
+            JJCommand::BookmarkTrack { name, .. } => {
+                vec!["bookmark".to_string(), "track".to_string(), name.clone()]
             }
-            JJCommand::BookmarkUntrack { name, flags } => {
-                let mut args = vec!["bookmark".to_string(), "untrack".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args.push(name.clone());
-                args
+            JJCommand::BookmarkUntrack { name, .. } => {
+                vec!["bookmark".to_string(), "untrack".to_string(), name.clone()]
             }
-            JJCommand::Undo { flags } => {
-                let mut args = vec!["undo".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args
-            }
-            JJCommand::Redo { flags } => {
-                let mut args = vec!["redo".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args
-            }
-            JJCommand::GitFetch { all_remotes, flags } => {
+            JJCommand::Undo { .. } => vec!["undo".to_string()],
+            JJCommand::Redo { .. } => vec!["redo".to_string()],
+            JJCommand::GitFetch { all_remotes, .. } => {
                 let mut args = vec!["git".to_string(), "fetch".to_string()];
                 if *all_remotes {
                     args.push("--all-remotes".to_string());
                 }
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
                 args
             }
-            JJCommand::GitPush { all, flags } => {
+            JJCommand::GitPush { all, .. } => {
                 let mut args = vec!["git".to_string(), "push".to_string()];
                 if *all {
                     args.push("--all".to_string());
                 }
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[
-                        (CommandFlags::DRY_RUN, "--dry-run"),
-                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
-                    ],
-                );
+                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
             }
-            JJCommand::GitPushChange { change_id, flags } => {
+            JJCommand::GitPushChange { change_id, .. } => {
                 let mut args = vec!["git".to_string(), "push".to_string()];
                 args.push("-c".to_string());
                 args.push(change_id.clone());
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[
-                        (CommandFlags::DRY_RUN, "--dry-run"),
-                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
-                    ],
-                );
+                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
             }
-            JJCommand::GitExport { flags } => {
-                let mut args = vec!["git".to_string(), "export".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args
-            }
-            JJCommand::GitImport { flags } => {
-                let mut args = vec!["git".to_string(), "import".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args
-            }
-            JJCommand::Absorb { from, flags } => {
+            JJCommand::GitExport { .. } => vec!["git".to_string(), "export".to_string()],
+            JJCommand::GitImport { .. } => vec!["git".to_string(), "import".to_string()],
+            JJCommand::Absorb { from, .. } => {
                 let mut args = vec!["absorb".to_string()];
                 if let Some(id) = from {
                     args.push("--from".to_string());
                     args.push(id.clone());
                 }
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
                 args
             }
-            JJCommand::Commit { message, flags } => {
+            JJCommand::Commit { message, .. } => {
                 let mut args = vec!["commit".to_string()];
                 push_flags(
                     &mut args,
-                    *flags,
-                    &[
-                        (CommandFlags::INTERACTIVE, "--interactive"),
-                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
-                    ],
+                    flags,
+                    &[(CommandFlags::INTERACTIVE, "--interactive")],
                 );
                 if let Some(msg) = message {
                     args.push("-m".to_string());
@@ -485,17 +362,9 @@ impl JJCommand {
                 args
             }
             JJCommand::Duplicate {
-                change_id,
-                onto,
-                flags,
+                change_id, onto, ..
             } => {
-                let mut args = vec!["duplicate".to_string()];
-                push_flags(
-                    &mut args,
-                    *flags,
-                    &[(CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable")],
-                );
-                args.push(change_id.clone());
+                let mut args = vec!["duplicate".to_string(), change_id.clone()];
                 if let Some(target) = onto {
                     args.push("--onto".to_string());
                     args.push(target.clone());
@@ -506,16 +375,15 @@ impl JJCommand {
                 change_id,
                 target,
                 message,
-                flags,
+                ..
             } => {
                 let mut args = vec!["squash".to_string()];
                 push_flags(
                     &mut args,
-                    *flags,
+                    flags,
                     &[
                         (CommandFlags::INTERACTIVE, "--interactive"),
                         (CommandFlags::KEEP_EMPTIED, "--keep-emptied"),
-                        (CommandFlags::IGNORE_IMMUTABLE, "--ignore-immutable"),
                     ],
                 );
                 match message {
@@ -530,7 +398,6 @@ impl JJCommand {
                 }
                 match target {
                     None => {
-                        // Squash into parent.
                         args.push("-r".to_string());
                         args.push(change_id.clone());
                     }
@@ -559,7 +426,11 @@ impl JJCommand {
                 }
                 args
             }
-        }
+        };
+
+        // Append global flags (ignore-immutable, etc.) once at the end.
+        push_global_flags(&mut args, flags);
+        args
     }
 
     /// Human-readable display string shown in the command output overlay.
@@ -695,11 +566,21 @@ impl JJCommand {
     }
 }
 
-/// Push CLI flag arguments for any active flags in the bitset.
+/// Push CLI flag arguments for any active command-specific flags.
 fn push_flags(args: &mut Vec<String>, flags: CommandFlags, mapping: &[(CommandFlags, &str)]) {
     for (flag, arg) in mapping {
         if flags.contains(*flag) {
             args.push(arg.to_string());
+        }
+    }
+}
+
+/// Push CLI flags for all active global toggles (ignore-immutable, etc.).
+/// Called once at the end of `args()` so individual variants don't need to.
+fn push_global_flags(args: &mut Vec<String>, flags: CommandFlags) {
+    for toggle in GLOBAL_TOGGLES {
+        if flags.contains(toggle.flag) {
+            args.push(toggle.cli_flag.to_string());
         }
     }
 }

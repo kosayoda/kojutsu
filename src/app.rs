@@ -8,6 +8,41 @@ use crate::jj_command::JJCommand;
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo::JjRepo;
 
+/// Metadata for a global toggle that persists across commands.
+pub struct GlobalToggle {
+    /// The `CommandFlags` bit this toggle controls.
+    pub flag: CommandFlags,
+    /// Short hint character shown in the status bar (e.g., "I").
+    pub hint: &'static str,
+    /// Human-readable label (e.g., "ignore-immutable").
+    pub label: &'static str,
+    /// CLI flag appended to jj commands (e.g., "--ignore-immutable").
+    pub cli_flag: &'static str,
+}
+
+/// All global toggles. Single source of truth for status bar rendering,
+/// help display, and CLI arg generation.
+pub const GLOBAL_TOGGLES: &[GlobalToggle] = &[
+    GlobalToggle {
+        flag: CommandFlags::IGNORE_IMMUTABLE,
+        hint: "I",
+        label: "ignore-immutable",
+        cli_flag: "--ignore-immutable",
+    },
+    GlobalToggle {
+        flag: CommandFlags::IGNORE_WORKING_COPY,
+        hint: "W",
+        label: "ignore-working-copy",
+        cli_flag: "--ignore-working-copy",
+    },
+    GlobalToggle {
+        flag: CommandFlags::DEBUG,
+        hint: "D",
+        label: "debug",
+        cli_flag: "--debug",
+    },
+];
+
 /// The current interaction mode.
 pub enum AppMode {
     /// Normal browsing.
@@ -512,6 +547,10 @@ pub struct App {
     pub file_cache: HashMap<usize, Vec<FileChange>>,
     /// Lazily loaded diff lines, keyed by (entry_idx, file_idx).
     pub diff_cache: HashMap<(usize, usize), Vec<DiffLine>>,
+    /// Global toggles that persist across commands.
+    pub toggles: CommandFlags,
+    /// Display string of the last command executed (shown in status bar).
+    pub last_command: Option<String>,
 }
 
 impl App {
@@ -534,6 +573,8 @@ impl App {
             file_unfolded: HashMap::new(),
             file_cache: HashMap::new(),
             diff_cache: HashMap::new(),
+            toggles: CommandFlags::empty(),
+            last_command: None,
         };
         app.rebuild_rows();
         app
