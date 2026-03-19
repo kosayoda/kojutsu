@@ -373,7 +373,7 @@ impl Default for Keymap {
             ),
             // Duplicate submenu
             prefix(
-                "shift-d",
+                "y",
                 "duplicate",
                 HelpGroup::Commands,
                 vec![
@@ -382,7 +382,7 @@ impl Default for Keymap {
                         CommandFlags::IGNORE_IMMUTABLE,
                         "ignore immutable",
                     ),
-                    bind("shift-d", AppAction::Duplicate, "duplicate"),
+                    bind("y", AppAction::Duplicate, "duplicate"),
                     bind("t", AppAction::DuplicateOnto, "onto..."),
                 ],
             ),
