@@ -35,15 +35,30 @@ pub fn render(entries: &[DagEntry]) -> Vec<GraphLines> {
     entries
         .iter()
         .map(|entry| {
-            let parents: Vec<Ancestor<String>> = entry
+            // Filter out Missing edges when there are reachable (Direct/Indirect)
+            // edges. Missing edges only add useless ~ terminator columns on
+            // merge commits whose parents are outside the revset.
+            let has_reachable = entry
                 .edges
                 .iter()
-                .map(|e| match e.kind {
-                    EdgeKind::Direct => Ancestor::Parent(e.target.clone()),
-                    EdgeKind::Indirect => Ancestor::Ancestor(e.target.clone()),
-                    EdgeKind::Missing => Ancestor::Anonymous,
-                })
-                .collect();
+                .any(|e| !matches!(e.kind, EdgeKind::Missing));
+            let parents: Vec<Ancestor<String>> = if has_reachable {
+                entry
+                    .edges
+                    .iter()
+                    .filter(|e| !matches!(e.kind, EdgeKind::Missing))
+                    .map(|e| match e.kind {
+                        EdgeKind::Direct => Ancestor::Parent(e.target.clone()),
+                        EdgeKind::Indirect => Ancestor::Ancestor(e.target.clone()),
+                        EdgeKind::Missing => unreachable!(),
+                    })
+                    .collect()
+            } else if entry.edges.is_empty() {
+                vec![]
+            } else {
+                // All edges are Missing -- keep one for the ~ terminator.
+                vec![Ancestor::Anonymous]
+            };
 
             let glyph = entry.commit.glyph();
 

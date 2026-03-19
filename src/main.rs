@@ -22,6 +22,10 @@ struct Cli {
     /// Revset expression to display (default: from jj config `revsets.log`)
     #[arg(short = 'r', long = "revisions")]
     revisions: Option<String>,
+
+    /// Print raw DAG edges and exit (for debugging graph rendering)
+    #[arg(long)]
+    debug_graph: bool,
 }
 
 fn main() -> Result<()> {
@@ -33,6 +37,12 @@ fn main() -> Result<()> {
     let mut jj = JjRepo::open(&repo_path)?;
     let revset = cli.revisions.unwrap_or_else(|| jj.default_revset());
     let entries = jj.evaluate_revset(&revset)?;
+
+    if cli.debug_graph {
+        debug_print_graph(&entries);
+        return Ok(());
+    }
+
     let repo_root = jj.workspace_root().display().to_string();
     let keymap: &'static Keymap = Box::leak(Box::new(Keymap::default()));
 
@@ -189,6 +199,55 @@ fn edit_revset_in_editor(app: &mut App, jj: &JjRepo, terminal: &mut kojutsu::ter
                 output: format!("failed to run {editor}: {e}").into_bytes(),
                 success: false,
             };
+        }
+    }
+}
+
+fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
+    for entry in entries {
+        let c = &entry.commit;
+        let mut flags = Vec::new();
+        if c.is_working_copy {
+            flags.push("wc");
+        }
+        if c.is_immutable {
+            flags.push("immutable");
+        }
+        if c.is_empty {
+            flags.push("empty");
+        }
+        if c.has_conflict {
+            flags.push("conflict");
+        }
+        if c.is_divergent {
+            flags.push("divergent");
+        }
+        let flags_str = if flags.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", flags.join(", "))
+        };
+        let bookmarks: Vec<&str> = c.bookmarks.iter().map(|b| b.name.as_str()).collect();
+        let bm_str = if bookmarks.is_empty() {
+            String::new()
+        } else {
+            format!(" bookmarks={}", bookmarks.join(","))
+        };
+        let desc = c.description.as_deref().unwrap_or("(no description)");
+        println!(
+            "{} ({}){}{} {}",
+            c.change_id.display,
+            &c.graph_id[..8],
+            flags_str,
+            bm_str,
+            desc
+        );
+        for edge in &entry.edges {
+            println!(
+                "  {:?} -> {}",
+                edge.kind,
+                &edge.target[..8.min(edge.target.len())]
+            );
         }
     }
 }

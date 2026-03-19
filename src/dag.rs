@@ -118,6 +118,7 @@ pub struct Edge {
     pub kind: EdgeKind,
 }
 
+#[derive(Debug)]
 pub enum EdgeKind {
     /// Immediate parent.
     Direct,
