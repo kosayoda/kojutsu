@@ -70,6 +70,7 @@ fn handle_normal_key(
         LookupResult::Action(action) => dispatch_action(app, jj, action, CommandFlags::empty()),
         LookupResult::Prefix { label, children } => {
             app.mode = AppMode::Submenu {
+                key: keymap::display_key(node),
                 label,
                 children,
                 flags: CommandFlags::empty(),

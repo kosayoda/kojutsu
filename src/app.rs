@@ -50,6 +50,8 @@ pub enum AppMode {
     /// A prefix key was pressed; showing submenu options in the bottom bar.
     /// References point into the leaked `&'static Keymap`.
     Submenu {
+        /// Display string for the prefix key (e.g., "s", "b", "g").
+        key: String,
         label: &'static str,
         children: &'static [(keymap_parser::Node, KeymapNode)],
         flags: CommandFlags,

@@ -98,6 +98,7 @@ pub enum KeymapNode {
     Action {
         action: AppAction,
         description: &'static str,
+        group: HelpGroup,
     },
     /// Branch: this key opens a submenu with further options.
     Prefix {
@@ -161,171 +162,166 @@ impl Keymap {
 
 impl Default for Keymap {
     fn default() -> Self {
+        use HelpGroup::{Commands as C, General as G, Navigation as N};
+
         let root = vec![
             // Help
-            bind("?", AppAction::ShowHelp, "help"),
+            bind("?", AppAction::ShowHelp, "help", G),
             // Quit
-            bind("q", AppAction::Quit, "quit"),
-            bind("ctrl-c", AppAction::Quit, "quit"),
+            bind("q", AppAction::Quit, "quit", G),
+            bind("ctrl-c", AppAction::Quit, "quit", G),
             // Line-by-line navigation
-            bind("j", AppAction::MoveDown, "move down"),
-            bind("down", AppAction::MoveDown, "move down"),
-            bind("k", AppAction::MoveUp, "move up"),
-            bind("up", AppAction::MoveUp, "move up"),
+            bind("j", AppAction::MoveDown, "move down", N),
+            bind("down", AppAction::MoveDown, "move down", N),
+            bind("k", AppAction::MoveUp, "move up", N),
+            bind("up", AppAction::MoveUp, "move up", N),
             // Section navigation (jump between commits)
-            bind("shift-j", AppAction::MoveDownSection, "next commit"),
-            bind("shift-k", AppAction::MoveUpSection, "prev commit"),
+            bind("shift-j", AppAction::MoveDownSection, "next commit", N),
+            bind("shift-k", AppAction::MoveUpSection, "prev commit", N),
             // Paging
-            bind("ctrl-d", AppAction::PageDown, "page down"),
-            bind("pagedown", AppAction::PageDown, "page down"),
-            bind("ctrl-u", AppAction::PageUp, "page up"),
-            bind("pageup", AppAction::PageUp, "page up"),
+            bind("ctrl-d", AppAction::PageDown, "page down", N),
+            bind("pagedown", AppAction::PageDown, "page down", N),
+            bind("ctrl-u", AppAction::PageUp, "page up", N),
+            bind("pageup", AppAction::PageUp, "page up", N),
             // Jump
-            bind("@", AppAction::JumpToWorkingCopy, "jump to @"),
-            bind("0", AppAction::MoveToTop, "go to top"),
-            bind("$", AppAction::MoveToBottom, "go to bottom"),
+            bind("@", AppAction::JumpToWorkingCopy, "jump to @", N),
+            bind("0", AppAction::MoveToTop, "go to top", N),
+            bind("$", AppAction::MoveToBottom, "go to bottom", N),
             // Fold
-            bind("tab", AppAction::ToggleFold, "toggle fold"),
+            bind("tab", AppAction::ToggleFold, "toggle fold", N),
             // Global toggles
             bind(
                 "shift-i",
                 AppAction::ToggleIgnoreImmutable,
                 "toggle ignore-immutable",
+                G,
             ),
             bind(
                 "shift-w",
                 AppAction::ToggleIgnoreWorkingCopy,
                 "toggle ignore-working-copy",
+                G,
             ),
-            bind("shift-d", AppAction::ToggleDebug, "toggle debug"),
+            bind("shift-d", AppAction::ToggleDebug, "toggle debug", G),
             // Refresh
-            bind("ctrl-r", AppAction::Refresh, "refresh"),
-            // Absorb submenu
-            prefix(
-                "a",
-                "absorb",
-                HelpGroup::Commands,
-                vec![bind("a", AppAction::Absorb, "absorb")],
-            ),
+            bind("ctrl-r", AppAction::Refresh, "refresh", N),
+            // Absorb
+            bind("a", AppAction::Absorb, "absorb", C),
             // Bookmark submenu
             prefix(
                 "b",
                 "bookmark",
-                HelpGroup::Commands,
+                C,
                 vec![
                     toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
-                    bind("c", AppAction::BookmarkCreate, "create"),
-                    bind("s", AppAction::BookmarkSet, "set"),
-                    bind("d", AppAction::BookmarkDelete, "delete"),
-                    bind("f", AppAction::BookmarkForget, "forget"),
-                    bind("m", AppAction::BookmarkMove, "move..."),
-                    bind("r", AppAction::BookmarkRename, "rename"),
-                    bind("a", AppAction::BookmarkAdvance, "advance"),
-                    bind("t", AppAction::BookmarkTrack, "track"),
-                    bind("u", AppAction::BookmarkUntrack, "untrack"),
+                    bind("c", AppAction::BookmarkCreate, "create", C),
+                    bind("s", AppAction::BookmarkSet, "set", C),
+                    bind("d", AppAction::BookmarkDelete, "delete", C),
+                    bind("f", AppAction::BookmarkForget, "forget", C),
+                    bind("m", AppAction::BookmarkMove, "move…", C),
+                    bind("r", AppAction::BookmarkRename, "rename", C),
+                    bind("a", AppAction::BookmarkAdvance, "advance", C),
+                    bind("t", AppAction::BookmarkTrack, "track", C),
+                    bind("u", AppAction::BookmarkUntrack, "untrack", C),
                 ],
             ),
             // Commit submenu
             prefix(
                 "c",
                 "commit",
-                HelpGroup::Commands,
+                C,
                 vec![
                     toggle("i", CommandFlags::INTERACTIVE, "interactive"),
-                    bind("c", AppAction::Commit, "commit (in $EDITOR)"),
-                    bind("m", AppAction::CommitWithMessage, "with message"),
+                    bind("c", AppAction::Commit, "commit (in $EDITOR)", C),
+                    bind("m", AppAction::CommitWithMessage, "with message", C),
                 ],
             ),
             // Describe submenu
             prefix(
                 "d",
                 "describe",
-                HelpGroup::Commands,
+                C,
                 vec![
-                    bind("d", AppAction::Describe, "describe"),
-                    bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR"),
+                    bind("d", AppAction::Describe, "describe", C),
+                    bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR", C),
                 ],
             ),
-            // Edit submenu
-            prefix(
-                "e",
-                "edit",
-                HelpGroup::Commands,
-                vec![bind("e", AppAction::Edit, "edit")],
-            ),
+            // Edit
+            bind("e", AppAction::Edit, "edit", C),
             // Git submenu
             prefix(
                 "g",
                 "git",
-                HelpGroup::Commands,
+                C,
                 vec![
                     toggle("d", CommandFlags::DRY_RUN, "dry run (push only)"),
-                    bind("f", AppAction::GitFetch, "fetch"),
+                    bind("f", AppAction::GitFetch, "fetch", C),
                     bind(
                         "shift-f",
                         AppAction::GitFetchAllRemotes,
                         "fetch all remotes",
+                        C,
                     ),
-                    bind("p", AppAction::GitPush, "push"),
-                    bind("shift-p", AppAction::GitPushAll, "push all bookmarks"),
-                    bind("c", AppAction::GitPushChange, "push change"),
-                    bind("e", AppAction::GitExport, "export (jj→git)"),
-                    bind("i", AppAction::GitImport, "import (git→jj)"),
+                    bind("p", AppAction::GitPush, "push", C),
+                    bind("shift-p", AppAction::GitPushAll, "push all bookmarks", C),
+                    bind("c", AppAction::GitPushChange, "push change", C),
+                    bind("e", AppAction::GitExport, "export (jj→git)", C),
+                    bind("i", AppAction::GitImport, "import (git→jj)", C),
                 ],
             ),
             // New submenu
             prefix(
                 "n",
                 "new",
-                HelpGroup::Commands,
+                C,
                 vec![
                     toggle("e", CommandFlags::NO_EDIT, "no-edit"),
-                    bind("n", AppAction::New, "new"),
-                    bind("a", AppAction::NewInsertAfter, "insert after"),
-                    bind("b", AppAction::NewInsertBefore, "insert before"),
+                    bind("n", AppAction::New, "new", C),
+                    bind("a", AppAction::NewInsertAfter, "insert after", C),
+                    bind("b", AppAction::NewInsertBefore, "insert before", C),
                 ],
             ),
             // Rebase submenu
             prefix(
                 "r",
                 "rebase",
-                HelpGroup::Commands,
+                C,
                 vec![
-                    bind("r", AppAction::RebaseRevision, "revision..."),
-                    bind("s", AppAction::RebaseSource, "source..."),
-                    bind("b", AppAction::RebaseBranch, "branch..."),
+                    bind("r", AppAction::RebaseRevision, "revision…", C),
+                    bind("s", AppAction::RebaseSource, "source…", C),
+                    bind("b", AppAction::RebaseBranch, "branch…", C),
                 ],
             ),
             // Squash submenu
             prefix(
                 "s",
                 "squash",
-                HelpGroup::Commands,
+                C,
                 vec![
                     toggle("i", CommandFlags::INTERACTIVE, "interactive"),
                     toggle("k", CommandFlags::KEEP_EMPTIED, "keep emptied"),
-                    bind("s", AppAction::Squash, "into parent"),
-                    bind("t", AppAction::SquashInto, "into..."),
-                    bind("o", AppAction::SquashOnto, "onto..."),
-                    bind("a", AppAction::SquashAfter, "after..."),
-                    bind("b", AppAction::SquashBefore, "before..."),
+                    bind("s", AppAction::Squash, "into parent", C),
+                    bind("t", AppAction::SquashInto, "into…", C),
+                    bind("o", AppAction::SquashOnto, "onto…", C),
+                    bind("a", AppAction::SquashAfter, "after…", C),
+                    bind("b", AppAction::SquashBefore, "before…", C),
                 ],
             ),
             // Undo submenu
             prefix(
                 "u",
                 "undo/redo",
-                HelpGroup::Commands,
+                C,
                 vec![
-                    bind("u", AppAction::Undo, "undo"),
-                    bind("r", AppAction::Redo, "redo"),
+                    bind("u", AppAction::Undo, "undo", C),
+                    bind("r", AppAction::Redo, "redo", C),
                 ],
             ),
             // Abandon submenu
             prefix(
                 "x",
                 "abandon",
-                HelpGroup::Commands,
+                C,
                 vec![
                     toggle("b", CommandFlags::RETAIN_BOOKMARKS, "keep bookmarks"),
                     toggle(
@@ -333,30 +329,31 @@ impl Default for Keymap {
                         CommandFlags::RESTORE_DESCENDANTS,
                         "restore descendants",
                     ),
-                    bind("x", AppAction::Abandon, "abandon"),
+                    bind("x", AppAction::Abandon, "abandon", C),
                 ],
             ),
             // Duplicate submenu
             prefix(
                 "y",
                 "duplicate",
-                HelpGroup::Commands,
+                C,
                 vec![
-                    bind("y", AppAction::Duplicate, "duplicate"),
-                    bind("t", AppAction::DuplicateOnto, "onto..."),
+                    bind("y", AppAction::Duplicate, "duplicate", C),
+                    bind("t", AppAction::DuplicateOnto, "onto…", C),
                 ],
             ),
             // Command palette
             prefix(
                 ";",
                 "command",
-                HelpGroup::General,
+                G,
                 vec![
-                    bind("r", AppAction::EditRevset, "edit revset"),
+                    bind("r", AppAction::EditRevset, "edit revset", G),
                     bind(
                         "shift-r",
                         AppAction::EditRevsetInEditor,
                         "edit revset in $EDITOR",
+                        G,
                     ),
                 ],
             ),
@@ -367,13 +364,19 @@ impl Default for Keymap {
 }
 
 /// Helper: create a (Node, KeymapNode::Action) pair from a key string.
-fn bind(key_str: &str, action: AppAction, description: &'static str) -> (Node, KeymapNode) {
+fn bind(
+    key_str: &str,
+    action: AppAction,
+    description: &'static str,
+    group: HelpGroup,
+) -> (Node, KeymapNode) {
     let node = keymap_parser::parse(key_str).expect("valid key string in default keymap");
     (
         node,
         KeymapNode::Action {
             action,
             description,
+            group,
         },
     )
 }
@@ -464,8 +467,18 @@ fn convert_modifiers(mods: &KeyModifiers) -> keymap_parser::Modifiers {
 // Display helpers for the submenu popup
 // ---------------------------------------------------------------------------
 
-/// Format a `Node` as a human-readable key string for display in the bottom bar.
+/// Format a `Node` as a human-readable key string for display.
+///
+/// Shift + lowercase letter is shown as the uppercase letter (e.g., `J` instead
+/// of `shift-j`), matching how users think about these keys.
 pub fn display_key(node: &Node) -> String {
+    if node.modifiers == Modifier::Shift as u8 {
+        if let Key::Char(c) = node.key {
+            if c.is_ascii_lowercase() {
+                return c.to_ascii_uppercase().to_string();
+            }
+        }
+    }
     format!("{node}")
 }
 
@@ -496,67 +509,6 @@ pub struct HelpEntry {
     pub group: HelpGroup,
 }
 
-fn classify_action(action: AppAction) -> HelpGroup {
-    match action {
-        AppAction::MoveDown
-        | AppAction::MoveUp
-        | AppAction::MoveDownSection
-        | AppAction::MoveUpSection
-        | AppAction::PageDown
-        | AppAction::PageUp
-        | AppAction::JumpToWorkingCopy
-        | AppAction::MoveToTop
-        | AppAction::MoveToBottom
-        | AppAction::ToggleFold
-        | AppAction::Refresh => HelpGroup::Navigation,
-        AppAction::Abandon
-        | AppAction::Absorb
-        | AppAction::Commit
-        | AppAction::CommitWithMessage
-        | AppAction::Describe
-        | AppAction::DescribeInEditor
-        | AppAction::Edit
-        | AppAction::New
-        | AppAction::NewInsertAfter
-        | AppAction::NewInsertBefore
-        | AppAction::Squash
-        | AppAction::SquashInto
-        | AppAction::SquashOnto
-        | AppAction::SquashAfter
-        | AppAction::SquashBefore
-        | AppAction::Undo
-        | AppAction::Redo
-        | AppAction::RebaseRevision
-        | AppAction::RebaseSource
-        | AppAction::RebaseBranch
-        | AppAction::BookmarkCreate
-        | AppAction::BookmarkSet
-        | AppAction::BookmarkDelete
-        | AppAction::BookmarkForget
-        | AppAction::BookmarkMove
-        | AppAction::BookmarkRename
-        | AppAction::BookmarkAdvance
-        | AppAction::BookmarkTrack
-        | AppAction::BookmarkUntrack
-        | AppAction::GitFetch
-        | AppAction::GitFetchAllRemotes
-        | AppAction::GitPush
-        | AppAction::GitPushAll
-        | AppAction::GitPushChange
-        | AppAction::GitExport
-        | AppAction::GitImport
-        | AppAction::Duplicate
-        | AppAction::DuplicateOnto => HelpGroup::Commands,
-        AppAction::Quit
-        | AppAction::ShowHelp
-        | AppAction::EditRevset
-        | AppAction::EditRevsetInEditor
-        | AppAction::ToggleIgnoreImmutable
-        | AppAction::ToggleIgnoreWorkingCopy
-        | AppAction::ToggleDebug => HelpGroup::General,
-    }
-}
-
 /// Map toggle actions to their hint character from `GLOBAL_TOGGLES`.
 /// Returns `Some("I")` for `ToggleIgnoreImmutable`, etc.
 fn toggle_hint(action: AppAction) -> Option<&'static str> {
@@ -579,7 +531,7 @@ fn toggle_hint(action: AppAction) -> Option<&'static str> {
 /// with keys joined by ` / `.
 pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
     // Collect raw entries, merging duplicate actions.
-    let mut action_keys: Vec<(AppAction, Vec<String>, &'static str)> = Vec::new();
+    let mut action_keys: Vec<(AppAction, Vec<String>, &'static str, HelpGroup)> = Vec::new();
     let mut prefix_entries: Vec<HelpEntry> = Vec::new();
 
     for (node, km_node) in &keymap.root {
@@ -587,15 +539,16 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
             KeymapNode::Action {
                 action,
                 description,
+                group,
             } => {
                 // Use the hint character for global toggle actions (e.g., "I" instead of "shift-i").
                 let key_str = toggle_hint(*action)
                     .map(|h| h.to_string())
                     .unwrap_or_else(|| display_key(node));
-                if let Some(existing) = action_keys.iter_mut().find(|(a, _, _)| a == action) {
+                if let Some(existing) = action_keys.iter_mut().find(|(a, _, _, _)| a == action) {
                     existing.1.push(key_str);
                 } else {
-                    action_keys.push((*action, vec![key_str], description));
+                    action_keys.push((*action, vec![key_str], description, *group));
                 }
             }
             KeymapNode::Prefix { label, group, .. } => {
@@ -613,10 +566,10 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
     // Convert action_keys into HelpEntries.
     let mut entries: Vec<HelpEntry> = action_keys
         .into_iter()
-        .map(|(action, keys, desc)| HelpEntry {
+        .map(|(_action, keys, desc, group)| HelpEntry {
             keys: keys.join(" / "),
             description: desc.to_string(),
-            group: classify_action(action),
+            group,
         })
         .collect();
     entries.extend(prefix_entries);
