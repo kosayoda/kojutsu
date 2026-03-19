@@ -705,7 +705,7 @@ fn render_commit_item<'a>(
         Style::default().fg(Color::DarkGray),
     ));
 
-    // Bookmarks (with * suffix if dirty)
+    // Local bookmarks (with * suffix if dirty)
     for bm in &c.bookmarks {
         line1.push(Span::raw(" "));
         let display = if bm.is_dirty {
@@ -717,6 +717,17 @@ fn render_commit_item<'a>(
             display,
             Style::default()
                 .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    // Remote bookmarks (name@remote, shown when no local bookmark covers them)
+    for rb in &c.remote_bookmarks {
+        line1.push(Span::raw(" "));
+        line1.push(Span::styled(
+            format!("{}@{}", rb.name, rb.remote),
+            Style::default()
+                .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ));
     }

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -34,7 +34,7 @@ use jj_lib::repo_path::RepoPathBuf;
 
 use crate::dag::{
     AuthorInfo, BookmarkInfo, CommitInfo, DagEntry, DiffLine, DiffLineKind, Edge, EdgeKind,
-    FileChange, FileStatus, ShortId,
+    FileChange, FileStatus, RemoteBookmarkInfo, ShortId,
 };
 
 /// Number of hex characters to show for change/commit IDs.
@@ -280,6 +280,21 @@ impl JjRepo {
             .map(|(symbol, _)| symbol.name)
             .collect();
 
+        // Pre-build a map from commit ID to remote bookmarks pointing at it.
+        // O(M) once per refresh, then O(1) per commit lookup.
+        let mut remote_bookmark_map: HashMap<CommitId, Vec<(String, String)>> = HashMap::new();
+        for (symbol, remote_ref) in repo.view().all_remote_bookmarks() {
+            if let Some(commit_id) = remote_ref.target.as_normal() {
+                remote_bookmark_map
+                    .entry(commit_id.clone())
+                    .or_default()
+                    .push((
+                        symbol.name.as_str().to_string(),
+                        symbol.remote.as_str().to_string(),
+                    ));
+            }
+        }
+
         // Iterate graph nodes
         let mut entries = Vec::new();
         for node_result in topo_iter {
@@ -295,8 +310,13 @@ impl JjRepo {
                 .and_then(|check| check(&commit_id).ok())
                 .unwrap_or(false);
 
-            let info =
-                self.extract_commit_info(&commit, &id_prefix_index, immutable, &dirty_bookmarks)?;
+            let info = self.extract_commit_info(
+                &commit,
+                &id_prefix_index,
+                immutable,
+                &dirty_bookmarks,
+                &remote_bookmark_map,
+            )?;
             let dag_edges = edges
                 .into_iter()
                 .map(|e| Edge {
@@ -500,6 +520,7 @@ impl JjRepo {
         id_prefix_index: &jj_lib::id_prefix::IdPrefixIndex<'_>,
         is_immutable: bool,
         dirty_bookmarks: &HashSet<&RefName>,
+        remote_bookmark_map: &HashMap<CommitId, Vec<(String, String)>>,
     ) -> Result<CommitInfo> {
         let repo = self.repo.as_ref();
 
@@ -571,6 +592,22 @@ impl JjRepo {
             })
             .collect();
 
+        // Remote bookmarks pointing at this commit, excluding those already
+        // represented by a local bookmark with the same name on this commit.
+        let local_names: HashSet<&str> = bookmarks.iter().map(|b| b.name.as_str()).collect();
+        let remote_bookmarks: Vec<RemoteBookmarkInfo> = remote_bookmark_map
+            .get(commit.id())
+            .map(|rbs: &Vec<(String, String)>| {
+                rbs.iter()
+                    .filter(|(name, _): &&(String, String)| !local_names.contains(name.as_str()))
+                    .map(|(name, remote)| RemoteBookmarkInfo {
+                        name: name.clone(),
+                        remote: remote.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         // Divergence: multiple visible commits share the same change ID
         let is_divergent = repo
             .resolve_change_id(commit.change_id())
@@ -593,6 +630,7 @@ impl JjRepo {
             is_immutable,
             is_divergent,
             bookmarks,
+            remote_bookmarks,
         })
     }
 }

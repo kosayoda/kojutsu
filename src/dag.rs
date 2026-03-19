@@ -34,8 +34,11 @@ pub struct CommitInfo {
     pub is_immutable: bool,
     /// Whether this commit is divergent (multiple visible commits share the same change ID).
     pub is_divergent: bool,
-    /// Bookmarks pointing at this commit.
+    /// Local bookmarks pointing at this commit.
     pub bookmarks: Vec<BookmarkInfo>,
+    /// Remote bookmarks pointing at this commit (excluding those already
+    /// represented by a local bookmark with the same name).
+    pub remote_bookmarks: Vec<RemoteBookmarkInfo>,
 }
 
 /// A local bookmark with its tracking status.
@@ -44,6 +47,14 @@ pub struct BookmarkInfo {
     pub name: String,
     /// Whether the local bookmark differs from its tracked remote counterpart.
     pub is_dirty: bool,
+}
+
+/// A remote bookmark (e.g., `main@origin`).
+pub struct RemoteBookmarkInfo {
+    /// Bookmark name (e.g., "main").
+    pub name: String,
+    /// Remote name (e.g., "origin").
+    pub remote: String,
 }
 
 #[derive(Debug, Clone, Copy)]
