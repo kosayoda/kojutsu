@@ -605,6 +605,17 @@ impl JJCommand {
         let args = self.args();
         let display = self.display();
 
+        // Ignore SIGINT in the parent while the child runs. Without this,
+        // Ctrl-C during an SSH password prompt (or editor) would kill both
+        // the child and our process. The child still receives SIGINT normally
+        // since it has its own signal disposition after exec.
+        //
+        // We use signal_hook::flag to set an AtomicBool on SIGINT instead of
+        // the default terminate-the-process behavior.
+        let interrupted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sigint_hook =
+            signal_hook::flag::register(signal_hook::consts::SIGINT, interrupted.clone()).ok();
+
         let result = Command::new("jj")
             .args(&args)
             .arg("-R")
@@ -614,12 +625,25 @@ impl JJCommand {
             .stderr(std::process::Stdio::inherit())
             .status();
 
+        // Restore default SIGINT handling.
+        if let Some(id) = sigint_hook {
+            signal_hook::low_level::unregister(id);
+        }
+        let was_interrupted = interrupted.load(std::sync::atomic::Ordering::Relaxed);
+
         match result {
-            Ok(status) => JJCommandResult {
-                display,
-                output: Vec::new(),
-                success: status.success(),
-            },
+            Ok(status) => {
+                let output = if was_interrupted || status.code().is_none() {
+                    b"interrupted".to_vec()
+                } else {
+                    Vec::new()
+                };
+                JJCommandResult {
+                    display,
+                    output,
+                    success: status.success() && !was_interrupted,
+                }
+            }
             Err(e) => JJCommandResult {
                 display,
                 output: format!("failed to run jj: {e}").into_bytes(),

@@ -28,6 +28,8 @@ keymap_parser = "1.0.0-rc.4"
 pollster = "0.4"
 # DAG graph rendering (same library jj uses)
 sapling-renderdag = "0.1"
+# Safe signal handling (ignore SIGINT while child processes run)
+signal-hook = "0.3"
 # Serialization (required by keymap_parser, future config files)
 serde = { version = "1", features = ["derive"] }
 # Enum utilities
