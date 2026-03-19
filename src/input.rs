@@ -149,6 +149,14 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             app.jump_to_working_copy();
             Action::None
         }
+        AppAction::MoveToTop => {
+            app.move_to_top();
+            Action::None
+        }
+        AppAction::MoveToBottom => {
+            app.move_to_bottom();
+            Action::None
+        }
         AppAction::ToggleFold => {
             app.toggle_fold(jj);
             Action::None

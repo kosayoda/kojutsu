@@ -34,6 +34,8 @@ pub enum AppAction {
     PageDown,
     PageUp,
     JumpToWorkingCopy,
+    MoveToTop,
+    MoveToBottom,
     ToggleFold,
     Refresh,
     Abandon,
@@ -173,6 +175,8 @@ impl Default for Keymap {
             bind("pageup", AppAction::PageUp, "page up"),
             // Jump
             bind("@", AppAction::JumpToWorkingCopy, "jump to @"),
+            bind("0", AppAction::MoveToTop, "go to top"),
+            bind("$", AppAction::MoveToBottom, "go to bottom"),
             // Fold
             bind("tab", AppAction::ToggleFold, "toggle fold"),
             // Refresh
@@ -511,8 +515,8 @@ pub fn display_key(node: &Node) -> String {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HelpGroup {
-    Navigation,
     Commands,
+    Navigation,
     General,
 }
 
@@ -541,6 +545,8 @@ fn classify_action(action: AppAction) -> HelpGroup {
         | AppAction::PageDown
         | AppAction::PageUp
         | AppAction::JumpToWorkingCopy
+        | AppAction::MoveToTop
+        | AppAction::MoveToBottom
         | AppAction::ToggleFold
         | AppAction::Refresh => HelpGroup::Navigation,
         AppAction::Abandon

@@ -496,6 +496,8 @@ pub struct App {
     pub cursor: usize,
     /// Scroll offset of the list from the last render (set by ui::draw).
     pub last_scroll_offset: usize,
+    /// Header height from the last render (for mouse click translation).
+    pub last_header_height: u16,
     pub revset: String,
     /// Last failed revset attempt (pre-fills the input on retry).
     pub revset_draft: Option<String>,
@@ -523,6 +525,7 @@ impl App {
             rows: Vec::new(),
             cursor: 0,
             last_scroll_offset: 0,
+            last_header_height: 2,
             revset,
             revset_draft: None,
             repo_root,
@@ -645,6 +648,26 @@ impl App {
     /// Move selection to the next selectable row (commit, file, or diff line).
     pub fn move_down(&mut self) {
         for j in (self.cursor + 1)..self.rows.len() {
+            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+                self.cursor = j;
+                return;
+            }
+        }
+    }
+
+    /// Move selection to the first selectable row.
+    pub fn move_to_top(&mut self) {
+        for j in 0..self.rows.len() {
+            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+                self.cursor = j;
+                return;
+            }
+        }
+    }
+
+    /// Move selection to the last selectable row.
+    pub fn move_to_bottom(&mut self) {
+        for j in (0..self.rows.len()).rev() {
             if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
                 self.cursor = j;
                 return;

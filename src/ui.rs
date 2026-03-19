@@ -10,14 +10,28 @@ use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, Sho
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, Keymap, KeymapNode};
 
 /// The Y offset where the list starts (for mouse click translation).
-pub const HEADER_HEIGHT: u16 = 2;
+/// Minimum separator between repo and revset when on a single line.
+const HEADER_SEP: &str = "  ";
 
 /// Render the full UI into the frame.
 pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
+    // Use a single-line header if both repo and revset fit on one line.
+    let single_line_len = "repository: ".len()
+        + app.repo_root.len()
+        + HEADER_SEP.len()
+        + "revset: ".len()
+        + app.revset.len();
+    let header_height = if single_line_len <= frame.area().width as usize {
+        1
+    } else {
+        2
+    };
+
     let [header_area, list_area] =
-        Layout::vertical([Constraint::Length(HEADER_HEIGHT), Constraint::Fill(1)])
+        Layout::vertical([Constraint::Length(header_height), Constraint::Fill(1)])
             .areas(frame.area());
 
+    app.last_header_height = header_height;
     draw_header(frame, header_area, app);
     draw_list(frame, list_area, app);
 
@@ -108,16 +122,27 @@ fn overlay_area(area: Rect, height: u16) -> Rect {
 }
 
 fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
-    let header = vec![
-        Line::from(vec![
+    let header = if area.height == 1 {
+        // Single-line: "repository: <path>  revset: <revset>"
+        vec![Line::from(vec![
             Span::styled("repository: ", Style::default().fg(Color::DarkGray)),
             Span::styled(&app.repo_root, Style::default().fg(Color::White)),
-        ]),
-        Line::from(vec![
+            Span::raw(HEADER_SEP),
             Span::styled("revset: ", Style::default().fg(Color::DarkGray)),
             Span::styled(&app.revset, Style::default().fg(Color::Cyan)),
-        ]),
-    ];
+        ])]
+    } else {
+        vec![
+            Line::from(vec![
+                Span::styled("repository: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&app.repo_root, Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled("revset: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&app.revset, Style::default().fg(Color::Cyan)),
+            ]),
+        ]
+    };
     frame.render_widget(Paragraph::new(header), area);
 }
 
@@ -185,6 +210,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::NONE))
+        .scroll_padding(5)
         .highlight_style(
             Style::default()
                 .bg(Color::Rgb(50, 50, 60))
@@ -272,10 +298,16 @@ fn render_help_column(frame: &mut Frame, area: Rect, groups: &[&(HelpGroup, Vec<
             Cell::from(group.label()).style(header_style),
             Cell::from(""),
         ]));
+        let desc_width = area.width.saturating_sub(20) as usize;
         for entry in entries.iter() {
+            let desc = if entry.description.len() > desc_width && desc_width > 1 {
+                format!("{}…", &entry.description[..desc_width - 1])
+            } else {
+                entry.description.clone()
+            };
             rows.push(Row::new(vec![
                 Cell::from(format!("  {}", entry.keys)).style(key_style),
-                Cell::from(entry.description.as_str()).style(desc_style),
+                Cell::from(desc).style(desc_style),
             ]));
         }
     }

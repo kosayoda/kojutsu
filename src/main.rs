@@ -58,7 +58,10 @@ fn main() -> Result<()> {
                 Event::Key(key) if key.kind == event::KeyEventKind::Press => {
                     input::handle_key(&mut app, &jj, keymap, key)
                 }
-                Event::Mouse(mouse) => input::handle_mouse(&mut app, &jj, mouse, ui::HEADER_HEIGHT),
+                Event::Mouse(mouse) => {
+                    let hdr = app.last_header_height;
+                    input::handle_mouse(&mut app, &jj, mouse, hdr)
+                }
                 _ => Action::None,
             };
             match action {
