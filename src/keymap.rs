@@ -88,6 +88,7 @@ pub enum AppAction {
     ToggleDebug,
     ToggleLineNumbers,
     ToggleSelect,
+    EnterVisualMode,
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +193,7 @@ impl Default for Keymap {
             // Fold / Select
             bind("tab", AppAction::ToggleFold, "toggle fold", N),
             bind("space", AppAction::ToggleSelect, "toggle select", N),
+            bind("v", AppAction::EnterVisualMode, "visual select", N),
             // Global toggles
             bind(
                 "shift-i",

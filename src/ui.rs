@@ -66,7 +66,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
                 label,
                 children,
                 *flags,
-                app.selection_count(),
+                app.selection_summary().submenu_suffix(),
             );
         }
         AppMode::CommandOutput {
@@ -185,11 +185,9 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
-    // Add selection count to the toggle spans if any files are selected.
-    let sel_count = app.selection_count();
-    if sel_count > 0 {
+    if let Some(text) = app.selection_summary().display_text() {
         toggle_spans.push(Span::styled(
-            format!(" {sel_count} files selected "),
+            format!(" {text} "),
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -281,7 +279,8 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 let diff_lines = &app.diff_cache[&(*entry_idx, *file_idx)];
                 let diff_line = &diff_lines[line_idx.raw()];
                 let is_selected = app.is_line_selected(*entry_idx, *file_idx, *line_idx);
-                render_diff_line(diff_line, app.show_line_numbers, is_selected)
+                let in_visual = app.is_in_visual_range(*entry_idx, *file_idx, *line_idx);
+                render_diff_line(diff_line, app.show_line_numbers, is_selected, in_visual)
             }
         })
         .collect();
@@ -404,7 +403,7 @@ fn draw_submenu(
     label: &str,
     children: &[(keymap_parser::Node, KeymapNode)],
     flags: CommandFlags,
-    selection_count: usize,
+    selection_suffix: Option<String>,
 ) {
     // Build toggle indicators for the title bar.
     let mut toggle_spans: Vec<Span> = Vec::new();
@@ -432,9 +431,9 @@ fn draw_submenu(
         }
     };
 
-    // Build title: " s Squash " or " s Squash (2 files) " if selection active.
-    let title = if selection_count > 0 {
-        format!(" {key} {display_label} ({selection_count} files) ")
+    // Build title: " s Squash " or " s Squash (3 lines) " etc.
+    let title = if let Some(suffix) = selection_suffix {
+        format!(" {key} {display_label} ({suffix}) ")
     } else {
         format!(" {key} {display_label} ")
     };
@@ -838,6 +837,7 @@ fn render_diff_line(
     diff_line: &DiffLine,
     show_line_numbers: bool,
     is_selected: bool,
+    in_visual: bool,
 ) -> ListItem<'_> {
     let (marker, style) = match diff_line.kind {
         DiffLineKind::Header => (" ", Style::default().fg(Color::Magenta)),
@@ -847,15 +847,16 @@ fn render_diff_line(
     };
 
     let line_num_style = Style::default().fg(Color::DarkGray);
-    let select_indicator = if is_selected { "●" } else { " " };
 
     let mut spans = Vec::new();
-    // Selection indicator for added/removed lines.
-    if diff_line.kind == DiffLineKind::Added || diff_line.kind == DiffLineKind::Removed {
-        spans.push(Span::styled(
-            format!("{select_indicator} "),
-            Style::default().fg(Color::Yellow),
-        ));
+    // Left margin: visual range bar │ + selection indicator ●.
+    let is_selectable =
+        diff_line.kind == DiffLineKind::Added || diff_line.kind == DiffLineKind::Removed;
+    if is_selectable {
+        let bar = if in_visual { "│" } else { " " };
+        let dot = if is_selected { "●" } else { " " };
+        spans.push(Span::styled(bar, Style::default().fg(Color::Cyan)));
+        spans.push(Span::styled(dot, Style::default().fg(Color::Yellow)));
     } else {
         spans.push(Span::raw("  "));
     }

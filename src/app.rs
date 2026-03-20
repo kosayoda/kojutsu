@@ -5,6 +5,15 @@ use tui_input::Input;
 use crate::dag::{DagEntry, DiffLine, DiffLineKind, FileChange};
 use crate::graph::{self, GraphLines};
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, IndexVec};
+
+/// A persistent visual selection range within one file's diff.
+#[derive(Clone)]
+pub struct VisualRange {
+    pub change_id: String,
+    pub path: String,
+    pub start_line: DiffLineIdx,
+    pub end_line: DiffLineIdx,
+}
 use crate::jj_command::{ChangeSelection, JJCommand};
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo::JjRepo;
@@ -63,6 +72,119 @@ pub struct GlobalToggle {
     pub label: &'static str,
     /// CLI flag appended to jj commands (e.g., "--ignore-immutable").
     pub cli_flag: &'static str,
+}
+
+pub struct SelectionSummary {
+    pub file_count: usize,
+    pub full_file_count: usize,
+    pub line_count: usize,
+    pub has_full_files: bool,
+}
+
+impl SelectionSummary {
+    pub fn display_text(&self) -> Option<String> {
+        if self.file_count == 0 && self.line_count == 0 {
+            return None;
+        }
+        if self.line_count == 0 {
+            let noun = if self.full_file_count == 1 {
+                "file"
+            } else {
+                "files"
+            };
+            return Some(format!("{} {} selected", self.full_file_count, noun));
+        }
+        if !self.has_full_files && self.file_count == 1 {
+            let noun = if self.line_count == 1 {
+                "line"
+            } else {
+                "lines"
+            };
+            return Some(format!("{} {} selected", self.line_count, noun));
+        }
+        if self.has_full_files && self.line_count > 0 {
+            let file_noun = if self.full_file_count == 1 {
+                "file"
+            } else {
+                "files"
+            };
+            let line_noun = if self.line_count == 1 {
+                "line"
+            } else {
+                "lines"
+            };
+            return Some(format!(
+                "{} {} + {} {} selected",
+                self.full_file_count, file_noun, self.line_count, line_noun
+            ));
+        }
+        let line_noun = if self.line_count == 1 {
+            "line"
+        } else {
+            "lines"
+        };
+        let file_noun = if self.file_count == 1 {
+            "file"
+        } else {
+            "files"
+        };
+        Some(format!(
+            "{} {} in {} {} selected",
+            self.line_count, line_noun, self.file_count, file_noun
+        ))
+    }
+
+    pub fn submenu_suffix(&self) -> Option<String> {
+        if self.file_count == 0 && self.line_count == 0 {
+            return None;
+        }
+        if self.line_count == 0 {
+            let noun = if self.full_file_count == 1 {
+                "file"
+            } else {
+                "files"
+            };
+            return Some(format!("{} {}", self.full_file_count, noun));
+        }
+        if !self.has_full_files && self.file_count == 1 {
+            let noun = if self.line_count == 1 {
+                "line"
+            } else {
+                "lines"
+            };
+            return Some(format!("{} {}", self.line_count, noun));
+        }
+        if self.has_full_files && self.line_count > 0 {
+            let file_noun = if self.full_file_count == 1 {
+                "file"
+            } else {
+                "files"
+            };
+            let line_noun = if self.line_count == 1 {
+                "line"
+            } else {
+                "lines"
+            };
+            return Some(format!(
+                "{} {} + {} {}",
+                self.full_file_count, file_noun, self.line_count, line_noun
+            ));
+        }
+        let line_noun = if self.line_count == 1 {
+            "line"
+        } else {
+            "lines"
+        };
+        let file_noun = if self.file_count == 1 {
+            "file"
+        } else {
+            "files"
+        };
+        Some(format!(
+            "{} {} in {} {}",
+            self.line_count, line_noun, self.file_count, file_noun
+        ))
+    }
 }
 
 /// All global toggles. Single source of truth for status bar rendering,
@@ -626,6 +748,12 @@ pub struct App {
     pub show_line_numbers: bool,
     /// Currently selected files (for partial operations like squash).
     pub selections: HashSet<Selection>,
+    /// Visual mode anchor row index. When `Some`, visual selection is actively
+    /// being extended. Only valid on DiffLine rows.
+    pub visual_anchor: Option<usize>,
+    /// Persistent visual range (survives exiting visual mode with `v`).
+    /// Cleared on file collapse, refresh, or starting a new visual selection.
+    pub visual_range: Option<VisualRange>,
 }
 
 impl App {
@@ -656,6 +784,8 @@ impl App {
             last_command: None,
             show_line_numbers: false,
             selections: HashSet::new(),
+            visual_anchor: None,
+            visual_range: None,
         };
         app.rebuild_rows();
         app
@@ -817,20 +947,70 @@ impl App {
         }
     }
 
-    /// Move selection to the previous commit node (section jump).
+    /// Whether J/K should jump to the next commit (vs next file).
+    ///
+    /// - On `CommitNode`: always commit-level.
+    /// - On collapsed `FileChange`: commit-level (j already moves between files).
+    /// - On expanded `FileChange`: file-level (skip diff lines to next file).
+    /// - On `DiffLine`: file-level (escape the current diff).
+    fn is_commit_level_jump(&self) -> bool {
+        match self.rows.get(self.cursor) {
+            Some(DisplayRow::CommitNode { .. }) => true,
+            Some(DisplayRow::FileChange {
+                entry_idx,
+                file_idx,
+            }) => {
+                // Collapsed file → commit-level. Expanded → file-level.
+                !self
+                    .file_unfolded
+                    .get(&(*entry_idx, *file_idx))
+                    .copied()
+                    .unwrap_or(false)
+            }
+            _ => false, // DiffLine, GraphLink → file-level
+        }
+    }
+
+    /// Context-aware section jump upward.
+    ///
+    /// - Commit-level: jump to the previous commit.
+    /// - File-level: jump to the previous file or commit.
     pub fn move_up_section(&mut self) {
+        let commit_level = self.is_commit_level_jump();
+
         for j in (0..self.cursor).rev() {
-            if matches!(self.rows[j], DisplayRow::CommitNode { .. }) {
+            let target = if commit_level {
+                matches!(self.rows[j], DisplayRow::CommitNode { .. })
+            } else {
+                matches!(
+                    self.rows[j],
+                    DisplayRow::FileChange { .. } | DisplayRow::CommitNode { .. }
+                )
+            };
+            if target {
                 self.cursor = j;
                 return;
             }
         }
     }
 
-    /// Move selection to the next commit node (section jump).
+    /// Context-aware section jump downward.
+    ///
+    /// - Commit-level: jump to the next commit.
+    /// - File-level: jump to the next file or commit.
     pub fn move_down_section(&mut self) {
+        let commit_level = self.is_commit_level_jump();
+
         for j in (self.cursor + 1)..self.rows.len() {
-            if matches!(self.rows[j], DisplayRow::CommitNode { .. }) {
+            let target = if commit_level {
+                matches!(self.rows[j], DisplayRow::CommitNode { .. })
+            } else {
+                matches!(
+                    self.rows[j],
+                    DisplayRow::FileChange { .. } | DisplayRow::CommitNode { .. }
+                )
+            };
+            if target {
                 self.cursor = j;
                 return;
             }
@@ -1117,6 +1297,31 @@ impl App {
         self.selections.len()
     }
 
+    pub fn selection_summary(&self) -> SelectionSummary {
+        let mut files = HashSet::new();
+        let mut full_files = HashSet::new();
+        let mut line_count = 0usize;
+        let mut has_full_files = false;
+
+        for selection in &self.selections {
+            files.insert(selection.path().to_string());
+            match selection {
+                Selection::File(file_ref) => {
+                    has_full_files = true;
+                    full_files.insert(file_ref.path.clone());
+                }
+                Selection::Line { .. } => line_count += 1,
+            }
+        }
+
+        SelectionSummary {
+            file_count: files.len(),
+            full_file_count: full_files.len(),
+            line_count,
+            has_full_files,
+        }
+    }
+
     /// Clear all selections.
     pub fn clear_selection(&mut self) {
         self.selections.clear();
@@ -1128,6 +1333,303 @@ impl App {
             let same_commit = self.selections.iter().any(|s| s.change_id() == change_id);
             if !same_commit {
                 self.selections.clear();
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Visual mode
+    // -----------------------------------------------------------------------
+
+    /// Toggle visual mode.
+    ///
+    /// - If not in visual mode: start visual selection on current line (must be
+    ///   an Added/Removed diff line). Clears any persistent visual range.
+    /// - If in visual mode: exit and persist the current range as a `VisualRange`.
+    pub fn toggle_visual_mode(&mut self) {
+        if self.visual_anchor.is_some() {
+            // Exit visual mode → persist the range.
+            self.persist_visual_range();
+            self.visual_anchor = None;
+        } else if let Some(DisplayRow::DiffLine {
+            entry_idx,
+            file_idx,
+            line_idx,
+        }) = self.rows.get(self.cursor)
+        {
+            let dl = &self.diff_cache[&(*entry_idx, *file_idx)][line_idx.raw()];
+            if dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed {
+                self.visual_range = None; // clear any old persistent range
+                self.visual_anchor = Some(self.cursor);
+            }
+        }
+    }
+
+    /// Exit visual mode, discarding the range (no persistence).
+    pub fn cancel_visual_mode(&mut self) {
+        self.visual_anchor = None;
+    }
+
+    /// Whether visual mode is actively selecting (anchor set).
+    pub fn in_visual_mode(&self) -> bool {
+        self.visual_anchor.is_some()
+    }
+
+    /// Get the active visual range as (lo, hi) row indices (inclusive).
+    /// Only valid while `in_visual_mode()` is true.
+    fn active_visual_row_range(&self) -> Option<(usize, usize)> {
+        self.visual_anchor
+            .map(|anchor| (anchor.min(self.cursor), anchor.max(self.cursor)))
+    }
+
+    /// Get the (entry_idx, file_idx) of the visual mode anchor.
+    fn visual_file(&self) -> Option<(EntryIdx, FileIdx)> {
+        let anchor = self.visual_anchor?;
+        match self.rows.get(anchor) {
+            Some(DisplayRow::DiffLine {
+                entry_idx,
+                file_idx,
+                ..
+            }) => Some((*entry_idx, *file_idx)),
+            _ => None,
+        }
+    }
+
+    /// Persist the current active visual range as a `VisualRange`.
+    fn persist_visual_range(&mut self) {
+        let Some((lo, hi)) = self.active_visual_row_range() else {
+            return;
+        };
+
+        // Find the DiffLineIdx bounds from the row range.
+        let mut start_line = None;
+        let mut end_line = None;
+        let mut change_id = None;
+        let mut path = None;
+
+        for idx in lo..=hi {
+            if let Some(DisplayRow::DiffLine {
+                entry_idx,
+                file_idx,
+                line_idx,
+            }) = self.rows.get(idx)
+            {
+                if start_line.is_none() {
+                    start_line = Some(*line_idx);
+                    change_id = Some(self.entries[*entry_idx].commit.change_id.display.clone());
+                    path = Some(self.file_cache[entry_idx][file_idx.raw()].path.clone());
+                }
+                end_line = Some(*line_idx);
+            }
+        }
+
+        if let (Some(start), Some(end), Some(cid), Some(p)) =
+            (start_line, end_line, change_id, path)
+        {
+            self.visual_range = Some(VisualRange {
+                change_id: cid,
+                path: p,
+                start_line: start,
+                end_line: end,
+            });
+        }
+    }
+
+    /// Check if a diff line is within the visual range (active or persistent).
+    pub fn is_in_visual_range(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        line_idx: DiffLineIdx,
+    ) -> bool {
+        // Check active visual range first (while selecting).
+        if let Some((lo, hi)) = self.active_visual_row_range() {
+            // Check by row index (the cursor range).
+            if let Some(row_idx) = self.rows.iter().position(|r| {
+                matches!(r, DisplayRow::DiffLine { entry_idx: e, file_idx: f, line_idx: l }
+                    if *e == entry_idx && *f == file_idx && *l == line_idx)
+            }) {
+                return row_idx >= lo && row_idx <= hi;
+            }
+        }
+
+        // Check persistent visual range.
+        if let Some(vr) = &self.visual_range {
+            let cid = &self.entries[entry_idx].commit.change_id.display;
+            if let Some(files) = self.file_cache.get(&entry_idx) {
+                if let Some(file) = files.get(file_idx.raw()) {
+                    if cid == &vr.change_id
+                        && file.path == vr.path
+                        && line_idx >= vr.start_line
+                        && line_idx <= vr.end_line
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if the cursor is on a line within the persistent visual range.
+    pub fn cursor_in_persistent_visual_range(&self) -> bool {
+        let Some(vr) = &self.visual_range else {
+            return false;
+        };
+        if let Some(DisplayRow::DiffLine {
+            entry_idx,
+            file_idx,
+            line_idx,
+        }) = self.rows.get(self.cursor)
+        {
+            let cid = &self.entries[*entry_idx].commit.change_id.display;
+            if let Some(file) = self
+                .file_cache
+                .get(entry_idx)
+                .and_then(|f| f.get(file_idx.raw()))
+            {
+                return cid == &vr.change_id
+                    && file.path == vr.path
+                    && *line_idx >= vr.start_line
+                    && *line_idx <= vr.end_line;
+            }
+        }
+        false
+    }
+
+    /// Move cursor down, constrained to the same file's diff lines (visual mode).
+    pub fn visual_move_down(&mut self) {
+        let Some((anchor_entry, anchor_file)) = self.visual_file() else {
+            return;
+        };
+        for j in (self.cursor + 1)..self.rows.len() {
+            if matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+                continue;
+            }
+            match &self.rows[j] {
+                DisplayRow::DiffLine {
+                    entry_idx,
+                    file_idx,
+                    ..
+                } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
+                    self.cursor = j;
+                    return;
+                }
+                _ => return, // hit file/commit boundary, stop
+            }
+        }
+    }
+
+    /// Move cursor up, constrained to the same file's diff lines (visual mode).
+    pub fn visual_move_up(&mut self) {
+        let Some((anchor_entry, anchor_file)) = self.visual_file() else {
+            return;
+        };
+        for j in (0..self.cursor).rev() {
+            if matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+                continue;
+            }
+            match &self.rows[j] {
+                DisplayRow::DiffLine {
+                    entry_idx,
+                    file_idx,
+                    ..
+                } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
+                    self.cursor = j;
+                    return;
+                }
+                _ => return, // hit file/commit boundary, stop
+            }
+        }
+    }
+
+    /// Toggle all selectable lines in a visual range (active or persistent).
+    /// If active visual mode, persists the range first.
+    /// Clears the persistent range after toggling.
+    pub fn toggle_visual_selection(&mut self) {
+        // If actively selecting, persist first.
+        if self.visual_anchor.is_some() {
+            self.persist_visual_range();
+            self.visual_anchor = None;
+        }
+
+        let Some(vr) = self.visual_range.clone() else {
+            return;
+        };
+
+        // Collect line data from the persistent range before mutating.
+        let line_data: Vec<(String, String, Option<u32>, Option<u32>)> = self
+            .diff_cache
+            .iter()
+            .filter_map(|((eidx, fidx), diff_lines)| {
+                let cid = &self.entries[*eidx].commit.change_id.display;
+                let path = &self.file_cache[eidx][fidx.raw()].path;
+                if cid != &vr.change_id || path != &vr.path {
+                    return None;
+                }
+                let lines: Vec<_> = diff_lines
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| {
+                        let idx = DiffLineIdx::new(*i);
+                        idx >= vr.start_line && idx <= vr.end_line
+                    })
+                    .filter(|(_, dl)| {
+                        dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed
+                    })
+                    .map(|(_, dl)| {
+                        (
+                            vr.change_id.clone(),
+                            vr.path.clone(),
+                            dl.old_line,
+                            dl.new_line,
+                        )
+                    })
+                    .collect();
+                Some(lines)
+            })
+            .flatten()
+            .collect();
+
+        if line_data.is_empty() {
+            return;
+        }
+
+        // If all are already selected, deselect. Otherwise select.
+        let all_selected = line_data.iter().all(|(cid, path, ol, nl)| {
+            self.selections.contains(&Selection::Line {
+                change_id: cid.clone(),
+                path: path.clone(),
+                old_line: *ol,
+                new_line: *nl,
+            })
+        });
+
+        if all_selected {
+            for (cid, path, ol, nl) in &line_data {
+                self.selections.remove(&Selection::Line {
+                    change_id: cid.clone(),
+                    path: path.clone(),
+                    old_line: *ol,
+                    new_line: *nl,
+                });
+            }
+        } else {
+            if let Some((cid, ..)) = line_data.first() {
+                self.clear_other_commits(cid);
+            }
+            for (cid, path, ol, nl) in line_data {
+                self.selections.remove(&Selection::File {
+                    change_id: cid.clone(),
+                    path: path.clone(),
+                });
+                self.selections.insert(Selection::Line {
+                    change_id: cid,
+                    path,
+                    old_line: ol,
+                    new_line: nl,
+                });
             }
         }
     }
@@ -1206,6 +1708,8 @@ impl App {
         self.file_unfolded.clear();
         self.file_cache.clear();
         self.diff_cache.clear();
+        self.visual_anchor = None;
+        self.visual_range = None;
         self.entries = entries;
         self.cursor = 0;
         self.rebuild_rows();
@@ -1232,6 +1736,20 @@ impl App {
 
         if currently_unfolded {
             self.file_unfolded.insert(key, false);
+            // Clear visual range if it's for this file.
+            if let Some(vr) = &self.visual_range {
+                let cid = &self.entries[entry_idx].commit.change_id.display;
+                if let Some(file) = self
+                    .file_cache
+                    .get(&entry_idx)
+                    .and_then(|f| f.get(file_idx.raw()))
+                {
+                    if cid == &vr.change_id && file.path == vr.path {
+                        self.visual_range = None;
+                    }
+                }
+            }
+            self.visual_anchor = None;
         } else {
             // Lazy load diff lines.
             if !self.diff_cache.contains_key(&key) {

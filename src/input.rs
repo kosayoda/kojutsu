@@ -141,6 +141,38 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
     // Merge global toggles into the command flags.
     let flags = flags | app.toggles;
 
+    // Visual mode intercepts: constrain movement and handle space/v/esc.
+    if app.in_visual_mode() {
+        match action {
+            AppAction::MoveDown => {
+                app.visual_move_down();
+                return Action::None;
+            }
+            AppAction::MoveUp => {
+                app.visual_move_up();
+                return Action::None;
+            }
+            AppAction::ToggleSelect => {
+                // space while actively selecting: toggle the range and persist.
+                app.toggle_visual_selection();
+                return Action::None;
+            }
+            AppAction::EnterVisualMode => {
+                // v again: exit visual mode, persist the range.
+                app.toggle_visual_mode();
+                return Action::None;
+            }
+            AppAction::Quit => {
+                app.cancel_visual_mode();
+                return Action::Quit;
+            }
+            _ => {
+                // Any other action cancels visual mode (no persistence).
+                app.cancel_visual_mode();
+            }
+        }
+    }
+
     match action {
         AppAction::Quit => Action::Quit,
         AppAction::MoveDown => {
@@ -200,6 +232,13 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             Action::None
         }
         AppAction::ToggleSelect => {
+            // If cursor is on a line within a persistent visual range,
+            // toggle the entire range.
+            if app.cursor_in_persistent_visual_range() {
+                app.toggle_visual_selection();
+                return Action::None;
+            }
+
             // Extract row info before mutating app (borrow rules).
             enum SelectTarget {
                 Commit(EntryIdx),
@@ -248,6 +287,10 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
                 }
                 None => {}
             }
+            Action::None
+        }
+        AppAction::EnterVisualMode => {
+            app.toggle_visual_mode();
             Action::None
         }
         AppAction::Refresh => Action::Refresh,
