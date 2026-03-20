@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table};
 use ratatui::Frame;
 
-use crate::app::{App, AppMode, DisplayRow, GLOBAL_TOGGLES};
+use crate::app::{App, AppMode, DisplayRow, FileSelectionState, GLOBAL_TOGGLES};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, ShortId};
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, Keymap, KeymapNode};
 
@@ -270,8 +270,8 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     .get(&(*entry_idx, *file_idx))
                     .copied()
                     .unwrap_or(false);
-                let is_selected = app.is_file_selected(*entry_idx, *file_idx);
-                render_file_line(file, is_unfolded, is_selected)
+                let sel_state = app.file_selection_state(*entry_idx, *file_idx);
+                render_file_line(file, is_unfolded, sel_state)
             }
             DisplayRow::DiffLine {
                 entry_idx,
@@ -280,7 +280,8 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
             } => {
                 let diff_lines = &app.diff_cache[&(*entry_idx, *file_idx)];
                 let diff_line = &diff_lines[line_idx.raw()];
-                render_diff_line(diff_line, app.show_line_numbers)
+                let is_selected = app.is_line_selected(*entry_idx, *file_idx, *line_idx);
+                render_diff_line(diff_line, app.show_line_numbers, is_selected)
             }
         })
         .collect();
@@ -799,7 +800,11 @@ fn render_commit_item<'a>(
     ListItem::new(vec![Line::from(line1), Line::from(line2)])
 }
 
-fn render_file_line(file: &FileChange, is_unfolded: bool, is_selected: bool) -> ListItem<'_> {
+fn render_file_line(
+    file: &FileChange,
+    is_unfolded: bool,
+    sel_state: FileSelectionState,
+) -> ListItem<'_> {
     let (marker, color) = match file.status {
         FileStatus::Added => ("A", Color::Green),
         FileStatus::Modified => ("M", Color::Cyan),
@@ -807,7 +812,11 @@ fn render_file_line(file: &FileChange, is_unfolded: bool, is_selected: bool) -> 
     };
 
     let fold_char = if is_unfolded { "▾" } else { "▸" };
-    let select_char = if is_selected { "●" } else { " " };
+    let select_char = match sel_state {
+        FileSelectionState::Full => "●",
+        FileSelectionState::Partial => "◐",
+        FileSelectionState::None => " ",
+    };
 
     ListItem::new(Line::from(vec![
         Span::styled(
@@ -825,7 +834,11 @@ fn render_file_line(file: &FileChange, is_unfolded: bool, is_selected: bool) -> 
     ]))
 }
 
-fn render_diff_line(diff_line: &DiffLine, show_line_numbers: bool) -> ListItem<'_> {
+fn render_diff_line(
+    diff_line: &DiffLine,
+    show_line_numbers: bool,
+    is_selected: bool,
+) -> ListItem<'_> {
     let (marker, style) = match diff_line.kind {
         DiffLineKind::Header => (" ", Style::default().fg(Color::Magenta)),
         DiffLineKind::Context => (" ", Style::default().fg(Color::DarkGray)),
@@ -834,8 +847,18 @@ fn render_diff_line(diff_line: &DiffLine, show_line_numbers: bool) -> ListItem<'
     };
 
     let line_num_style = Style::default().fg(Color::DarkGray);
+    let select_indicator = if is_selected { "●" } else { " " };
 
     let mut spans = Vec::new();
+    // Selection indicator for added/removed lines.
+    if diff_line.kind == DiffLineKind::Added || diff_line.kind == DiffLineKind::Removed {
+        spans.push(Span::styled(
+            format!("{select_indicator} "),
+            Style::default().fg(Color::Yellow),
+        ));
+    } else {
+        spans.push(Span::raw("  "));
+    }
     if show_line_numbers && diff_line.kind != DiffLineKind::Header {
         // "  {old:>4} {new:>4} {marker}{content}"
         let old = diff_line

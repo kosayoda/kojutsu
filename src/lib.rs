@@ -1,10 +1,12 @@
 pub mod app;
 pub mod dag;
+pub mod diff_tool;
 pub mod graph;
 pub mod idx;
 pub mod input;
 pub mod jj_command;
 pub mod keymap;
 pub mod repo;
+pub mod selection;
 pub mod terminal;
 pub mod ui;

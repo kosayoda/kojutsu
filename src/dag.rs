@@ -161,7 +161,7 @@ pub struct DiffLine {
     pub new_line: Option<u32>,
 }
 
-#[derive(PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DiffLineKind {
     /// Unchanged context line.
     Context,

@@ -2,10 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use tui_input::Input;
 
-use crate::dag::{DagEntry, DiffLine, FileChange};
+use crate::dag::{DagEntry, DiffLine, DiffLineKind, FileChange};
 use crate::graph::{self, GraphLines};
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, IndexVec};
-use crate::jj_command::JJCommand;
+use crate::jj_command::{ChangeSelection, JJCommand};
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo::JjRepo;
 
@@ -13,14 +13,44 @@ use crate::repo::JjRepo;
 /// path, so selections survive DAG refreshes.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum Selection {
-    /// A selected file within a commit's diff.
-    File {
-        /// The commit's change ID (display prefix).
+    /// Entire file selected.
+    File { change_id: String, path: String },
+    /// Individual diff line selected (added or removed).
+    Line {
         change_id: String,
-        /// File path within that commit's diff.
         path: String,
+        /// Line number in the old file (`Some` for removed/context lines).
+        old_line: Option<u32>,
+        /// Line number in the new file (`Some` for added/context lines).
+        new_line: Option<u32>,
     },
-    // Future: Line { change_id: String, path: String, line_idx: DiffLineIdx },
+}
+
+impl Selection {
+    /// Get the change ID from any selection variant.
+    pub fn change_id(&self) -> &str {
+        match self {
+            Selection::File { change_id, .. } | Selection::Line { change_id, .. } => change_id,
+        }
+    }
+
+    /// Get the file path from any selection variant.
+    pub fn path(&self) -> &str {
+        match self {
+            Selection::File { path, .. } | Selection::Line { path, .. } => path,
+        }
+    }
+}
+
+/// Selection state of a file (for UI display).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FileSelectionState {
+    /// No selections for this file.
+    None,
+    /// Some lines selected (but not all, and no File-level selection).
+    Partial,
+    /// Entire file selected (Selection::File entry exists).
+    Full,
 }
 
 /// Metadata for a global toggle that persists across commands.
@@ -186,7 +216,7 @@ pub enum PendingCommand {
     /// Commit with inline message (text is the message).
     Commit {
         flags: CommandFlags,
-        paths: Vec<String>,
+        selection: ChangeSelection,
     },
 }
 
@@ -226,9 +256,9 @@ impl PendingCommand {
             PendingCommand::BookmarkUntrack { flags } => {
                 JJCommand::BookmarkUntrack { name: text, flags }
             }
-            PendingCommand::Commit { flags, paths } => JJCommand::Commit {
+            PendingCommand::Commit { flags, selection } => JJCommand::Commit {
                 message: Some(text),
-                paths,
+                selection,
                 flags,
             },
         }
@@ -269,7 +299,7 @@ impl TargetOperation {
         source: String,
         target: String,
         flags: CommandFlags,
-        paths: Vec<String>,
+        selection: ChangeSelection,
     ) -> Vec<FollowUpOption> {
         match self {
             TargetOperation::SquashInto
@@ -283,7 +313,7 @@ impl TargetOperation {
                     TargetOperation::SquashBefore => SquashTarget::Before(target),
                     _ => unreachable!(),
                 };
-                squash_follow_up(source, Some(squash_target), paths, flags)
+                squash_follow_up(source, Some(squash_target), selection, flags)
             }
             TargetOperation::RebaseRevision => {
                 rebase_follow_up(source, target, RebaseSourceMode::Revision, flags)
@@ -326,27 +356,27 @@ impl TargetOperation {
 fn squash_follow_up(
     source: String,
     target: Option<SquashTarget>,
-    paths: Vec<String>,
+    selection: ChangeSelection,
     flags: CommandFlags,
 ) -> Vec<FollowUpOption> {
     let default_cmd = JJCommand::Squash {
         change_id: source.clone(),
         target: target.clone(),
         message: MessageMode::Default,
-        paths: paths.clone(),
+        selection: selection.clone(),
         flags,
     };
     let use_dest_cmd = JJCommand::Squash {
         change_id: source.clone(),
         target: target.clone(),
         message: MessageMode::UseDestination,
-        paths: paths.clone(),
+        selection: selection.clone(),
         flags,
     };
     let builder = ReadyCommand::Squash {
         source,
         target,
-        paths,
+        selection,
     };
 
     vec![
@@ -442,7 +472,7 @@ pub enum ReadyCommand {
     Squash {
         source: String,
         target: Option<SquashTarget>,
-        paths: Vec<String>,
+        selection: ChangeSelection,
     },
 }
 
@@ -453,12 +483,12 @@ impl ReadyCommand {
             ReadyCommand::Squash {
                 source,
                 target,
-                paths,
+                selection,
             } => JJCommand::Squash {
                 change_id: source,
                 target,
                 message: MessageMode::Default,
-                paths,
+                selection,
                 flags,
             },
         }
@@ -470,12 +500,12 @@ impl ReadyCommand {
             ReadyCommand::Squash {
                 source,
                 target,
-                paths,
+                selection,
             } => JJCommand::Squash {
                 change_id: source,
                 target,
                 message: MessageMode::Inline(message),
-                paths,
+                selection,
                 flags,
             },
         }
@@ -487,12 +517,12 @@ impl ReadyCommand {
             ReadyCommand::Squash {
                 source,
                 target,
-                paths,
+                selection,
             } => JJCommand::Squash {
                 change_id: source,
                 target,
                 message: MessageMode::UseDestination,
-                paths,
+                selection,
                 flags,
             },
         }
@@ -845,15 +875,11 @@ impl App {
         let change_id = self.entries[entry_idx].commit.change_id.display.clone();
         let path = self.file_cache[&entry_idx][file_idx.raw()].path.clone();
 
-        // Clear selections if switching to a different commit.
-        if !self.selections.is_empty() {
-            let same_commit = self.selections.iter().any(|s| match s {
-                Selection::File { change_id: cid, .. } => *cid == change_id,
-            });
-            if !same_commit {
-                self.selections.clear();
-            }
-        }
+        self.clear_other_commits(&change_id);
+
+        // Clear any line-level selections for this file (File overrides Lines).
+        self.selections
+            .retain(|s| !matches!(s, Selection::Line { path: p, .. } if *p == path));
 
         let sel = Selection::File { change_id, path };
         if !self.selections.remove(&sel) {
@@ -867,66 +893,223 @@ impl App {
         if !self.unfolded[entry_idx] {
             return;
         }
-        let Some(files) = self.file_cache.get(&entry_idx) else {
+        if !self.file_cache.contains_key(&entry_idx) {
             return;
-        };
-
-        let change_id = self.entries[entry_idx].commit.change_id.display.clone();
-
-        // Clear selections from other commits.
-        if !self.selections.is_empty() {
-            let same_commit = self.selections.iter().any(|s| match s {
-                Selection::File { change_id: cid, .. } => *cid == change_id,
-            });
-            if !same_commit {
-                self.selections.clear();
-            }
         }
 
-        // If all files are already selected, deselect all. Otherwise select all.
-        let all_selected = files.iter().all(|f| {
+        let change_id = self.entries[entry_idx].commit.change_id.display.clone();
+        self.clear_other_commits(&change_id);
+
+        // Collect file paths upfront to avoid borrowing self.file_cache across mutations.
+        let file_paths: Vec<String> = self.file_cache[&entry_idx]
+            .iter()
+            .map(|f| f.path.clone())
+            .collect();
+
+        // If all files are already selected (File-level), deselect all.
+        let all_selected = file_paths.iter().all(|p| {
             self.selections.contains(&Selection::File {
                 change_id: change_id.clone(),
-                path: f.path.clone(),
+                path: p.clone(),
             })
         });
 
         if all_selected {
             self.selections.clear();
         } else {
-            for f in files {
+            self.selections.clear();
+            for p in file_paths {
                 self.selections.insert(Selection::File {
                     change_id: change_id.clone(),
-                    path: f.path.clone(),
+                    path: p,
                 });
             }
         }
     }
 
-    /// Check if a specific file is selected.
-    pub fn is_file_selected(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> bool {
+    /// Toggle a single diff line selection (added/removed only).
+    pub fn toggle_line_selection(
+        &mut self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        line_idx: DiffLineIdx,
+    ) {
+        let change_id = self.entries[entry_idx].commit.change_id.display.clone();
+        let file_path = self.file_cache[&entry_idx][file_idx.raw()].path.clone();
+
+        // Extract what we need from the diff line before mutating self.
+        let dl = &self.diff_cache[&(entry_idx, file_idx)][line_idx.raw()];
+        if dl.kind != DiffLineKind::Added && dl.kind != DiffLineKind::Removed {
+            return;
+        }
+        let old_line = dl.old_line;
+        let new_line = dl.new_line;
+
+        self.clear_other_commits(&change_id);
+
+        // If there's a File-level selection for this file, remove it.
+        self.selections.remove(&Selection::File {
+            change_id: change_id.clone(),
+            path: file_path.clone(),
+        });
+
+        let sel = Selection::Line {
+            change_id,
+            path: file_path,
+            old_line,
+            new_line,
+        };
+        if !self.selections.remove(&sel) {
+            self.selections.insert(sel);
+        }
+    }
+
+    /// Toggle all added/removed lines in a hunk (triggered by space on a header line).
+    pub fn toggle_hunk_selection(
+        &mut self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        header_line_idx: DiffLineIdx,
+    ) {
+        let change_id = self.entries[entry_idx].commit.change_id.display.clone();
+        let file_path = self.file_cache[&entry_idx][file_idx.raw()].path.clone();
+
+        // Collect hunk line data before mutating self.
+        let mut hunk_lines = Vec::new();
+        {
+            let diff_lines = &self.diff_cache[&(entry_idx, file_idx)];
+            for dl in diff_lines.iter().skip(header_line_idx.raw() + 1) {
+                if dl.kind == DiffLineKind::Header {
+                    break;
+                }
+                if dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed {
+                    hunk_lines.push(Selection::Line {
+                        change_id: change_id.clone(),
+                        path: file_path.clone(),
+                        old_line: dl.old_line,
+                        new_line: dl.new_line,
+                    });
+                }
+            }
+        }
+
+        self.clear_other_commits(&change_id);
+
+        // Remove any File-level selection for this file.
+        self.selections.remove(&Selection::File {
+            change_id: change_id.clone(),
+            path: file_path.clone(),
+        });
+
+        // If all hunk lines are already selected, deselect them. Otherwise select all.
+        let all_selected = hunk_lines.iter().all(|s| self.selections.contains(s));
+        if all_selected {
+            for s in &hunk_lines {
+                self.selections.remove(s);
+            }
+        } else {
+            for s in hunk_lines {
+                self.selections.insert(s);
+            }
+        }
+    }
+
+    /// Check if a specific diff line is selected.
+    pub fn is_line_selected(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        line_idx: DiffLineIdx,
+    ) -> bool {
         let change_id = &self.entries[entry_idx].commit.change_id.display;
-        if let Some(files) = self.file_cache.get(&entry_idx) {
-            if let Some(file) = files.get(file_idx.raw()) {
-                return self.selections.iter().any(|s| match s {
-                    Selection::File {
-                        change_id: cid,
-                        path,
-                    } => cid == change_id && path == &file.path,
-                });
-            }
+        let file_path = &self.file_cache[&entry_idx][file_idx.raw()].path;
+        let diff_line = &self.diff_cache[&(entry_idx, file_idx)][line_idx.raw()];
+
+        // If the whole file is selected, all lines are implicitly selected.
+        if self.selections.contains(&Selection::File {
+            change_id: change_id.clone(),
+            path: file_path.clone(),
+        }) {
+            return diff_line.kind == DiffLineKind::Added
+                || diff_line.kind == DiffLineKind::Removed;
         }
-        false
+
+        self.selections.contains(&Selection::Line {
+            change_id: change_id.clone(),
+            path: file_path.clone(),
+            old_line: diff_line.old_line,
+            new_line: diff_line.new_line,
+        })
     }
 
-    /// Get the file paths of all current selections.
-    pub fn selected_file_paths(&self) -> Vec<String> {
+    /// Get the selection state of a file for UI display.
+    pub fn file_selection_state(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+    ) -> FileSelectionState {
+        let change_id = &self.entries[entry_idx].commit.change_id.display;
+        let file_path = &self.file_cache[&entry_idx][file_idx.raw()].path;
+
+        // Explicit file-level selection.
+        if self.selections.contains(&Selection::File {
+            change_id: change_id.clone(),
+            path: file_path.clone(),
+        }) {
+            return FileSelectionState::Full;
+        }
+
+        // Count line-level selections for this file.
+        let selected_count = self
+            .selections
+            .iter()
+            .filter(|s| {
+                matches!(s, Selection::Line { change_id: cid, path, .. }
+                    if cid == change_id && path == file_path)
+            })
+            .count();
+
+        if selected_count == 0 {
+            return FileSelectionState::None;
+        }
+
+        // Count selectable lines (added/removed) in the diff.
+        // If all are selected, promote to Full.
+        let selectable_count = self
+            .diff_cache
+            .get(&(entry_idx, file_idx))
+            .map(|diff_lines| {
+                diff_lines
+                    .iter()
+                    .filter(|dl| dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed)
+                    .count()
+            })
+            .unwrap_or(0);
+
+        if selectable_count > 0 && selected_count >= selectable_count {
+            FileSelectionState::Full
+        } else {
+            FileSelectionState::Partial
+        }
+    }
+
+    /// Check if there are any line-level selections (vs only file-level).
+    pub fn has_line_selections(&self) -> bool {
         self.selections
             .iter()
-            .map(|s| match s {
-                Selection::File { path, .. } => path.clone(),
-            })
-            .collect()
+            .any(|s| matches!(s, Selection::Line { .. }))
+    }
+
+    /// Get the unique file paths from all selections.
+    pub fn selected_file_paths(&self) -> Vec<String> {
+        let mut paths: Vec<String> = self
+            .selections
+            .iter()
+            .map(|s| s.path().to_string())
+            .collect();
+        paths.sort();
+        paths.dedup();
+        paths
     }
 
     /// Number of currently selected items.
@@ -937,6 +1120,16 @@ impl App {
     /// Clear all selections.
     pub fn clear_selection(&mut self) {
         self.selections.clear();
+    }
+
+    /// Clear selections from other commits if switching to a different one.
+    fn clear_other_commits(&mut self, change_id: &str) {
+        if !self.selections.is_empty() {
+            let same_commit = self.selections.iter().any(|s| s.change_id() == change_id);
+            if !same_commit {
+                self.selections.clear();
+            }
+        }
     }
 
     /// Jump to the working copy commit (`@`).

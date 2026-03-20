@@ -1,8 +1,19 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use crate::app::{MessageMode, RebaseDestMode, RebaseSourceMode, SquashTarget, GLOBAL_TOGGLES};
 use crate::keymap::CommandFlags;
+
+/// How to filter changes for squash/commit operations.
+#[derive(Debug, Clone)]
+pub enum ChangeSelection {
+    /// Include all changes (no filtering).
+    All,
+    /// Include only these files (maps to [FILESETS] positional args).
+    Files(Vec<String>),
+    /// Line-level selection (maps to --interactive --tool with selection JSON).
+    Lines(PathBuf),
+}
 
 /// A typesafe representation of a jj CLI command.
 #[derive(Debug, Clone)]
@@ -36,8 +47,8 @@ pub enum JJCommand {
         change_id: String,
         target: Option<SquashTarget>,
         message: MessageMode,
-        /// File paths to squash (empty = all files).
-        paths: Vec<String>,
+        /// How to filter changes.
+        selection: ChangeSelection,
         flags: CommandFlags,
     },
     Rebase {
@@ -118,8 +129,8 @@ pub enum JJCommand {
     Commit {
         /// Inline message. `None` = open $EDITOR.
         message: Option<String>,
-        /// File paths to commit (empty = all files).
-        paths: Vec<String>,
+        /// How to filter changes.
+        selection: ChangeSelection,
         flags: CommandFlags,
     },
     Duplicate {
@@ -352,7 +363,9 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::Commit { message, paths, .. } => {
+            JJCommand::Commit {
+                message, selection, ..
+            } => {
                 let mut args = vec!["commit".to_string()];
                 push_flags(
                     &mut args,
@@ -363,7 +376,7 @@ impl JJCommand {
                     args.push("-m".to_string());
                     args.push(msg.clone());
                 }
-                args.extend(paths.iter().cloned());
+                push_change_selection(&mut args, selection);
                 args
             }
             JJCommand::Duplicate {
@@ -380,7 +393,7 @@ impl JJCommand {
                 change_id,
                 target,
                 message,
-                paths,
+                selection,
                 ..
             } => {
                 let mut args = vec!["squash".to_string()];
@@ -430,8 +443,7 @@ impl JJCommand {
                         }
                     }
                 }
-                // Append selected file paths as trailing filesets.
-                args.extend(paths.iter().cloned());
+                push_change_selection(&mut args, selection);
                 args
             }
         };
@@ -466,11 +478,25 @@ impl JJCommand {
     pub fn is_interactive(&self) -> bool {
         match self {
             JJCommand::DescribeInEditor { .. } => true,
-            JJCommand::Squash { message, flags, .. } => {
-                flags.contains(CommandFlags::INTERACTIVE) || matches!(message, MessageMode::Default)
+            JJCommand::Squash {
+                message,
+                selection,
+                flags,
+                ..
+            } => {
+                flags.contains(CommandFlags::INTERACTIVE)
+                    || matches!(message, MessageMode::Default)
+                    || matches!(selection, ChangeSelection::Lines(_))
             }
-            JJCommand::Commit { message, flags, .. } => {
-                message.is_none() || flags.contains(CommandFlags::INTERACTIVE)
+            JJCommand::Commit {
+                message,
+                selection,
+                flags,
+                ..
+            } => {
+                message.is_none()
+                    || flags.contains(CommandFlags::INTERACTIVE)
+                    || matches!(selection, ChangeSelection::Lines(_))
             }
             _ => false,
         }
@@ -581,6 +607,39 @@ fn push_flags(args: &mut Vec<String>, flags: CommandFlags, mapping: &[(CommandFl
             args.push(arg.to_string());
         }
     }
+}
+
+/// Push args for change selection (file paths or --tool for line-level).
+fn push_change_selection(args: &mut Vec<String>, selection: &ChangeSelection) {
+    match selection {
+        ChangeSelection::All => {}
+        ChangeSelection::Files(paths) => {
+            args.extend(paths.iter().cloned());
+        }
+        ChangeSelection::Lines(json_path) => {
+            let exe = std::env::current_exe().unwrap_or_else(|_| "kojutsu".into());
+            args.extend([
+                "--interactive".to_string(),
+                "--tool".to_string(),
+                "kojutsu-select".to_string(),
+                "--config".to_string(),
+                format!(
+                    "merge-tools.kojutsu-select.program={}",
+                    shell_escape(&exe.display().to_string())
+                ),
+                "--config".to_string(),
+                format!(
+                    "merge-tools.kojutsu-select.edit-args=[\"--apply-diff\", \"{}\", \"$left\", \"$right\"]",
+                    json_path.display()
+                ),
+            ]);
+        }
+    }
+}
+
+/// Escape a string for use in jj --config values.
+fn shell_escape(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// Push CLI flags for all active global toggles (ignore-immutable, etc.).

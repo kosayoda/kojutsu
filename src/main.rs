@@ -26,11 +26,36 @@ struct Cli {
     /// Print raw DAG edges and exit (for debugging graph rendering)
     #[arg(long)]
     debug_graph: bool,
+
+    /// Internal: apply diff selection as a diff tool (invoked by jj).
+    #[arg(long, hide = true)]
+    apply_diff: Option<PathBuf>,
+
+    /// Internal: left directory for diff tool mode (positional).
+    #[arg(hide = true)]
+    diff_left: Option<PathBuf>,
+
+    /// Internal: right directory for diff tool mode (positional).
+    #[arg(hide = true)]
+    diff_right: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
+
+    // Diff tool mode: apply selection and exit.
+    if let Some(selection_path) = &cli.apply_diff {
+        let left = cli
+            .diff_left
+            .as_ref()
+            .expect("left dir required for --apply-diff");
+        let right = cli
+            .diff_right
+            .as_ref()
+            .expect("right dir required for --apply-diff");
+        return kojutsu::diff_tool::apply(selection_path, left, right);
+    }
 
     let repo_path = cli.repository.canonicalize().unwrap_or(cli.repository);
     JjRepo::snapshot(&repo_path);

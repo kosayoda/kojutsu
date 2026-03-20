@@ -1963,6 +1963,7 @@ dependencies = [
  "ratatui",
  "sapling-renderdag",
  "serde",
+ "serde_json",
  "signal-hook",
  "strum 0.28.0",
  "tempfile",
@@ -1972,6 +1973,7 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "tui-input",
+ "walkdir",
 ]
 
 [[package]]

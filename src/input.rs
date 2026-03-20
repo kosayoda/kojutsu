@@ -8,10 +8,27 @@ use crate::app::{
     App, AppMode, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
     PendingSelection, TargetOperation,
 };
-use crate::idx::{EntryIdx, FileIdx};
-use crate::jj_command::JJCommand;
+use crate::dag::DiffLineKind;
+use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
+use crate::jj_command::{ChangeSelection, JJCommand};
 use crate::keymap::{self, AppAction, CommandFlags, Keymap, LookupResult};
 use crate::repo::JjRepo;
+
+/// Build the appropriate `ChangeSelection` from the current app state.
+fn build_change_selection(app: &App) -> ChangeSelection {
+    if app.has_line_selections() {
+        let path = crate::selection::serialize_selections(&app.selections)
+            .expect("failed to serialize selections");
+        ChangeSelection::Lines(path)
+    } else {
+        let paths = app.selected_file_paths();
+        if paths.is_empty() {
+            ChangeSelection::All
+        } else {
+            ChangeSelection::Files(paths)
+        }
+    }
+}
 
 /// Result of handling an input event.
 pub enum Action {
@@ -183,25 +200,51 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             Action::None
         }
         AppAction::ToggleSelect => {
-            // Extract indices before mutating app (borrow rules).
-            let sel: Option<(EntryIdx, Option<FileIdx>)> = match app.rows.get(app.cursor) {
-                Some(DisplayRow::CommitNode { entry_idx }) => Some((*entry_idx, None)),
+            // Extract row info before mutating app (borrow rules).
+            enum SelectTarget {
+                Commit(EntryIdx),
+                File(EntryIdx, FileIdx),
+                DiffLine(EntryIdx, FileIdx, DiffLineIdx, DiffLineKind),
+            }
+            let target = match app.rows.get(app.cursor) {
+                Some(DisplayRow::CommitNode { entry_idx }) => {
+                    Some(SelectTarget::Commit(*entry_idx))
+                }
                 Some(DisplayRow::FileChange {
                     entry_idx,
                     file_idx,
-                }) => Some((*entry_idx, Some(*file_idx))),
+                }) => Some(SelectTarget::File(*entry_idx, *file_idx)),
                 Some(DisplayRow::DiffLine {
                     entry_idx,
                     file_idx,
-                    ..
-                }) => Some((*entry_idx, Some(*file_idx))),
+                    line_idx,
+                }) => {
+                    let kind = app.diff_cache[&(*entry_idx, *file_idx)][line_idx.raw()].kind;
+                    Some(SelectTarget::DiffLine(
+                        *entry_idx, *file_idx, *line_idx, kind,
+                    ))
+                }
                 _ => None,
             };
-            match sel {
-                Some((entry_idx, None)) => app.toggle_commit_selection(entry_idx),
-                Some((entry_idx, Some(file_idx))) => {
+            match target {
+                Some(SelectTarget::Commit(entry_idx)) => {
+                    app.toggle_commit_selection(entry_idx);
+                }
+                Some(SelectTarget::File(entry_idx, file_idx)) => {
                     app.toggle_file_selection(entry_idx, file_idx);
                     app.move_down();
+                }
+                Some(SelectTarget::DiffLine(entry_idx, file_idx, line_idx, kind)) => {
+                    match kind {
+                        DiffLineKind::Added | DiffLineKind::Removed => {
+                            app.toggle_line_selection(entry_idx, file_idx, line_idx);
+                            app.move_down();
+                        }
+                        DiffLineKind::Header => {
+                            app.toggle_hunk_selection(entry_idx, file_idx, line_idx);
+                        }
+                        DiffLineKind::Context => {} // no-op
+                    }
                 }
                 None => {}
             }
@@ -233,7 +276,7 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         AppAction::Commit => {
             let cmd = JJCommand::Commit {
                 message: None,
-                paths: app.selected_file_paths(),
+                selection: build_change_selection(app),
                 flags,
             };
             Action::SuspendAndRunJj(cmd)
@@ -244,7 +287,7 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
                 input: Input::new(String::new()),
                 on_submit: PendingCommand::Commit {
                     flags,
-                    paths: app.selected_file_paths(),
+                    selection: build_change_selection(app),
                 },
             };
             Action::None
@@ -277,12 +320,12 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             flags,
         }),
         AppAction::Squash => {
-            let paths = app.selected_file_paths();
+            let selection = build_change_selection(app);
             make_command(app, |id| JJCommand::Squash {
                 change_id: id,
                 target: None,
                 message: MessageMode::Default,
-                paths: paths.clone(),
+                selection: selection.clone(),
                 flags,
             })
         }
@@ -459,8 +502,8 @@ fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
                 };
                 let target = target.to_string();
                 let label = operation.label();
-                let paths = app.selected_file_paths();
-                let mut options = operation.follow_up(source, target.clone(), flags, paths);
+                let selection = build_change_selection(app);
+                let mut options = operation.follow_up(source, target.clone(), flags, selection);
                 // If there's exactly one option, execute immediately.
                 if options.len() == 1 {
                     let opt = options.remove(0);
