@@ -119,6 +119,7 @@ fn suspend_and_run(
     *terminal = kojutsu::terminal::init().expect("failed to re-init terminal");
 
     if result.success {
+        app.clear_selection();
         if let Ok(new_jj) = JjRepo::open(repo_path) {
             *jj = new_jj;
             let revset = app.revset.clone();
@@ -271,6 +272,7 @@ fn run_jj_command(app: &mut App, jj: &mut JjRepo, repo_path: &std::path::Path, c
     };
 
     if result.success {
+        app.clear_selection();
         if let Ok(new_jj) = JjRepo::open(repo_path) {
             *jj = new_jj;
             let revset = app.revset.clone();

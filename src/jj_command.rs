@@ -36,6 +36,8 @@ pub enum JJCommand {
         change_id: String,
         target: Option<SquashTarget>,
         message: MessageMode,
+        /// File paths to squash (empty = all files).
+        paths: Vec<String>,
         flags: CommandFlags,
     },
     Rebase {
@@ -116,6 +118,8 @@ pub enum JJCommand {
     Commit {
         /// Inline message. `None` = open $EDITOR.
         message: Option<String>,
+        /// File paths to commit (empty = all files).
+        paths: Vec<String>,
         flags: CommandFlags,
     },
     Duplicate {
@@ -348,7 +352,7 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::Commit { message, .. } => {
+            JJCommand::Commit { message, paths, .. } => {
                 let mut args = vec!["commit".to_string()];
                 push_flags(
                     &mut args,
@@ -359,6 +363,7 @@ impl JJCommand {
                     args.push("-m".to_string());
                     args.push(msg.clone());
                 }
+                args.extend(paths.iter().cloned());
                 args
             }
             JJCommand::Duplicate {
@@ -375,6 +380,7 @@ impl JJCommand {
                 change_id,
                 target,
                 message,
+                paths,
                 ..
             } => {
                 let mut args = vec!["squash".to_string()];
@@ -424,6 +430,8 @@ impl JJCommand {
                         }
                     }
                 }
+                // Append selected file paths as trailing filesets.
+                args.extend(paths.iter().cloned());
                 args
             }
         };
@@ -461,7 +469,7 @@ impl JJCommand {
             JJCommand::Squash { message, flags, .. } => {
                 flags.contains(CommandFlags::INTERACTIVE) || matches!(message, MessageMode::Default)
             }
-            JJCommand::Commit { message, flags } => {
+            JJCommand::Commit { message, flags, .. } => {
                 message.is_none() || flags.contains(CommandFlags::INTERACTIVE)
             }
             _ => false,

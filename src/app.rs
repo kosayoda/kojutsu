@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use tui_input::Input;
 
@@ -7,6 +7,20 @@ use crate::graph::{self, GraphLines};
 use crate::jj_command::JJCommand;
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo::JjRepo;
+
+/// A selected item in the DAG. Tied to commit identity (change ID) and file
+/// path, so selections survive DAG refreshes.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum Selection {
+    /// A selected file within a commit's diff.
+    File {
+        /// The commit's change ID (display prefix).
+        change_id: String,
+        /// File path within that commit's diff.
+        path: String,
+    },
+    // Future: Line { change_id: String, path: String, line: u32 },
+}
 
 /// Metadata for a global toggle that persists across commands.
 pub struct GlobalToggle {
@@ -169,7 +183,10 @@ pub enum PendingCommand {
     /// Untrack a remote bookmark (text is "name@remote").
     BookmarkUntrack { flags: CommandFlags },
     /// Commit with inline message (text is the message).
-    Commit { flags: CommandFlags },
+    Commit {
+        flags: CommandFlags,
+        paths: Vec<String>,
+    },
 }
 
 impl PendingCommand {
@@ -210,8 +227,9 @@ impl PendingCommand {
             PendingCommand::BookmarkUntrack { flags } => {
                 JJCommand::BookmarkUntrack { name: text, flags }
             }
-            PendingCommand::Commit { flags } => JJCommand::Commit {
+            PendingCommand::Commit { flags, paths } => JJCommand::Commit {
                 message: Some(text),
+                paths,
                 flags,
             },
         }
@@ -253,6 +271,7 @@ impl TargetOperation {
         source: String,
         target: String,
         flags: CommandFlags,
+        paths: Vec<String>,
     ) -> Vec<FollowUpOption> {
         match self {
             TargetOperation::SquashInto
@@ -266,7 +285,7 @@ impl TargetOperation {
                     TargetOperation::SquashBefore => SquashTarget::Before(target),
                     _ => unreachable!(),
                 };
-                squash_follow_up(source, Some(squash_target), flags)
+                squash_follow_up(source, Some(squash_target), paths, flags)
             }
             TargetOperation::RebaseRevision => {
                 rebase_follow_up(source, target, RebaseSourceMode::Revision, flags)
@@ -309,21 +328,28 @@ impl TargetOperation {
 fn squash_follow_up(
     source: String,
     target: Option<SquashTarget>,
+    paths: Vec<String>,
     flags: CommandFlags,
 ) -> Vec<FollowUpOption> {
     let default_cmd = JJCommand::Squash {
         change_id: source.clone(),
         target: target.clone(),
         message: MessageMode::Default,
+        paths: paths.clone(),
         flags,
     };
     let use_dest_cmd = JJCommand::Squash {
         change_id: source.clone(),
         target: target.clone(),
         message: MessageMode::UseDestination,
+        paths: paths.clone(),
         flags,
     };
-    let builder = ReadyCommand::Squash { source, target };
+    let builder = ReadyCommand::Squash {
+        source,
+        target,
+        paths,
+    };
 
     vec![
         FollowUpOption {
@@ -425,6 +451,7 @@ pub enum ReadyCommand {
     Squash {
         source: String,
         target: Option<SquashTarget>,
+        paths: Vec<String>,
     },
 }
 
@@ -432,10 +459,15 @@ impl ReadyCommand {
     /// Build with default message behavior (jj handles it).
     pub fn build_default(self, flags: CommandFlags) -> JJCommand {
         match self {
-            ReadyCommand::Squash { source, target } => JJCommand::Squash {
+            ReadyCommand::Squash {
+                source,
+                target,
+                paths,
+            } => JJCommand::Squash {
                 change_id: source,
                 target,
                 message: MessageMode::Default,
+                paths,
                 flags,
             },
         }
@@ -444,10 +476,15 @@ impl ReadyCommand {
     /// Build with an inline message.
     pub fn build_with_message(self, message: String, flags: CommandFlags) -> JJCommand {
         match self {
-            ReadyCommand::Squash { source, target } => JJCommand::Squash {
+            ReadyCommand::Squash {
+                source,
+                target,
+                paths,
+            } => JJCommand::Squash {
                 change_id: source,
                 target,
                 message: MessageMode::Inline(message),
+                paths,
                 flags,
             },
         }
@@ -456,10 +493,15 @@ impl ReadyCommand {
     /// Build with --use-destination-message.
     pub fn build_use_dest_message(self, flags: CommandFlags) -> JJCommand {
         match self {
-            ReadyCommand::Squash { source, target } => JJCommand::Squash {
+            ReadyCommand::Squash {
+                source,
+                target,
+                paths,
+            } => JJCommand::Squash {
                 change_id: source,
                 target,
                 message: MessageMode::UseDestination,
+                paths,
                 flags,
             },
         }
@@ -555,6 +597,8 @@ pub struct App {
     pub last_command: Option<String>,
     /// Whether to show line numbers in diff views.
     pub show_line_numbers: bool,
+    /// Currently selected files (for partial operations like squash).
+    pub selections: HashSet<Selection>,
 }
 
 impl App {
@@ -580,6 +624,7 @@ impl App {
             toggles: CommandFlags::empty(),
             last_command: None,
             show_line_numbers: false,
+            selections: HashSet::new(),
         };
         app.rebuild_rows();
         app
@@ -785,6 +830,111 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Selection
+    // -----------------------------------------------------------------------
+
+    /// Toggle file selection. If the file belongs to a different commit than
+    /// existing selections, clears the old selections first (selections are
+    /// scoped to one commit at a time).
+    pub fn toggle_file_selection(&mut self, entry_idx: usize, file_idx: usize) {
+        let change_id = self.entries[entry_idx].commit.change_id.display.clone();
+        let path = self.file_cache[&entry_idx][file_idx].path.clone();
+
+        // Clear selections if switching to a different commit.
+        if !self.selections.is_empty() {
+            let same_commit = self.selections.iter().any(|s| match s {
+                Selection::File { change_id: cid, .. } => *cid == change_id,
+            });
+            if !same_commit {
+                self.selections.clear();
+            }
+        }
+
+        let sel = Selection::File { change_id, path };
+        if !self.selections.remove(&sel) {
+            self.selections.insert(sel);
+        }
+    }
+
+    /// Toggle selection for all files in a commit (select all / deselect all).
+    /// Only works when the commit is unfolded.
+    pub fn toggle_commit_selection(&mut self, entry_idx: usize) {
+        if !self.unfolded[entry_idx] {
+            return;
+        }
+        let Some(files) = self.file_cache.get(&entry_idx) else {
+            return;
+        };
+
+        let change_id = self.entries[entry_idx].commit.change_id.display.clone();
+
+        // Clear selections from other commits.
+        if !self.selections.is_empty() {
+            let same_commit = self.selections.iter().any(|s| match s {
+                Selection::File { change_id: cid, .. } => *cid == change_id,
+            });
+            if !same_commit {
+                self.selections.clear();
+            }
+        }
+
+        // If all files are already selected, deselect all. Otherwise select all.
+        let all_selected = files.iter().all(|f| {
+            self.selections.contains(&Selection::File {
+                change_id: change_id.clone(),
+                path: f.path.clone(),
+            })
+        });
+
+        if all_selected {
+            self.selections.clear();
+        } else {
+            for f in files {
+                self.selections.insert(Selection::File {
+                    change_id: change_id.clone(),
+                    path: f.path.clone(),
+                });
+            }
+        }
+    }
+
+    /// Check if a specific file is selected.
+    pub fn is_file_selected(&self, entry_idx: usize, file_idx: usize) -> bool {
+        let change_id = &self.entries[entry_idx].commit.change_id.display;
+        if let Some(files) = self.file_cache.get(&entry_idx) {
+            if let Some(file) = files.get(file_idx) {
+                return self.selections.iter().any(|s| match s {
+                    Selection::File {
+                        change_id: cid,
+                        path,
+                    } => cid == change_id && path == &file.path,
+                });
+            }
+        }
+        false
+    }
+
+    /// Get the file paths of all current selections.
+    pub fn selected_file_paths(&self) -> Vec<String> {
+        self.selections
+            .iter()
+            .map(|s| match s {
+                Selection::File { path, .. } => path.clone(),
+            })
+            .collect()
+    }
+
+    /// Number of currently selected items.
+    pub fn selection_count(&self) -> usize {
+        self.selections.len()
+    }
+
+    /// Clear all selections.
+    pub fn clear_selection(&mut self) {
+        self.selections.clear();
     }
 
     /// Jump to the working copy commit (`@`).

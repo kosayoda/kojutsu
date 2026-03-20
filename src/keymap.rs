@@ -87,6 +87,7 @@ pub enum AppAction {
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
     ToggleLineNumbers,
+    ToggleSelect,
 }
 
 // ---------------------------------------------------------------------------
@@ -188,8 +189,9 @@ impl Default for Keymap {
             bind("@", AppAction::JumpToWorkingCopy, "jump to @", N),
             bind("0", AppAction::MoveToTop, "go to top", N),
             bind("$", AppAction::MoveToBottom, "go to bottom", N),
-            // Fold
+            // Fold / Select
             bind("tab", AppAction::ToggleFold, "toggle fold", N),
+            bind("space", AppAction::ToggleSelect, "toggle select", N),
             // Global toggles
             bind(
                 "shift-i",

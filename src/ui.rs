@@ -59,7 +59,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             // 1 line for top border (with title + toggles) + 1 line for actions.
             let overlay = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, overlay);
-            draw_submenu(frame, overlay, key, label, children, *flags);
+            draw_submenu(
+                frame,
+                overlay,
+                key,
+                label,
+                children,
+                *flags,
+                app.selection_count(),
+            );
         }
         AppMode::CommandOutput {
             command,
@@ -177,10 +185,20 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
+    // Add selection count to the toggle spans if any files are selected.
+    let sel_count = app.selection_count();
+    if sel_count > 0 {
+        toggle_spans.push(Span::styled(
+            format!(" {sel_count} files selected "),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(Color::DarkGray))
-        // Empty title as left padding for Status
         .title("")
         .title(" Status ")
         .title_style(Style::default().fg(Color::Cyan).bold())
@@ -252,7 +270,8 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     .get(&(*entry_idx, *file_idx))
                     .copied()
                     .unwrap_or(false);
-                render_file_line(file, is_unfolded)
+                let is_selected = app.is_file_selected(*entry_idx, *file_idx);
+                render_file_line(file, is_unfolded, is_selected)
             }
             DisplayRow::DiffLine {
                 entry_idx,
@@ -384,6 +403,7 @@ fn draw_submenu(
     label: &str,
     children: &[(keymap_parser::Node, KeymapNode)],
     flags: CommandFlags,
+    selection_count: usize,
 ) {
     // Build toggle indicators for the title bar.
     let mut toggle_spans: Vec<Span> = Vec::new();
@@ -411,13 +431,19 @@ fn draw_submenu(
         }
     };
 
-    // Block with title on the border: " s Squash " on left, toggles on right.
+    // Build title: " s Squash " or " s Squash (2 files) " if selection active.
+    let title = if selection_count > 0 {
+        format!(" {key} {display_label} ({selection_count} files) ")
+    } else {
+        format!(" {key} {display_label} ")
+    };
+
+    // Block with title on the border.
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(Color::DarkGray))
-        // Empty title as left padding for key
         .title("")
-        .title(format!(" {key} {display_label} "))
+        .title(title)
         .title_style(
             Style::default()
                 .fg(Color::Cyan)
@@ -773,7 +799,7 @@ fn render_commit_item<'a>(
     ListItem::new(vec![Line::from(line1), Line::from(line2)])
 }
 
-fn render_file_line(file: &FileChange, is_unfolded: bool) -> ListItem<'_> {
+fn render_file_line(file: &FileChange, is_unfolded: bool, is_selected: bool) -> ListItem<'_> {
     let (marker, color) = match file.status {
         FileStatus::Added => ("A", Color::Green),
         FileStatus::Modified => ("M", Color::Cyan),
@@ -781,9 +807,13 @@ fn render_file_line(file: &FileChange, is_unfolded: bool) -> ListItem<'_> {
     };
 
     let fold_char = if is_unfolded { "▾" } else { "▸" };
+    let select_char = if is_selected { "●" } else { " " };
 
     ListItem::new(Line::from(vec![
-        Span::raw("    "),
+        Span::styled(
+            format!("  {select_char} "),
+            Style::default().fg(Color::Yellow),
+        ),
         Span::styled(fold_char, Style::default().fg(Color::DarkGray)),
         Span::raw(" "),
         Span::styled(

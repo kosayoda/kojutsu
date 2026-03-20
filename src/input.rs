@@ -5,8 +5,8 @@ use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
 use crate::app::{
-    App, AppMode, FollowUpAction, FollowUpOption, MessageMode, PendingCommand, PendingSelection,
-    TargetOperation,
+    App, AppMode, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
+    PendingSelection, TargetOperation,
 };
 use crate::jj_command::JJCommand;
 use crate::keymap::{self, AppAction, CommandFlags, Keymap, LookupResult};
@@ -181,6 +181,47 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             app.show_line_numbers = !app.show_line_numbers;
             Action::None
         }
+        AppAction::ToggleSelect => {
+            // Extract indices from the current row before mutating app.
+            let row_info = match app.rows.get(app.cursor) {
+                Some(DisplayRow::CommitNode { entry_idx }) => Some((0, *entry_idx, 0)),
+                Some(DisplayRow::FileChange {
+                    entry_idx,
+                    file_idx,
+                }) => Some((1, *entry_idx, *file_idx)),
+                Some(DisplayRow::DiffLine {
+                    entry_idx,
+                    file_idx,
+                    ..
+                }) => Some((1, *entry_idx, *file_idx)),
+                _ => None,
+            };
+            match row_info {
+                Some((0, entry_idx, _)) => app.toggle_commit_selection(entry_idx),
+                Some((_, entry_idx, file_idx)) => {
+                    app.toggle_file_selection(entry_idx, file_idx);
+                    // Auto-advance, but stay within the same commit's files.
+                    let next = app.cursor + 1;
+                    if let Some(
+                        DisplayRow::FileChange {
+                            entry_idx: next_entry,
+                            ..
+                        }
+                        | DisplayRow::DiffLine {
+                            entry_idx: next_entry,
+                            ..
+                        },
+                    ) = app.rows.get(next)
+                    {
+                        if *next_entry == entry_idx {
+                            app.move_down();
+                        }
+                    }
+                }
+                None => {}
+            }
+            Action::None
+        }
         AppAction::Refresh => Action::Refresh,
         AppAction::EditRevset => {
             let prefill = app.revset_input_text().to_string();
@@ -207,6 +248,7 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         AppAction::Commit => {
             let cmd = JJCommand::Commit {
                 message: None,
+                paths: app.selected_file_paths(),
                 flags,
             };
             Action::SuspendAndRunJj(cmd)
@@ -215,7 +257,10 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             app.mode = AppMode::TextInput {
                 prompt: "commit message: ".to_string(),
                 input: Input::new(String::new()),
-                on_submit: PendingCommand::Commit { flags },
+                on_submit: PendingCommand::Commit {
+                    flags,
+                    paths: app.selected_file_paths(),
+                },
             };
             Action::None
         }
@@ -246,12 +291,16 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             insert_before: true,
             flags,
         }),
-        AppAction::Squash => make_command(app, |id| JJCommand::Squash {
-            change_id: id,
-            target: None,
-            message: MessageMode::Default,
-            flags,
-        }),
+        AppAction::Squash => {
+            let paths = app.selected_file_paths();
+            make_command(app, |id| JJCommand::Squash {
+                change_id: id,
+                target: None,
+                message: MessageMode::Default,
+                paths: paths.clone(),
+                flags,
+            })
+        }
         AppAction::SquashInto => enter_target_select(app, TargetOperation::SquashInto, flags),
         AppAction::SquashOnto => enter_target_select(app, TargetOperation::SquashOnto, flags),
         AppAction::SquashAfter => enter_target_select(app, TargetOperation::SquashAfter, flags),
@@ -425,7 +474,8 @@ fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
                 };
                 let target = target.to_string();
                 let label = operation.label();
-                let mut options = operation.follow_up(source, target.clone(), flags);
+                let paths = app.selected_file_paths();
+                let mut options = operation.follow_up(source, target.clone(), flags, paths);
                 // If there's exactly one option, execute immediately.
                 if options.len() == 1 {
                     let opt = options.remove(0);
