@@ -251,7 +251,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
             } => {
                 let graph_str = app.graph[*entry_idx]
                     .extra
-                    .get(*line_idx)
+                    .get(line_idx.raw())
                     .map(|s| s.as_str())
                     .unwrap_or("");
                 ListItem::new(Line::from(Span::styled(
@@ -264,7 +264,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 file_idx,
             } => {
                 let files = &app.file_cache[entry_idx];
-                let file = &files[*file_idx];
+                let file = &files[file_idx.raw()];
                 let is_unfolded = app
                     .file_unfolded
                     .get(&(*entry_idx, *file_idx))
@@ -279,7 +279,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 line_idx,
             } => {
                 let diff_lines = &app.diff_cache[&(*entry_idx, *file_idx)];
-                let diff_line = &diff_lines[*line_idx];
+                let diff_line = &diff_lines[line_idx.raw()];
                 render_diff_line(diff_line, app.show_line_numbers)
             }
         })

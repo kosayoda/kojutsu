@@ -1,6 +1,7 @@
 pub mod app;
 pub mod dag;
 pub mod graph;
+pub mod idx;
 pub mod input;
 pub mod jj_command;
 pub mod keymap;

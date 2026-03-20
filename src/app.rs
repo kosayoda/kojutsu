@@ -4,6 +4,7 @@ use tui_input::Input;
 
 use crate::dag::{DagEntry, DiffLine, FileChange};
 use crate::graph::{self, GraphLines};
+use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, IndexVec};
 use crate::jj_command::JJCommand;
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo::JjRepo;
@@ -19,7 +20,7 @@ pub enum Selection {
         /// File path within that commit's diff.
         path: String,
     },
-    // Future: Line { change_id: String, path: String, line: u32 },
+    // Future: Line { change_id: String, path: String, line_idx: DiffLineIdx },
 }
 
 /// Metadata for a global toggle that persists across commands.
@@ -203,9 +204,7 @@ impl PendingCommand {
             PendingCommand::SquashWithMessage { builder, flags } => {
                 builder.build_with_message(text, flags)
             }
-            PendingCommand::Revset => {
-                unreachable!("Revset pending command should not be converted to JJCommand")
-            }
+            PendingCommand::Revset => panic!("Revset pending command handled separately"),
             PendingCommand::BookmarkCreate { change_id, flags } => JJCommand::BookmarkCreate {
                 name: text,
                 change_id,
@@ -265,7 +264,6 @@ impl TargetOperation {
         }
     }
 
-    /// Build follow-up options given source and target.
     pub fn follow_up(
         self,
         source: String,
@@ -361,41 +359,19 @@ fn squash_follow_up(
             key: 'm',
             label: "with message",
             action: FollowUpAction::TextInput {
-                prompt: "message: ".to_string(),
+                prompt: "squash message: ".to_string(),
                 pending: PendingCommand::SquashWithMessage { builder, flags },
             },
         },
         FollowUpOption {
-            key: 'u',
+            key: 'd',
             label: "use dest message",
             action: FollowUpAction::Execute(use_dest_cmd),
         },
     ]
 }
 
-/// How the source was specified for rebase (-r, -s, -b).
-#[derive(Debug, Clone, Copy)]
-pub enum RebaseSourceMode {
-    /// -r: single revision, descendants rebased onto parent.
-    Revision,
-    /// -s: revision + all descendants.
-    Source,
-    /// -b: whole branch.
-    Branch,
-}
-
-/// Where to rebase to (-d, -A, -B).
-#[derive(Debug, Clone)]
-pub enum RebaseDestMode {
-    /// -d/--onto: onto the target.
-    Onto(String),
-    /// -A/--insert-after: after the target.
-    After(String),
-    /// -B/--insert-before: before the target.
-    Before(String),
-}
-
-/// Build follow-up options for a rebase command (destination mode choice).
+/// Build follow-up options for a rebase command (dest mode selection).
 fn rebase_follow_up(
     source: String,
     target: String,
@@ -404,11 +380,11 @@ fn rebase_follow_up(
 ) -> Vec<FollowUpOption> {
     vec![
         FollowUpOption {
-            key: 'd',
+            key: 'o',
             label: "onto",
             action: FollowUpAction::Execute(JJCommand::Rebase {
                 change_id: source.clone(),
-                source_mode,
+                source_mode: source_mode.clone(),
                 dest: RebaseDestMode::Onto(target.clone()),
                 flags,
             }),
@@ -418,7 +394,7 @@ fn rebase_follow_up(
             label: "after",
             action: FollowUpAction::Execute(JJCommand::Rebase {
                 change_id: source.clone(),
-                source_mode,
+                source_mode: source_mode.clone(),
                 dest: RebaseDestMode::After(target.clone()),
                 flags,
             }),
@@ -436,7 +412,7 @@ fn rebase_follow_up(
     ]
 }
 
-/// The target type for a targeted squash.
+/// Squash target variants (where to squash into).
 #[derive(Debug, Clone)]
 pub enum SquashTarget {
     Into(String),
@@ -445,8 +421,23 @@ pub enum SquashTarget {
     Before(String),
 }
 
-/// A command that's ready to execute, possibly with a message choice.
+/// Rebase source mode.
 #[derive(Debug, Clone)]
+pub enum RebaseSourceMode {
+    Revision,
+    Source,
+    Branch,
+}
+
+/// Rebase destination mode.
+#[derive(Debug, Clone)]
+pub enum RebaseDestMode {
+    Onto(String),
+    After(String),
+    Before(String),
+}
+
+/// A partially-constructed command that needs a message from the user.
 pub enum ReadyCommand {
     Squash {
         source: String,
@@ -522,25 +513,31 @@ pub enum MessageMode {
 /// Identifies a display row for cursor restore after rebuild.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum RowKey {
-    CommitNode(usize),
-    GraphLink(usize, usize),
-    FileChange(usize, usize),
-    DiffLine(usize, usize, usize),
+    CommitNode(EntryIdx),
+    GraphLink(EntryIdx, GraphLineIdx),
+    FileChange(EntryIdx, FileIdx),
+    DiffLine(EntryIdx, FileIdx, DiffLineIdx),
 }
 
 /// One visual row in the list.
 pub enum DisplayRow {
     /// A commit node line (graph glyph + commit info).
-    CommitNode { entry_idx: usize },
+    CommitNode { entry_idx: EntryIdx },
     /// A graph link/pad line between commits.
-    GraphLink { entry_idx: usize, line_idx: usize },
+    GraphLink {
+        entry_idx: EntryIdx,
+        line_idx: GraphLineIdx,
+    },
     /// A file change line (shown when commit is unfolded).
-    FileChange { entry_idx: usize, file_idx: usize },
+    FileChange {
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+    },
     /// A diff hunk line (shown when a file is unfolded).
     DiffLine {
-        entry_idx: usize,
-        file_idx: usize,
-        line_idx: usize,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        line_idx: DiffLineIdx,
     },
 }
 
@@ -567,8 +564,8 @@ impl DisplayRow {
 
 /// Application state. Pure data -- no I/O, no rendering.
 pub struct App {
-    pub entries: Vec<DagEntry>,
-    pub graph: Vec<GraphLines>,
+    pub entries: IndexVec<EntryIdx, DagEntry>,
+    pub graph: IndexVec<EntryIdx, GraphLines>,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
@@ -584,13 +581,13 @@ pub struct App {
     /// Current interaction mode.
     pub mode: AppMode,
     /// Per-commit fold state: true = unfolded (showing files).
-    pub unfolded: Vec<bool>,
+    pub unfolded: IndexVec<EntryIdx, bool>,
     /// Per-file fold state: (entry_idx, file_idx) -> unfolded.
-    pub file_unfolded: HashMap<(usize, usize), bool>,
+    pub file_unfolded: HashMap<(EntryIdx, FileIdx), bool>,
     /// Lazily loaded file changes, keyed by entry index.
-    pub file_cache: HashMap<usize, Vec<FileChange>>,
+    pub file_cache: HashMap<EntryIdx, Vec<FileChange>>,
     /// Lazily loaded diff lines, keyed by (entry_idx, file_idx).
-    pub diff_cache: HashMap<(usize, usize), Vec<DiffLine>>,
+    pub diff_cache: HashMap<(EntryIdx, FileIdx), Vec<DiffLine>>,
     /// Global toggles that persist across commands.
     pub toggles: CommandFlags,
     /// Display string of the last command executed (shown in status bar).
@@ -603,8 +600,12 @@ pub struct App {
 
 impl App {
     pub fn new(entries: Vec<DagEntry>, revset: String, repo_root: String) -> Self {
-        let graph = graph::render(&entries);
-        let unfolded = vec![false; entries.len()];
+        let entries = IndexVec::from_vec(entries);
+        let graph = IndexVec::from_vec(graph::render(entries.as_slice()));
+        let mut unfolded = IndexVec::new();
+        for _ in 0..entries.len() {
+            unfolded.push(false);
+        }
 
         let mut app = Self {
             entries,
@@ -636,12 +637,13 @@ impl App {
         let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
 
         self.rows.clear();
-        for (entry_idx, gl) in self.graph.iter().enumerate() {
+        for (entry_idx, gl) in self.graph.iter_enumerated() {
             self.rows.push(DisplayRow::CommitNode { entry_idx });
 
             if self.unfolded[entry_idx] {
                 if let Some(files) = self.file_cache.get(&entry_idx) {
-                    for file_idx in 0..files.len() {
+                    for file_idx_raw in 0..files.len() {
+                        let file_idx = FileIdx::new(file_idx_raw);
                         self.rows.push(DisplayRow::FileChange {
                             entry_idx,
                             file_idx,
@@ -655,11 +657,11 @@ impl App {
                             .unwrap_or(false)
                         {
                             if let Some(diff_lines) = self.diff_cache.get(&(entry_idx, file_idx)) {
-                                for line_idx in 0..diff_lines.len() {
+                                for line_idx_raw in 0..diff_lines.len() {
                                     self.rows.push(DisplayRow::DiffLine {
                                         entry_idx,
                                         file_idx,
-                                        line_idx,
+                                        line_idx: DiffLineIdx::new(line_idx_raw),
                                     });
                                 }
                             }
@@ -670,10 +672,10 @@ impl App {
 
             // Extra graph lines (link/pad/term) are rendered as separate
             // GraphLink rows between commits.
-            for line_idx in 0..gl.extra.len() {
+            for line_idx_raw in 0..gl.extra.len() {
                 self.rows.push(DisplayRow::GraphLink {
                     entry_idx,
-                    line_idx,
+                    line_idx: GraphLineIdx::new(line_idx_raw),
                 });
             }
         }
@@ -839,9 +841,9 @@ impl App {
     /// Toggle file selection. If the file belongs to a different commit than
     /// existing selections, clears the old selections first (selections are
     /// scoped to one commit at a time).
-    pub fn toggle_file_selection(&mut self, entry_idx: usize, file_idx: usize) {
+    pub fn toggle_file_selection(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
         let change_id = self.entries[entry_idx].commit.change_id.display.clone();
-        let path = self.file_cache[&entry_idx][file_idx].path.clone();
+        let path = self.file_cache[&entry_idx][file_idx.raw()].path.clone();
 
         // Clear selections if switching to a different commit.
         if !self.selections.is_empty() {
@@ -861,7 +863,7 @@ impl App {
 
     /// Toggle selection for all files in a commit (select all / deselect all).
     /// Only works when the commit is unfolded.
-    pub fn toggle_commit_selection(&mut self, entry_idx: usize) {
+    pub fn toggle_commit_selection(&mut self, entry_idx: EntryIdx) {
         if !self.unfolded[entry_idx] {
             return;
         }
@@ -902,10 +904,10 @@ impl App {
     }
 
     /// Check if a specific file is selected.
-    pub fn is_file_selected(&self, entry_idx: usize, file_idx: usize) -> bool {
+    pub fn is_file_selected(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> bool {
         let change_id = &self.entries[entry_idx].commit.change_id.display;
         if let Some(files) = self.file_cache.get(&entry_idx) {
-            if let Some(file) = files.get(file_idx) {
+            if let Some(file) = files.get(file_idx.raw()) {
                 return self.selections.iter().any(|s| match s {
                     Selection::File {
                         change_id: cid,
@@ -1001,8 +1003,13 @@ impl App {
     /// Try to reload DAG data. Returns an error string on failure.
     pub fn try_refresh(&mut self, jj: &JjRepo, revset: &str) -> Result<(), String> {
         let entries = jj.evaluate_revset(revset).map_err(|e| format!("{e:#}"))?;
-        self.graph = graph::render(&entries);
-        self.unfolded = vec![false; entries.len()];
+        let entries = IndexVec::from_vec(entries);
+        self.graph = IndexVec::from_vec(graph::render(entries.as_slice()));
+        let mut unfolded = IndexVec::new();
+        for _ in 0..entries.len() {
+            unfolded.push(false);
+        }
+        self.unfolded = unfolded;
         self.file_unfolded.clear();
         self.file_cache.clear();
         self.diff_cache.clear();
@@ -1012,7 +1019,7 @@ impl App {
         Ok(())
     }
 
-    fn toggle_commit_fold(&mut self, entry_idx: usize, jj: &JjRepo) {
+    fn toggle_commit_fold(&mut self, entry_idx: EntryIdx, jj: &JjRepo) {
         if self.unfolded[entry_idx] {
             self.unfolded[entry_idx] = false;
         } else {
@@ -1026,7 +1033,7 @@ impl App {
         self.rebuild_rows();
     }
 
-    fn toggle_file_fold(&mut self, entry_idx: usize, file_idx: usize, jj: &JjRepo) {
+    fn toggle_file_fold(&mut self, entry_idx: EntryIdx, file_idx: FileIdx, jj: &JjRepo) {
         let key = (entry_idx, file_idx);
         let currently_unfolded = self.file_unfolded.get(&key).copied().unwrap_or(false);
 
@@ -1036,7 +1043,7 @@ impl App {
             // Lazy load diff lines.
             if !self.diff_cache.contains_key(&key) {
                 if let Some(files) = self.file_cache.get(&entry_idx) {
-                    if let Some(file) = files.get(file_idx) {
+                    if let Some(file) = files.get(file_idx.raw()) {
                         let graph_id = &self.entries[entry_idx].commit.graph_id;
                         let diff_lines = jj.file_diff(graph_id, &file.path).unwrap_or_default();
                         self.diff_cache.insert(key, diff_lines);

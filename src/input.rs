@@ -8,6 +8,7 @@ use crate::app::{
     App, AppMode, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
     PendingSelection, TargetOperation,
 };
+use crate::idx::{EntryIdx, FileIdx};
 use crate::jj_command::JJCommand;
 use crate::keymap::{self, AppAction, CommandFlags, Keymap, LookupResult};
 use crate::repo::JjRepo;
@@ -182,41 +183,25 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             Action::None
         }
         AppAction::ToggleSelect => {
-            // Extract indices from the current row before mutating app.
-            let row_info = match app.rows.get(app.cursor) {
-                Some(DisplayRow::CommitNode { entry_idx }) => Some((0, *entry_idx, 0)),
+            // Extract indices before mutating app (borrow rules).
+            let sel: Option<(EntryIdx, Option<FileIdx>)> = match app.rows.get(app.cursor) {
+                Some(DisplayRow::CommitNode { entry_idx }) => Some((*entry_idx, None)),
                 Some(DisplayRow::FileChange {
                     entry_idx,
                     file_idx,
-                }) => Some((1, *entry_idx, *file_idx)),
+                }) => Some((*entry_idx, Some(*file_idx))),
                 Some(DisplayRow::DiffLine {
                     entry_idx,
                     file_idx,
                     ..
-                }) => Some((1, *entry_idx, *file_idx)),
+                }) => Some((*entry_idx, Some(*file_idx))),
                 _ => None,
             };
-            match row_info {
-                Some((0, entry_idx, _)) => app.toggle_commit_selection(entry_idx),
-                Some((_, entry_idx, file_idx)) => {
+            match sel {
+                Some((entry_idx, None)) => app.toggle_commit_selection(entry_idx),
+                Some((entry_idx, Some(file_idx))) => {
                     app.toggle_file_selection(entry_idx, file_idx);
-                    // Auto-advance, but stay within the same commit's files.
-                    let next = app.cursor + 1;
-                    if let Some(
-                        DisplayRow::FileChange {
-                            entry_idx: next_entry,
-                            ..
-                        }
-                        | DisplayRow::DiffLine {
-                            entry_idx: next_entry,
-                            ..
-                        },
-                    ) = app.rows.get(next)
-                    {
-                        if *next_entry == entry_idx {
-                            app.move_down();
-                        }
-                    }
+                    app.move_down();
                 }
                 None => {}
             }
