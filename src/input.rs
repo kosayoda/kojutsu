@@ -4,15 +4,16 @@ use ratatui::crossterm::event::{
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
 
-use crate::app::{
-    App, AppMode, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
-    PendingSelection, TargetOperation,
-};
+use crate::app::{App, AppMode};
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{ChangeSelection, JJCommand};
 use crate::keymap::{self, AppAction, CommandFlags, Keymap, LookupResult};
 use crate::repo::JjRepo;
+use crate::types::{
+    ChangeId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
+    PendingSelection, RebaseSource, TargetOperation,
+};
 
 /// Build the appropriate `ChangeSelection` from the current app state.
 fn build_change_selection(app: &App) -> ChangeSelection {
@@ -372,16 +373,19 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
                 flags,
             })
         }
-        AppAction::SquashInto => enter_target_select(app, TargetOperation::SquashInto, flags),
-        AppAction::SquashOnto => enter_target_select(app, TargetOperation::SquashOnto, flags),
-        AppAction::SquashAfter => enter_target_select(app, TargetOperation::SquashAfter, flags),
-        AppAction::SquashBefore => enter_target_select(app, TargetOperation::SquashBefore, flags),
+        AppAction::SquashSelect(kind) => {
+            enter_target_select(app, TargetOperation::Squash(kind), flags)
+        }
         // Rebase -- target selection
         AppAction::RebaseRevision => {
-            enter_target_select(app, TargetOperation::RebaseRevision, flags)
+            enter_target_select(app, TargetOperation::Rebase(RebaseSource::Revision), flags)
         }
-        AppAction::RebaseSource => enter_target_select(app, TargetOperation::RebaseSource, flags),
-        AppAction::RebaseBranch => enter_target_select(app, TargetOperation::RebaseBranch, flags),
+        AppAction::RebaseSource => {
+            enter_target_select(app, TargetOperation::Rebase(RebaseSource::Source), flags)
+        }
+        AppAction::RebaseBranch => {
+            enter_target_select(app, TargetOperation::Rebase(RebaseSource::Branch), flags)
+        }
 
         // Bookmark commands
         AppAction::BookmarkCreate => {
@@ -436,10 +440,7 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             let Some(change_id) = app.selected_change_id() else {
                 return Action::None;
             };
-            Action::SuspendAndRunJj(JJCommand::GitPushChange {
-                change_id: change_id.to_string(),
-                flags,
-            })
+            Action::SuspendAndRunJj(JJCommand::GitPushChange { change_id, flags })
         }
         AppAction::GitExport => Action::RunJj(JJCommand::GitExport { flags }),
         AppAction::GitImport => Action::RunJj(JJCommand::GitImport { flags }),
@@ -455,11 +456,11 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
 }
 
 /// Helper: build a command action from the selected change ID.
-fn make_command(app: &App, build: impl FnOnce(String) -> JJCommand) -> Action {
+fn make_command(app: &App, build: impl FnOnce(ChangeId) -> JJCommand) -> Action {
     let Some(change_id) = app.selected_change_id() else {
         return Action::None;
     };
-    let cmd = build(change_id.to_string());
+    let cmd = build(change_id);
     if cmd.is_interactive() {
         Action::SuspendAndRunJj(cmd)
     } else {
@@ -472,8 +473,6 @@ fn enter_describe_input(app: &mut App, flags: CommandFlags) -> Action {
         return Action::None;
     };
     let current_desc = app.selected_description().unwrap_or("").to_string();
-    let change_id = change_id.to_string();
-
     app.mode = AppMode::TextInput {
         prompt: "describe: ".to_string(),
         input: Input::new(current_desc),
@@ -516,7 +515,6 @@ fn enter_target_select(app: &mut App, operation: TargetOperation, flags: Command
     let Some(source) = app.selected_change_id() else {
         return Action::None;
     };
-    let source = source.to_string();
     let restore_cursor = app.cursor;
     app.mode = AppMode::TargetSelect {
         prompt: operation.label(),
@@ -543,7 +541,6 @@ fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
                 let Some(target) = app.selected_change_id() else {
                     return Action::None;
                 };
-                let target = target.to_string();
                 let label = operation.label();
                 let selection = build_change_selection(app);
                 let mut options = operation.follow_up(source, target.clone(), flags, selection);
@@ -662,16 +659,15 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
     let Some(change_id) = app.selected_change_id() else {
         return Action::None;
     };
-    let change_id = change_id.to_string();
 
     // Check if the selected commit is the working copy.
     let is_wc = app.selected_bookmarks().is_some_and(|_| {
         // Check via the entries
         let entry_idx = match app.rows.get(app.cursor) {
-            Some(crate::app::DisplayRow::CommitNode { entry_idx }) => Some(*entry_idx),
-            Some(crate::app::DisplayRow::GraphLink { entry_idx, .. }) => Some(*entry_idx),
-            Some(crate::app::DisplayRow::FileChange { entry_idx, .. }) => Some(*entry_idx),
-            Some(crate::app::DisplayRow::DiffLine { entry_idx, .. }) => Some(*entry_idx),
+            Some(DisplayRow::CommitNode { entry_idx }) => Some(*entry_idx),
+            Some(DisplayRow::GraphLink { entry_idx, .. }) => Some(*entry_idx),
+            Some(DisplayRow::FileChange { entry_idx, .. }) => Some(*entry_idx),
+            Some(DisplayRow::DiffLine { entry_idx, .. }) => Some(*entry_idx),
             None => None,
         };
         entry_idx.is_some_and(|idx| app.entries[idx].commit.is_working_copy)
@@ -719,7 +715,6 @@ fn enter_bookmark_text_input(
     let Some(change_id) = app.selected_change_id() else {
         return Action::None;
     };
-    let change_id = change_id.to_string();
 
     let on_submit = match action {
         BookmarkTextAction::Create => PendingCommand::BookmarkCreate { change_id, flags },
@@ -742,7 +737,6 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
     if bookmarks.is_empty() {
         return Action::None;
     }
-    let change_id = change_id.to_string();
 
     let on_select = match kind {
         PendingSelectionKind::Delete => PendingSelection::BookmarkDelete { change_id, flags },

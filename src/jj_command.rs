@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use crate::app::{MessageMode, RebaseDestMode, RebaseSourceMode, SquashTarget, GLOBAL_TOGGLES};
+use crate::app::GLOBAL_TOGGLES;
 use crate::keymap::CommandFlags;
+use crate::types::{ChangeId, MessageMode, RebaseSource, RebaseTarget, SquashTarget};
 
 /// How to filter changes for squash/commit operations.
 #[derive(Debug, Clone)]
@@ -19,32 +20,32 @@ pub enum ChangeSelection {
 #[derive(Debug, Clone)]
 pub enum JJCommand {
     Abandon {
-        change_id: String,
+        change_id: ChangeId,
         flags: CommandFlags,
     },
     /// Describe with an inline message (non-interactive).
     Describe {
-        change_id: String,
+        change_id: ChangeId,
         message: String,
         flags: CommandFlags,
     },
     /// Describe via jj's configured editor (interactive -- needs terminal).
     DescribeInEditor {
-        change_id: String,
+        change_id: ChangeId,
         flags: CommandFlags,
     },
     Edit {
-        change_id: String,
+        change_id: ChangeId,
         flags: CommandFlags,
     },
     New {
-        change_id: String,
+        change_id: ChangeId,
         insert_after: bool,
         insert_before: bool,
         flags: CommandFlags,
     },
     Squash {
-        change_id: String,
+        change_id: ChangeId,
         target: Option<SquashTarget>,
         message: MessageMode,
         /// How to filter changes.
@@ -52,19 +53,19 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     Rebase {
-        change_id: String,
-        source_mode: RebaseSourceMode,
-        dest: RebaseDestMode,
+        change_id: ChangeId,
+        source_mode: RebaseSource,
+        dest: RebaseTarget,
         flags: CommandFlags,
     },
     BookmarkCreate {
         name: String,
-        change_id: String,
+        change_id: ChangeId,
         flags: CommandFlags,
     },
     BookmarkSet {
         name: String,
-        change_id: String,
+        change_id: ChangeId,
         flags: CommandFlags,
     },
     BookmarkDelete {
@@ -77,7 +78,7 @@ pub enum JJCommand {
     },
     BookmarkMove {
         name: String,
-        target: String,
+        target: ChangeId,
         flags: CommandFlags,
     },
     BookmarkRename {
@@ -86,7 +87,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     BookmarkAdvance {
-        change_id: Option<String>,
+        change_id: Option<ChangeId>,
         flags: CommandFlags,
     },
     BookmarkTrack {
@@ -112,7 +113,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     GitPushChange {
-        change_id: String,
+        change_id: ChangeId,
         flags: CommandFlags,
     },
     GitExport {
@@ -123,7 +124,7 @@ pub enum JJCommand {
     },
     Absorb {
         /// Source revision. `None` = default (absorb from @).
-        from: Option<String>,
+        from: Option<ChangeId>,
         flags: CommandFlags,
     },
     Commit {
@@ -134,9 +135,9 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     Duplicate {
-        change_id: String,
+        change_id: ChangeId,
         /// Target revision for `--onto`. `None` = duplicate onto same parents.
-        onto: Option<String>,
+        onto: Option<ChangeId>,
         flags: CommandFlags,
     },
 }
@@ -198,7 +199,7 @@ impl JJCommand {
                         (CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
                     ],
                 );
-                args.push(change_id.clone());
+                args.push(change_id.to_string());
                 args
             }
             JJCommand::Describe {
@@ -207,14 +208,14 @@ impl JJCommand {
                 let mut args = vec!["describe".to_string()];
                 args.push("-m".to_string());
                 args.push(message.clone());
-                args.push(change_id.clone());
+                args.push(change_id.to_string());
                 args
             }
             JJCommand::DescribeInEditor { change_id, .. } => {
-                vec!["describe".to_string(), change_id.clone()]
+                vec!["describe".to_string(), change_id.to_string()]
             }
             JJCommand::Edit { change_id, .. } => {
-                vec!["edit".to_string(), change_id.clone()]
+                vec!["edit".to_string(), change_id.to_string()]
             }
             JJCommand::New {
                 change_id,
@@ -229,7 +230,7 @@ impl JJCommand {
                 if *insert_before {
                     args.push("--insert-before".to_string());
                 }
-                args.push(change_id.clone());
+                args.push(change_id.to_string());
                 push_flags(&mut args, flags, &[(CommandFlags::NO_EDIT, "--no-edit")]);
                 args
             }
@@ -241,25 +242,13 @@ impl JJCommand {
             } => {
                 let mut args = vec!["rebase".to_string()];
                 match source_mode {
-                    RebaseSourceMode::Revision => args.push("-r".to_string()),
-                    RebaseSourceMode::Source => args.push("-s".to_string()),
-                    RebaseSourceMode::Branch => args.push("-b".to_string()),
+                    RebaseSource::Revision => args.push("-r".to_string()),
+                    RebaseSource::Source => args.push("-s".to_string()),
+                    RebaseSource::Branch => args.push("-b".to_string()),
                 }
-                args.push(change_id.clone());
-                match dest {
-                    RebaseDestMode::Onto(t) => {
-                        args.push("-d".to_string());
-                        args.push(t.clone());
-                    }
-                    RebaseDestMode::After(t) => {
-                        args.push("-A".to_string());
-                        args.push(t.clone());
-                    }
-                    RebaseDestMode::Before(t) => {
-                        args.push("-B".to_string());
-                        args.push(t.clone());
-                    }
-                }
+                args.push(change_id.to_string());
+                args.push(dest.kind.flag().to_string());
+                args.push(dest.target.to_string());
                 args
             }
             JJCommand::BookmarkCreate {
@@ -269,7 +258,7 @@ impl JJCommand {
                     "bookmark".to_string(),
                     "create".to_string(),
                     "-r".to_string(),
-                    change_id.clone(),
+                    change_id.to_string(),
                     name.clone(),
                 ]
             }
@@ -283,7 +272,7 @@ impl JJCommand {
                     &[(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
                 );
                 args.push("-r".to_string());
-                args.push(change_id.clone());
+                args.push(change_id.to_string());
                 args.push(name.clone());
                 args
             }
@@ -301,8 +290,8 @@ impl JJCommand {
                     &[(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
                 );
                 args.push("--to".to_string());
-                args.push(target.clone());
-                args.push(name.clone());
+                args.push(target.to_string());
+                args.push(name.to_string());
                 args
             }
             JJCommand::BookmarkRename {
@@ -319,7 +308,7 @@ impl JJCommand {
                 let mut args = vec!["bookmark".to_string(), "advance".to_string()];
                 if let Some(id) = change_id {
                     args.push("--to".to_string());
-                    args.push(id.clone());
+                    args.push(id.to_string());
                 }
                 args
             }
@@ -349,7 +338,7 @@ impl JJCommand {
             JJCommand::GitPushChange { change_id, .. } => {
                 let mut args = vec!["git".to_string(), "push".to_string()];
                 args.push("-c".to_string());
-                args.push(change_id.clone());
+                args.push(change_id.to_string());
                 push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
             }
@@ -359,7 +348,7 @@ impl JJCommand {
                 let mut args = vec!["absorb".to_string()];
                 if let Some(id) = from {
                     args.push("--from".to_string());
-                    args.push(id.clone());
+                    args.push(id.to_string());
                 }
                 args
             }
@@ -382,10 +371,10 @@ impl JJCommand {
             JJCommand::Duplicate {
                 change_id, onto, ..
             } => {
-                let mut args = vec!["duplicate".to_string(), change_id.clone()];
+                let mut args = vec!["duplicate".to_string(), change_id.to_string()];
                 if let Some(target) = onto {
                     args.push("--onto".to_string());
-                    args.push(target.clone());
+                    args.push(target.to_string());
                 }
                 args
             }
@@ -418,29 +407,13 @@ impl JJCommand {
                 match target {
                     None => {
                         args.push("-r".to_string());
-                        args.push(change_id.clone());
+                        args.push(change_id.to_string());
                     }
                     Some(t) => {
                         args.push("--from".to_string());
-                        args.push(change_id.clone());
-                        match t {
-                            SquashTarget::Into(id) => {
-                                args.push("--into".to_string());
-                                args.push(id.clone());
-                            }
-                            SquashTarget::Onto(id) => {
-                                args.push("--onto".to_string());
-                                args.push(id.clone());
-                            }
-                            SquashTarget::After(id) => {
-                                args.push("--insert-after".to_string());
-                                args.push(id.clone());
-                            }
-                            SquashTarget::Before(id) => {
-                                args.push("--insert-before".to_string());
-                                args.push(id.clone());
-                            }
-                        }
+                        args.push(change_id.to_string());
+                        args.push(t.kind.flag().to_string());
+                        args.push(t.target.to_string());
                     }
                 }
                 push_change_selection(&mut args, selection);

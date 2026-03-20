@@ -288,7 +288,7 @@ fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
             println!(
                 "  {:?} -> {}",
                 edge.kind,
-                &edge.target[..8.min(edge.target.len())]
+                &edge.target.as_str()[..8.min(edge.target.as_str().len())]
             );
         }
     }

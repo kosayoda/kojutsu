@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use color_eyre::Result;
 use serde::Serialize;
 
-use crate::app::Selection;
+use crate::types::{FileRef, Selection};
 
 /// Serialized selection for a single file.
 #[derive(Serialize)]
@@ -38,14 +38,16 @@ pub fn serialize_selections(selections: &HashSet<Selection>) -> Result<PathBuf> 
 
     for sel in selections {
         match sel {
-            Selection::File { path, .. } => {
+            Selection::File(FileRef { path, .. }) => {
                 file_map.insert(path.as_str(), FileSelection::Full);
             }
             Selection::Line {
-                path,
+                file_ref: FileRef {
+                    path,
+                    change_id: _,
+                },
                 old_line,
                 new_line,
-                ..
             } => {
                 let kind = match (old_line, new_line) {
                     (Some(_), None) => "removed",

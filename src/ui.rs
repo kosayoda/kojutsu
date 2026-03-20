@@ -5,9 +5,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table};
 use ratatui::Frame;
 
-use crate::app::{App, AppMode, DisplayRow, FileSelectionState, GLOBAL_TOGGLES};
+use crate::app::{App, AppMode, GLOBAL_TOGGLES};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, ShortId};
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, Keymap, KeymapNode};
+use crate::types::{DisplayRow, FileSelectionState, FollowUpOption};
 
 /// The Y offset where the list starts (for mouse click translation).
 /// Minimum separator between repo and revset when on a single line.
@@ -109,7 +110,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
         AppMode::TargetSelect { prompt, source, .. } => {
             let overlay = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, overlay);
-            draw_target_select(frame, overlay, prompt, source);
+            draw_target_select(frame, overlay, prompt, source.as_str());
         }
         AppMode::FollowUp { prompt, options } => {
             let overlay = overlay_area(overlay_base, 2);
@@ -539,12 +540,7 @@ fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, source: &str)
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
-fn draw_follow_up(
-    frame: &mut Frame,
-    area: Rect,
-    prompt: &str,
-    options: &[crate::app::FollowUpOption],
-) {
+fn draw_follow_up(frame: &mut Frame, area: Rect, prompt: &str, options: &[FollowUpOption]) {
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(Color::DarkGray));

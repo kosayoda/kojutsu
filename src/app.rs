@@ -1,78 +1,18 @@
 use std::collections::{HashMap, HashSet};
 
+use compact_str::format_compact;
 use tui_input::Input;
 
 use crate::dag::{DagEntry, DiffLine, DiffLineKind, FileChange};
 use crate::graph::{self, GraphLines};
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, IndexVec};
 
-/// A persistent visual selection range within one file's diff.
-#[derive(Clone)]
-pub struct VisualRange {
-    pub change_id: String,
-    pub path: String,
-    pub start_line: DiffLineIdx,
-    pub end_line: DiffLineIdx,
-}
-use crate::jj_command::{ChangeSelection, JJCommand};
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo::JjRepo;
-
-/// A selected item in the DAG. Tied to commit identity (change ID) and file
-/// path, so selections survive DAG refreshes.
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub enum Selection {
-    /// Entire file selected.
-    File { change_id: String, path: String },
-    /// Individual diff line selected (added or removed).
-    Line {
-        change_id: String,
-        path: String,
-        /// Line number in the old file (`Some` for removed/context lines).
-        old_line: Option<u32>,
-        /// Line number in the new file (`Some` for added/context lines).
-        new_line: Option<u32>,
-    },
-}
-
-impl Selection {
-    /// Get the change ID from any selection variant.
-    pub fn change_id(&self) -> &str {
-        match self {
-            Selection::File { change_id, .. } | Selection::Line { change_id, .. } => change_id,
-        }
-    }
-
-    /// Get the file path from any selection variant.
-    pub fn path(&self) -> &str {
-        match self {
-            Selection::File { path, .. } | Selection::Line { path, .. } => path,
-        }
-    }
-}
-
-/// Selection state of a file (for UI display).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FileSelectionState {
-    /// No selections for this file.
-    None,
-    /// Some lines selected (but not all, and no File-level selection).
-    Partial,
-    /// Entire file selected (Selection::File entry exists).
-    Full,
-}
-
-/// Metadata for a global toggle that persists across commands.
-pub struct GlobalToggle {
-    /// The `CommandFlags` bit this toggle controls.
-    pub flag: CommandFlags,
-    /// Short hint character shown in the status bar (e.g., "I").
-    pub hint: &'static str,
-    /// Human-readable label (e.g., "ignore-immutable").
-    pub label: &'static str,
-    /// CLI flag appended to jj commands (e.g., "--ignore-immutable").
-    pub cli_flag: &'static str,
-}
+use crate::types::{
+    ChangeId, DisplayRow, FileRef, FileSelectionState, FollowUpOption, GlobalToggle,
+    PendingCommand, PendingSelection, RowKey, Selection, TargetOperation, VisualRange,
+};
 
 pub struct SelectionSummary {
     pub file_count: usize,
@@ -243,7 +183,7 @@ pub enum AppMode {
     /// Navigating to select a target commit for a two-commit operation.
     TargetSelect {
         prompt: &'static str,
-        source: String,
+        source: ChangeId,
         restore_cursor: usize,
         operation: TargetOperation,
         flags: CommandFlags,
@@ -260,458 +200,6 @@ pub enum AppMode {
         selected: usize,
         on_select: PendingSelection,
     },
-}
-
-/// What to do after selecting an item from a list.
-pub enum PendingSelection {
-    /// Delete a bookmark on the selected commit.
-    BookmarkDelete {
-        change_id: String,
-        flags: CommandFlags,
-    },
-    /// Forget a bookmark on the selected commit.
-    BookmarkForget {
-        change_id: String,
-        flags: CommandFlags,
-    },
-    /// Move a bookmark to a target commit (enters TargetSelect after selection).
-    BookmarkMove {
-        change_id: String,
-        flags: CommandFlags,
-    },
-    /// Rename a bookmark (enters TextInput after selection).
-    BookmarkRename {
-        change_id: String,
-        flags: CommandFlags,
-    },
-}
-
-/// An option in a follow-up prompt (shown after target selection).
-pub struct FollowUpOption {
-    pub key: char,
-    pub label: &'static str,
-    pub action: FollowUpAction,
-}
-
-/// What happens when a follow-up option is selected.
-pub enum FollowUpAction {
-    /// Execute a command immediately.
-    Execute(JJCommand),
-    /// Enter a text input, then execute.
-    TextInput {
-        prompt: String,
-        pending: PendingCommand,
-    },
-}
-
-/// What to do when a TextInput is submitted.
-pub enum PendingCommand {
-    Describe {
-        change_id: String,
-        flags: CommandFlags,
-    },
-    SquashWithMessage {
-        builder: ReadyCommand,
-        flags: CommandFlags,
-    },
-    /// The text is a revset expression to evaluate.
-    Revset,
-    /// Create a bookmark with the given name.
-    BookmarkCreate {
-        change_id: String,
-        flags: CommandFlags,
-    },
-    /// Set (create or update) a bookmark.
-    BookmarkSet {
-        change_id: String,
-        flags: CommandFlags,
-    },
-    /// Rename a bookmark (old name already selected, text is new name).
-    BookmarkRename {
-        old_name: String,
-        flags: CommandFlags,
-    },
-    /// Track a remote bookmark (text is "name@remote").
-    BookmarkTrack { flags: CommandFlags },
-    /// Untrack a remote bookmark (text is "name@remote").
-    BookmarkUntrack { flags: CommandFlags },
-    /// Commit with inline message (text is the message).
-    Commit {
-        flags: CommandFlags,
-        selection: ChangeSelection,
-    },
-}
-
-impl PendingCommand {
-    /// Convert to a `JJCommand` given the user's input text.
-    ///
-    /// Panics if called on `Revset` -- that variant is handled separately.
-    pub fn into_jj_command(self, text: String) -> JJCommand {
-        match self {
-            PendingCommand::Describe { change_id, flags } => JJCommand::Describe {
-                change_id,
-                message: text,
-                flags,
-            },
-            PendingCommand::SquashWithMessage { builder, flags } => {
-                builder.build_with_message(text, flags)
-            }
-            PendingCommand::Revset => panic!("Revset pending command handled separately"),
-            PendingCommand::BookmarkCreate { change_id, flags } => JJCommand::BookmarkCreate {
-                name: text,
-                change_id,
-                flags,
-            },
-            PendingCommand::BookmarkSet { change_id, flags } => JJCommand::BookmarkSet {
-                name: text,
-                change_id,
-                flags,
-            },
-            PendingCommand::BookmarkRename { old_name, flags } => JJCommand::BookmarkRename {
-                old_name,
-                new_name: text,
-                flags,
-            },
-            PendingCommand::BookmarkTrack { flags } => {
-                JJCommand::BookmarkTrack { name: text, flags }
-            }
-            PendingCommand::BookmarkUntrack { flags } => {
-                JJCommand::BookmarkUntrack { name: text, flags }
-            }
-            PendingCommand::Commit { flags, selection } => JJCommand::Commit {
-                message: Some(text),
-                selection,
-                flags,
-            },
-        }
-    }
-}
-
-/// What kind of two-commit target selection we're doing.
-#[derive(Debug, Clone)]
-pub enum TargetOperation {
-    SquashInto,
-    SquashOnto,
-    SquashAfter,
-    SquashBefore,
-    RebaseRevision,
-    RebaseSource,
-    RebaseBranch,
-    BookmarkMove { bookmark_name: String },
-    DuplicateOnto,
-}
-
-impl TargetOperation {
-    pub fn label(&self) -> &'static str {
-        match self {
-            TargetOperation::SquashInto => "squash into",
-            TargetOperation::SquashOnto => "squash onto",
-            TargetOperation::SquashAfter => "squash after",
-            TargetOperation::SquashBefore => "squash before",
-            TargetOperation::RebaseRevision => "rebase revision",
-            TargetOperation::RebaseSource => "rebase source",
-            TargetOperation::RebaseBranch => "rebase branch",
-            TargetOperation::BookmarkMove { .. } => "move bookmark",
-            TargetOperation::DuplicateOnto => "duplicate onto",
-        }
-    }
-
-    pub fn follow_up(
-        self,
-        source: String,
-        target: String,
-        flags: CommandFlags,
-        selection: ChangeSelection,
-    ) -> Vec<FollowUpOption> {
-        match self {
-            TargetOperation::SquashInto
-            | TargetOperation::SquashOnto
-            | TargetOperation::SquashAfter
-            | TargetOperation::SquashBefore => {
-                let squash_target = match self {
-                    TargetOperation::SquashInto => SquashTarget::Into(target),
-                    TargetOperation::SquashOnto => SquashTarget::Onto(target),
-                    TargetOperation::SquashAfter => SquashTarget::After(target),
-                    TargetOperation::SquashBefore => SquashTarget::Before(target),
-                    _ => unreachable!(),
-                };
-                squash_follow_up(source, Some(squash_target), selection, flags)
-            }
-            TargetOperation::RebaseRevision => {
-                rebase_follow_up(source, target, RebaseSourceMode::Revision, flags)
-            }
-            TargetOperation::RebaseSource => {
-                rebase_follow_up(source, target, RebaseSourceMode::Source, flags)
-            }
-            TargetOperation::RebaseBranch => {
-                rebase_follow_up(source, target, RebaseSourceMode::Branch, flags)
-            }
-            TargetOperation::BookmarkMove { bookmark_name } => {
-                // Bookmark move executes immediately -- no follow-up choice.
-                vec![FollowUpOption {
-                    key: ' ', // won't be shown; auto-executed below
-                    label: "move",
-                    action: FollowUpAction::Execute(JJCommand::BookmarkMove {
-                        name: bookmark_name.clone(),
-                        target,
-                        flags,
-                    }),
-                }]
-            }
-            TargetOperation::DuplicateOnto => {
-                // Duplicate onto executes immediately -- single option, auto-executed.
-                vec![FollowUpOption {
-                    key: ' ',
-                    label: "duplicate",
-                    action: FollowUpAction::Execute(JJCommand::Duplicate {
-                        change_id: source,
-                        onto: Some(target),
-                        flags,
-                    }),
-                }]
-            }
-        }
-    }
-}
-
-/// Build follow-up options for a squash command.
-fn squash_follow_up(
-    source: String,
-    target: Option<SquashTarget>,
-    selection: ChangeSelection,
-    flags: CommandFlags,
-) -> Vec<FollowUpOption> {
-    let default_cmd = JJCommand::Squash {
-        change_id: source.clone(),
-        target: target.clone(),
-        message: MessageMode::Default,
-        selection: selection.clone(),
-        flags,
-    };
-    let use_dest_cmd = JJCommand::Squash {
-        change_id: source.clone(),
-        target: target.clone(),
-        message: MessageMode::UseDestination,
-        selection: selection.clone(),
-        flags,
-    };
-    let builder = ReadyCommand::Squash {
-        source,
-        target,
-        selection,
-    };
-
-    vec![
-        FollowUpOption {
-            key: 's',
-            label: "squash",
-            action: FollowUpAction::Execute(default_cmd),
-        },
-        FollowUpOption {
-            key: 'm',
-            label: "with message",
-            action: FollowUpAction::TextInput {
-                prompt: "squash message: ".to_string(),
-                pending: PendingCommand::SquashWithMessage { builder, flags },
-            },
-        },
-        FollowUpOption {
-            key: 'd',
-            label: "use dest message",
-            action: FollowUpAction::Execute(use_dest_cmd),
-        },
-    ]
-}
-
-/// Build follow-up options for a rebase command (dest mode selection).
-fn rebase_follow_up(
-    source: String,
-    target: String,
-    source_mode: RebaseSourceMode,
-    flags: CommandFlags,
-) -> Vec<FollowUpOption> {
-    vec![
-        FollowUpOption {
-            key: 'o',
-            label: "onto",
-            action: FollowUpAction::Execute(JJCommand::Rebase {
-                change_id: source.clone(),
-                source_mode: source_mode.clone(),
-                dest: RebaseDestMode::Onto(target.clone()),
-                flags,
-            }),
-        },
-        FollowUpOption {
-            key: 'a',
-            label: "after",
-            action: FollowUpAction::Execute(JJCommand::Rebase {
-                change_id: source.clone(),
-                source_mode: source_mode.clone(),
-                dest: RebaseDestMode::After(target.clone()),
-                flags,
-            }),
-        },
-        FollowUpOption {
-            key: 'b',
-            label: "before",
-            action: FollowUpAction::Execute(JJCommand::Rebase {
-                change_id: source,
-                source_mode,
-                dest: RebaseDestMode::Before(target),
-                flags,
-            }),
-        },
-    ]
-}
-
-/// Squash target variants (where to squash into).
-#[derive(Debug, Clone)]
-pub enum SquashTarget {
-    Into(String),
-    Onto(String),
-    After(String),
-    Before(String),
-}
-
-/// Rebase source mode.
-#[derive(Debug, Clone)]
-pub enum RebaseSourceMode {
-    Revision,
-    Source,
-    Branch,
-}
-
-/// Rebase destination mode.
-#[derive(Debug, Clone)]
-pub enum RebaseDestMode {
-    Onto(String),
-    After(String),
-    Before(String),
-}
-
-/// A partially-constructed command that needs a message from the user.
-pub enum ReadyCommand {
-    Squash {
-        source: String,
-        target: Option<SquashTarget>,
-        selection: ChangeSelection,
-    },
-}
-
-impl ReadyCommand {
-    /// Build with default message behavior (jj handles it).
-    pub fn build_default(self, flags: CommandFlags) -> JJCommand {
-        match self {
-            ReadyCommand::Squash {
-                source,
-                target,
-                selection,
-            } => JJCommand::Squash {
-                change_id: source,
-                target,
-                message: MessageMode::Default,
-                selection,
-                flags,
-            },
-        }
-    }
-
-    /// Build with an inline message.
-    pub fn build_with_message(self, message: String, flags: CommandFlags) -> JJCommand {
-        match self {
-            ReadyCommand::Squash {
-                source,
-                target,
-                selection,
-            } => JJCommand::Squash {
-                change_id: source,
-                target,
-                message: MessageMode::Inline(message),
-                selection,
-                flags,
-            },
-        }
-    }
-
-    /// Build with --use-destination-message.
-    pub fn build_use_dest_message(self, flags: CommandFlags) -> JJCommand {
-        match self {
-            ReadyCommand::Squash {
-                source,
-                target,
-                selection,
-            } => JJCommand::Squash {
-                change_id: source,
-                target,
-                message: MessageMode::UseDestination,
-                selection,
-                flags,
-            },
-        }
-    }
-}
-
-/// How to handle the commit message during squash.
-#[derive(Debug, Clone)]
-pub enum MessageMode {
-    /// Let jj handle it (auto-merge, opens editor if needed).
-    Default,
-    /// Use -m "message".
-    Inline(String),
-    /// Use --use-destination-message.
-    UseDestination,
-}
-
-/// Identifies a display row for cursor restore after rebuild.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RowKey {
-    CommitNode(EntryIdx),
-    GraphLink(EntryIdx, GraphLineIdx),
-    FileChange(EntryIdx, FileIdx),
-    DiffLine(EntryIdx, FileIdx, DiffLineIdx),
-}
-
-/// One visual row in the list.
-pub enum DisplayRow {
-    /// A commit node line (graph glyph + commit info).
-    CommitNode { entry_idx: EntryIdx },
-    /// A graph link/pad line between commits.
-    GraphLink {
-        entry_idx: EntryIdx,
-        line_idx: GraphLineIdx,
-    },
-    /// A file change line (shown when commit is unfolded).
-    FileChange {
-        entry_idx: EntryIdx,
-        file_idx: FileIdx,
-    },
-    /// A diff hunk line (shown when a file is unfolded).
-    DiffLine {
-        entry_idx: EntryIdx,
-        file_idx: FileIdx,
-        line_idx: DiffLineIdx,
-    },
-}
-
-impl DisplayRow {
-    pub fn key(&self) -> RowKey {
-        match *self {
-            DisplayRow::CommitNode { entry_idx } => RowKey::CommitNode(entry_idx),
-            DisplayRow::GraphLink {
-                entry_idx,
-                line_idx,
-            } => RowKey::GraphLink(entry_idx, line_idx),
-            DisplayRow::FileChange {
-                entry_idx,
-                file_idx,
-            } => RowKey::FileChange(entry_idx, file_idx),
-            DisplayRow::DiffLine {
-                entry_idx,
-                file_idx,
-                line_idx,
-            } => RowKey::DiffLine(entry_idx, file_idx, line_idx),
-        }
-    }
 }
 
 /// Application state. Pure data -- no I/O, no rendering.
@@ -865,46 +353,42 @@ impl App {
             .unwrap_or(0);
     }
 
-    /// Get the change ID (unique prefix) of the commit the cursor is on.
-    ///
-    /// Works from any row type -- files and diff lines resolve to their
-    /// parent commit.
-    pub fn selected_change_id(&self) -> Option<String> {
+    /// Get the entry idx the cursor is on.
+    fn selected_entry_idx(&self) -> Option<EntryIdx> {
         let entry_idx = match self.rows.get(self.cursor)? {
             DisplayRow::CommitNode { entry_idx }
             | DisplayRow::GraphLink { entry_idx, .. }
             | DisplayRow::FileChange { entry_idx, .. }
             | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,
         };
+        Some(entry_idx)
+    }
+
+    /// Get the change ID (unique prefix) of the commit the cursor is on.
+    ///
+    /// Works from any row type -- files and diff lines resolve to their
+    /// parent commit.
+    pub fn selected_change_id(&self) -> Option<ChangeId> {
+        let entry_idx = self.selected_entry_idx()?;
         let commit = &self.entries[entry_idx].commit;
         let id = &commit.change_id;
         let prefix = &id.display[..id.prefix_len.min(id.display.len())];
         if let Some(suffix) = commit.change_id_suffix {
-            Some(format!("{prefix}/{suffix}"))
+            Some(ChangeId::new(format_compact!("{prefix}/{suffix}")))
         } else {
-            Some(prefix.to_string())
+            Some(ChangeId::new(prefix))
         }
     }
 
     /// Get the bookmarks of the commit the cursor is on.
     pub fn selected_bookmarks(&self) -> Option<&[crate::dag::BookmarkInfo]> {
-        let entry_idx = match self.rows.get(self.cursor)? {
-            DisplayRow::CommitNode { entry_idx }
-            | DisplayRow::GraphLink { entry_idx, .. }
-            | DisplayRow::FileChange { entry_idx, .. }
-            | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,
-        };
+        let entry_idx = self.selected_entry_idx()?;
         Some(&self.entries[entry_idx].commit.bookmarks)
     }
 
     /// Get the description of the commit the cursor is on.
     pub fn selected_description(&self) -> Option<&str> {
-        let entry_idx = match self.rows.get(self.cursor)? {
-            DisplayRow::CommitNode { entry_idx }
-            | DisplayRow::GraphLink { entry_idx, .. }
-            | DisplayRow::FileChange { entry_idx, .. }
-            | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,
-        };
+        let entry_idx = self.selected_entry_idx()?;
         self.entries[entry_idx].commit.description.as_deref()
     }
 
@@ -1058,16 +542,16 @@ impl App {
     /// existing selections, clears the old selections first (selections are
     /// scoped to one commit at a time).
     pub fn toggle_file_selection(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
-        let change_id = self.entries[entry_idx].commit.change_id.display.clone();
+        let change_id: ChangeId = self.entries[entry_idx].commit.change_id.change_id();
         let path = self.file_cache[&entry_idx][file_idx.raw()].path.clone();
 
         self.clear_other_commits(&change_id);
 
         // Clear any line-level selections for this file (File overrides Lines).
         self.selections
-            .retain(|s| !matches!(s, Selection::Line { path: p, .. } if *p == path));
+            .retain(|s| !matches!(s, Selection::Line { file_ref: f, .. } if *f.path == path));
 
-        let sel = Selection::File { change_id, path };
+        let sel = Selection::File(FileRef { change_id, path });
         if !self.selections.remove(&sel) {
             self.selections.insert(sel);
         }
@@ -1083,7 +567,7 @@ impl App {
             return;
         }
 
-        let change_id = self.entries[entry_idx].commit.change_id.display.clone();
+        let change_id = self.entries[entry_idx].commit.change_id.change_id();
         self.clear_other_commits(&change_id);
 
         // Collect file paths upfront to avoid borrowing self.file_cache across mutations.
@@ -1094,10 +578,10 @@ impl App {
 
         // If all files are already selected (File-level), deselect all.
         let all_selected = file_paths.iter().all(|p| {
-            self.selections.contains(&Selection::File {
+            self.selections.contains(&Selection::File(FileRef {
                 change_id: change_id.clone(),
                 path: p.clone(),
-            })
+            }))
         });
 
         if all_selected {
@@ -1105,10 +589,10 @@ impl App {
         } else {
             self.selections.clear();
             for p in file_paths {
-                self.selections.insert(Selection::File {
+                self.selections.insert(Selection::File(FileRef {
                     change_id: change_id.clone(),
                     path: p,
-                });
+                }));
             }
         }
     }
@@ -1120,7 +604,7 @@ impl App {
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     ) {
-        let change_id = self.entries[entry_idx].commit.change_id.display.clone();
+        let change_id = self.entries[entry_idx].commit.change_id.change_id();
         let file_path = self.file_cache[&entry_idx][file_idx.raw()].path.clone();
 
         // Extract what we need from the diff line before mutating self.
@@ -1134,14 +618,16 @@ impl App {
         self.clear_other_commits(&change_id);
 
         // If there's a File-level selection for this file, remove it.
-        self.selections.remove(&Selection::File {
+        self.selections.remove(&Selection::File(FileRef {
             change_id: change_id.clone(),
             path: file_path.clone(),
-        });
+        }));
 
         let sel = Selection::Line {
-            change_id,
-            path: file_path,
+            file_ref: FileRef {
+                change_id,
+                path: file_path,
+            },
             old_line,
             new_line,
         };
@@ -1157,7 +643,7 @@ impl App {
         file_idx: FileIdx,
         header_line_idx: DiffLineIdx,
     ) {
-        let change_id = self.entries[entry_idx].commit.change_id.display.clone();
+        let change_id = self.entries[entry_idx].commit.change_id.change_id();
         let file_path = self.file_cache[&entry_idx][file_idx.raw()].path.clone();
 
         // Collect hunk line data before mutating self.
@@ -1170,8 +656,10 @@ impl App {
                 }
                 if dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed {
                     hunk_lines.push(Selection::Line {
-                        change_id: change_id.clone(),
-                        path: file_path.clone(),
+                        file_ref: FileRef {
+                            change_id: change_id.clone(),
+                            path: file_path.clone(),
+                        },
                         old_line: dl.old_line,
                         new_line: dl.new_line,
                     });
@@ -1182,10 +670,10 @@ impl App {
         self.clear_other_commits(&change_id);
 
         // Remove any File-level selection for this file.
-        self.selections.remove(&Selection::File {
+        self.selections.remove(&Selection::File(FileRef {
             change_id: change_id.clone(),
             path: file_path.clone(),
-        });
+        }));
 
         // If all hunk lines are already selected, deselect them. Otherwise select all.
         let all_selected = hunk_lines.iter().all(|s| self.selections.contains(s));
@@ -1207,22 +695,24 @@ impl App {
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     ) -> bool {
-        let change_id = &self.entries[entry_idx].commit.change_id.display;
+        let change_id = &self.entries[entry_idx].commit.change_id.change_id();
         let file_path = &self.file_cache[&entry_idx][file_idx.raw()].path;
         let diff_line = &self.diff_cache[&(entry_idx, file_idx)][line_idx.raw()];
 
         // If the whole file is selected, all lines are implicitly selected.
-        if self.selections.contains(&Selection::File {
+        if self.selections.contains(&Selection::File(FileRef {
             change_id: change_id.clone(),
             path: file_path.clone(),
-        }) {
+        })) {
             return diff_line.kind == DiffLineKind::Added
                 || diff_line.kind == DiffLineKind::Removed;
         }
 
         self.selections.contains(&Selection::Line {
-            change_id: change_id.clone(),
-            path: file_path.clone(),
+            file_ref: FileRef {
+                change_id: change_id.clone(),
+                path: file_path.clone(),
+            },
             old_line: diff_line.old_line,
             new_line: diff_line.new_line,
         })
@@ -1234,14 +724,14 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
     ) -> FileSelectionState {
-        let change_id = &self.entries[entry_idx].commit.change_id.display;
+        let change_id = &self.entries[entry_idx].commit.change_id.change_id();
         let file_path = &self.file_cache[&entry_idx][file_idx.raw()].path;
 
         // Explicit file-level selection.
-        if self.selections.contains(&Selection::File {
+        if self.selections.contains(&Selection::File(FileRef {
             change_id: change_id.clone(),
             path: file_path.clone(),
-        }) {
+        })) {
             return FileSelectionState::Full;
         }
 
@@ -1250,8 +740,8 @@ impl App {
             .selections
             .iter()
             .filter(|s| {
-                matches!(s, Selection::Line { change_id: cid, path, .. }
-                    if cid == change_id && path == file_path)
+                matches!(s, Selection::Line { file_ref, .. }
+                    if file_ref.change_id == *change_id && file_ref.path == *file_path)
             })
             .count();
 
@@ -1334,7 +824,7 @@ impl App {
     }
 
     /// Clear selections from other commits if switching to a different one.
-    fn clear_other_commits(&mut self, change_id: &str) {
+    fn clear_other_commits(&mut self, change_id: &ChangeId) {
         if !self.selections.is_empty() {
             let same_commit = self.selections.iter().any(|s| s.change_id() == change_id);
             if !same_commit {
@@ -1422,18 +912,18 @@ impl App {
             {
                 if start_line.is_none() {
                     start_line = Some(*line_idx);
-                    change_id = Some(self.entries[*entry_idx].commit.change_id.display.clone());
+                    change_id = Some(self.entries[*entry_idx].commit.change_id.change_id());
                     path = Some(self.file_cache[entry_idx][file_idx.raw()].path.clone());
                 }
                 end_line = Some(*line_idx);
             }
         }
 
-        if let (Some(start), Some(end), Some(cid), Some(p)) =
+        if let (Some(start), Some(end), Some(change_id), Some(p)) =
             (start_line, end_line, change_id, path)
         {
             self.visual_range = Some(VisualRange {
-                change_id: cid,
+                change_id,
                 path: p,
                 start_line: start,
                 end_line: end,
@@ -1461,10 +951,10 @@ impl App {
 
         // Check persistent visual range.
         if let Some(vr) = &self.visual_range {
-            let cid = &self.entries[entry_idx].commit.change_id.display;
+            let cid = self.entries[entry_idx].commit.change_id.change_id();
             if let Some(files) = self.file_cache.get(&entry_idx) {
                 if let Some(file) = files.get(file_idx.raw()) {
-                    if cid == &vr.change_id
+                    if cid == vr.change_id
                         && file.path == vr.path
                         && line_idx >= vr.start_line
                         && line_idx <= vr.end_line
@@ -1489,13 +979,13 @@ impl App {
             line_idx,
         }) = self.rows.get(self.cursor)
         {
-            let cid = &self.entries[*entry_idx].commit.change_id.display;
+            let cid = self.entries[*entry_idx].commit.change_id.change_id();
             if let Some(file) = self
                 .file_cache
                 .get(entry_idx)
                 .and_then(|f| f.get(file_idx.raw()))
             {
-                return cid == &vr.change_id
+                return cid == vr.change_id
                     && file.path == vr.path
                     && *line_idx >= vr.start_line
                     && *line_idx <= vr.end_line;
@@ -1565,13 +1055,13 @@ impl App {
         };
 
         // Collect line data from the persistent range before mutating.
-        let line_data: Vec<(String, String, Option<u32>, Option<u32>)> = self
+        let line_data: Vec<(ChangeId, String, Option<u32>, Option<u32>)> = self
             .diff_cache
             .iter()
             .filter_map(|((eidx, fidx), diff_lines)| {
-                let cid = &self.entries[*eidx].commit.change_id.display;
+                let cid = self.entries[*eidx].commit.change_id.change_id();
                 let path = &self.file_cache[eidx][fidx.raw()].path;
-                if cid != &vr.change_id || path != &vr.path {
+                if cid != vr.change_id || path != &vr.path {
                     return None;
                 }
                 let lines: Vec<_> = diff_lines
@@ -1604,9 +1094,13 @@ impl App {
 
         // If all are already selected, deselect. Otherwise select.
         let all_selected = line_data.iter().all(|(cid, path, ol, nl)| {
-            self.selections.contains(&Selection::Line {
+            let file_ref = FileRef {
                 change_id: cid.clone(),
                 path: path.clone(),
+            };
+
+            self.selections.contains(&Selection::Line {
+                file_ref,
                 old_line: *ol,
                 new_line: *nl,
             })
@@ -1615,8 +1109,10 @@ impl App {
         if all_selected {
             for (cid, path, ol, nl) in &line_data {
                 self.selections.remove(&Selection::Line {
-                    change_id: cid.clone(),
-                    path: path.clone(),
+                    file_ref: FileRef {
+                        change_id: cid.clone(),
+                        path: path.clone(),
+                    },
                     old_line: *ol,
                     new_line: *nl,
                 });
@@ -1626,13 +1122,15 @@ impl App {
                 self.clear_other_commits(cid);
             }
             for (cid, path, ol, nl) in line_data {
-                self.selections.remove(&Selection::File {
+                self.selections.remove(&Selection::File(FileRef {
                     change_id: cid.clone(),
                     path: path.clone(),
-                });
+                }));
                 self.selections.insert(Selection::Line {
-                    change_id: cid,
-                    path,
+                    file_ref: FileRef {
+                        change_id: cid,
+                        path,
+                    },
                     old_line: ol,
                     new_line: nl,
                 });
@@ -1744,13 +1242,13 @@ impl App {
             self.file_unfolded.insert(key, false);
             // Clear visual range if it's for this file.
             if let Some(vr) = &self.visual_range {
-                let cid = &self.entries[entry_idx].commit.change_id.display;
+                let cid = self.entries[entry_idx].commit.change_id.change_id();
                 if let Some(file) = self
                     .file_cache
                     .get(&entry_idx)
                     .and_then(|f| f.get(file_idx.raw()))
                 {
-                    if cid == &vr.change_id && file.path == vr.path {
+                    if cid == vr.change_id && file.path == vr.path {
                         self.visual_range = None;
                     }
                 }

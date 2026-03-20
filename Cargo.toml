@@ -16,6 +16,8 @@ clap = { version = "4.5", features = ["derive"] }
 chrono = "0.4"
 # Binary error handling
 color-eyre = "0.6.3"
+# Memory efficient string types
+compact_str = "0.9.0"
 # Async stream collection
 futures = "0.3"
 # Date/time

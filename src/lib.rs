@@ -9,4 +9,5 @@ pub mod keymap;
 pub mod repo;
 pub mod selection;
 pub mod terminal;
+pub mod types;
 pub mod ui;

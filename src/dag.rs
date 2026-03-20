@@ -1,5 +1,7 @@
 use jiff::Timestamp;
 
+use crate::types::ChangeId;
+
 /// A short display ID with a unique prefix highlighted.
 ///
 /// For example, if the full hex is `xvzwolmwrq...` and the shortest unique
@@ -11,6 +13,13 @@ pub struct ShortId {
     /// Number of characters in `display` that form the unique prefix.
     pub prefix_len: usize,
 }
+
+impl ShortId {
+    pub fn change_id(&self) -> ChangeId {
+        ChangeId::new(&self.display)
+    }
+}
+
 
 /// Commit metadata extracted from jj-lib, with no jj-lib types leaking out.
 pub struct CommitInfo {
@@ -130,7 +139,7 @@ pub struct DagEntry {
 /// An edge from a commit to a parent in the DAG.
 pub struct Edge {
     /// The change ID of the target commit.
-    pub target: String,
+    pub target: ChangeId,
     pub kind: EdgeKind,
 }
 

@@ -48,8 +48,8 @@ pub fn render(entries: &[DagEntry]) -> Vec<GraphLines> {
                     .iter()
                     .filter(|e| !matches!(e.kind, EdgeKind::Missing))
                     .map(|e| match e.kind {
-                        EdgeKind::Direct => Ancestor::Parent(e.target.clone()),
-                        EdgeKind::Indirect => Ancestor::Ancestor(e.target.clone()),
+                        EdgeKind::Direct => Ancestor::Parent(e.target.to_string()),
+                        EdgeKind::Indirect => Ancestor::Ancestor(e.target.to_string()),
                         EdgeKind::Missing => unreachable!(),
                     })
                     .collect()

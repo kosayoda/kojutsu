@@ -1954,6 +1954,7 @@ dependencies = [
  "chrono",
  "clap",
  "color-eyre",
+ "compact_str",
  "futures",
  "itertools",
  "jiff",

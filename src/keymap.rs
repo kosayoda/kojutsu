@@ -1,7 +1,7 @@
 use keymap_parser::{Key, Modifier, Node};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::GLOBAL_TOGGLES;
+use crate::{app::GLOBAL_TOGGLES, types::SquashKind};
 
 // ---------------------------------------------------------------------------
 // CommandFlags -- toggleable flags that modify command behavior.
@@ -53,10 +53,7 @@ pub enum AppAction {
     NewInsertAfter,
     NewInsertBefore,
     Squash,
-    SquashInto,
-    SquashOnto,
-    SquashAfter,
-    SquashBefore,
+    SquashSelect(SquashKind),
     RebaseRevision,
     RebaseSource,
     RebaseBranch,
@@ -306,10 +303,15 @@ impl Default for Keymap {
                     toggle("i", CommandFlags::INTERACTIVE, "interactive"),
                     toggle("k", CommandFlags::KEEP_EMPTIED, "keep emptied"),
                     bind("s", AppAction::Squash, "into parent", C),
-                    bind("t", AppAction::SquashInto, "into…", C),
-                    bind("o", AppAction::SquashOnto, "onto…", C),
-                    bind("a", AppAction::SquashAfter, "after…", C),
-                    bind("b", AppAction::SquashBefore, "before…", C),
+                    bind("t", AppAction::SquashSelect(SquashKind::Into), "into…", C),
+                    bind("o", AppAction::SquashSelect(SquashKind::Onto), "onto…", C),
+                    bind("a", AppAction::SquashSelect(SquashKind::After), "after…", C),
+                    bind(
+                        "b",
+                        AppAction::SquashSelect(SquashKind::Before),
+                        "before…",
+                        C,
+                    ),
                 ],
             ),
             // Undo submenu
