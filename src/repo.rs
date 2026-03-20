@@ -463,6 +463,8 @@ impl JjRepo {
             return Ok(vec![DiffLine {
                 kind: DiffLineKind::Header,
                 content: "(binary file)".to_string(),
+                old_line: None,
+                new_line: None,
             }]);
         }
 
@@ -488,7 +490,13 @@ impl JjRepo {
                     hunk.right_line_range.start + 1,
                     hunk.right_line_range.len(),
                 ),
+                old_line: None,
+                new_line: None,
             });
+
+            // Track line numbers through the hunk (1-indexed).
+            let mut old_line = hunk.left_line_range.start as u32 + 1;
+            let mut new_line = hunk.right_line_range.start as u32 + 1;
 
             for (line_type, tokens) in &hunk.lines {
                 // Concatenate all tokens into a single string.
@@ -499,14 +507,29 @@ impl JjRepo {
                     .trim_end_matches('\n')
                     .to_string();
 
-                let kind = match line_type {
-                    DiffLineType::Context => DiffLineKind::Context,
-                    DiffLineType::Removed => DiffLineKind::Removed,
-                    DiffLineType::Added => DiffLineKind::Added,
+                let (kind, ol, nl) = match line_type {
+                    DiffLineType::Context => {
+                        let result = (DiffLineKind::Context, Some(old_line), Some(new_line));
+                        old_line += 1;
+                        new_line += 1;
+                        result
+                    }
+                    DiffLineType::Removed => {
+                        let result = (DiffLineKind::Removed, Some(old_line), None);
+                        old_line += 1;
+                        result
+                    }
+                    DiffLineType::Added => {
+                        let result = (DiffLineKind::Added, None, Some(new_line));
+                        new_line += 1;
+                        result
+                    }
                 };
                 lines.push(DiffLine {
                     kind,
                     content: text,
+                    old_line: ol,
+                    new_line: nl,
                 });
             }
         }

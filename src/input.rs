@@ -177,6 +177,10 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             app.toggles ^= CommandFlags::DEBUG;
             Action::None
         }
+        AppAction::ToggleLineNumbers => {
+            app.show_line_numbers = !app.show_line_numbers;
+            Action::None
+        }
         AppAction::Refresh => Action::Refresh,
         AppAction::EditRevset => {
             let prefill = app.revset_input_text().to_string();

@@ -553,6 +553,8 @@ pub struct App {
     pub toggles: CommandFlags,
     /// Display string of the last command executed (shown in status bar).
     pub last_command: Option<String>,
+    /// Whether to show line numbers in diff views.
+    pub show_line_numbers: bool,
 }
 
 impl App {
@@ -577,6 +579,7 @@ impl App {
             diff_cache: HashMap::new(),
             toggles: CommandFlags::empty(),
             last_command: None,
+            show_line_numbers: false,
         };
         app.rebuild_rows();
         app
@@ -630,9 +633,28 @@ impl App {
             }
         }
 
-        // Restore cursor to the exact same row, or fall back to the commit.
-        self.cursor = prev_cursor
-            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
+        // Restore cursor: try exact match, then fall back to parent file,
+        // then parent commit. This handles fold scenarios where the cursor
+        // was on a diff line that disappeared when the file was folded.
+        let fallbacks: [Option<RowKey>; 3] = match prev_cursor {
+            Some(RowKey::DiffLine(e, f, l)) => [
+                Some(RowKey::DiffLine(e, f, l)),
+                Some(RowKey::FileChange(e, f)),
+                Some(RowKey::CommitNode(e)),
+            ],
+            Some(RowKey::FileChange(e, f)) => [
+                Some(RowKey::FileChange(e, f)),
+                Some(RowKey::CommitNode(e)),
+                None,
+            ],
+            Some(key) => [Some(key), None, None],
+            None => [None, None, None],
+        };
+
+        self.cursor = fallbacks
+            .iter()
+            .flatten()
+            .find_map(|key| self.rows.iter().position(|r| r.key() == *key))
             .unwrap_or(0);
     }
 
@@ -751,6 +773,14 @@ impl App {
                 entry_idx,
                 file_idx,
             }) => {
+                self.toggle_file_fold(*entry_idx, *file_idx, jj);
+            }
+            Some(DisplayRow::DiffLine {
+                entry_idx,
+                file_idx,
+                ..
+            }) => {
+                // Folding on a diff line folds the parent file.
                 self.toggle_file_fold(*entry_idx, *file_idx, jj);
             }
             _ => {}

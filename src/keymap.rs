@@ -86,6 +86,7 @@ pub enum AppAction {
     ToggleIgnoreImmutable,
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
+    ToggleLineNumbers,
 }
 
 // ---------------------------------------------------------------------------
@@ -355,6 +356,7 @@ impl Default for Keymap {
                         "edit revset in $EDITOR",
                         G,
                     ),
+                    bind("l", AppAction::ToggleLineNumbers, "toggle line numbers", G),
                 ],
             ),
         ];

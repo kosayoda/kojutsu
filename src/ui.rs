@@ -261,7 +261,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
             } => {
                 let diff_lines = &app.diff_cache[&(*entry_idx, *file_idx)];
                 let diff_line = &diff_lines[*line_idx];
-                render_diff_line(diff_line)
+                render_diff_line(diff_line, app.show_line_numbers)
             }
         })
         .collect();
@@ -795,18 +795,43 @@ fn render_file_line(file: &FileChange, is_unfolded: bool) -> ListItem<'_> {
     ]))
 }
 
-fn render_diff_line(diff_line: &DiffLine) -> ListItem<'_> {
-    let (prefix, style) = match diff_line.kind {
-        DiffLineKind::Header => ("      ", Style::default().fg(Color::Magenta)),
-        DiffLineKind::Context => ("       ", Style::default().fg(Color::DarkGray)),
-        DiffLineKind::Added => ("      +", Style::default().fg(Color::Green)),
-        DiffLineKind::Removed => ("      -", Style::default().fg(Color::Red)),
+fn render_diff_line(diff_line: &DiffLine, show_line_numbers: bool) -> ListItem<'_> {
+    let (marker, style) = match diff_line.kind {
+        DiffLineKind::Header => (" ", Style::default().fg(Color::Magenta)),
+        DiffLineKind::Context => (" ", Style::default().fg(Color::DarkGray)),
+        DiffLineKind::Added => ("+", Style::default().fg(Color::Green)),
+        DiffLineKind::Removed => ("-", Style::default().fg(Color::Red)),
     };
 
-    ListItem::new(Line::from(vec![
-        Span::styled(prefix, style),
-        Span::styled(diff_line.content.as_str(), style),
-    ]))
+    let line_num_style = Style::default().fg(Color::DarkGray);
+
+    let mut spans = Vec::new();
+    if show_line_numbers && diff_line.kind != DiffLineKind::Header {
+        // "  {old:>4} {new:>4} {marker}{content}"
+        let old = diff_line
+            .old_line
+            .map(|n| format!("{n:>4}"))
+            .unwrap_or_else(|| "    ".to_string());
+        let new = diff_line
+            .new_line
+            .map(|n| format!("{n:>4}"))
+            .unwrap_or_else(|| "    ".to_string());
+        spans.push(Span::styled(format!("  {old} {new} "), line_num_style));
+        spans.push(Span::styled(marker, style));
+        spans.push(Span::styled(diff_line.content.as_str(), style));
+    } else {
+        // Original layout: fixed indent + marker + content
+        let prefix = match diff_line.kind {
+            DiffLineKind::Header => "      ",
+            DiffLineKind::Context => "       ",
+            DiffLineKind::Added => "      +",
+            DiffLineKind::Removed => "      -",
+        };
+        spans.push(Span::styled(prefix, style));
+        spans.push(Span::styled(diff_line.content.as_str(), style));
+    }
+
+    ListItem::new(Line::from(spans))
 }
 
 /// Push a `ShortId` as two spans: bright prefix + dimmed suffix.

@@ -155,8 +155,13 @@ pub enum FileStatus {
 pub struct DiffLine {
     pub kind: DiffLineKind,
     pub content: String,
+    /// Line number in the old (removed) file. `None` for added lines and headers.
+    pub old_line: Option<u32>,
+    /// Line number in the new (added) file. `None` for removed lines and headers.
+    pub new_line: Option<u32>,
 }
 
+#[derive(PartialEq, Eq)]
 pub enum DiffLineKind {
     /// Unchanged context line.
     Context,
