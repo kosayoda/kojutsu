@@ -631,12 +631,24 @@ impl JjRepo {
             })
             .unwrap_or_default();
 
-        // Divergence: multiple visible commits share the same change ID
-        let is_divergent = repo
-            .resolve_change_id(commit.change_id())
-            .ok()
-            .flatten()
+        // Hidden, divergent, and change ID disambiguation.
+        let resolved_targets = repo.resolve_change_id(commit.change_id()).ok().flatten();
+
+        let is_divergent = resolved_targets
+            .as_ref()
             .is_some_and(|targets| targets.is_divergent());
+
+        let is_hidden = commit.is_hidden(repo).unwrap_or(false);
+
+        // Compute disambiguation suffix (e.g., /5 in ztmnmkvk/5) only for
+        // hidden or divergent commits where disambiguation is needed.
+        let change_id_suffix = if is_hidden || is_divergent {
+            resolved_targets
+                .as_ref()
+                .and_then(|targets| targets.find_offset(commit.id()))
+        } else {
+            None
+        };
 
         // Full commit ID hex for graph rendering (stable key).
         let graph_id = commit.id().hex();
@@ -652,6 +664,8 @@ impl JjRepo {
             has_conflict,
             is_immutable,
             is_divergent,
+            is_hidden,
+            change_id_suffix,
             bookmarks,
             remote_bookmarks,
         })

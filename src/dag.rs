@@ -34,6 +34,11 @@ pub struct CommitInfo {
     pub is_immutable: bool,
     /// Whether this commit is divergent (multiple visible commits share the same change ID).
     pub is_divergent: bool,
+    /// Whether this commit is hidden (superseded by a newer version with the same change ID).
+    pub is_hidden: bool,
+    /// Disambiguation suffix for the change ID (e.g., `5` in `ztmnmkvk/5`).
+    /// `Some(n)` when multiple commits share the same change ID prefix.
+    pub change_id_suffix: Option<usize>,
     /// Local bookmarks pointing at this commit.
     pub bookmarks: Vec<BookmarkInfo>,
     /// Remote bookmarks pointing at this commit (excluding those already

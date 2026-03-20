@@ -705,10 +705,19 @@ fn render_commit_item<'a>(
     // Change ID (prefix bright, rest dimmed; red if divergent)
     let change_color = if c.is_divergent {
         Color::Red
+    } else if c.is_hidden {
+        Color::White
     } else {
         Color::Magenta
     };
     push_short_id(&mut line1, &c.change_id, change_color);
+    // Disambiguation suffix (e.g., /5 for hidden commits)
+    if let Some(suffix) = c.change_id_suffix {
+        line1.push(Span::styled(
+            format!("/{suffix}"),
+            Style::default().fg(change_color),
+        ));
+    }
     if c.is_divergent {
         line1.push(Span::styled(
             "??",
@@ -742,7 +751,7 @@ fn render_commit_item<'a>(
         line1.push(Span::styled(
             display,
             Style::default()
-                .fg(Color::Green)
+                .fg(Color::Magenta)
                 .add_modifier(Modifier::BOLD),
         ));
     }
@@ -761,6 +770,11 @@ fn render_commit_item<'a>(
     // Commit ID (at end, like jj log -- prefix bright, rest dimmed)
     line1.push(Span::raw(" "));
     push_short_id(&mut line1, &c.commit_id, Color::Blue);
+
+    // Hidden indicator
+    if c.is_hidden {
+        line1.push(Span::styled(" (hidden)", Style::default().fg(Color::White)));
+    }
 
     // --- Line 2: graph_cont  description ---
     let mut line2: Vec<Span<'a>> = Vec::new();

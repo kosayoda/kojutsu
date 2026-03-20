@@ -869,15 +869,21 @@ impl App {
     ///
     /// Works from any row type -- files and diff lines resolve to their
     /// parent commit.
-    pub fn selected_change_id(&self) -> Option<&str> {
+    pub fn selected_change_id(&self) -> Option<String> {
         let entry_idx = match self.rows.get(self.cursor)? {
             DisplayRow::CommitNode { entry_idx }
             | DisplayRow::GraphLink { entry_idx, .. }
             | DisplayRow::FileChange { entry_idx, .. }
             | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,
         };
-        let id = &self.entries[entry_idx].commit.change_id;
-        Some(&id.display[..id.prefix_len.min(id.display.len())])
+        let commit = &self.entries[entry_idx].commit;
+        let id = &commit.change_id;
+        let prefix = &id.display[..id.prefix_len.min(id.display.len())];
+        if let Some(suffix) = commit.change_id_suffix {
+            Some(format!("{prefix}/{suffix}"))
+        } else {
+            Some(prefix.to_string())
+        }
     }
 
     /// Get the bookmarks of the commit the cursor is on.
