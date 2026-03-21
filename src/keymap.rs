@@ -543,9 +543,9 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
     use SelectionKind::{Commit, File, Line};
     match action {
         AppAction::Squash | AppAction::SquashSelect(_) => &[Commit, File, Line],
-        AppAction::Commit | AppAction::CommitWithMessage => &[Commit],
+        AppAction::Commit | AppAction::CommitWithMessage => &[Commit, File, Line],
+        AppAction::Absorb => &[Commit, File],
         AppAction::Abandon
-        | AppAction::Absorb
         | AppAction::Describe
         | AppAction::DescribeInEditor
         | AppAction::Edit

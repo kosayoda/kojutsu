@@ -125,6 +125,8 @@ pub enum JJCommand {
     Absorb {
         /// Source revision. `None` = default (absorb from @).
         from: Option<ChangeId>,
+        /// How to filter changes. Absorb supports all changes or file-level selection.
+        selection: ChangeSelection,
         flags: CommandFlags,
     },
     Commit {
@@ -344,11 +346,20 @@ impl JJCommand {
             }
             JJCommand::GitExport { .. } => vec!["git".to_string(), "export".to_string()],
             JJCommand::GitImport { .. } => vec!["git".to_string(), "import".to_string()],
-            JJCommand::Absorb { from, .. } => {
+            JJCommand::Absorb {
+                from, selection, ..
+            } => {
                 let mut args = vec!["absorb".to_string()];
                 if let Some(id) = from {
                     args.push("--from".to_string());
                     args.push(id.to_string());
+                }
+                match selection {
+                    ChangeSelection::All => {}
+                    ChangeSelection::Files(paths) => args.extend(paths.iter().cloned()),
+                    ChangeSelection::Lines(_) => {
+                        debug_assert!(false, "line selection should be blocked for absorb");
+                    }
                 }
                 args
             }

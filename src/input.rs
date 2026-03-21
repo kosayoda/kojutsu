@@ -366,6 +366,7 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         }),
         AppAction::Absorb => make_command(app, |id| JJCommand::Absorb {
             from: Some(id),
+            selection: build_change_selection(app),
             flags,
         }),
         AppAction::Commit => {
