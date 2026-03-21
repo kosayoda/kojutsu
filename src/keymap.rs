@@ -86,6 +86,9 @@ pub enum AppAction {
     ToggleLineNumbers,
     ToggleSelect,
     EnterVisualMode,
+    StartSearch,
+    NextMatch,
+    PrevMatch,
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +194,9 @@ impl Default for Keymap {
             bind("tab", AppAction::ToggleFold, "toggle fold", N),
             bind("space", AppAction::ToggleSelect, "toggle select", N),
             bind("v", AppAction::EnterVisualMode, "visual select", N),
+            bind("/", AppAction::StartSearch, "search", N),
+            bind("ctrl-n", AppAction::NextMatch, "next match", N),
+            bind("ctrl-p", AppAction::PrevMatch, "prev match", N),
             // Global toggles
             bind(
                 "shift-i",

@@ -8,7 +8,94 @@ use ratatui::Frame;
 use crate::app::{App, AppMode, GLOBAL_TOGGLES};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, ShortId};
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, Keymap, KeymapNode};
-use crate::types::{DisplayRow, FileSelectionState, FollowUpOption};
+use crate::types::{
+    DisplayRow, FileSelectionState, FollowUpOption, SearchFocus, SearchScopes, SEARCH_SCOPE_SPECS,
+};
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SearchRowState {
+    None,
+    Match,
+    Current,
+}
+
+#[derive(Clone, Copy)]
+struct SearchRender<'a> {
+    query: &'a str,
+    scopes: SearchScopes,
+    case_sensitive: bool,
+    row_state: SearchRowState,
+}
+
+fn search_row_state(app: &App, row_idx: usize) -> SearchRowState {
+    let Some(search) = &app.search else {
+        return SearchRowState::None;
+    };
+    if !app.is_match(row_idx) {
+        return SearchRowState::None;
+    }
+    if let Some(current) = search.current_match {
+        if search.matches.get(current).copied() == Some(row_idx) {
+            return SearchRowState::Current;
+        }
+    }
+    SearchRowState::Match
+}
+
+fn search_gutter<'a>(state: SearchRowState) -> Span<'a> {
+    match state {
+        SearchRowState::None => Span::raw("  "),
+        SearchRowState::Match => Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+        SearchRowState::Current => Span::styled(
+            "┃ ",
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ),
+    }
+}
+
+fn contains_query(haystack: &str, query: &str, case_sensitive: bool) -> bool {
+    if case_sensitive {
+        haystack.contains(query)
+    } else {
+        haystack.to_lowercase().contains(&query.to_lowercase())
+    }
+}
+
+fn push_highlighted<'a>(
+    out: &mut Vec<Span<'a>>,
+    text: &str,
+    query: &str,
+    base: Style,
+    case_sensitive: bool,
+) {
+    if query.is_empty() {
+        out.push(Span::styled(text.to_string(), base));
+        return;
+    }
+
+    let (hay, needle) = if case_sensitive {
+        (text.to_string(), query.to_string())
+    } else {
+        (text.to_lowercase(), query.to_lowercase())
+    };
+    if let Some(start) = hay.find(&needle) {
+        let end = start + needle.len();
+        if start > 0 {
+            out.push(Span::styled(text[..start].to_string(), base));
+        }
+        out.push(Span::styled(
+            text[start..end].to_string(),
+            base.add_modifier(Modifier::REVERSED),
+        ));
+        if end < text.len() {
+            out.push(Span::styled(text[end..].to_string(), base));
+        }
+    } else {
+        out.push(Span::styled(text.to_string(), base));
+    }
+}
 
 /// The Y offset where the list starts (for mouse click translation).
 /// Minimum separator between repo and revset when on a single line.
@@ -106,6 +193,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             let overlay = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_text_input(frame, overlay, prompt, input);
+        }
+        AppMode::SearchInput => {
+            let overlay = overlay_area(overlay_base, 2);
+            frame.render_widget(ratatui::widgets::Clear, overlay);
+            draw_search_input(frame, overlay, app);
         }
         AppMode::TargetSelect { prompt, source, .. } => {
             let overlay = overlay_area(overlay_base, 2);
@@ -211,14 +303,19 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Show last command in the status bar content area.
-    if let Some(cmd) = &app.last_command {
-        let line = Line::from(Span::styled(
-            cmd.as_str(),
-            Style::default().fg(Color::DarkGray),
-        ));
-        frame.render_widget(Paragraph::new(line), inner);
-    }
+    let content = if let Some(search) = &app.search {
+        let pos = search.current_match.map(|i| i + 1).unwrap_or(0);
+        format!(
+            "search: {} ({}/{})",
+            search.query(),
+            pos,
+            search.matches.len()
+        )
+    } else {
+        app.last_command.clone().unwrap_or_default()
+    };
+    let line = Line::from(Span::styled(content, Style::default().fg(Color::DarkGray)));
+    frame.render_widget(Paragraph::new(line), inner);
 }
 
 fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -228,60 +325,93 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
         _ => None,
     };
 
+    let search_ctx = app.search.as_ref().map(|s| SearchRender {
+        query: s.query(),
+        scopes: s.scopes,
+        case_sensitive: s.query().chars().any(|c| c.is_ascii_uppercase()),
+        row_state: SearchRowState::None,
+    });
+
     let items: Vec<ListItem> = app
         .rows
         .iter()
-        .map(|row| match row {
-            DisplayRow::CommitNode { entry_idx } => {
-                let entry = &app.entries[*entry_idx];
-                let gl = &app.graph[*entry_idx];
-                let graph_node = gl.node.as_str();
-                let graph_cont = gl.cont.as_str();
-                let is_source = target_select_source.is_some_and(|src| {
-                    let id = &entry.commit.change_id;
-                    id.display.starts_with(src)
-                        || src.starts_with(&id.display[..id.prefix_len.min(id.display.len())])
-                });
-                render_commit_item(graph_node, graph_cont, &entry.commit, is_source)
-            }
-            DisplayRow::GraphLink {
-                entry_idx,
-                line_idx,
-            } => {
-                let graph_str = app.graph[*entry_idx]
-                    .extra
-                    .get(line_idx.raw())
-                    .map(|s| s.as_str())
-                    .unwrap_or("");
-                ListItem::new(Line::from(Span::styled(
-                    graph_str.to_string(),
-                    Style::default().fg(Color::DarkGray),
-                )))
-            }
-            DisplayRow::FileChange {
-                entry_idx,
-                file_idx,
-            } => {
-                let files = &app.file_cache[entry_idx];
-                let file = &files[file_idx.raw()];
-                let is_unfolded = app
-                    .file_unfolded
-                    .get(&(*entry_idx, *file_idx))
-                    .copied()
-                    .unwrap_or(false);
-                let sel_state = app.file_selection_state(*entry_idx, *file_idx);
-                render_file_line(file, is_unfolded, sel_state)
-            }
-            DisplayRow::DiffLine {
-                entry_idx,
-                file_idx,
-                line_idx,
-            } => {
-                let diff_lines = &app.diff_cache[&(*entry_idx, *file_idx)];
-                let diff_line = &diff_lines[line_idx.raw()];
-                let is_selected = app.is_line_selected(*entry_idx, *file_idx, *line_idx);
-                let in_visual = app.is_in_visual_range(*entry_idx, *file_idx, *line_idx);
-                render_diff_line(diff_line, app.show_line_numbers, is_selected, in_visual)
+        .enumerate()
+        .map(|(row_idx, row)| {
+            let row_search = search_ctx.as_ref().map(|ctx| SearchRender {
+                row_state: search_row_state(app, row_idx),
+                ..*ctx
+            });
+            match row {
+                DisplayRow::CommitNode { entry_idx } => {
+                    let entry = &app.entries[*entry_idx];
+                    let gl = &app.graph[*entry_idx];
+                    let graph_node = gl.node.as_str();
+                    let graph_cont = gl.cont.as_str();
+                    let is_source = target_select_source.is_some_and(|src| {
+                        let id = &entry.commit.change_id;
+                        id.display.starts_with(src)
+                            || src.starts_with(&id.display[..id.prefix_len.min(id.display.len())])
+                    });
+                    render_commit_item(
+                        graph_node,
+                        graph_cont,
+                        &entry.commit,
+                        is_source,
+                        row_search.as_ref(),
+                    )
+                }
+                DisplayRow::GraphLink {
+                    entry_idx,
+                    line_idx,
+                } => {
+                    let graph_str = app.graph[*entry_idx]
+                        .extra
+                        .get(line_idx.raw())
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    let mut spans = vec![search_gutter(
+                        row_search
+                            .as_ref()
+                            .map(|s| s.row_state)
+                            .unwrap_or(SearchRowState::None),
+                    )];
+                    spans.push(Span::styled(
+                        graph_str.to_string(),
+                        Style::default().fg(Color::DarkGray),
+                    ));
+                    ListItem::new(Line::from(spans))
+                }
+                DisplayRow::FileChange {
+                    entry_idx,
+                    file_idx,
+                } => {
+                    let files = &app.file_cache[entry_idx];
+                    let file = &files[file_idx.raw()];
+                    let is_unfolded = app
+                        .file_unfolded
+                        .get(&(*entry_idx, *file_idx))
+                        .copied()
+                        .unwrap_or(false);
+                    let sel_state = app.file_selection_state(*entry_idx, *file_idx);
+                    render_file_line(file, is_unfolded, sel_state, row_search.as_ref())
+                }
+                DisplayRow::DiffLine {
+                    entry_idx,
+                    file_idx,
+                    line_idx,
+                } => {
+                    let diff_lines = &app.diff_cache[&(*entry_idx, *file_idx)];
+                    let diff_line = &diff_lines[line_idx.raw()];
+                    let is_selected = app.is_line_selected(*entry_idx, *file_idx, *line_idx);
+                    let in_visual = app.is_in_visual_range(*entry_idx, *file_idx, *line_idx);
+                    render_diff_line(
+                        diff_line,
+                        app.show_line_numbers,
+                        is_selected,
+                        in_visual,
+                        row_search.as_ref(),
+                    )
+                }
             }
         })
         .collect();
@@ -512,6 +642,55 @@ fn draw_text_input(frame: &mut Frame, area: Rect, prompt: &str, input: &tui_inpu
     frame.set_cursor_position((cursor_x, cursor_y));
 }
 
+fn draw_search_input(frame: &mut Frame, area: Rect, app: &App) {
+    let Some(search) = &app.search else {
+        return;
+    };
+    let mut scope_spans: Vec<Span> = Vec::new();
+    for spec in SEARCH_SCOPE_SPECS.iter() {
+        let enabled = search.scopes.contains(spec.flag);
+        let mut style = if enabled {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        if matches!(search.focus, SearchFocus::Scopes) {
+            style = style.bg(Color::Rgb(50, 50, 60));
+        }
+        scope_spans.push(Span::styled(
+            format!(" [{}] {} ", spec.hint, spec.label),
+            style,
+        ));
+    }
+
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title("")
+        .title(" Search ")
+        .title_style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .title(Line::from(scope_spans));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let line = Line::from(Span::styled(
+        search.query(),
+        Style::default().fg(Color::White),
+    ));
+    frame.render_widget(Paragraph::new(line), inner);
+
+    if matches!(search.focus, SearchFocus::Query) {
+        let cursor_x = inner.x + search.input.visual_cursor() as u16;
+        frame.set_cursor_position((cursor_x, inner.y));
+    }
+}
+
 fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, source: &str) {
     let block = Block::default()
         .borders(Borders::TOP)
@@ -655,7 +834,8 @@ fn render_commit_item<'a>(
     graph_cont: &str,
     c: &'a CommitInfo,
     is_source: bool,
-) -> ListItem<'a> {
+    search: Option<&SearchRender<'_>>,
+) -> ListItem<'static> {
     let graph_color = if is_source {
         Color::Yellow
     } else {
@@ -668,9 +848,11 @@ fn render_commit_item<'a>(
     };
 
     let graph_style = Style::default().fg(graph_color);
+    let search_state = search.map(|s| s.row_state).unwrap_or(SearchRowState::None);
 
     // --- Line 1: graph  change_id author timestamp bookmarks commit_id ---
-    let mut line1: Vec<Span<'a>> = Vec::new();
+    let mut line1: Vec<Span<'static>> = Vec::new();
+    line1.push(search_gutter(search_state));
 
     // Source marker for target selection mode.
     if is_source {
@@ -692,9 +874,12 @@ fn render_commit_item<'a>(
         };
         let span = &graph_node[start..end];
         if is_glyph {
-            line1.push(Span::styled(span, graph_style));
+            line1.push(Span::styled(span.to_string(), graph_style));
         } else {
-            line1.push(Span::styled(span, Style::default().fg(Color::DarkGray)));
+            line1.push(Span::styled(
+                span.to_string(),
+                Style::default().fg(Color::DarkGray),
+            ));
         }
     }
 
@@ -706,13 +891,40 @@ fn render_commit_item<'a>(
     } else {
         Color::Magenta
     };
-    push_short_id(&mut line1, &c.change_id, change_color);
-    // Disambiguation suffix (e.g., /5 for hidden commits)
-    if let Some(suffix) = c.change_id_suffix {
-        line1.push(Span::styled(
-            format!("/{suffix}"),
-            Style::default().fg(change_color),
-        ));
+    let change_id_text = if let Some(suffix) = c.change_id_suffix {
+        format!("{}/{}", c.change_id.display, suffix)
+    } else {
+        c.change_id.display.clone()
+    };
+    if let Some(search) = search {
+        if search.scopes.contains(SearchScopes::CHANGE_ID)
+            && contains_query(&change_id_text, search.query, search.case_sensitive)
+        {
+            push_highlighted_short_id(
+                &mut line1,
+                &c.change_id,
+                c.change_id_suffix.map(|s| format!("/{s}")),
+                change_color,
+                search.query,
+                search.case_sensitive,
+            );
+        } else {
+            push_short_id(&mut line1, &c.change_id, change_color);
+            if let Some(suffix) = c.change_id_suffix {
+                line1.push(Span::styled(
+                    format!("/{suffix}"),
+                    Style::default().fg(change_color),
+                ));
+            }
+        }
+    } else {
+        push_short_id(&mut line1, &c.change_id, change_color);
+        if let Some(suffix) = c.change_id_suffix {
+            line1.push(Span::styled(
+                format!("/{suffix}"),
+                Style::default().fg(change_color),
+            ));
+        }
     }
     if c.is_divergent {
         line1.push(Span::styled(
@@ -723,10 +935,29 @@ fn render_commit_item<'a>(
     line1.push(Span::raw(" "));
 
     // Author
-    line1.push(Span::styled(
-        c.author.email.as_str(),
-        Style::default().fg(Color::Yellow),
-    ));
+    if let Some(search) = search {
+        if search.scopes.contains(SearchScopes::AUTHOR)
+            && contains_query(c.author.email.as_str(), search.query, search.case_sensitive)
+        {
+            push_highlighted(
+                &mut line1,
+                c.author.email.as_str(),
+                search.query,
+                Style::default().fg(Color::Yellow),
+                search.case_sensitive,
+            );
+        } else {
+            line1.push(Span::styled(
+                c.author.email.clone(),
+                Style::default().fg(Color::Yellow),
+            ));
+        }
+    } else {
+        line1.push(Span::styled(
+            c.author.email.clone(),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
     line1.push(Span::raw(" "));
 
     // Timestamp
@@ -744,28 +975,78 @@ fn render_commit_item<'a>(
         } else {
             bm.name.clone()
         };
-        line1.push(Span::styled(
-            display,
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ));
+        let style = Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD);
+        if let Some(search) = search {
+            if search.scopes.contains(SearchScopes::BOOKMARK)
+                && contains_query(&display, search.query, search.case_sensitive)
+            {
+                push_highlighted(
+                    &mut line1,
+                    &display,
+                    search.query,
+                    style,
+                    search.case_sensitive,
+                );
+            } else {
+                line1.push(Span::styled(display, style));
+            }
+        } else {
+            line1.push(Span::styled(display, style));
+        }
     }
 
     // Remote bookmarks (name@remote, shown when no local bookmark covers them)
     for rb in &c.remote_bookmarks {
         line1.push(Span::raw(" "));
-        line1.push(Span::styled(
-            format!("{}@{}", rb.name, rb.remote),
-            Style::default()
-                .fg(Color::Magenta)
-                .add_modifier(Modifier::BOLD),
-        ));
+        let text = format!("{}@{}", rb.name, rb.remote);
+        let style = Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD);
+        if let Some(search) = search {
+            if search.scopes.contains(SearchScopes::BOOKMARK)
+                && contains_query(&text, search.query, search.case_sensitive)
+            {
+                push_highlighted(
+                    &mut line1,
+                    &text,
+                    search.query,
+                    style,
+                    search.case_sensitive,
+                );
+            } else {
+                line1.push(Span::styled(text, style));
+            }
+        } else {
+            line1.push(Span::styled(text, style));
+        }
     }
 
     // Commit ID (at end, like jj log -- prefix bright, rest dimmed)
     line1.push(Span::raw(" "));
-    push_short_id(&mut line1, &c.commit_id, Color::Blue);
+    if let Some(search) = search {
+        if search.scopes.contains(SearchScopes::COMMIT_ID)
+            && contains_query(
+                c.commit_id.display.as_str(),
+                search.query,
+                search.case_sensitive,
+            )
+        {
+            push_highlighted_short_id(
+                &mut line1,
+                &c.commit_id,
+                None,
+                Color::Blue,
+                search.query,
+                search.case_sensitive,
+            );
+        } else {
+            push_short_id(&mut line1, &c.commit_id, Color::Blue);
+        }
+    } else {
+        push_short_id(&mut line1, &c.commit_id, Color::Blue);
+    }
 
     // Hidden indicator
     if c.is_hidden {
@@ -773,7 +1054,8 @@ fn render_commit_item<'a>(
     }
 
     // --- Line 2: graph_cont  description ---
-    let mut line2: Vec<Span<'a>> = Vec::new();
+    let mut line2: Vec<Span<'static>> = Vec::new();
+    line2.push(search_gutter(search_state));
 
     // Graph continuation prefix (properly padded by the renderer).
     line2.push(Span::styled(
@@ -793,7 +1075,23 @@ fn render_commit_item<'a>(
         } else {
             Style::default().fg(Color::White)
         };
-        line2.push(Span::styled(desc.as_str(), desc_style));
+        if let Some(search) = search {
+            if search.scopes.contains(SearchScopes::DESCRIPTION)
+                && contains_query(desc.as_str(), search.query, search.case_sensitive)
+            {
+                push_highlighted(
+                    &mut line2,
+                    desc.as_str(),
+                    search.query,
+                    desc_style,
+                    search.case_sensitive,
+                );
+            } else {
+                line2.push(Span::styled(desc.clone(), desc_style));
+            }
+        } else {
+            line2.push(Span::styled(desc.clone(), desc_style));
+        }
     } else {
         let placeholder = if c.is_empty {
             "(empty)"
@@ -813,7 +1111,8 @@ fn render_file_line(
     file: &FileChange,
     is_unfolded: bool,
     sel_state: FileSelectionState,
-) -> ListItem<'_> {
+    search: Option<&SearchRender<'_>>,
+) -> ListItem<'static> {
     let (marker, color) = match file.status {
         FileStatus::Added => ("A", Color::Green),
         FileStatus::Modified => ("M", Color::Cyan),
@@ -827,7 +1126,10 @@ fn render_file_line(
         FileSelectionState::None => " ",
     };
 
-    ListItem::new(Line::from(vec![
+    let mut spans = vec![search_gutter(
+        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
+    )];
+    spans.extend(vec![
         Span::styled(
             format!("  {select_char} "),
             Style::default().fg(Color::Yellow),
@@ -839,8 +1141,26 @@ fn render_file_line(
             Style::default().fg(color).add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
-        Span::styled(file.path.as_str(), Style::default().fg(Color::White)),
-    ]))
+    ]);
+    let base = Style::default().fg(Color::White);
+    if let Some(search) = search {
+        if search.scopes.contains(SearchScopes::PATH)
+            && contains_query(file.path.as_str(), search.query, search.case_sensitive)
+        {
+            push_highlighted(
+                &mut spans,
+                file.path.as_str(),
+                search.query,
+                base,
+                search.case_sensitive,
+            );
+        } else {
+            spans.push(Span::styled(file.path.clone(), base));
+        }
+    } else {
+        spans.push(Span::styled(file.path.clone(), base));
+    }
+    ListItem::new(Line::from(spans))
 }
 
 fn render_diff_line(
@@ -848,7 +1168,8 @@ fn render_diff_line(
     show_line_numbers: bool,
     is_selected: bool,
     in_visual: bool,
-) -> ListItem<'_> {
+    search: Option<&SearchRender<'_>>,
+) -> ListItem<'static> {
     let (marker, style) = match diff_line.kind {
         DiffLineKind::Header => (" ", Style::default().fg(Color::Magenta)),
         DiffLineKind::Context => (" ", Style::default().fg(Color::DarkGray)),
@@ -858,7 +1179,9 @@ fn render_diff_line(
 
     let line_num_style = Style::default().fg(Color::DarkGray);
 
-    let mut spans = Vec::new();
+    let mut spans = vec![search_gutter(
+        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
+    )];
     // Left margin: visual range bar │ + selection indicator ●.
     let is_selectable =
         diff_line.kind == DiffLineKind::Added || diff_line.kind == DiffLineKind::Removed;
@@ -882,7 +1205,27 @@ fn render_diff_line(
             .unwrap_or_else(|| "    ".to_string());
         spans.push(Span::styled(format!("  {old} {new} "), line_num_style));
         spans.push(Span::styled(marker, style));
-        spans.push(Span::styled(diff_line.content.as_str(), style));
+        if let Some(search) = search {
+            if search.scopes.contains(SearchScopes::LINE)
+                && contains_query(
+                    diff_line.content.as_str(),
+                    search.query,
+                    search.case_sensitive,
+                )
+            {
+                push_highlighted(
+                    &mut spans,
+                    diff_line.content.as_str(),
+                    search.query,
+                    style,
+                    search.case_sensitive,
+                );
+            } else {
+                spans.push(Span::styled(diff_line.content.clone(), style));
+            }
+        } else {
+            spans.push(Span::styled(diff_line.content.clone(), style));
+        }
     } else {
         // Original layout: fixed indent + marker + content
         let prefix = match diff_line.kind {
@@ -892,22 +1235,105 @@ fn render_diff_line(
             DiffLineKind::Removed => "      -",
         };
         spans.push(Span::styled(prefix, style));
-        spans.push(Span::styled(diff_line.content.as_str(), style));
+        if let Some(search) = search {
+            if search.scopes.contains(SearchScopes::LINE)
+                && contains_query(
+                    diff_line.content.as_str(),
+                    search.query,
+                    search.case_sensitive,
+                )
+            {
+                push_highlighted(
+                    &mut spans,
+                    diff_line.content.as_str(),
+                    search.query,
+                    style,
+                    search.case_sensitive,
+                );
+            } else {
+                spans.push(Span::styled(diff_line.content.clone(), style));
+            }
+        } else {
+            spans.push(Span::styled(diff_line.content.clone(), style));
+        }
     }
 
     ListItem::new(Line::from(spans))
 }
 
 /// Push a `ShortId` as two spans: bright prefix + dimmed suffix.
-fn push_short_id<'a>(spans: &mut Vec<Span<'a>>, id: &'a ShortId, color: Color) {
+fn push_short_id(spans: &mut Vec<Span<'static>>, id: &ShortId, color: Color) {
     let prefix = &id.display[..id.prefix_len.min(id.display.len())];
     let suffix = &id.display[id.prefix_len.min(id.display.len())..];
 
     spans.push(Span::styled(
-        prefix,
+        prefix.to_string(),
         Style::default().fg(color).add_modifier(Modifier::BOLD),
     ));
     if !suffix.is_empty() {
-        spans.push(Span::styled(suffix, Style::default().fg(Color::DarkGray)));
+        spans.push(Span::styled(
+            suffix.to_string(),
+            Style::default().fg(Color::DarkGray),
+        ));
     }
+}
+
+fn push_highlighted_short_id(
+    spans: &mut Vec<Span<'static>>,
+    id: &ShortId,
+    extra_suffix: Option<String>,
+    color: Color,
+    query: &str,
+    case_sensitive: bool,
+) {
+    let prefix = &id.display[..id.prefix_len.min(id.display.len())];
+    let suffix = &id.display[id.prefix_len.min(id.display.len())..];
+    let extra = extra_suffix.unwrap_or_default();
+    let text = format!("{prefix}{suffix}{extra}");
+
+    let (hay, needle) = if case_sensitive {
+        (text.clone(), query.to_string())
+    } else {
+        (text.to_lowercase(), query.to_lowercase())
+    };
+    let match_range = hay.find(&needle).map(|start| start..start + needle.len());
+
+    let mut push_part = |part: &str, style: Style, global_start: usize| {
+        if part.is_empty() {
+            return;
+        }
+        if let Some(range) = &match_range {
+            let part_start = global_start;
+            let part_end = global_start + part.len();
+            let overlap_start = range.start.max(part_start);
+            let overlap_end = range.end.min(part_end);
+            if overlap_start < overlap_end {
+                let local_start = overlap_start - part_start;
+                let local_end = overlap_end - part_start;
+                if local_start > 0 {
+                    spans.push(Span::styled(part[..local_start].to_string(), style));
+                }
+                spans.push(Span::styled(
+                    part[local_start..local_end].to_string(),
+                    style.add_modifier(Modifier::REVERSED),
+                ));
+                if local_end < part.len() {
+                    spans.push(Span::styled(part[local_end..].to_string(), style));
+                }
+                return;
+            }
+        }
+        spans.push(Span::styled(part.to_string(), style));
+    };
+
+    let prefix_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
+    let suffix_style = Style::default().fg(Color::DarkGray);
+    let extra_style = Style::default().fg(color);
+
+    let mut pos = 0;
+    push_part(prefix, prefix_style, pos);
+    pos += prefix.len();
+    push_part(suffix, suffix_style, pos);
+    pos += suffix.len();
+    push_part(&extra, extra_style, pos);
 }

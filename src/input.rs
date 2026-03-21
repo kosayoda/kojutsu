@@ -1,5 +1,5 @@
 use ratatui::crossterm::event::{
-    Event, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind,
+    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use tui_input::backend::crossterm::EventHandler;
 use tui_input::Input;
@@ -66,13 +66,22 @@ pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyE
         }
         AppMode::CommandOutput { .. } => {
             app.mode = AppMode::Normal;
-            handle_normal_key(app, jj, keymap, &node)
+            if node.key == keymap_parser::Key::Esc {
+                Action::None
+            } else {
+                handle_normal_key(app, jj, keymap, &node)
+            }
         }
         AppMode::Help => {
             app.mode = AppMode::Normal;
-            handle_normal_key(app, jj, keymap, &node)
+            if node.key == keymap_parser::Key::Esc {
+                Action::None
+            } else {
+                handle_normal_key(app, jj, keymap, &node)
+            }
         }
         AppMode::TextInput { .. } => handle_text_input(app, key),
+        AppMode::SearchInput => handle_search_input(app, key),
         AppMode::TargetSelect { .. } => handle_target_select(app, key),
         AppMode::FollowUp { .. } => handle_follow_up(app, key),
         AppMode::SelectFromList { .. } => handle_select_from_list(app, key),
@@ -85,6 +94,11 @@ fn handle_normal_key(
     keymap: &'static Keymap,
     node: &keymap_parser::Node,
 ) -> Action {
+    if node.key == keymap_parser::Key::Esc && app.search.is_some() {
+        app.clear_search();
+        return Action::None;
+    }
+
     match keymap.lookup(node) {
         LookupResult::Action(action) => dispatch_action(app, jj, action, CommandFlags::empty()),
         LookupResult::Prefix { label, children } => {
@@ -292,6 +306,18 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         }
         AppAction::EnterVisualMode => {
             app.toggle_visual_mode();
+            Action::None
+        }
+        AppAction::StartSearch => {
+            app.begin_search();
+            Action::None
+        }
+        AppAction::NextMatch => {
+            app.search_next();
+            Action::None
+        }
+        AppAction::PrevMatch => {
+            app.search_prev();
             Action::None
         }
         AppAction::Refresh => Action::Refresh,
@@ -505,6 +531,75 @@ fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
         _ => {
             if let AppMode::TextInput { input, .. } = &mut app.mode {
                 input.handle_event(&Event::Key(key));
+            }
+            Action::None
+        }
+    }
+}
+
+fn handle_search_input(app: &mut App, key: KeyEvent) -> Action {
+    use crate::types::SearchFocus;
+
+    match key.code {
+        KeyCode::Esc => {
+            app.cancel_search();
+            Action::None
+        }
+        KeyCode::Enter => {
+            app.confirm_search();
+            Action::None
+        }
+        KeyCode::Tab => {
+            app.toggle_search_focus();
+            Action::None
+        }
+        _ => {
+            let focus = app.search.as_ref().map(|s| s.focus);
+            match focus {
+                Some(SearchFocus::Query) => match key.code {
+                    KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.search_next();
+                    }
+                    KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.search_prev();
+                    }
+                    _ => {
+                        if let Some(search) = &mut app.search {
+                            let mut input = search.input.clone();
+                            input.handle_event(&Event::Key(key));
+                            app.update_search_input(input);
+                        }
+                    }
+                },
+                Some(SearchFocus::Scopes) => match key.code {
+                    KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.search_next();
+                    }
+                    KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        app.search_prev();
+                    }
+                    KeyCode::Char('0') => app.reset_search_scopes(),
+                    KeyCode::Char('*') => app.enable_all_search_scopes(),
+                    KeyCode::Char('c') => {
+                        app.toggle_search_scope(crate::types::SearchScopes::CHANGE_ID)
+                    }
+                    KeyCode::Char('i') => {
+                        app.toggle_search_scope(crate::types::SearchScopes::COMMIT_ID)
+                    }
+                    KeyCode::Char('d') => {
+                        app.toggle_search_scope(crate::types::SearchScopes::DESCRIPTION)
+                    }
+                    KeyCode::Char('b') => {
+                        app.toggle_search_scope(crate::types::SearchScopes::BOOKMARK)
+                    }
+                    KeyCode::Char('a') => {
+                        app.toggle_search_scope(crate::types::SearchScopes::AUTHOR)
+                    }
+                    KeyCode::Char('p') => app.toggle_search_scope(crate::types::SearchScopes::PATH),
+                    KeyCode::Char('l') => app.toggle_search_scope(crate::types::SearchScopes::LINE),
+                    _ => {}
+                },
+                None => {}
             }
             Action::None
         }
