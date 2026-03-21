@@ -1,7 +1,22 @@
 use keymap_parser::{Key, Modifier, Node};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::{app::GLOBAL_TOGGLES, types::SquashKind};
+use crate::{
+    app::GLOBAL_TOGGLES,
+    types::{SelectionKind, SquashKind},
+};
+
+bitflags::bitflags! {
+    pub struct SelectionKindSet: u8 {
+        const COMMIT = 1 << 0;
+        const FILE   = 1 << 1;
+        const LINE   = 1 << 2;
+    }
+}
+
+impl SelectionKindSet {
+    pub const ALL: Self = Self::COMMIT.union(Self::FILE).union(Self::LINE);
+}
 
 // ---------------------------------------------------------------------------
 // CommandFlags -- toggleable flags that modify command behavior.
@@ -521,6 +536,55 @@ pub struct HelpEntry {
     pub keys: String,
     pub description: String,
     pub group: HelpGroup,
+    pub selection_support: SelectionKindSet,
+}
+
+pub fn action_supported_selection_kinds(action: AppAction) -> &'static [SelectionKind] {
+    use SelectionKind::{Commit, File, Line};
+    match action {
+        AppAction::Squash | AppAction::SquashSelect(_) => &[Commit, File, Line],
+        AppAction::Commit | AppAction::CommitWithMessage => &[Commit],
+        AppAction::Abandon
+        | AppAction::Absorb
+        | AppAction::Describe
+        | AppAction::DescribeInEditor
+        | AppAction::Edit
+        | AppAction::New
+        | AppAction::NewInsertAfter
+        | AppAction::NewInsertBefore
+        | AppAction::RebaseRevision
+        | AppAction::RebaseSource
+        | AppAction::RebaseBranch
+        | AppAction::BookmarkCreate
+        | AppAction::BookmarkSet
+        | AppAction::BookmarkDelete
+        | AppAction::BookmarkForget
+        | AppAction::BookmarkMove
+        | AppAction::BookmarkRename
+        | AppAction::BookmarkAdvance
+        | AppAction::BookmarkTrack
+        | AppAction::BookmarkUntrack
+        | AppAction::Undo
+        | AppAction::Redo
+        | AppAction::GitFetch
+        | AppAction::GitFetchAllRemotes
+        | AppAction::GitPush
+        | AppAction::GitPushAll
+        | AppAction::GitPushChange
+        | AppAction::GitExport
+        | AppAction::GitImport
+        | AppAction::Duplicate
+        | AppAction::DuplicateOnto => &[Commit],
+        _ => &[Commit, File, Line],
+    }
+}
+
+pub fn selection_kind_set_for_action(action: AppAction) -> SelectionKindSet {
+    action_supported_selection_kinds(action)
+        .iter()
+        .fold(SelectionKindSet::empty(), |acc, kind| {
+            acc | kind.as_bitset()
+        })
 }
 
 /// Map toggle actions to their hint character from `GLOBAL_TOGGLES`.
@@ -565,12 +629,25 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
                     action_keys.push((*action, vec![key_str], description, *group));
                 }
             }
-            KeymapNode::Prefix { label, group, .. } => {
+            KeymapNode::Prefix {
+                label,
+                group,
+                children,
+            } => {
                 let key_str = display_key(node);
                 prefix_entries.push(HelpEntry {
                     keys: format!("{key_str} …"),
                     description: label.to_string(),
                     group: *group,
+                    selection_support: children.iter().fold(
+                        SelectionKindSet::empty(),
+                        |acc, (_, child)| match child {
+                            KeymapNode::Action { action, .. } => {
+                                acc | selection_kind_set_for_action(*action)
+                            }
+                            _ => acc,
+                        },
+                    ),
                 });
             }
             KeymapNode::Toggle { .. } => {} // toggles don't appear at root
@@ -584,6 +661,7 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
             keys: keys.join(" / "),
             description: desc.to_string(),
             group,
+            selection_support: selection_kind_set_for_action(_action),
         })
         .collect();
     entries.extend(prefix_entries);

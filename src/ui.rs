@@ -187,7 +187,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
                 .max(4);
             let overlay = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
-            draw_help(frame, overlay, &left, &right);
+            draw_help(frame, overlay, app, &left, &right);
         }
         AppMode::TextInput { prompt, input, .. } => {
             let overlay = overlay_area(overlay_base, 2);
@@ -461,6 +461,7 @@ fn balance_help_groups(groups: &[(HelpGroup, Vec<HelpEntry>)]) -> (HelpColumn<'_
 fn draw_help(
     frame: &mut Frame,
     area: Rect,
+    app: &App,
     left_groups: &[&(HelpGroup, Vec<HelpEntry>)],
     right_groups: &[&(HelpGroup, Vec<HelpEntry>)],
 ) {
@@ -485,11 +486,16 @@ fn draw_help(
     let [left_area, right_area] =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(inner);
 
-    render_help_column(frame, left_area, left_groups);
-    render_help_column(frame, right_area, right_groups);
+    render_help_column(frame, left_area, app, left_groups);
+    render_help_column(frame, right_area, app, right_groups);
 }
 
-fn render_help_column(frame: &mut Frame, area: Rect, groups: &[&(HelpGroup, Vec<HelpEntry>)]) {
+fn render_help_column(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    groups: &[&(HelpGroup, Vec<HelpEntry>)],
+) {
     let header_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);
@@ -515,9 +521,28 @@ fn render_help_column(frame: &mut Frame, area: Rect, groups: &[&(HelpGroup, Vec<
             } else {
                 entry.description.clone()
             };
+            let required = app.selection_kind().as_bitset();
+            let blocked = app.selection_active() && !entry.selection_support.contains(required);
+            let key_style = if blocked {
+                key_style
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
+            } else {
+                key_style
+            };
+            let desc_style = if blocked {
+                desc_style
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
+            } else {
+                desc_style
+            };
             rows.push(Row::new(vec![
-                Cell::from(format!("  {}", entry.keys)).style(key_style),
-                Cell::from(desc).style(desc_style),
+                Cell::from(Line::from(vec![
+                    Span::from("  "),
+                    Span::styled(format!("{:4}", entry.keys), key_style),
+                ])),
+                Cell::from(Span::styled(desc, desc_style)),
             ]));
         }
     }

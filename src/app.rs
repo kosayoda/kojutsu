@@ -12,7 +12,7 @@ use crate::repo::JjRepo;
 use crate::types::{
     ChangeId, DisplayRow, FileRef, FileSelectionState, FollowUpOption, GlobalToggle,
     PendingCommand, PendingSelection, RowKey, SearchFocus, SearchScopes, SearchState, Selection,
-    TargetOperation, VisualRange,
+    SelectionContext, SelectionKind, TargetOperation, VisualRange,
 };
 
 pub struct SelectionSummary {
@@ -237,8 +237,9 @@ pub struct App {
     pub last_command: Option<String>,
     /// Whether to show line numbers in diff views.
     pub show_line_numbers: bool,
-    /// Currently selected files (for partial operations like squash).
-    pub selections: HashSet<Selection>,
+    /// Current selection context: implicit commit under cursor, or explicit
+    /// homogeneous file/line selection.
+    pub selection: SelectionContext,
     /// Visual mode anchor row index. When `Some`, visual selection is actively
     /// being extended. Only valid on DiffLine rows.
     pub visual_anchor: Option<usize>,
@@ -276,7 +277,7 @@ impl App {
             toggles: CommandFlags::empty(),
             last_command: None,
             show_line_numbers: false,
-            selections: HashSet::new(),
+            selection: SelectionContext::Implicit,
             visual_anchor: None,
             visual_range: None,
             search: None,
@@ -544,6 +545,21 @@ impl App {
     // Selection
     // -----------------------------------------------------------------------
 
+    pub fn selection_active(&self) -> bool {
+        self.selection.is_active()
+    }
+
+    pub fn selection_kind(&self) -> SelectionKind {
+        self.selection.kind()
+    }
+
+    pub fn explicit_selection(&self) -> Option<&HashSet<Selection>> {
+        match &self.selection {
+            SelectionContext::Explicit { items, .. } if !items.is_empty() => Some(items),
+            _ => None,
+        }
+    }
+
     /// Toggle file selection. If the file belongs to a different commit than
     /// existing selections, clears the old selections first (selections are
     /// scoped to one commit at a time).
@@ -552,14 +568,15 @@ impl App {
         let path = self.file_cache[&entry_idx][file_idx.raw()].path.clone();
 
         self.clear_other_commits(&change_id);
+        self.selection.ensure_kind(SelectionKind::File);
 
         // Clear any line-level selections for this file (File overrides Lines).
-        self.selections
-            .retain(|s| !matches!(s, Selection::Line { file_ref: f, .. } if *f.path == path));
+        self.selection
+            .retain(|s| !matches!(s, Selection::Line { file_ref: f, .. } if f.path == path));
 
         let sel = Selection::File(FileRef { change_id, path });
-        if !self.selections.remove(&sel) {
-            self.selections.insert(sel);
+        if !self.selection.remove(&sel) {
+            self.selection.insert(SelectionKind::File, sel);
         }
     }
 
@@ -575,6 +592,7 @@ impl App {
 
         let change_id = self.entries[entry_idx].commit.change_id.change_id();
         self.clear_other_commits(&change_id);
+        self.selection.ensure_kind(SelectionKind::File);
 
         // Collect file paths upfront to avoid borrowing self.file_cache across mutations.
         let file_paths: Vec<String> = self.file_cache[&entry_idx]
@@ -584,21 +602,24 @@ impl App {
 
         // If all files are already selected (File-level), deselect all.
         let all_selected = file_paths.iter().all(|p| {
-            self.selections.contains(&Selection::File(FileRef {
+            self.selection.contains(&Selection::File(FileRef {
                 change_id: change_id.clone(),
                 path: p.clone(),
             }))
         });
 
         if all_selected {
-            self.selections.clear();
+            self.selection.clear();
         } else {
-            self.selections.clear();
+            self.selection.clear();
             for p in file_paths {
-                self.selections.insert(Selection::File(FileRef {
-                    change_id: change_id.clone(),
-                    path: p,
-                }));
+                self.selection.insert(
+                    SelectionKind::File,
+                    Selection::File(FileRef {
+                        change_id: change_id.clone(),
+                        path: p,
+                    }),
+                );
             }
         }
     }
@@ -622,9 +643,10 @@ impl App {
         let new_line = dl.new_line;
 
         self.clear_other_commits(&change_id);
+        self.selection.ensure_kind(SelectionKind::Line);
 
         // If there's a File-level selection for this file, remove it.
-        self.selections.remove(&Selection::File(FileRef {
+        self.selection.remove(&Selection::File(FileRef {
             change_id: change_id.clone(),
             path: file_path.clone(),
         }));
@@ -637,8 +659,8 @@ impl App {
             old_line,
             new_line,
         };
-        if !self.selections.remove(&sel) {
-            self.selections.insert(sel);
+        if !self.selection.remove(&sel) {
+            self.selection.insert(SelectionKind::Line, sel);
         }
     }
 
@@ -674,22 +696,23 @@ impl App {
         }
 
         self.clear_other_commits(&change_id);
+        self.selection.ensure_kind(SelectionKind::Line);
 
         // Remove any File-level selection for this file.
-        self.selections.remove(&Selection::File(FileRef {
+        self.selection.remove(&Selection::File(FileRef {
             change_id: change_id.clone(),
             path: file_path.clone(),
         }));
 
         // If all hunk lines are already selected, deselect them. Otherwise select all.
-        let all_selected = hunk_lines.iter().all(|s| self.selections.contains(s));
+        let all_selected = hunk_lines.iter().all(|s| self.selection.contains(s));
         if all_selected {
             for s in &hunk_lines {
-                self.selections.remove(s);
+                self.selection.remove(s);
             }
         } else {
             for s in hunk_lines {
-                self.selections.insert(s);
+                self.selection.insert(SelectionKind::Line, s);
             }
         }
     }
@@ -706,7 +729,7 @@ impl App {
         let diff_line = &self.diff_cache[&(entry_idx, file_idx)][line_idx.raw()];
 
         // If the whole file is selected, all lines are implicitly selected.
-        if self.selections.contains(&Selection::File(FileRef {
+        if self.selection.contains(&Selection::File(FileRef {
             change_id: change_id.clone(),
             path: file_path.clone(),
         })) {
@@ -714,7 +737,7 @@ impl App {
                 || diff_line.kind == DiffLineKind::Removed;
         }
 
-        self.selections.contains(&Selection::Line {
+        self.selection.contains(&Selection::Line {
             file_ref: FileRef {
                 change_id: change_id.clone(),
                 path: file_path.clone(),
@@ -734,7 +757,7 @@ impl App {
         let file_path = &self.file_cache[&entry_idx][file_idx.raw()].path;
 
         // Explicit file-level selection.
-        if self.selections.contains(&Selection::File(FileRef {
+        if self.selection.contains(&Selection::File(FileRef {
             change_id: change_id.clone(),
             path: file_path.clone(),
         })) {
@@ -743,7 +766,7 @@ impl App {
 
         // Count line-level selections for this file.
         let selected_count = self
-            .selections
+            .selection
             .iter()
             .filter(|s| {
                 matches!(s, Selection::Line { file_ref, .. }
@@ -777,15 +800,13 @@ impl App {
 
     /// Check if there are any line-level selections (vs only file-level).
     pub fn has_line_selections(&self) -> bool {
-        self.selections
-            .iter()
-            .any(|s| matches!(s, Selection::Line { .. }))
+        self.selection.any(|s| matches!(s, Selection::Line { .. }))
     }
 
     /// Get the unique file paths from all selections.
     pub fn selected_file_paths(&self) -> Vec<String> {
         let mut paths: Vec<String> = self
-            .selections
+            .selection
             .iter()
             .map(|s| s.path().to_string())
             .collect();
@@ -796,7 +817,7 @@ impl App {
 
     /// Number of currently selected items.
     pub fn selection_count(&self) -> usize {
-        self.selections.len()
+        self.selection.len()
     }
 
     pub fn selection_summary(&self) -> SelectionSummary {
@@ -805,9 +826,10 @@ impl App {
         let mut line_count = 0usize;
         let mut has_full_files = false;
 
-        for selection in &self.selections {
+        for selection in self.selection.iter() {
             files.insert(selection.path().to_string());
             match selection {
+                Selection::Commit(_) => {}
                 Selection::File(file_ref) => {
                     has_full_files = true;
                     full_files.insert(file_ref.path.clone());
@@ -826,15 +848,15 @@ impl App {
 
     /// Clear all selections.
     pub fn clear_selection(&mut self) {
-        self.selections.clear();
+        self.selection.clear();
     }
 
     /// Clear selections from other commits if switching to a different one.
     fn clear_other_commits(&mut self, change_id: &ChangeId) {
-        if !self.selections.is_empty() {
-            let same_commit = self.selections.iter().any(|s| s.change_id() == change_id);
+        if self.selection.is_active() {
+            let same_commit = self.selection.any(|s| s.change_id() == change_id);
             if !same_commit {
-                self.selections.clear();
+                self.clear_selection();
             }
         }
     }
@@ -1325,7 +1347,7 @@ impl App {
                 path: path.clone(),
             };
 
-            self.selections.contains(&Selection::Line {
+            self.selection.contains(&Selection::Line {
                 file_ref,
                 old_line: *ol,
                 new_line: *nl,
@@ -1334,7 +1356,7 @@ impl App {
 
         if all_selected {
             for (cid, path, ol, nl) in &line_data {
-                self.selections.remove(&Selection::Line {
+                self.selection.remove(&Selection::Line {
                     file_ref: FileRef {
                         change_id: cid.clone(),
                         path: path.clone(),
@@ -1347,19 +1369,23 @@ impl App {
             if let Some((cid, ..)) = line_data.first() {
                 self.clear_other_commits(cid);
             }
+            self.selection.ensure_kind(SelectionKind::Line);
             for (cid, path, ol, nl) in line_data {
-                self.selections.remove(&Selection::File(FileRef {
+                self.selection.remove(&Selection::File(FileRef {
                     change_id: cid.clone(),
                     path: path.clone(),
                 }));
-                self.selections.insert(Selection::Line {
-                    file_ref: FileRef {
-                        change_id: cid,
-                        path,
+                self.selection.insert(
+                    SelectionKind::Line,
+                    Selection::Line {
+                        file_ref: FileRef {
+                            change_id: cid,
+                            path,
+                        },
+                        old_line: ol,
+                        new_line: nl,
                     },
-                    old_line: ol,
-                    new_line: nl,
-                });
+                );
             }
         }
     }

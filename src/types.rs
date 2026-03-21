@@ -1,10 +1,10 @@
-use strum::IntoEnumIterator as _;
+use strum::{EnumDiscriminants, IntoEnumIterator as _};
 use tui_input::Input;
 
 use crate::{
     idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx},
     jj_command::{ChangeSelection, JJCommand},
-    keymap::CommandFlags,
+    keymap::{CommandFlags, SelectionKindSet},
 };
 
 pub type Str = compact_str::CompactString;
@@ -59,8 +59,11 @@ pub struct FileRef {
 
 /// A selected item in the DAG. Tied to commit identity (change ID) and file
 /// path, so selections survive DAG refreshes.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, EnumDiscriminants)]
+#[strum_discriminants(name(SelectionKind))]
 pub enum Selection {
+    /// Commit selected (used implicitly from cursor, not currently in explicit sets).
+    Commit(ChangeId),
     /// Entire file selected.
     File(FileRef),
     /// Individual diff line selected (added or removed).
@@ -73,10 +76,111 @@ pub enum Selection {
     },
 }
 
+impl SelectionKind {
+    pub fn as_bitset(&self) -> SelectionKindSet {
+        match self {
+            SelectionKind::Commit => SelectionKindSet::COMMIT,
+            SelectionKind::File => SelectionKindSet::FILE,
+            SelectionKind::Line => SelectionKindSet::LINE,
+        }
+    }
+}
+
+pub enum SelectionContext {
+    /// No explicit selection; actions implicitly target the commit under cursor.
+    Implicit,
+    /// Explicit homogeneous selection.
+    Explicit {
+        kind: SelectionKind,
+        items: std::collections::HashSet<Selection>,
+    },
+}
+
+impl SelectionContext {
+    pub fn is_active(&self) -> bool {
+        matches!(self, SelectionContext::Explicit { items, .. } if !items.is_empty())
+    }
+
+    pub fn kind(&self) -> SelectionKind {
+        match self {
+            SelectionContext::Implicit => SelectionKind::Commit,
+            SelectionContext::Explicit { kind, items } if !items.is_empty() => *kind,
+            SelectionContext::Explicit { .. } => SelectionKind::Commit,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        *self = SelectionContext::Implicit;
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            SelectionContext::Implicit => 0,
+            SelectionContext::Explicit { items, .. } => items.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn iter(&self) -> Box<dyn Iterator<Item = &Selection> + '_> {
+        match self {
+            SelectionContext::Implicit => Box::new(std::iter::empty()),
+            SelectionContext::Explicit { items, .. } => Box::new(items.iter()),
+        }
+    }
+
+    pub fn contains(&self, selection: &Selection) -> bool {
+        match self {
+            SelectionContext::Implicit => false,
+            SelectionContext::Explicit { items, .. } => items.contains(selection),
+        }
+    }
+
+    pub fn remove(&mut self, selection: &Selection) -> bool {
+        match self {
+            SelectionContext::Implicit => false,
+            SelectionContext::Explicit { items, .. } => items.remove(selection),
+        }
+    }
+
+    pub fn retain(&mut self, f: impl FnMut(&Selection) -> bool) {
+        if let SelectionContext::Explicit { items, .. } = self {
+            items.retain(f);
+            if items.is_empty() {
+                *self = SelectionContext::Implicit;
+            }
+        }
+    }
+
+    pub fn any(&self, f: impl FnMut(&Selection) -> bool) -> bool {
+        self.iter().any(f)
+    }
+
+    pub fn ensure_kind(&mut self, kind: SelectionKind) {
+        let reset = !matches!(self, SelectionContext::Explicit { kind: k, .. } if *k == kind);
+        if reset {
+            *self = SelectionContext::Explicit {
+                kind,
+                items: std::collections::HashSet::new(),
+            };
+        }
+    }
+
+    pub fn insert(&mut self, kind: SelectionKind, selection: Selection) {
+        self.ensure_kind(kind);
+        if let SelectionContext::Explicit { items, .. } = self {
+            items.insert(selection);
+        }
+    }
+}
+
 impl Selection {
     /// Get the file reference from any selection variant.
     pub fn file_ref(&self) -> &FileRef {
         match self {
+            Selection::Commit(_) => panic!("commit selection has no file_ref"),
             Selection::File(file_ref) => file_ref,
             Selection::Line {
                 file_ref,
@@ -88,7 +192,10 @@ impl Selection {
 
     /// Get the change ID from any selection variant.
     pub fn change_id(&self) -> &ChangeId {
-        &self.file_ref().change_id
+        match self {
+            Selection::Commit(change_id) => change_id,
+            _ => &self.file_ref().change_id,
+        }
     }
 
     /// Get the file path from any selection variant.

@@ -8,25 +8,34 @@ use crate::app::{App, AppMode};
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{ChangeSelection, JJCommand};
-use crate::keymap::{self, AppAction, CommandFlags, Keymap, LookupResult};
+use crate::keymap::{
+    self, action_supported_selection_kinds, AppAction, CommandFlags, Keymap, LookupResult,
+};
 use crate::repo::JjRepo;
 use crate::types::{
     ChangeId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
-    PendingSelection, RebaseSource, TargetOperation,
+    PendingSelection, RebaseSource, SelectionKind, TargetOperation,
 };
 
 /// Build the appropriate `ChangeSelection` from the current app state.
 fn build_change_selection(app: &App) -> ChangeSelection {
-    if app.has_line_selections() {
-        let path = crate::selection::serialize_selections(&app.selections)
+    match app.selection_kind() {
+        SelectionKind::Commit => ChangeSelection::All,
+        SelectionKind::File => {
+            let paths = app.selected_file_paths();
+            if paths.is_empty() {
+                ChangeSelection::All
+            } else {
+                ChangeSelection::Files(paths)
+            }
+        }
+        SelectionKind::Line => {
+            let path = crate::selection::serialize_selections(
+                app.explicit_selection()
+                    .expect("line selection should be explicit"),
+            )
             .expect("failed to serialize selections");
-        ChangeSelection::Lines(path)
-    } else {
-        let paths = app.selected_file_paths();
-        if paths.is_empty() {
-            ChangeSelection::All
-        } else {
-            ChangeSelection::Files(paths)
+            ChangeSelection::Lines(path)
         }
     }
 }
@@ -102,6 +111,18 @@ fn handle_normal_key(
     match keymap.lookup(node) {
         LookupResult::Action(action) => dispatch_action(app, jj, action, CommandFlags::empty()),
         LookupResult::Prefix { label, children } => {
+            if app.selection_active() {
+                let kind = app.selection_kind();
+                let has_supported_action = children.iter().any(|(_, node)| match node {
+                    keymap::KeymapNode::Action { action, .. } => {
+                        action_supported_selection_kinds(*action).contains(&kind)
+                    }
+                    _ => false,
+                });
+                if !has_supported_action {
+                    return Action::None;
+                }
+            }
             app.mode = AppMode::Submenu {
                 key: keymap::display_key(node),
                 label,
@@ -155,6 +176,12 @@ fn handle_submenu_key(
 fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: CommandFlags) -> Action {
     // Merge global toggles into the command flags.
     let flags = flags | app.toggles;
+
+    if app.selection_active()
+        && !action_supported_selection_kinds(action).contains(&app.selection_kind())
+    {
+        return Action::None;
+    }
 
     // Visual mode intercepts: constrain movement and handle space/v/esc.
     if app.in_visual_mode() {

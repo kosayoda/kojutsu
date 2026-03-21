@@ -38,14 +38,12 @@ pub fn serialize_selections(selections: &HashSet<Selection>) -> Result<PathBuf> 
 
     for sel in selections {
         match sel {
+            Selection::Commit(_) => {}
             Selection::File(FileRef { path, .. }) => {
                 file_map.insert(path.as_str(), FileSelection::Full);
             }
             Selection::Line {
-                file_ref: FileRef {
-                    path,
-                    change_id: _,
-                },
+                file_ref: FileRef { path, change_id: _ },
                 old_line,
                 new_line,
             } => {
