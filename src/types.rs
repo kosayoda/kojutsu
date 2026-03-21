@@ -5,6 +5,7 @@ use crate::{
     idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx},
     jj_command::{ChangeSelection, JJCommand},
     keymap::{CommandFlags, SelectionKindSet},
+    pluralize,
 };
 
 pub type Str = compact_str::CompactString;
@@ -76,6 +77,81 @@ pub enum Selection {
     },
 }
 
+pub struct SelectionSummary {
+    pub file_count: usize,
+    pub full_file_count: usize,
+    pub line_count: usize,
+    pub has_full_files: bool,
+}
+
+impl SelectionSummary {
+    pub fn empty() -> Self {
+        Self {
+            file_count: 0,
+            full_file_count: 0,
+            line_count: 0,
+            has_full_files: false,
+        }
+    }
+
+    pub fn display_text(&self) -> Option<String> {
+        let file_noun = pluralize!(self.full_file_count, "file", "files");
+        let line_noun = pluralize!(self.line_count, "line", "lines");
+
+        if self.file_count == 0 && self.line_count == 0 {
+            return None;
+        }
+
+        if self.line_count == 0 {
+            return Some(format!("{} {} selected", self.full_file_count, file_noun));
+        }
+
+        if !self.has_full_files && self.file_count == 1 {
+            return Some(format!("{} {} selected", self.line_count, line_noun));
+        }
+
+        if self.has_full_files && self.line_count > 0 {
+            return Some(format!(
+                "{} {} + {} {} selected",
+                self.full_file_count, file_noun, self.line_count, line_noun
+            ));
+        }
+
+        Some(format!(
+            "{} {} in {} {} selected",
+            self.line_count, line_noun, self.file_count, file_noun
+        ))
+    }
+
+    pub fn submenu_suffix(&self) -> Option<String> {
+        let file_noun = pluralize!(self.full_file_count, "file", "files");
+        let line_noun = pluralize!(self.line_count, "line", "lines");
+
+        if self.file_count == 0 && self.line_count == 0 {
+            return None;
+        }
+
+        if self.line_count == 0 {
+            return Some(format!("{} {}", self.full_file_count, file_noun));
+        }
+
+        if !self.has_full_files && self.file_count == 1 {
+            return Some(format!("{} {}", self.line_count, line_noun));
+        }
+
+        if self.has_full_files && self.line_count > 0 {
+            return Some(format!(
+                "{} {} + {} {}",
+                self.full_file_count, file_noun, self.line_count, line_noun
+            ));
+        }
+        Some(format!(
+            "{} {} in {} {}",
+            self.line_count, line_noun, self.file_count, file_noun
+        ))
+    }
+}
+
 impl SelectionKind {
     pub fn as_bitset(&self) -> SelectionKindSet {
         match self {
@@ -86,38 +162,58 @@ impl SelectionKind {
     }
 }
 
-pub enum SelectionContext {
-    /// No explicit selection; actions implicitly target the commit under cursor.
-    Implicit,
-    /// Explicit homogeneous selection.
-    Explicit {
-        kind: SelectionKind,
-        items: std::collections::HashSet<Selection>,
-    },
+pub struct SelectionContext {
+    explicit: std::collections::HashSet<Selection>,
+    summary: SelectionSummary,
 }
 
 impl SelectionContext {
+    pub fn new() -> Self {
+        Self {
+            explicit: std::collections::HashSet::new(),
+            summary: SelectionSummary::empty(),
+        }
+    }
+
     pub fn is_active(&self) -> bool {
-        matches!(self, SelectionContext::Explicit { items, .. } if !items.is_empty())
+        !self.explicit.is_empty()
     }
 
     pub fn kind(&self) -> SelectionKind {
-        match self {
-            SelectionContext::Implicit => SelectionKind::Commit,
-            SelectionContext::Explicit { kind, items } if !items.is_empty() => *kind,
-            SelectionContext::Explicit { .. } => SelectionKind::Commit,
+        self.explicit
+            .iter()
+            .next()
+            .map(SelectionKind::from)
+            .unwrap_or(SelectionKind::Commit)
+    }
+
+    pub fn summary(&self) -> &SelectionSummary {
+        &self.summary
+    }
+
+    pub fn explicit(&self) -> Option<&std::collections::HashSet<Selection>> {
+        if self.explicit.is_empty() {
+            None
+        } else {
+            Some(&self.explicit)
         }
+    }
+
+    pub fn display_text(&self) -> Option<String> {
+        self.summary.display_text()
+    }
+
+    pub fn submenu_suffix(&self) -> Option<String> {
+        self.summary.submenu_suffix()
     }
 
     pub fn clear(&mut self) {
-        *self = SelectionContext::Implicit;
+        self.explicit.clear();
+        self.summary = SelectionSummary::empty();
     }
 
     pub fn len(&self) -> usize {
-        match self {
-            SelectionContext::Implicit => 0,
-            SelectionContext::Explicit { items, .. } => items.len(),
-        }
+        self.explicit.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -125,33 +221,24 @@ impl SelectionContext {
     }
 
     pub fn iter(&self) -> Box<dyn Iterator<Item = &Selection> + '_> {
-        match self {
-            SelectionContext::Implicit => Box::new(std::iter::empty()),
-            SelectionContext::Explicit { items, .. } => Box::new(items.iter()),
-        }
+        Box::new(self.explicit.iter())
     }
 
     pub fn contains(&self, selection: &Selection) -> bool {
-        match self {
-            SelectionContext::Implicit => false,
-            SelectionContext::Explicit { items, .. } => items.contains(selection),
-        }
+        self.explicit.contains(selection)
     }
 
     pub fn remove(&mut self, selection: &Selection) -> bool {
-        match self {
-            SelectionContext::Implicit => false,
-            SelectionContext::Explicit { items, .. } => items.remove(selection),
+        let removed = self.explicit.remove(selection);
+        if removed {
+            self.recompute_summary();
         }
+        removed
     }
 
     pub fn retain(&mut self, f: impl FnMut(&Selection) -> bool) {
-        if let SelectionContext::Explicit { items, .. } = self {
-            items.retain(f);
-            if items.is_empty() {
-                *self = SelectionContext::Implicit;
-            }
-        }
+        self.explicit.retain(f);
+        self.recompute_summary();
     }
 
     pub fn any(&self, f: impl FnMut(&Selection) -> bool) -> bool {
@@ -159,20 +246,49 @@ impl SelectionContext {
     }
 
     pub fn ensure_kind(&mut self, kind: SelectionKind) {
-        let reset = !matches!(self, SelectionContext::Explicit { kind: k, .. } if *k == kind);
+        let reset = self.is_active() && self.kind() != kind;
         if reset {
-            *self = SelectionContext::Explicit {
-                kind,
-                items: std::collections::HashSet::new(),
-            };
+            self.clear();
         }
     }
 
     pub fn insert(&mut self, kind: SelectionKind, selection: Selection) {
         self.ensure_kind(kind);
-        if let SelectionContext::Explicit { items, .. } = self {
-            items.insert(selection);
+        if self.explicit.insert(selection) {
+            self.recompute_summary();
         }
+    }
+
+    fn recompute_summary(&mut self) {
+        let mut files = std::collections::HashSet::new();
+        let mut full_files = std::collections::HashSet::new();
+        let mut line_count = 0usize;
+        let mut has_full_files = false;
+
+        for selection in &self.explicit {
+            files.insert(selection.path().to_string());
+            match selection {
+                Selection::Commit(_) => {}
+                Selection::File(file_ref) => {
+                    has_full_files = true;
+                    full_files.insert(file_ref.path.clone());
+                }
+                Selection::Line { .. } => line_count += 1,
+            }
+        }
+
+        self.summary = SelectionSummary {
+            file_count: files.len(),
+            full_file_count: full_files.len(),
+            line_count,
+            has_full_files,
+        };
+    }
+}
+
+impl Default for SelectionContext {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -154,7 +154,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
                 label,
                 children,
                 *flags,
-                app.selection_summary().submenu_suffix(),
+                app.selection.submenu_suffix(),
             );
         }
         AppMode::CommandOutput {
@@ -278,7 +278,7 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         ));
     }
 
-    if let Some(text) = app.selection_summary().display_text() {
+    if let Some(text) = app.selection.display_text() {
         toggle_spans.push(Span::styled(
             format!(" {text} "),
             Style::default()

@@ -15,119 +15,6 @@ use crate::types::{
     SelectionContext, SelectionKind, TargetOperation, VisualRange,
 };
 
-pub struct SelectionSummary {
-    pub file_count: usize,
-    pub full_file_count: usize,
-    pub line_count: usize,
-    pub has_full_files: bool,
-}
-
-impl SelectionSummary {
-    pub fn display_text(&self) -> Option<String> {
-        if self.file_count == 0 && self.line_count == 0 {
-            return None;
-        }
-        if self.line_count == 0 {
-            let noun = if self.full_file_count == 1 {
-                "file"
-            } else {
-                "files"
-            };
-            return Some(format!("{} {} selected", self.full_file_count, noun));
-        }
-        if !self.has_full_files && self.file_count == 1 {
-            let noun = if self.line_count == 1 {
-                "line"
-            } else {
-                "lines"
-            };
-            return Some(format!("{} {} selected", self.line_count, noun));
-        }
-        if self.has_full_files && self.line_count > 0 {
-            let file_noun = if self.full_file_count == 1 {
-                "file"
-            } else {
-                "files"
-            };
-            let line_noun = if self.line_count == 1 {
-                "line"
-            } else {
-                "lines"
-            };
-            return Some(format!(
-                "{} {} + {} {} selected",
-                self.full_file_count, file_noun, self.line_count, line_noun
-            ));
-        }
-        let line_noun = if self.line_count == 1 {
-            "line"
-        } else {
-            "lines"
-        };
-        let file_noun = if self.file_count == 1 {
-            "file"
-        } else {
-            "files"
-        };
-        Some(format!(
-            "{} {} in {} {} selected",
-            self.line_count, line_noun, self.file_count, file_noun
-        ))
-    }
-
-    pub fn submenu_suffix(&self) -> Option<String> {
-        if self.file_count == 0 && self.line_count == 0 {
-            return None;
-        }
-        if self.line_count == 0 {
-            let noun = if self.full_file_count == 1 {
-                "file"
-            } else {
-                "files"
-            };
-            return Some(format!("{} {}", self.full_file_count, noun));
-        }
-        if !self.has_full_files && self.file_count == 1 {
-            let noun = if self.line_count == 1 {
-                "line"
-            } else {
-                "lines"
-            };
-            return Some(format!("{} {}", self.line_count, noun));
-        }
-        if self.has_full_files && self.line_count > 0 {
-            let file_noun = if self.full_file_count == 1 {
-                "file"
-            } else {
-                "files"
-            };
-            let line_noun = if self.line_count == 1 {
-                "line"
-            } else {
-                "lines"
-            };
-            return Some(format!(
-                "{} {} + {} {}",
-                self.full_file_count, file_noun, self.line_count, line_noun
-            ));
-        }
-        let line_noun = if self.line_count == 1 {
-            "line"
-        } else {
-            "lines"
-        };
-        let file_noun = if self.file_count == 1 {
-            "file"
-        } else {
-            "files"
-        };
-        Some(format!(
-            "{} {} in {} {}",
-            self.line_count, line_noun, self.file_count, file_noun
-        ))
-    }
-}
-
 /// All global toggles. Single source of truth for status bar rendering,
 /// help display, and CLI arg generation.
 pub const GLOBAL_TOGGLES: &[GlobalToggle] = &[
@@ -277,7 +164,7 @@ impl App {
             toggles: CommandFlags::empty(),
             last_command: None,
             show_line_numbers: false,
-            selection: SelectionContext::Implicit,
+            selection: SelectionContext::new(),
             visual_anchor: None,
             visual_range: None,
             search: None,
@@ -554,10 +441,7 @@ impl App {
     }
 
     pub fn explicit_selection(&self) -> Option<&HashSet<Selection>> {
-        match &self.selection {
-            SelectionContext::Explicit { items, .. } if !items.is_empty() => Some(items),
-            _ => None,
-        }
+        self.selection.explicit()
     }
 
     /// Toggle file selection. If the file belongs to a different commit than
@@ -818,32 +702,6 @@ impl App {
     /// Number of currently selected items.
     pub fn selection_count(&self) -> usize {
         self.selection.len()
-    }
-
-    pub fn selection_summary(&self) -> SelectionSummary {
-        let mut files = HashSet::new();
-        let mut full_files = HashSet::new();
-        let mut line_count = 0usize;
-        let mut has_full_files = false;
-
-        for selection in self.selection.iter() {
-            files.insert(selection.path().to_string());
-            match selection {
-                Selection::Commit(_) => {}
-                Selection::File(file_ref) => {
-                    has_full_files = true;
-                    full_files.insert(file_ref.path.clone());
-                }
-                Selection::Line { .. } => line_count += 1,
-            }
-        }
-
-        SelectionSummary {
-            file_count: files.len(),
-            full_file_count: full_files.len(),
-            line_count,
-            has_full_files,
-        }
     }
 
     /// Clear all selections.
