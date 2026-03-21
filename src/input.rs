@@ -313,13 +313,11 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
                 }
                 Some(SelectTarget::File(entry_idx, file_idx)) => {
                     app.toggle_file_selection(entry_idx, file_idx);
-                    app.move_down();
                 }
                 Some(SelectTarget::DiffLine(entry_idx, file_idx, line_idx, kind)) => {
                     match kind {
                         DiffLineKind::Added | DiffLineKind::Removed => {
                             app.toggle_line_selection(entry_idx, file_idx, line_idx);
-                            app.move_down();
                         }
                         DiffLineKind::Header => {
                             app.toggle_hunk_selection(entry_idx, file_idx, line_idx);
