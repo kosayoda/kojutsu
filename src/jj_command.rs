@@ -3,7 +3,7 @@ use std::process::{Command, Output};
 
 use crate::app::GLOBAL_TOGGLES;
 use crate::keymap::CommandFlags;
-use crate::types::{ChangeId, MessageMode, RebaseSource, RebaseTarget, SquashTarget};
+use crate::types::{ChangeId, MessageMode, RebaseSource, RebaseTarget, SplitTarget, SquashTarget};
 
 /// How to filter changes for squash/commit operations.
 #[derive(Debug, Clone)]
@@ -62,6 +62,12 @@ pub enum JJCommand {
         from: Option<ChangeId>,
         into: Option<ChangeId>,
         changes_in: Option<ChangeId>,
+        selection: ChangeSelection,
+        flags: CommandFlags,
+    },
+    Split {
+        change_id: ChangeId,
+        target: Option<SplitTarget>,
         selection: ChangeSelection,
         flags: CommandFlags,
     },
@@ -172,6 +178,7 @@ impl JJCommand {
             | JJCommand::New { flags, .. }
             | JJCommand::Rebase { flags, .. }
             | JJCommand::Restore { flags, .. }
+            | JJCommand::Split { flags, .. }
             | JJCommand::BookmarkCreate { flags, .. }
             | JJCommand::BookmarkSet { flags, .. }
             | JJCommand::BookmarkDelete { flags, .. }
@@ -288,6 +295,28 @@ impl JJCommand {
                 if let Some(id) = changes_in {
                     args.push("--changes-in".to_string());
                     args.push(id.to_string());
+                }
+                push_change_selection(&mut args, selection);
+                args
+            }
+            JJCommand::Split {
+                change_id,
+                target,
+                selection,
+                ..
+            } => {
+                let mut args = vec!["split".to_string(), "-r".to_string(), change_id.to_string()];
+                push_flags(
+                    &mut args,
+                    flags,
+                    &[
+                        (CommandFlags::INTERACTIVE, "--interactive"),
+                        (CommandFlags::PARALLEL, "--parallel"),
+                    ],
+                );
+                if let Some(t) = target {
+                    args.push(t.kind.flag().to_string());
+                    args.push(t.target.to_string());
                 }
                 push_change_selection(&mut args, selection);
                 args
@@ -527,6 +556,7 @@ impl JJCommand {
                 flags.contains(CommandFlags::INTERACTIVE)
                     || matches!(selection, ChangeSelection::Lines(_))
             }
+            JJCommand::Split { .. } => true,
             _ => false,
         }
     }

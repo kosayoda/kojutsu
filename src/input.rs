@@ -14,7 +14,7 @@ use crate::keymap::{
 use crate::repo::JjRepo;
 use crate::types::{
     ChangeId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
-    PendingSelection, RebaseSource, SelectionKind, TargetOperation,
+    PendingSelection, RebaseSource, SelectionKind, SplitKind, TargetOperation,
 };
 
 /// Build the appropriate `ChangeSelection` from the current app state.
@@ -447,6 +447,21 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         }),
         AppAction::RestoreFrom => enter_target_select(app, TargetOperation::RestoreFrom, flags),
         AppAction::RestoreInto => enter_target_select(app, TargetOperation::RestoreInto, flags),
+        AppAction::Split => make_command(app, |id| JJCommand::Split {
+            change_id: id,
+            target: None,
+            selection: build_change_selection(app),
+            flags,
+        }),
+        AppAction::SplitOnto => {
+            enter_target_select(app, TargetOperation::Split(SplitKind::Onto), flags)
+        }
+        AppAction::SplitAfter => {
+            enter_target_select(app, TargetOperation::Split(SplitKind::After), flags)
+        }
+        AppAction::SplitBefore => {
+            enter_target_select(app, TargetOperation::Split(SplitKind::Before), flags)
+        }
 
         // Bookmark commands
         AppAction::BookmarkCreate => {

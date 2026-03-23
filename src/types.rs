@@ -565,6 +565,7 @@ impl PendingCommand {
 #[derive(Debug, Clone)]
 pub enum TargetOperation {
     Squash(SquashKind),
+    Split(SplitKind),
     Rebase(RebaseSource),
     RestoreFrom,
     RestoreInto,
@@ -580,6 +581,11 @@ impl TargetOperation {
                 SquashKind::Onto => "squash onto",
                 SquashKind::After => "squash after",
                 SquashKind::Before => "squash before",
+            },
+            TargetOperation::Split(kind) => match kind {
+                SplitKind::Onto => "split onto",
+                SplitKind::After => "split after",
+                SplitKind::Before => "split before",
             },
             TargetOperation::Rebase(source) => match source {
                 RebaseSource::Revision => "rebase revision",
@@ -607,6 +613,16 @@ impl TargetOperation {
                 selection,
                 flags,
             ),
+            TargetOperation::Split(kind) => vec![FollowUpOption {
+                key: ' ',
+                label: "split",
+                action: FollowUpAction::Execute(JJCommand::Split {
+                    change_id: source,
+                    target: Some(SplitTarget { target, kind }),
+                    selection,
+                    flags,
+                }),
+            }],
             TargetOperation::Rebase(source_mode) => {
                 rebase_follow_up(source, target, source_mode, flags)
             }
@@ -739,6 +755,12 @@ pub struct SquashTarget {
     pub kind: SquashKind,
 }
 
+#[derive(Debug, Clone)]
+pub struct SplitTarget {
+    pub target: ChangeId,
+    pub kind: SplitKind,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SquashKind {
     Into,
@@ -754,6 +776,23 @@ impl SquashKind {
             SquashKind::Onto => "--onto",
             SquashKind::After => "--insert-after",
             SquashKind::Before => "--insert-before",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitKind {
+    Onto,
+    After,
+    Before,
+}
+
+impl SplitKind {
+    pub fn flag(&self) -> &'static str {
+        match self {
+            SplitKind::Onto => "--onto",
+            SplitKind::After => "--insert-after",
+            SplitKind::Before => "--insert-before",
         }
     }
 }

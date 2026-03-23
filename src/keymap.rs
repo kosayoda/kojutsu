@@ -35,6 +35,7 @@ bitflags::bitflags! {
         const KEEP_EMPTIED        = 1 << 7;
         const ALLOW_BACKWARDS     = 1 << 8;
         const DRY_RUN             = 1 << 9;
+        const PARALLEL            = 1 << 10;
     }
 }
 
@@ -75,6 +76,10 @@ pub enum AppAction {
     Restore,
     RestoreFrom,
     RestoreInto,
+    Split,
+    SplitOnto,
+    SplitAfter,
+    SplitBefore,
     EditRevset,
     EditRevsetInEditor,
     BookmarkCreate,
@@ -335,6 +340,20 @@ impl Default for Keymap {
                     bind("t", AppAction::RestoreInto, "into…", C),
                 ],
             ),
+            // Split submenu
+            prefix(
+                "shift-s",
+                "split",
+                C,
+                vec![
+                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                    toggle("p", CommandFlags::PARALLEL, "parallel"),
+                    bind("shift-s", AppAction::Split, "split", C),
+                    bind("o", AppAction::SplitOnto, "onto…", C),
+                    bind("a", AppAction::SplitAfter, "after…", C),
+                    bind("b", AppAction::SplitBefore, "before…", C),
+                ],
+            ),
             // Squash submenu
             prefix(
                 "s",
@@ -566,6 +585,10 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         AppAction::Restore | AppAction::RestoreFrom | AppAction::RestoreInto => {
             &[Commit, File, Line]
         }
+        AppAction::Split
+        | AppAction::SplitOnto
+        | AppAction::SplitAfter
+        | AppAction::SplitBefore => &[Commit, File, Line],
         AppAction::Commit | AppAction::CommitWithMessage => &[Commit, File, Line],
         AppAction::Absorb => &[Commit, File],
         AppAction::Abandon
