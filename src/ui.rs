@@ -313,6 +313,8 @@ fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
             pos,
             search.matches.len()
         )
+    } else if let Some(status) = &app.status_message {
+        status.clone()
     } else {
         app.last_command.clone().unwrap_or_default()
     };
@@ -359,7 +361,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                         graph_cont,
                         &entry.commit,
                         app.unfolded[*entry_idx]
-                            .then(|| app.commit_stats_cache.get(entry_idx).copied())
+                            .then(|| app.commit_stats(*entry_idx))
                             .flatten(),
                         is_source,
                         row_search.as_ref(),
@@ -390,7 +392,9 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     entry_idx,
                     file_idx,
                 } => {
-                    let files = &app.file_cache[entry_idx];
+                    let files = app
+                        .files_for_entry(*entry_idx)
+                        .expect("visible file row must be loaded");
                     let file = &files[file_idx.raw()];
                     let is_unfolded = app
                         .file_unfolded
@@ -405,7 +409,9 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     file_idx,
                     line_idx,
                 } => {
-                    let diff_lines = &app.diff_cache[&(*entry_idx, *file_idx)];
+                    let diff_lines = app
+                        .diff_lines(*entry_idx, *file_idx)
+                        .expect("visible diff row must be loaded");
                     let diff_line = &diff_lines[line_idx.raw()];
                     let is_selected = app.is_line_selected(*entry_idx, *file_idx, *line_idx);
                     let in_visual = app.is_in_visual_range(*entry_idx, *file_idx, *line_idx);
@@ -1017,6 +1023,31 @@ fn render_commit_item<'a>(
         Style::default().fg(Color::DarkGray),
     ));
 
+    // Commit ID (at end, like jj log -- prefix bright, rest dimmed)
+    line1.push(Span::raw(" "));
+    if let Some(search) = search {
+        if search.scopes.contains(SearchScopes::COMMIT_ID)
+            && contains_query(
+                c.commit_id.display.as_str(),
+                search.query,
+                search.case_sensitive,
+            )
+        {
+            push_highlighted_short_id(
+                &mut line1,
+                &c.commit_id,
+                None,
+                Color::Blue,
+                search.query,
+                search.case_sensitive,
+            );
+        } else {
+            push_short_id(&mut line1, &c.commit_id, Color::Blue);
+        }
+    } else {
+        push_short_id(&mut line1, &c.commit_id, Color::Blue);
+    }
+
     // Local bookmarks (with * suffix if dirty)
     for bm in &c.bookmarks {
         line1.push(Span::raw(" "));
@@ -1071,31 +1102,6 @@ fn render_commit_item<'a>(
         } else {
             line1.push(Span::styled(text, style));
         }
-    }
-
-    // Commit ID (at end, like jj log -- prefix bright, rest dimmed)
-    line1.push(Span::raw(" "));
-    if let Some(search) = search {
-        if search.scopes.contains(SearchScopes::COMMIT_ID)
-            && contains_query(
-                c.commit_id.display.as_str(),
-                search.query,
-                search.case_sensitive,
-            )
-        {
-            push_highlighted_short_id(
-                &mut line1,
-                &c.commit_id,
-                None,
-                Color::Blue,
-                search.query,
-                search.case_sensitive,
-            );
-        } else {
-            push_short_id(&mut line1, &c.commit_id, Color::Blue);
-        }
-    } else {
-        push_short_id(&mut line1, &c.commit_id, Color::Blue);
     }
 
     if let Some(stats) = line_stats {

@@ -12,7 +12,6 @@ use crate::keymap::{
     self, action_label, action_supported_selection_kinds, AppAction, CommandFlags, Keymap,
     LookupResult,
 };
-use crate::repo::JjRepo;
 use crate::types::{
     ChangeId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
     PendingSelection, RebaseSource, SelectionKind, SplitKind, TargetOperation,
@@ -60,26 +59,26 @@ pub enum Action {
 }
 
 /// Handle a key press, dispatching through the keymap trie and app mode.
-pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyEvent) -> Action {
+pub fn handle_key(app: &mut App, keymap: &'static Keymap, key: KeyEvent) -> Action {
     let Some(node) = keymap::key_event_to_node(&key) else {
         return Action::None;
     };
 
     match &app.mode {
-        AppMode::Normal => handle_normal_key(app, jj, keymap, &node),
+        AppMode::Normal => handle_normal_key(app, keymap, &node),
         AppMode::Submenu {
             children, flags, ..
         } => {
             let children = *children;
             let flags = *flags;
-            handle_submenu_key(app, jj, children, flags, &node)
+            handle_submenu_key(app, children, flags, &node)
         }
         AppMode::CommandOutput { .. } => {
             app.mode = AppMode::Normal;
             if node.key == keymap_parser::Key::Esc {
                 Action::None
             } else {
-                handle_normal_key(app, jj, keymap, &node)
+                handle_normal_key(app, keymap, &node)
             }
         }
         AppMode::Help => {
@@ -87,7 +86,7 @@ pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyE
             if node.key == keymap_parser::Key::Esc {
                 Action::None
             } else {
-                handle_normal_key(app, jj, keymap, &node)
+                handle_normal_key(app, keymap, &node)
             }
         }
         AppMode::TextInput { .. } => handle_text_input(app, key),
@@ -98,19 +97,14 @@ pub fn handle_key(app: &mut App, jj: &JjRepo, keymap: &'static Keymap, key: KeyE
     }
 }
 
-fn handle_normal_key(
-    app: &mut App,
-    jj: &JjRepo,
-    keymap: &'static Keymap,
-    node: &keymap_parser::Node,
-) -> Action {
+fn handle_normal_key(app: &mut App, keymap: &'static Keymap, node: &keymap_parser::Node) -> Action {
     if node.key == keymap_parser::Key::Esc && app.search.is_some() {
         app.clear_search();
         return Action::None;
     }
 
     match keymap.lookup(node) {
-        LookupResult::Action(action) => dispatch_action(app, jj, action, CommandFlags::empty()),
+        LookupResult::Action(action) => dispatch_action(app, action, CommandFlags::empty()),
         LookupResult::Prefix { label, children } => {
             if app.selection_active() {
                 let kind = app.selection_kind();
@@ -139,7 +133,6 @@ fn handle_normal_key(
 
 fn handle_submenu_key(
     app: &mut App,
-    jj: &JjRepo,
     children: &'static [(keymap_parser::Node, keymap::KeymapNode)],
     flags: CommandFlags,
     node: &keymap_parser::Node,
@@ -154,7 +147,7 @@ fn handle_submenu_key(
     match result {
         LookupResult::Action(action) => {
             app.mode = AppMode::Normal;
-            dispatch_action(app, jj, action, flags)
+            dispatch_action(app, action, flags)
         }
         LookupResult::Toggle(flag) => {
             // Flip the flag, stay in submenu.
@@ -174,7 +167,7 @@ fn handle_submenu_key(
     }
 }
 
-fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: CommandFlags) -> Action {
+fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
     // Merge global toggles into the command flags.
     let flags = flags | app.toggles;
 
@@ -266,7 +259,7 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
             Action::None
         }
         AppAction::ToggleFold => {
-            app.toggle_fold(jj);
+            app.toggle_fold();
             Action::None
         }
         AppAction::ToggleIgnoreImmutable => {
@@ -312,7 +305,10 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
                     file_idx,
                     line_idx,
                 }) => {
-                    let kind = app.diff_cache[&(*entry_idx, *file_idx)][line_idx.raw()].kind;
+                    let Some(diff_lines) = app.diff_lines(*entry_idx, *file_idx) else {
+                        return Action::None;
+                    };
+                    let kind = diff_lines[line_idx.raw()].kind;
                     Some(SelectTarget::DiffLine(
                         *entry_idx, *file_idx, *line_idx, kind,
                     ))
@@ -1011,7 +1007,7 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
 }
 
 /// Handle a mouse event.
-pub fn handle_mouse(app: &mut App, jj: &JjRepo, mouse: MouseEvent, list_offset: u16) -> Action {
+pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Action {
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             app.mode = AppMode::Normal;
@@ -1023,7 +1019,7 @@ pub fn handle_mouse(app: &mut App, jj: &JjRepo, mouse: MouseEvent, list_offset: 
             app.mode = AppMode::Normal;
             let row = (mouse.row.saturating_sub(list_offset)) as usize + app.scroll_offset();
             app.select_row(row);
-            app.toggle_fold(jj);
+            app.toggle_fold();
             Action::None
         }
         MouseEventKind::ScrollUp => {

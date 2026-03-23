@@ -4,12 +4,14 @@ use std::sync::Arc;
 
 use color_eyre::eyre::Context;
 use color_eyre::Result;
+use futures::StreamExt as _;
 use jj_lib::backend::CommitId;
 use jj_lib::commit::Commit;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
 use jj_lib::fileset::FilesetAliasesMap;
 use jj_lib::graph::{GraphEdgeType, GraphNode, TopoGroupedGraphIterator};
 use jj_lib::id_prefix::IdPrefixContext;
+use jj_lib::matchers::EverythingMatcher;
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::{RefName, WorkspaceNameBuf};
 use jj_lib::repo::{ReadonlyRepo, Repo, StoreFactories};
@@ -21,10 +23,6 @@ use jj_lib::revset::{
 use jj_lib::settings::UserSettings;
 use jj_lib::time_util::DatePatternContext;
 use jj_lib::workspace::{default_working_copy_factories, Workspace};
-use pollster::FutureExt as _;
-
-use futures::StreamExt as _;
-use jj_lib::matchers::EverythingMatcher;
 
 use jj_lib::conflict_labels::ConflictLabels;
 use jj_lib::conflicts::{materialize_tree_value, ConflictMaterializeOptions};
@@ -76,6 +74,11 @@ impl JjRepo {
 
     /// Open the jj workspace rooted at `path`.
     pub fn open(path: &Path) -> Result<Self> {
+        pollster::block_on(Self::open_async(path))
+    }
+
+    /// Open the jj workspace rooted at `path`.
+    pub async fn open_async(path: &Path) -> Result<Self> {
         let config = Self::load_config(path)?;
         let settings = UserSettings::from_config(config)
             .wrap_err("failed to create jj settings from config")?;
@@ -93,7 +96,7 @@ impl JjRepo {
         let repo = workspace
             .repo_loader()
             .load_at_head()
-            .block_on()
+            .await
             .wrap_err("failed to load repo at HEAD")?;
 
         Ok(Self {
@@ -380,8 +383,11 @@ impl JjRepo {
         resolved.evaluate(repo).ok()
     }
 
-    /// Compute the file-level changes for a commit (diff against parent tree).
-    pub fn file_changes(&self, commit_hex_id: &str) -> Result<Vec<FileChange>> {
+    /// Compute the file-level changes and line totals for a commit.
+    pub async fn commit_details(
+        &self,
+        commit_hex_id: &str,
+    ) -> Result<(Vec<FileChange>, LineStats)> {
         let repo = self.repo.as_ref();
         let commit_id = CommitId::try_from_hex(commit_hex_id)
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
@@ -392,15 +398,24 @@ impl JjRepo {
 
         let parent_tree = commit
             .parent_tree(repo)
-            .block_on()
+            .await
             .wrap_err("failed to get parent tree")?;
         let commit_tree = commit.tree();
 
         let mut changes = Vec::new();
+        let mut stats = LineStats::default();
+        let labels = ConflictLabels::unlabeled();
+        let materialize_options = ConflictMaterializeOptions {
+            marker_style: jj_lib::conflicts::ConflictMarkerStyle::Git,
+            marker_len: None,
+            merge: jj_lib::tree_merge::MergeOptions {
+                hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
+                same_change: jj_lib::merge::SameChange::Accept,
+            },
+        };
         let mut diff_stream = parent_tree.diff_stream(&commit_tree, &EverythingMatcher);
 
-        // Collect the stream synchronously.
-        while let Some(entry) = diff_stream.next().block_on() {
+        while let Some(entry) = diff_stream.next().await {
             let path = entry.path.as_internal_file_string().to_string();
             let values = match entry.values {
                 Ok(v) => v,
@@ -418,13 +433,42 @@ impl JjRepo {
             };
 
             changes.push(FileChange { path, status });
+
+            let before_mat =
+                materialize_tree_value(repo.store(), &entry.path, values.before, &labels).await?;
+            let after_mat =
+                materialize_tree_value(repo.store(), &entry.path, values.after, &labels).await?;
+
+            let before_part = git_diff_part(&entry.path, before_mat, &materialize_options)
+                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+            let after_part = git_diff_part(&entry.path, after_mat, &materialize_options)
+                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+
+            if before_part.content.is_binary || after_part.content.is_binary {
+                continue;
+            }
+
+            let contents = Diff::new(
+                before_part.content.contents.as_ref(),
+                after_part.content.contents.as_ref(),
+            );
+            let hunks = unified::unified_diff_hunks(contents, 3, Default::default());
+            for hunk in &hunks {
+                for (line_type, _) in &hunk.lines {
+                    match line_type {
+                        DiffLineType::Added => stats.added = stats.added.saturating_add(1),
+                        DiffLineType::Removed => stats.removed = stats.removed.saturating_add(1),
+                        DiffLineType::Context => {}
+                    }
+                }
+            }
         }
 
-        Ok(changes)
+        Ok((changes, stats))
     }
 
     /// Compute the line-level diff for a single file in a commit.
-    pub fn file_diff(&self, commit_hex_id: &str, path: &str) -> Result<Vec<DiffLine>> {
+    pub async fn file_diff(&self, commit_hex_id: &str, path: &str) -> Result<Vec<DiffLine>> {
         let repo = self.repo.as_ref();
         let commit_id = CommitId::try_from_hex(commit_hex_id)
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
@@ -433,7 +477,7 @@ impl JjRepo {
             .get_commit(&commit_id)
             .wrap_err("failed to load commit for diff")?;
 
-        let parent_tree = commit.parent_tree(repo).block_on()?;
+        let parent_tree = commit.parent_tree(repo).await?;
         let commit_tree = commit.tree();
         let repo_path = RepoPathBuf::from_internal_string(path)
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
@@ -451,9 +495,9 @@ impl JjRepo {
         let after_value = commit_tree.path_value(&repo_path)?;
 
         let before_mat =
-            materialize_tree_value(repo.store(), &repo_path, before_value, &labels).block_on()?;
+            materialize_tree_value(repo.store(), &repo_path, before_value, &labels).await?;
         let after_mat =
-            materialize_tree_value(repo.store(), &repo_path, after_value, &labels).block_on()?;
+            materialize_tree_value(repo.store(), &repo_path, after_value, &labels).await?;
 
         let before_part = git_diff_part(&repo_path, before_mat, &materialize_options)
             .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
@@ -536,75 +580,6 @@ impl JjRepo {
         }
 
         Ok(lines)
-    }
-
-    /// Compute added/removed line totals for a commit.
-    pub fn commit_line_stats(&self, commit_hex_id: &str) -> Result<LineStats> {
-        let repo = self.repo.as_ref();
-        let commit_id = CommitId::try_from_hex(commit_hex_id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
-        let commit = repo
-            .store()
-            .get_commit(&commit_id)
-            .wrap_err("failed to load commit for diff")?;
-
-        let parent_tree = commit.parent_tree(repo).block_on()?;
-        let commit_tree = commit.tree();
-        let labels = ConflictLabels::unlabeled();
-        let materialize_options = ConflictMaterializeOptions {
-            marker_style: jj_lib::conflicts::ConflictMarkerStyle::Git,
-            marker_len: None,
-            merge: jj_lib::tree_merge::MergeOptions {
-                hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
-                same_change: jj_lib::merge::SameChange::Accept,
-            },
-        };
-
-        let mut stats = LineStats::default();
-        let mut diff_stream = parent_tree.diff_stream(&commit_tree, &EverythingMatcher);
-        while let Some(entry) = diff_stream.next().block_on() {
-            let values = match entry.values {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            let before_mat =
-                materialize_tree_value(repo.store(), &entry.path, values.before, &labels)
-                    .block_on()?;
-            let after_mat =
-                materialize_tree_value(repo.store(), &entry.path, values.after, &labels)
-                    .block_on()?;
-
-            let before_part = git_diff_part(&entry.path, before_mat, &materialize_options)
-                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-            let after_part = git_diff_part(&entry.path, after_mat, &materialize_options)
-                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-
-            if before_part.content.is_binary || after_part.content.is_binary {
-                continue;
-            }
-
-            let contents = Diff::new(
-                before_part.content.contents.as_ref(),
-                after_part.content.contents.as_ref(),
-            );
-            let hunks = unified::unified_diff_hunks(contents, 3, Default::default());
-            for hunk in &hunks {
-                for (line_type, _) in &hunk.lines {
-                    match line_type {
-                        DiffLineType::Added => {
-                            stats.added = stats.added.saturating_add(1);
-                        }
-                        DiffLineType::Removed => {
-                            stats.removed = stats.removed.saturating_add(1);
-                        }
-                        DiffLineType::Context => {}
-                    }
-                }
-            }
-        }
-
-        Ok(stats)
     }
 
     fn extract_commit_info(

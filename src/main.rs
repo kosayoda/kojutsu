@@ -1,16 +1,30 @@
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::mpsc;
+use std::thread;
 
 use clap::Parser;
 use color_eyre::Result;
-use ratatui::crossterm::event::{self, Event};
+use crossterm::event::{Event, EventStream, KeyEventKind};
+use futures::StreamExt;
 
-use kojutsu::app::{App, AppMode};
+use kojutsu::app::{App, AppMode, Loadable};
 use kojutsu::input::{self, Action};
 use kojutsu::jj_command::JJCommand;
 use kojutsu::keymap::Keymap;
 use kojutsu::repo::JjRepo;
+use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService};
 use kojutsu::ui;
+
+enum AppEvent {
+    Init,
+    Terminal(Event),
+    Repo(RepoResult),
+}
+
+struct TerminalEvents {
+    stop_tx: tokio::sync::mpsc::UnboundedSender<()>,
+    join: thread::JoinHandle<()>,
+}
 
 #[derive(Parser)]
 #[command(name = "kojutsu", about = "TUI for Jujutsu version control")]
@@ -58,75 +72,141 @@ fn main() -> Result<()> {
     }
 
     let repo_path = cli.repository.canonicalize().unwrap_or(cli.repository);
-    JjRepo::snapshot(&repo_path);
-    let mut jj = JjRepo::open(&repo_path)?;
-    let revset = cli.revisions.unwrap_or_else(|| jj.default_revset());
-    let entries = jj.evaluate_revset(&revset)?;
 
     if cli.debug_graph {
+        JjRepo::snapshot(&repo_path);
+        let jj = JjRepo::open(&repo_path)?;
+        let revset = cli.revisions.unwrap_or_else(|| jj.default_revset());
+        let entries = jj.evaluate_revset(&revset)?;
         debug_print_graph(&entries);
         return Ok(());
     }
 
-    let repo_root = jj.workspace_root().display().to_string();
     let keymap: &'static Keymap = Box::leak(Box::new(Keymap::default()));
-
-    let mut app = App::new(entries, revset, repo_root);
+    let (event_tx, event_rx) = mpsc::channel();
+    let (repo_requests, repo_responses) = RepoService::spawn(repo_path.clone());
+    let _repo_forwarder = repo_responses.spawn_forwarder(event_tx.clone(), AppEvent::Repo);
+    let requested_revset = cli.revisions.clone();
+    let mut app = App::new(
+        Vec::new(),
+        requested_revset.clone().unwrap_or_default(),
+        repo_path.display().to_string(),
+    );
+    app.request_revset_load(requested_revset, true);
+    flush_repo_requests(&mut app, &repo_requests);
     let mut terminal = kojutsu::terminal::init()?;
+    let mut terminal_events = spawn_terminal_events(event_tx.clone());
+    let _ = event_tx.send(AppEvent::Init);
 
     loop {
         terminal.draw(|frame| ui::draw(frame, &mut app, keymap))?;
 
-        if event::poll(Duration::from_millis(200))? {
-            let ev = event::read()?;
-            let action = match ev {
-                Event::Key(key) if key.kind == event::KeyEventKind::Press => {
-                    input::handle_key(&mut app, &jj, keymap, key)
+        let app_event = match event_rx.recv() {
+            Ok(event) => event,
+            Err(_) => break,
+        };
+
+        let action = match app_event {
+            AppEvent::Init => Action::None,
+            AppEvent::Repo(result) => {
+                app.handle_repo_result(result);
+                Action::None
+            }
+            AppEvent::Terminal(ev) => match ev {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    input::handle_key(&mut app, keymap, key)
                 }
                 Event::Mouse(mouse) => {
                     let hdr = app.last_header_height;
-                    input::handle_mouse(&mut app, &jj, mouse, hdr)
+                    input::handle_mouse(&mut app, mouse, hdr)
                 }
                 _ => Action::None,
-            };
-            match action {
-                Action::Quit => break,
-                Action::RunJj(cmd) => {
-                    run_jj_command(&mut app, &mut jj, &repo_path, cmd);
-                }
-                Action::SuspendAndRunJj(cmd) => {
-                    suspend_and_run(&mut app, &mut jj, &repo_path, &mut terminal, cmd);
-                }
-                Action::Refresh => {
-                    refresh_app(&mut app, &mut jj, &repo_path);
-                }
-                Action::UpdateRevset(revset_str) => {
-                    update_revset(&mut app, &jj, revset_str);
-                }
-                Action::EditRevsetInEditor => {
-                    edit_revset_in_editor(&mut app, &jj, &mut terminal);
-                }
-                Action::None => {}
+            },
+        };
+        match action {
+            Action::Quit => break,
+            Action::RunJj(cmd) => {
+                run_jj_command(&mut app, &repo_path, cmd);
             }
+            Action::SuspendAndRunJj(cmd) => {
+                terminal_events.stop();
+                suspend_and_run(&mut app, &repo_path, &mut terminal, cmd);
+                terminal_events = spawn_terminal_events(event_tx.clone());
+            }
+            Action::Refresh => {
+                refresh_app(&mut app);
+            }
+            Action::UpdateRevset(revset_str) => {
+                update_revset(&mut app, revset_str);
+            }
+            Action::EditRevsetInEditor => {
+                edit_revset_in_editor(&mut app, &mut terminal);
+            }
+            Action::None => {}
         }
+        flush_repo_requests(&mut app, &repo_requests);
     }
 
+    terminal_events.stop();
     kojutsu::terminal::restore()?;
     Ok(())
 }
 
-fn refresh_app(app: &mut App, jj: &mut JjRepo, repo_path: &std::path::Path) {
-    JjRepo::snapshot(repo_path);
-    if let Ok(new_jj) = JjRepo::open(repo_path) {
-        *jj = new_jj;
-        let revset = app.revset.clone();
-        app.refresh(jj, &revset);
+fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
+    for request in app.take_repo_requests() {
+        service.send(request);
     }
+}
+
+fn spawn_terminal_events(event_tx: mpsc::Sender<AppEvent>) -> TerminalEvents {
+    let (stop_tx, mut stop_rx) = tokio::sync::mpsc::unbounded_channel();
+    let join = thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to build terminal runtime");
+        runtime.block_on(async move {
+            let mut events = EventStream::new();
+            loop {
+                tokio::select! {
+                    _ = stop_rx.recv() => break,
+                    maybe_event = events.next() => {
+                        let Some(result) = maybe_event else {
+                            break;
+                        };
+                        match result {
+                            Ok(event) => {
+                                if event_tx.send(AppEvent::Terminal(event)).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+            }
+        });
+    });
+    TerminalEvents { stop_tx, join }
+}
+
+impl TerminalEvents {
+    fn stop(self) {
+        let _ = self.stop_tx.send(());
+        let _ = self.join.join();
+    }
+}
+
+fn refresh_app(app: &mut App) {
+    let revset = match &app.revset_state {
+        Loadable::Loading => app.pending_revset.clone(),
+        _ => Some(app.revset.clone()),
+    };
+    app.request_revset_load(revset, true);
 }
 
 fn suspend_and_run(
     app: &mut App,
-    jj: &mut JjRepo,
     repo_path: &std::path::Path,
     terminal: &mut kojutsu::terminal::Term,
     cmd: JJCommand,
@@ -145,11 +225,7 @@ fn suspend_and_run(
 
     if result.success {
         app.clear_selection();
-        if let Ok(new_jj) = JjRepo::open(repo_path) {
-            *jj = new_jj;
-            let revset = app.revset.clone();
-            app.refresh(jj, &revset);
-        }
+        refresh_app(app);
     }
 
     // If there was output (e.g. error), show it. Otherwise stay in Normal mode.
@@ -162,24 +238,11 @@ fn suspend_and_run(
     }
 }
 
-fn update_revset(app: &mut App, jj: &JjRepo, revset_str: String) {
-    match app.try_refresh(jj, &revset_str) {
-        Ok(()) => {
-            app.revset = revset_str;
-            app.revset_draft = None;
-        }
-        Err(err) => {
-            app.revset_draft = Some(revset_str);
-            app.mode = AppMode::CommandOutput {
-                command: "revset error".to_string(),
-                output: err.into_bytes(),
-                success: false,
-            };
-        }
-    }
+fn update_revset(app: &mut App, revset_str: String) {
+    app.request_revset_load(Some(revset_str), false);
 }
 
-fn edit_revset_in_editor(app: &mut App, jj: &JjRepo, terminal: &mut kojutsu::terminal::Term) {
+fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) {
     use std::io::Write;
 
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
@@ -212,7 +275,7 @@ fn edit_revset_in_editor(app: &mut App, jj: &JjRepo, terminal: &mut kojutsu::ter
                 Ok(content) => {
                     let new_revset = content.trim().to_string();
                     if !new_revset.is_empty() {
-                        update_revset(app, jj, new_revset);
+                        update_revset(app, new_revset);
                     }
                 }
                 Err(e) => {
@@ -294,7 +357,7 @@ fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
     }
 }
 
-fn run_jj_command(app: &mut App, jj: &mut JjRepo, repo_path: &std::path::Path, cmd: JJCommand) {
+fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
     let result = cmd.run(repo_path);
 
     app.last_command = Some(result.display.clone());
@@ -306,10 +369,6 @@ fn run_jj_command(app: &mut App, jj: &mut JjRepo, repo_path: &std::path::Path, c
 
     if result.success {
         app.clear_selection();
-        if let Ok(new_jj) = JjRepo::open(repo_path) {
-            *jj = new_jj;
-            let revset = app.revset.clone();
-            app.refresh(jj, &revset);
-        }
+        refresh_app(app);
     }
 }

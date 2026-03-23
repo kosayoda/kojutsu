@@ -8,12 +8,28 @@ use crate::graph::{self, GraphLines};
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, IndexVec};
 
 use crate::keymap::{CommandFlags, KeymapNode};
-use crate::repo::JjRepo;
+use crate::repo_service::{RepoRequest, RepoResult};
 use crate::types::{
     ChangeId, DisplayRow, FileRef, FileSelectionState, FollowUpOption, GlobalToggle,
     PendingCommand, PendingSelection, RowKey, SearchFocus, SearchScopes, SearchState, Selection,
     SelectionContext, SelectionKind, TargetOperation, VisualRange,
 };
+
+pub enum Loadable<T> {
+    NotRequested,
+    Loading,
+    Loaded(T),
+    Failed(String),
+}
+
+impl<T> Loadable<T> {
+    fn loaded(&self) -> Option<&T> {
+        match self {
+            Self::Loaded(value) => Some(value),
+            _ => None,
+        }
+    }
+}
 
 /// All global toggles. Single source of truth for status bar rendering,
 /// help display, and CLI arg generation.
@@ -115,15 +131,23 @@ pub struct App {
     /// Per-file fold state: (entry_idx, file_idx) -> unfolded.
     pub file_unfolded: HashMap<(EntryIdx, FileIdx), bool>,
     /// Lazily loaded file changes, keyed by entry index.
-    pub file_cache: HashMap<EntryIdx, Vec<FileChange>>,
+    pub file_states: HashMap<EntryIdx, Loadable<Vec<FileChange>>>,
     /// Lazily loaded diff lines, keyed by (entry_idx, file_idx).
-    pub diff_cache: HashMap<(EntryIdx, FileIdx), Vec<DiffLine>>,
+    pub diff_states: HashMap<(EntryIdx, FileIdx), Loadable<Vec<DiffLine>>>,
     /// Lazily loaded per-commit line stats, keyed by entry index.
-    pub commit_stats_cache: HashMap<EntryIdx, LineStats>,
+    pub commit_stats_states: HashMap<EntryIdx, Loadable<LineStats>>,
+    /// Current revset load status.
+    pub revset_state: Loadable<()>,
+    /// Revset currently being requested, if any.
+    pub pending_revset: Option<String>,
+    /// Repo requests waiting to be sent to the background service.
+    pending_repo_requests: Vec<RepoRequest>,
     /// Global toggles that persist across commands.
     pub toggles: CommandFlags,
     /// Display string of the last command executed (shown in status bar).
     pub last_command: Option<String>,
+    /// Transient status notice shown in the status bar.
+    pub status_message: Option<String>,
     /// Whether to show line numbers in diff views.
     pub show_line_numbers: bool,
     /// Current selection context: implicit commit under cursor, or explicit
@@ -161,11 +185,15 @@ impl App {
             mode: AppMode::Normal,
             unfolded,
             file_unfolded: HashMap::new(),
-            file_cache: HashMap::new(),
-            diff_cache: HashMap::new(),
-            commit_stats_cache: HashMap::new(),
+            file_states: HashMap::new(),
+            diff_states: HashMap::new(),
+            commit_stats_states: HashMap::new(),
+            revset_state: Loadable::NotRequested,
+            pending_revset: None,
+            pending_repo_requests: Vec::new(),
             toggles: CommandFlags::empty(),
             last_command: None,
+            status_message: None,
             show_line_numbers: false,
             selection: SelectionContext::new(),
             visual_anchor: None,
@@ -186,7 +214,7 @@ impl App {
             self.rows.push(DisplayRow::CommitNode { entry_idx });
 
             if self.unfolded[entry_idx] {
-                if let Some(files) = self.file_cache.get(&entry_idx) {
+                if let Some(files) = self.files_for_entry(entry_idx) {
                     for file_idx_raw in 0..files.len() {
                         let file_idx = FileIdx::new(file_idx_raw);
                         self.rows.push(DisplayRow::FileChange {
@@ -201,7 +229,7 @@ impl App {
                             .copied()
                             .unwrap_or(false)
                         {
-                            if let Some(diff_lines) = self.diff_cache.get(&(entry_idx, file_idx)) {
+                            if let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) {
                                 for line_idx_raw in 0..diff_lines.len() {
                                     self.rows.push(DisplayRow::DiffLine {
                                         entry_idx,
@@ -287,6 +315,27 @@ impl App {
     pub fn selected_description(&self) -> Option<&str> {
         let entry_idx = self.selected_entry_idx()?;
         self.entries[entry_idx].commit.description.as_deref()
+    }
+
+    pub fn files_for_entry(&self, entry_idx: EntryIdx) -> Option<&Vec<FileChange>> {
+        self.file_states.get(&entry_idx).and_then(Loadable::loaded)
+    }
+
+    pub fn diff_lines(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<&Vec<DiffLine>> {
+        self.diff_states
+            .get(&(entry_idx, file_idx))
+            .and_then(Loadable::loaded)
+    }
+
+    pub fn commit_stats(&self, entry_idx: EntryIdx) -> Option<LineStats> {
+        self.commit_stats_states
+            .get(&entry_idx)
+            .and_then(Loadable::loaded)
+            .copied()
+    }
+
+    pub fn take_repo_requests(&mut self) -> Vec<RepoRequest> {
+        std::mem::take(&mut self.pending_repo_requests)
     }
 
     /// Get the scroll offset from the last render.
@@ -408,16 +457,16 @@ impl App {
     ///
     /// - On a commit row: toggle showing file changes.
     /// - On a file row: toggle showing diff hunks.
-    pub fn toggle_fold(&mut self, jj: &JjRepo) {
+    pub fn toggle_fold(&mut self) {
         match self.rows.get(self.cursor) {
             Some(DisplayRow::CommitNode { entry_idx }) => {
-                self.toggle_commit_fold(*entry_idx, jj);
+                self.toggle_commit_fold(*entry_idx);
             }
             Some(DisplayRow::FileChange {
                 entry_idx,
                 file_idx,
             }) => {
-                self.toggle_file_fold(*entry_idx, *file_idx, jj);
+                self.toggle_file_fold(*entry_idx, *file_idx);
             }
             Some(DisplayRow::DiffLine {
                 entry_idx,
@@ -425,7 +474,7 @@ impl App {
                 ..
             }) => {
                 // Folding on a diff line folds the parent file.
-                self.toggle_file_fold(*entry_idx, *file_idx, jj);
+                self.toggle_file_fold(*entry_idx, *file_idx);
             }
             _ => {}
         }
@@ -452,7 +501,10 @@ impl App {
     /// scoped to one commit at a time).
     pub fn toggle_file_selection(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
         let change_id: ChangeId = self.entries[entry_idx].commit.change_id.change_id();
-        let path = self.file_cache[&entry_idx][file_idx.raw()].path.clone();
+        let Some(files) = self.files_for_entry(entry_idx) else {
+            return;
+        };
+        let path = files[file_idx.raw()].path.clone();
 
         self.clear_other_commits(&change_id);
         self.selection.ensure_kind(SelectionKind::File);
@@ -473,7 +525,7 @@ impl App {
         if !self.unfolded[entry_idx] {
             return;
         }
-        if !self.file_cache.contains_key(&entry_idx) {
+        if self.files_for_entry(entry_idx).is_none() {
             return;
         }
 
@@ -481,9 +533,11 @@ impl App {
         self.clear_other_commits(&change_id);
         self.selection.ensure_kind(SelectionKind::File);
 
-        // Collect file paths upfront to avoid borrowing self.file_cache across mutations.
-        let file_paths: Vec<String> = self.file_cache[&entry_idx]
-            .iter()
+        // Collect file paths upfront to avoid borrowing loaded file state across mutations.
+        let file_paths: Vec<String> = self
+            .files_for_entry(entry_idx)
+            .into_iter()
+            .flatten()
             .map(|f| f.path.clone())
             .collect();
 
@@ -519,10 +573,16 @@ impl App {
         line_idx: DiffLineIdx,
     ) {
         let change_id = self.entries[entry_idx].commit.change_id.change_id();
-        let file_path = self.file_cache[&entry_idx][file_idx.raw()].path.clone();
+        let Some(files) = self.files_for_entry(entry_idx) else {
+            return;
+        };
+        let file_path = files[file_idx.raw()].path.clone();
 
         // Extract what we need from the diff line before mutating self.
-        let dl = &self.diff_cache[&(entry_idx, file_idx)][line_idx.raw()];
+        let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
+            return;
+        };
+        let dl = &diff_lines[line_idx.raw()];
         if dl.kind != DiffLineKind::Added && dl.kind != DiffLineKind::Removed {
             return;
         }
@@ -559,12 +619,17 @@ impl App {
         header_line_idx: DiffLineIdx,
     ) {
         let change_id = self.entries[entry_idx].commit.change_id.change_id();
-        let file_path = self.file_cache[&entry_idx][file_idx.raw()].path.clone();
+        let Some(files) = self.files_for_entry(entry_idx) else {
+            return;
+        };
+        let file_path = files[file_idx.raw()].path.clone();
 
         // Collect hunk line data before mutating self.
         let mut hunk_lines = Vec::new();
         {
-            let diff_lines = &self.diff_cache[&(entry_idx, file_idx)];
+            let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
+                return;
+            };
             for dl in diff_lines.iter().skip(header_line_idx.raw() + 1) {
                 if dl.kind == DiffLineKind::Header {
                     break;
@@ -612,8 +677,14 @@ impl App {
         line_idx: DiffLineIdx,
     ) -> bool {
         let change_id = &self.entries[entry_idx].commit.change_id.change_id();
-        let file_path = &self.file_cache[&entry_idx][file_idx.raw()].path;
-        let diff_line = &self.diff_cache[&(entry_idx, file_idx)][line_idx.raw()];
+        let Some(files) = self.files_for_entry(entry_idx) else {
+            return false;
+        };
+        let file_path = &files[file_idx.raw()].path;
+        let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
+            return false;
+        };
+        let diff_line = &diff_lines[line_idx.raw()];
 
         // If the whole file is selected, all lines are implicitly selected.
         if self.selection.contains(&Selection::File(FileRef {
@@ -641,7 +712,10 @@ impl App {
         file_idx: FileIdx,
     ) -> FileSelectionState {
         let change_id = &self.entries[entry_idx].commit.change_id.change_id();
-        let file_path = &self.file_cache[&entry_idx][file_idx.raw()].path;
+        let Some(files) = self.files_for_entry(entry_idx) else {
+            return FileSelectionState::None;
+        };
+        let file_path = &files[file_idx.raw()].path;
 
         // Explicit file-level selection.
         if self.selection.contains(&Selection::File(FileRef {
@@ -668,8 +742,9 @@ impl App {
         // Count selectable lines (added/removed) in the diff.
         // If all are selected, promote to Full.
         let selectable_count = self
-            .diff_cache
+            .diff_states
             .get(&(entry_idx, file_idx))
+            .and_then(Loadable::loaded)
             .map(|diff_lines| {
                 diff_lines
                     .iter()
@@ -915,8 +990,9 @@ impl App {
             } => {
                 scopes.contains(SearchScopes::PATH)
                     && self
-                        .file_cache
+                        .file_states
                         .get(entry_idx)
+                        .and_then(Loadable::loaded)
                         .and_then(|files| files.get(file_idx.raw()))
                         .is_some_and(|file| contains(file.path.as_str()))
             }
@@ -927,14 +1003,16 @@ impl App {
             } => {
                 (scopes.contains(SearchScopes::LINE)
                     && self
-                        .diff_cache
+                        .diff_states
                         .get(&(*entry_idx, *file_idx))
+                        .and_then(Loadable::loaded)
                         .and_then(|lines| lines.get(line_idx.raw()))
                         .is_some_and(|line| contains(line.content.as_str())))
                     || (scopes.contains(SearchScopes::PATH)
                         && self
-                            .file_cache
+                            .file_states
                             .get(entry_idx)
+                            .and_then(Loadable::loaded)
                             .and_then(|files| files.get(file_idx.raw()))
                             .is_some_and(|file| contains(file.path.as_str())))
             }
@@ -962,7 +1040,10 @@ impl App {
             line_idx,
         }) = self.rows.get(self.cursor)
         {
-            let dl = &self.diff_cache[&(*entry_idx, *file_idx)][line_idx.raw()];
+            let Some(diff_lines) = self.diff_lines(*entry_idx, *file_idx) else {
+                return;
+            };
+            let dl = &diff_lines[line_idx.raw()];
             if dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed {
                 self.visual_range = None; // clear any old persistent range
                 self.visual_anchor = Some(self.cursor);
@@ -1022,7 +1103,10 @@ impl App {
                 if start_line.is_none() {
                     start_line = Some(*line_idx);
                     change_id = Some(self.entries[*entry_idx].commit.change_id.change_id());
-                    path = Some(self.file_cache[entry_idx][file_idx.raw()].path.clone());
+                    path = self
+                        .files_for_entry(*entry_idx)
+                        .and_then(|files| files.get(file_idx.raw()))
+                        .map(|file| file.path.clone());
                 }
                 end_line = Some(*line_idx);
             }
@@ -1061,7 +1145,7 @@ impl App {
         // Check persistent visual range.
         if let Some(vr) = &self.visual_range {
             let cid = self.entries[entry_idx].commit.change_id.change_id();
-            if let Some(files) = self.file_cache.get(&entry_idx) {
+            if let Some(files) = self.files_for_entry(entry_idx) {
                 if let Some(file) = files.get(file_idx.raw()) {
                     if cid == vr.change_id
                         && file.path == vr.path
@@ -1090,8 +1174,9 @@ impl App {
         {
             let cid = self.entries[*entry_idx].commit.change_id.change_id();
             if let Some(file) = self
-                .file_cache
+                .file_states
                 .get(entry_idx)
+                .and_then(Loadable::loaded)
                 .and_then(|f| f.get(file_idx.raw()))
             {
                 return cid == vr.change_id
@@ -1165,11 +1250,12 @@ impl App {
 
         // Collect line data from the persistent range before mutating.
         let line_data: Vec<(ChangeId, String, Option<u32>, Option<u32>)> = self
-            .diff_cache
+            .diff_states
             .iter()
             .filter_map(|((eidx, fidx), diff_lines)| {
+                let diff_lines = diff_lines.loaded()?;
                 let cid = self.entries[*eidx].commit.change_id.change_id();
-                let path = &self.file_cache[eidx][fidx.raw()].path;
+                let path = &self.files_for_entry(*eidx)?[fidx.raw()].path;
                 if cid != vr.change_id || path != &vr.path {
                     return None;
                 }
@@ -1307,14 +1393,15 @@ impl App {
         self.revset_draft.as_deref().unwrap_or(&self.revset)
     }
 
-    /// Reload DAG data from the repo.
-    pub fn refresh(&mut self, jj: &JjRepo, revset: &str) {
-        let _ = self.try_refresh(jj, revset);
+    pub fn request_revset_load(&mut self, revset: Option<String>, refresh: bool) {
+        self.revset_state = Loadable::Loading;
+        self.pending_revset = revset.clone();
+        self.status_message = None;
+        self.pending_repo_requests
+            .push(RepoRequest::load_revset(revset, refresh));
     }
 
-    /// Try to reload DAG data. Returns an error string on failure.
-    pub fn try_refresh(&mut self, jj: &JjRepo, revset: &str) -> Result<(), String> {
-        let entries = jj.evaluate_revset(revset).map_err(|e| format!("{e:#}"))?;
+    fn apply_entries(&mut self, entries: Vec<DagEntry>) {
         let entries = IndexVec::from_vec(entries);
         self.graph = IndexVec::from_vec(graph::render(entries.as_slice()));
         let mut unfolded = IndexVec::new();
@@ -1323,37 +1410,117 @@ impl App {
         }
         self.unfolded = unfolded;
         self.file_unfolded.clear();
-        self.file_cache.clear();
-        self.diff_cache.clear();
-        self.commit_stats_cache.clear();
+        self.file_states.clear();
+        self.diff_states.clear();
+        self.commit_stats_states.clear();
         self.visual_anchor = None;
         self.visual_range = None;
         self.entries = entries;
         self.cursor = 0;
         self.rebuild_rows();
-        Ok(())
     }
 
-    fn toggle_commit_fold(&mut self, entry_idx: EntryIdx, jj: &JjRepo) {
+    pub fn handle_repo_result(&mut self, result: RepoResult) {
+        match result {
+            RepoResult::RevsetLoaded {
+                revset,
+                repo_root,
+                entries,
+            } => {
+                self.status_message = None;
+                self.revset = revset;
+                self.revset_draft = None;
+                self.pending_revset = None;
+                self.repo_root = repo_root;
+                self.revset_state = Loadable::Loaded(());
+                self.apply_entries(entries);
+            }
+            RepoResult::RevsetFailed { revset, error } => {
+                self.pending_revset = None;
+                self.revset_draft = Some(revset);
+                self.revset_state = Loadable::Failed(error.clone());
+                self.status_message = Some("failed to load revset".to_string());
+                self.mode = AppMode::CommandOutput {
+                    command: "revset error".to_string(),
+                    output: error.into_bytes(),
+                    success: false,
+                };
+            }
+            RepoResult::CommitDetailsLoaded {
+                entry_idx,
+                files,
+                stats,
+            } => {
+                self.status_message = None;
+                self.file_states.insert(entry_idx, Loadable::Loaded(files));
+                self.commit_stats_states
+                    .insert(entry_idx, Loadable::Loaded(stats));
+                self.rebuild_rows();
+            }
+            RepoResult::CommitDetailsFailed { entry_idx, error } => {
+                self.file_states
+                    .insert(entry_idx, Loadable::Failed(error.clone()));
+                self.commit_stats_states
+                    .insert(entry_idx, Loadable::Failed(error));
+                let change_id = self.entries[entry_idx].commit.change_id.change_id();
+                self.status_message = Some(format!("failed to load files for {change_id}"));
+                self.rebuild_rows();
+            }
+            RepoResult::FileDiffLoaded {
+                entry_idx,
+                file_idx,
+                lines,
+            } => {
+                self.status_message = None;
+                self.diff_states
+                    .insert((entry_idx, file_idx), Loadable::Loaded(lines));
+                self.rebuild_rows();
+            }
+            RepoResult::FileDiffFailed {
+                entry_idx,
+                file_idx,
+                error,
+            } => {
+                self.diff_states
+                    .insert((entry_idx, file_idx), Loadable::Failed(error));
+                if let Some(file) = self
+                    .files_for_entry(entry_idx)
+                    .and_then(|files| files.get(file_idx.raw()))
+                {
+                    self.status_message = Some(format!("failed to load diff for {}", file.path));
+                } else {
+                    self.status_message = Some("failed to load diff".to_string());
+                }
+                self.rebuild_rows();
+            }
+        }
+    }
+
+    fn toggle_commit_fold(&mut self, entry_idx: EntryIdx) {
         if self.unfolded[entry_idx] {
             self.unfolded[entry_idx] = false;
         } else {
-            if !self.file_cache.contains_key(&entry_idx) {
+            let should_request = !matches!(
+                self.file_states.get(&entry_idx),
+                Some(Loadable::Loading | Loadable::Loaded(_))
+            );
+            if should_request {
                 let graph_id = &self.entries[entry_idx].commit.graph_id;
-                let files = jj.file_changes(graph_id).unwrap_or_default();
-                self.file_cache.insert(entry_idx, files);
-            }
-            if !self.commit_stats_cache.contains_key(&entry_idx) {
-                let graph_id = &self.entries[entry_idx].commit.graph_id;
-                let stats = jj.commit_line_stats(graph_id).unwrap_or_default();
-                self.commit_stats_cache.insert(entry_idx, stats);
+                self.file_states.insert(entry_idx, Loadable::Loading);
+                self.commit_stats_states
+                    .insert(entry_idx, Loadable::Loading);
+                self.pending_repo_requests
+                    .push(RepoRequest::load_commit_details(
+                        entry_idx,
+                        graph_id.clone(),
+                    ));
             }
             self.unfolded[entry_idx] = true;
         }
         self.rebuild_rows();
     }
 
-    fn toggle_file_fold(&mut self, entry_idx: EntryIdx, file_idx: FileIdx, jj: &JjRepo) {
+    fn toggle_file_fold(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
         let key = (entry_idx, file_idx);
         let currently_unfolded = self.file_unfolded.get(&key).copied().unwrap_or(false);
 
@@ -1363,8 +1530,7 @@ impl App {
             if let Some(vr) = &self.visual_range {
                 let cid = self.entries[entry_idx].commit.change_id.change_id();
                 if let Some(file) = self
-                    .file_cache
-                    .get(&entry_idx)
+                    .files_for_entry(entry_idx)
                     .and_then(|f| f.get(file_idx.raw()))
                 {
                     if cid == vr.change_id && file.path == vr.path {
@@ -1374,14 +1540,25 @@ impl App {
             }
             self.visual_anchor = None;
         } else {
-            // Lazy load diff lines.
-            if !self.diff_cache.contains_key(&key) {
-                if let Some(files) = self.file_cache.get(&entry_idx) {
-                    if let Some(file) = files.get(file_idx.raw()) {
-                        let graph_id = &self.entries[entry_idx].commit.graph_id;
-                        let diff_lines = jj.file_diff(graph_id, &file.path).unwrap_or_default();
-                        self.diff_cache.insert(key, diff_lines);
-                    }
+            let should_request = !matches!(
+                self.diff_states.get(&key),
+                Some(Loadable::Loading | Loadable::Loaded(_))
+            );
+            if should_request {
+                if let Some((path, commit_id)) = self
+                    .files_for_entry(entry_idx)
+                    .and_then(|files| files.get(file_idx.raw()))
+                    .map(|file| {
+                        (
+                            file.path.clone(),
+                            self.entries[entry_idx].commit.graph_id.clone(),
+                        )
+                    })
+                {
+                    self.diff_states.insert(key, Loadable::Loading);
+                    self.pending_repo_requests.push(RepoRequest::load_file_diff(
+                        entry_idx, file_idx, commit_id, path,
+                    ));
                 }
             }
             self.file_unfolded.insert(key, true);
