@@ -23,6 +23,7 @@ pub enum Loadable<T> {
 }
 
 type FileDiffCacheKey = (CommitId, String);
+type FileFoldKey = (ChangeId, String);
 
 impl<T> Loadable<T> {
     fn loaded(&self) -> Option<&T> {
@@ -128,10 +129,10 @@ pub struct App {
     pub repo_root: String,
     /// Current interaction mode.
     pub mode: AppMode,
-    /// Per-commit fold state, keyed by commit graph id.
-    pub unfolded_commits: HashSet<CommitId>,
-    /// Per-file fold state, keyed by (commit graph id, path).
-    pub unfolded_files: HashSet<FileDiffCacheKey>,
+    /// Per-commit fold state, keyed by change id (stable across mutations).
+    pub unfolded_commits: HashSet<ChangeId>,
+    /// Per-file fold state, keyed by (change id, path) (stable across mutations).
+    pub unfolded_files: HashSet<FileFoldKey>,
     /// Lazily loaded file changes, keyed by commit graph id.
     pub file_states: HashMap<CommitId, Loadable<Vec<FileChange>>>,
     /// Lazily loaded diff lines, keyed by (commit graph id, path).
@@ -313,6 +314,10 @@ impl App {
         &self.entries[entry_idx].commit.graph_id
     }
 
+    fn change_id(&self, entry_idx: EntryIdx) -> ChangeId {
+        self.entries[entry_idx].commit.change_id.change_id()
+    }
+
     fn change_id_for_commit_key(&self, commit_id: &CommitId) -> Option<ChangeId> {
         self.entries
             .iter()
@@ -320,7 +325,7 @@ impl App {
             .map(|entry| entry.commit.change_id.change_id())
     }
 
-    fn file_key(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<FileDiffCacheKey> {
+    fn file_cache_key(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<FileDiffCacheKey> {
         let path = self
             .files_for_entry(entry_idx)?
             .get(file_idx.raw())?
@@ -329,12 +334,21 @@ impl App {
         Some((self.commit_id(entry_idx).clone(), path))
     }
 
+    fn file_fold_key(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<FileFoldKey> {
+        let path = self
+            .files_for_entry(entry_idx)?
+            .get(file_idx.raw())?
+            .path
+            .clone();
+        Some((self.change_id(entry_idx), path))
+    }
+
     pub fn is_commit_unfolded(&self, entry_idx: EntryIdx) -> bool {
-        self.unfolded_commits.contains(self.commit_id(entry_idx))
+        self.unfolded_commits.contains(&self.change_id(entry_idx))
     }
 
     pub fn is_file_unfolded(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> bool {
-        self.file_key(entry_idx, file_idx)
+        self.file_fold_key(entry_idx, file_idx)
             .is_some_and(|key| self.unfolded_files.contains(&key))
     }
 
@@ -345,7 +359,7 @@ impl App {
     }
 
     pub fn diff_lines(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<&Vec<DiffLine>> {
-        let key = self.file_key(entry_idx, file_idx)?;
+        let key = self.file_cache_key(entry_idx, file_idx)?;
         self.diff_states.get(&key).and_then(Loadable::loaded)
     }
 
@@ -760,7 +774,7 @@ impl App {
         // Count selectable lines (added/removed) in the diff.
         // If all are selected, promote to Full.
         let selectable_count = self
-            .file_key(entry_idx, file_idx)
+            .file_cache_key(entry_idx, file_idx)
             .and_then(|key| self.diff_states.get(&key))
             .and_then(Loadable::loaded)
             .map(|diff_lines| {
@@ -967,6 +981,43 @@ impl App {
             if let Some(idx) = current_match {
                 self.cursor = search.matches[idx];
             }
+        }
+    }
+
+    /// Recompute search match indices without moving the cursor.
+    /// Used after DAG refresh to keep highlights valid.
+    fn refresh_search_matches(&mut self) {
+        let Some(search) = &self.search else {
+            return;
+        };
+        let query = search.query().to_string();
+        let scopes = search.scopes;
+        if query.is_empty() || scopes.is_empty() {
+            if let Some(search) = &mut self.search {
+                search.matches.clear();
+                search.current_match = None;
+            }
+            return;
+        }
+        let mut matches = Vec::new();
+        for row_idx in 0..self.rows.len() {
+            if self.row_matches(row_idx, &query, scopes) {
+                matches.push(row_idx);
+            }
+        }
+        let current_match = if matches.is_empty() {
+            None
+        } else {
+            Some(
+                matches
+                    .iter()
+                    .position(|&row| row >= self.cursor)
+                    .unwrap_or(0),
+            )
+        };
+        if let Some(search) = &mut self.search {
+            search.matches = matches;
+            search.current_match = current_match;
         }
     }
 
@@ -1411,31 +1462,148 @@ impl App {
     }
 
     fn apply_entries(&mut self, entries: Vec<DagEntry>) {
-        let previous_commit = self
-            .selected_entry_idx()
-            .map(|entry_idx| self.commit_id(entry_idx).clone());
+        // Capture cursor context using stable ChangeId for restore after rebuild.
+        let cursor_context = self.selected_entry_idx().map(|entry_idx| {
+            let change_id = self.change_id(entry_idx);
+            let row = self.rows.get(self.cursor);
+            let file_path = row.and_then(|r| match r {
+                DisplayRow::FileChange {
+                    entry_idx: ei,
+                    file_idx,
+                }
+                | DisplayRow::DiffLine {
+                    entry_idx: ei,
+                    file_idx,
+                    ..
+                } if *ei == entry_idx => self
+                    .files_for_entry(entry_idx)
+                    .and_then(|f| f.get(file_idx.raw()))
+                    .map(|f| f.path.clone()),
+                _ => None,
+            });
+            let diff_line_idx = row.and_then(|r| match r {
+                DisplayRow::DiffLine { line_idx, .. } => Some(*line_idx),
+                _ => None,
+            });
+            (change_id, file_path, diff_line_idx)
+        });
         let entries = IndexVec::from_vec(entries);
         self.graph = IndexVec::from_vec(graph::render(entries.as_slice()));
         self.visual_anchor = None;
-        self.visual_range = None;
         self.entries = entries;
+
+        // Prune visual_range if the change no longer exists.
+        if let Some(vr) = &self.visual_range {
+            let still_exists = self
+                .entries
+                .iter()
+                .any(|e| e.commit.change_id.change_id() == vr.change_id);
+            if !still_exists {
+                self.visual_range = None;
+            }
+        }
+
+        // Collect new CommitIds so we can prune stale caches.
+        let live_commit_ids: HashSet<CommitId> = self
+            .entries
+            .iter()
+            .map(|e| e.commit.graph_id.clone())
+            .collect();
+
+        self.file_states.retain(|k, _| live_commit_ids.contains(k));
+        self.diff_states
+            .retain(|(k, _), _| live_commit_ids.contains(k));
+        self.commit_stats_states
+            .retain(|k, _| live_commit_ids.contains(k));
+
+        // Re-request data for commits that are still unfolded but whose
+        // new CommitId has no cached file data (happens after mutation).
+        for entry in self.entries.iter() {
+            let change_id = entry.commit.change_id.change_id();
+            if self.unfolded_commits.contains(&change_id) {
+                let commit_id = &entry.commit.graph_id;
+                if !matches!(
+                    self.file_states.get(commit_id),
+                    Some(Loadable::Loading | Loadable::Loaded(_))
+                ) {
+                    self.file_states
+                        .insert(commit_id.clone(), Loadable::Loading);
+                    self.commit_stats_states
+                        .insert(commit_id.clone(), Loadable::Loading);
+                    self.pending_repo_requests
+                        .push(RepoRequest::load_commit_details(commit_id.clone()));
+                }
+            }
+        }
+
+        // Prune fold state for changes no longer in the DAG.
+        let live_change_ids: HashSet<ChangeId> = self
+            .entries
+            .iter()
+            .map(|e| e.commit.change_id.change_id())
+            .collect();
+        self.unfolded_commits
+            .retain(|k| live_change_ids.contains(k));
+        self.unfolded_files
+            .retain(|(k, _)| live_change_ids.contains(k));
+        self.selection
+            .retain(|s| live_change_ids.contains(s.change_id()));
+
         self.rebuild_rows();
 
-        if let Some(previous_commit) = previous_commit {
+        // Restore cursor using stable ChangeId, with fallback chain:
+        // DiffLine → FileChange → CommitNode.
+        if let Some((change_id, file_path, diff_line_idx)) = cursor_context {
             if let Some((entry_idx, _)) = self
                 .entries
                 .iter_enumerated()
-                .find(|(_, entry)| entry.commit.graph_id == previous_commit)
+                .find(|(_, entry)| entry.commit.change_id.change_id() == change_id)
             {
-                if let Some(row_idx) = self
-                    .rows
-                    .iter()
-                    .position(|row| matches!(row, DisplayRow::CommitNode { entry_idx: idx } if *idx == entry_idx))
-                {
+                let find_row = |pred: &dyn Fn(&DisplayRow) -> bool| {
+                    self.rows.iter().position(pred)
+                };
+
+                let restored = diff_line_idx
+                    .and_then(|li| {
+                        let fp = file_path.as_deref()?;
+                        find_row(&|r| match r {
+                            DisplayRow::DiffLine {
+                                entry_idx: ei,
+                                file_idx,
+                                line_idx,
+                            } if *ei == entry_idx && *line_idx == li => self
+                                .files_for_entry(entry_idx)
+                                .and_then(|f| f.get(file_idx.raw()))
+                                .is_some_and(|f| f.path == fp),
+                            _ => false,
+                        })
+                    })
+                    .or_else(|| {
+                        let fp = file_path.as_deref()?;
+                        find_row(&|r| match r {
+                            DisplayRow::FileChange {
+                                entry_idx: ei,
+                                file_idx,
+                            } if *ei == entry_idx => self
+                                .files_for_entry(entry_idx)
+                                .and_then(|f| f.get(file_idx.raw()))
+                                .is_some_and(|f| f.path == fp),
+                            _ => false,
+                        })
+                    })
+                    .or_else(|| {
+                        find_row(&|r| {
+                            matches!(r, DisplayRow::CommitNode { entry_idx: ei } if *ei == entry_idx)
+                        })
+                    });
+
+                if let Some(row_idx) = restored {
                     self.cursor = row_idx;
                 }
             }
         }
+
+        self.refresh_search_matches();
     }
 
     pub fn handle_repo_result(&mut self, result: RepoResult) {
@@ -1470,6 +1638,28 @@ impl App {
                 stats,
             } => {
                 self.status_message = None;
+                // Re-request diffs for files that were previously unfolded.
+                let change_id = self.change_id_for_commit_key(&commit_id);
+                if let Some(change_id) = &change_id {
+                    for file in &files {
+                        let fold_key = (change_id.clone(), file.path.clone());
+                        if self.unfolded_files.contains(&fold_key) {
+                            let cache_key = (commit_id.clone(), file.path.clone());
+                            if !matches!(
+                                self.diff_states.get(&cache_key),
+                                Some(Loadable::Loading | Loadable::Loaded(_))
+                            ) {
+                                self.diff_states.insert(cache_key, Loadable::Loading);
+                                self.pending_repo_requests.push(
+                                    RepoRequest::load_file_diff(
+                                        commit_id.clone(),
+                                        file.path.clone(),
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
                 self.file_states
                     .insert(commit_id.clone(), Loadable::Loaded(files));
                 self.commit_stats_states
@@ -1508,9 +1698,10 @@ impl App {
     }
 
     fn toggle_commit_fold(&mut self, entry_idx: EntryIdx) {
+        let change_id = self.change_id(entry_idx);
         let commit_id = self.commit_id(entry_idx).clone();
         if self.is_commit_unfolded(entry_idx) {
-            self.unfolded_commits.remove(&commit_id);
+            self.unfolded_commits.remove(&change_id);
         } else {
             let should_request = !matches!(
                 self.file_states.get(&commit_id),
@@ -1522,24 +1713,24 @@ impl App {
                 self.commit_stats_states
                     .insert(commit_id.clone(), Loadable::Loading);
                 self.pending_repo_requests
-                    .push(RepoRequest::load_commit_details(commit_id.clone()));
+                    .push(RepoRequest::load_commit_details(commit_id));
             }
-            self.unfolded_commits.insert(commit_id);
+            self.unfolded_commits.insert(change_id);
         }
         self.rebuild_rows();
     }
 
     fn toggle_file_fold(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
-        let Some(key) = self.file_key(entry_idx, file_idx) else {
+        let Some(fold_key) = self.file_fold_key(entry_idx, file_idx) else {
             return;
         };
-        let currently_unfolded = self.unfolded_files.contains(&key);
+        let currently_unfolded = self.unfolded_files.contains(&fold_key);
 
         if currently_unfolded {
-            self.unfolded_files.remove(&key);
+            self.unfolded_files.remove(&fold_key);
             // Clear visual range if it's for this file.
             if let Some(vr) = &self.visual_range {
-                let cid = self.entries[entry_idx].commit.change_id.change_id();
+                let cid = self.change_id(entry_idx);
                 if let Some(file) = self
                     .files_for_entry(entry_idx)
                     .and_then(|f| f.get(file_idx.raw()))
@@ -1551,17 +1742,24 @@ impl App {
             }
             self.visual_anchor = None;
         } else {
-            let should_request = !matches!(
-                self.diff_states.get(&key),
-                Some(Loadable::Loading | Loadable::Loaded(_))
-            );
+            let cache_key = self.file_cache_key(entry_idx, file_idx);
+            let should_request = cache_key
+                .as_ref()
+                .map_or(true, |k| {
+                    !matches!(
+                        self.diff_states.get(k),
+                        Some(Loadable::Loading | Loadable::Loaded(_))
+                    )
+                });
             if should_request {
-                let (commit_id, path) = key.clone();
-                self.diff_states.insert(key.clone(), Loadable::Loading);
-                self.pending_repo_requests
-                    .push(RepoRequest::load_file_diff(commit_id, path));
+                if let Some(cache_key) = cache_key {
+                    let (commit_id, path) = cache_key.clone();
+                    self.diff_states.insert(cache_key, Loadable::Loading);
+                    self.pending_repo_requests
+                        .push(RepoRequest::load_file_diff(commit_id, path));
+                }
             }
-            self.unfolded_files.insert(key);
+            self.unfolded_files.insert(fold_key);
         }
         self.rebuild_rows();
     }
