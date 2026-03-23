@@ -155,6 +155,19 @@ pub enum JJCommand {
         onto: Option<ChangeId>,
         flags: CommandFlags,
     },
+    WorkspaceAdd {
+        path: String,
+        name: Option<String>,
+        revision: ChangeId,
+        flags: CommandFlags,
+    },
+    WorkspaceForget {
+        name: String,
+        flags: CommandFlags,
+    },
+    WorkspaceList {
+        flags: CommandFlags,
+    },
 }
 
 /// The result of running a jj command.
@@ -198,7 +211,10 @@ impl JJCommand {
             | JJCommand::Absorb { flags, .. }
             | JJCommand::Commit { flags, .. }
             | JJCommand::Duplicate { flags, .. }
-            | JJCommand::Squash { flags, .. } => *flags,
+            | JJCommand::Squash { flags, .. }
+            | JJCommand::WorkspaceAdd { flags, .. }
+            | JJCommand::WorkspaceForget { flags, .. }
+            | JJCommand::WorkspaceList { flags, .. } => *flags,
         }
     }
 
@@ -497,6 +513,32 @@ impl JJCommand {
                 }
                 push_change_selection(&mut args, selection);
                 args
+            }
+            JJCommand::WorkspaceAdd {
+                path,
+                name,
+                revision,
+                ..
+            } => {
+                let mut args = vec!["workspace".to_string(), "add".to_string()];
+                if let Some(n) = name {
+                    args.push("--name".to_string());
+                    args.push(n.clone());
+                }
+                args.push("-r".to_string());
+                args.push(revision.to_string());
+                args.push(path.clone());
+                args
+            }
+            JJCommand::WorkspaceForget { name, .. } => {
+                vec![
+                    "workspace".to_string(),
+                    "forget".to_string(),
+                    name.clone(),
+                ]
+            }
+            JJCommand::WorkspaceList { .. } => {
+                vec!["workspace".to_string(), "list".to_string()]
             }
         };
 

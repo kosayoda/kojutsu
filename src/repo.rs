@@ -643,8 +643,16 @@ impl JjRepo {
             timestamp,
         };
 
-        // Working copy
-        let is_working_copy = repo.view().is_wc_commit_id(commit.id());
+        // Workspaces
+        let workspaces: Vec<crate::dag::WorkspaceAnnotation> = repo
+            .view()
+            .workspaces_for_wc_commit_id(commit.id())
+            .into_iter()
+            .map(|ws_name| crate::dag::WorkspaceAnnotation {
+                is_current: ws_name == self.workspace_name,
+                name: ws_name.as_str().to_string(),
+            })
+            .collect();
 
         // Empty
         let is_empty = commit.is_empty(repo).unwrap_or(false);
@@ -706,7 +714,7 @@ impl JjRepo {
             commit_id,
             description,
             author,
-            is_working_copy,
+            workspaces,
             is_empty,
             has_conflict,
             is_immutable,

@@ -307,7 +307,7 @@ fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
     for entry in entries {
         let c = &entry.commit;
         let mut flags = Vec::new();
-        if c.is_working_copy {
+        if c.is_working_copy() {
             flags.push("wc");
         }
         if c.is_immutable {

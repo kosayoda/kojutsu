@@ -490,6 +490,35 @@ pub enum PendingSelection {
         change_id: ChangeId,
         flags: CommandFlags,
     },
+    /// Forget a workspace (text is the workspace name from the list).
+    WorkspaceForget { flags: CommandFlags },
+}
+
+/// What to do after selecting a single commit in CommitSelect mode.
+pub enum PendingCommitSelect {
+    WorkspaceAdd {
+        path: String,
+        name: Option<String>,
+    },
+}
+
+impl PendingCommitSelect {
+    pub fn prompt(&self) -> &'static str {
+        match self {
+            PendingCommitSelect::WorkspaceAdd { .. } => "workspace revision",
+        }
+    }
+
+    pub fn into_jj_command(self, target: ChangeId, flags: CommandFlags) -> JJCommand {
+        match self {
+            PendingCommitSelect::WorkspaceAdd { path, name } => JJCommand::WorkspaceAdd {
+                path,
+                name,
+                revision: target,
+                flags,
+            },
+        }
+    }
 }
 
 /// An option in a follow-up prompt (shown after target selection).
@@ -546,6 +575,13 @@ pub enum PendingCommand {
         flags: CommandFlags,
         selection: ChangeSelection,
     },
+    /// Workspace add step 1: collecting path. Text = path.
+    WorkspaceAddPath { flags: CommandFlags },
+    /// Workspace add step 2: path collected, collecting name. Text = name.
+    WorkspaceAddName {
+        path: String,
+        flags: CommandFlags,
+    },
 }
 
 impl PendingCommand {
@@ -589,6 +625,10 @@ impl PendingCommand {
                 selection,
                 flags,
             },
+            PendingCommand::WorkspaceAddPath { .. }
+            | PendingCommand::WorkspaceAddName { .. } => {
+                panic!("Workspace add steps handled separately in handle_text_input")
+            }
         }
     }
 }

@@ -12,8 +12,8 @@ use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo_service::{RepoRequest, RepoResult};
 use crate::types::{
     ChangeId, CommitId, DisplayRow, FileRef, FileSelectionState, FollowUpOption, GlobalToggle,
-    PendingCommand, PendingSelection, RowKey, SearchFocus, SearchScopes, SearchState, Selection,
-    SelectionContext, SelectionKind, TargetOperation, VisualRange,
+    PendingCommand, PendingCommitSelect, PendingSelection, RowKey, SearchFocus, SearchScopes,
+    SearchState, Selection, SelectionContext, SelectionKind, TargetOperation, VisualRange,
 };
 
 // ---------------------------------------------------------------------------
@@ -131,6 +131,12 @@ pub enum AppMode {
         source: ChangeId,
         restore_cursor: usize,
         operation: TargetOperation,
+        flags: CommandFlags,
+    },
+    /// Navigating to select a single commit (e.g. for workspace revision).
+    CommitSelect {
+        restore_cursor: usize,
+        pending: PendingCommitSelect,
         flags: CommandFlags,
     },
     /// Choosing from a set of follow-up options after target selection.
@@ -308,7 +314,7 @@ impl App {
     }
 
     /// Get the entry idx the cursor is on.
-    fn selected_entry_idx(&self) -> Option<EntryIdx> {
+    pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
         let entry_idx = match self.rows.get(self.cursor)? {
             DisplayRow::CommitNode { entry_idx }
             | DisplayRow::GraphLink { entry_idx, .. }
@@ -1454,7 +1460,7 @@ impl App {
     pub fn jump_to_working_copy(&mut self) {
         if let Some(pos) = self.rows.iter().position(|r| {
             matches!(r, DisplayRow::CommitNode { entry_idx }
-                if self.entries[*entry_idx].commit.is_working_copy)
+                if self.entries[*entry_idx].commit.is_working_copy())
         }) {
             self.cursor = pos;
         }

@@ -32,8 +32,8 @@ pub struct CommitInfo {
     pub description: Option<String>,
     /// Author information.
     pub author: AuthorInfo,
-    /// Whether this is the working copy commit (`@`).
-    pub is_working_copy: bool,
+    /// Workspaces that have this commit as their working copy.
+    pub workspaces: Vec<WorkspaceAnnotation>,
     /// Whether this commit is empty (no diff from parent).
     pub is_empty: bool,
     /// Whether this commit has unresolved conflicts.
@@ -66,6 +66,14 @@ pub struct BookmarkInfo {
     pub name: String,
     /// Whether the local bookmark differs from its tracked remote counterpart.
     pub is_dirty: bool,
+}
+
+/// A workspace that has a commit as its working copy.
+pub struct WorkspaceAnnotation {
+    /// Workspace name (e.g., "default", "feature").
+    pub name: String,
+    /// Whether this is the workspace kojutsu is running in.
+    pub is_current: bool,
 }
 
 /// A remote bookmark (e.g., `main@origin`).
@@ -116,8 +124,12 @@ impl TryFrom<char> for Glyph {
 }
 
 impl CommitInfo {
+    pub fn is_working_copy(&self) -> bool {
+        self.workspaces.iter().any(|ws| ws.is_current)
+    }
+
     pub fn glyph(&self) -> Glyph {
-        if self.is_working_copy {
+        if self.is_working_copy() {
             Glyph::WorkingCopy
         } else if self.has_conflict {
             Glyph::Conflict

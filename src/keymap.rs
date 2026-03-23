@@ -108,6 +108,9 @@ pub enum AppAction {
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
     ToggleLineNumbers,
+    WorkspaceAdd,
+    WorkspaceForget,
+    WorkspaceList,
     ToggleSelect,
     EnterVisualMode,
     StartSearch,
@@ -408,6 +411,17 @@ impl Default for Keymap {
                 vec![
                     bind("y", AppAction::Duplicate, "duplicate", C),
                     bind("t", AppAction::DuplicateOnto, "onto…", C),
+                ],
+            ),
+            // Workspace
+            prefix(
+                "w",
+                "workspace",
+                C,
+                vec![
+                    bind("a", AppAction::WorkspaceAdd, "add", C),
+                    bind("f", AppAction::WorkspaceForget, "forget", C),
+                    bind("l", AppAction::WorkspaceList, "list", C),
                 ],
             ),
             // Command palette

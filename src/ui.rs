@@ -206,6 +206,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             frame.render_widget(ratatui::widgets::Clear, overlay);
             draw_target_select(frame, overlay, prompt, source.as_str());
         }
+        AppMode::CommitSelect { pending, .. } => {
+            let overlay = overlay_area(overlay_base, 2);
+            frame.render_widget(ratatui::widgets::Clear, overlay);
+            draw_commit_select(frame, overlay, pending.prompt());
+        }
         AppMode::FollowUp { prompt, options } => {
             let overlay = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, overlay);
@@ -770,6 +775,28 @@ fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, source: &str)
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
+fn draw_commit_select(frame: &mut Frame, area: Rect, prompt: &str) {
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let spans = vec![
+        Span::styled(
+            format!("{prompt} "),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            "select commit (Enter = confirm, Esc = cancel)",
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
+    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
+}
+
 fn draw_follow_up(frame: &mut Frame, area: Rect, prompt: &str, options: &[FollowUpOption]) {
     let block = Block::default()
         .borders(Borders::TOP)
@@ -1097,6 +1124,19 @@ fn render_commit_item<'a>(
             }
         } else {
             line1.push(Span::styled(text, style));
+        }
+    }
+
+    // Workspace annotations (non-current workspaces shown as "name@")
+    for ws in &c.workspaces {
+        if !ws.is_current {
+            line1.push(Span::raw(" "));
+            line1.push(Span::styled(
+                format!("{}@", ws.name),
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ));
         }
     }
 

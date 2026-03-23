@@ -14,7 +14,8 @@ use crate::keymap::{
 };
 use crate::types::{
     ChangeId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
-    PendingSelection, RebaseSource, SelectionKind, SplitKind, TargetOperation,
+    PendingCommitSelect, PendingSelection, RebaseSource, SelectionKind, SplitKind,
+    TargetOperation,
 };
 
 /// Build the appropriate `ChangeSelection` from the current app state.
@@ -92,6 +93,7 @@ pub fn handle_key(app: &mut App, keymap: &'static Keymap, key: KeyEvent) -> Acti
         AppMode::TextInput { .. } => handle_text_input(app, key),
         AppMode::SearchInput => handle_search_input(app, key),
         AppMode::TargetSelect { .. } => handle_target_select(app, key),
+        AppMode::CommitSelect { .. } => handle_commit_select(app, key),
         AppMode::FollowUp { .. } => handle_follow_up(app, key),
         AppMode::SelectFromList { .. } => handle_select_from_list(app, key),
     }
@@ -368,6 +370,47 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.request_revset_load(None, false);
             Action::None
         }
+        AppAction::WorkspaceAdd => {
+            app.mode = AppMode::TextInput {
+                prompt: "workspace path: ".to_string(),
+                input: Input::new(String::new()),
+                on_submit: PendingCommand::WorkspaceAddPath { flags },
+            };
+            Action::None
+        }
+        AppAction::WorkspaceForget => {
+            let entry_idx = app.selected_entry_idx();
+            let workspaces: Vec<String> = entry_idx
+                .map(|idx| {
+                    app.entries[idx]
+                        .commit
+                        .workspaces
+                        .iter()
+                        .filter(|ws| !ws.is_current)
+                        .map(|ws| ws.name.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if workspaces.len() == 1 {
+                Action::RunJj(JJCommand::WorkspaceForget {
+                    name: workspaces.into_iter().next().unwrap(),
+                    flags,
+                })
+            } else if workspaces.len() > 1 {
+                app.mode = AppMode::SelectFromList {
+                    title: "forget workspace".to_string(),
+                    items: workspaces,
+                    selected: 0,
+                    on_select: PendingSelection::WorkspaceForget { flags },
+                };
+                Action::None
+            } else {
+                app.status_message =
+                    Some("no other workspace on this commit".to_string());
+                Action::None
+            }
+        }
+        AppAction::WorkspaceList => Action::RunJj(JJCommand::WorkspaceList { flags }),
         AppAction::ShowHelp => {
             app.mode = AppMode::Help;
             Action::None
@@ -580,6 +623,24 @@ fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
                 let text = input.to_string();
                 match on_submit {
                     PendingCommand::Revset => Action::UpdateRevset(text),
+                    PendingCommand::WorkspaceAddPath { flags } => {
+                        app.mode = AppMode::TextInput {
+                            prompt: "workspace name (enter for default): ".to_string(),
+                            input: Input::new(String::new()),
+                            on_submit: PendingCommand::WorkspaceAddName { path: text, flags },
+                        };
+                        Action::None
+                    }
+                    PendingCommand::WorkspaceAddName { path, flags } => {
+                        let name = if text.is_empty() { None } else { Some(text) };
+                        let restore_cursor = app.cursor;
+                        app.mode = AppMode::CommitSelect {
+                            restore_cursor,
+                            pending: PendingCommitSelect::WorkspaceAdd { path, name },
+                            flags,
+                        };
+                        Action::None
+                    }
                     cmd => Action::RunJj(cmd.into_jj_command(text)),
                 }
             } else {
@@ -756,6 +817,51 @@ fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
     }
 }
 
+fn handle_commit_select(app: &mut App, key: KeyEvent) -> Action {
+    match key.code {
+        KeyCode::Enter => {
+            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+            if let AppMode::CommitSelect {
+                pending, flags, ..
+            } = mode
+            {
+                let Some(target) = app.selected_change_id() else {
+                    return Action::None;
+                };
+                let cmd = pending.into_jj_command(target, flags);
+                Action::RunJj(cmd)
+            } else {
+                Action::None
+            }
+        }
+        KeyCode::Esc => {
+            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+            if let AppMode::CommitSelect { restore_cursor, .. } = mode {
+                app.cursor = restore_cursor;
+            }
+            Action::None
+        }
+        // Navigation keys pass through.
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.move_down();
+            Action::None
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.move_up();
+            Action::None
+        }
+        KeyCode::Char('J') => {
+            app.move_down_section();
+            Action::None
+        }
+        KeyCode::Char('K') => {
+            app.move_up_section();
+            Action::None
+        }
+        _ => Action::None,
+    }
+}
+
 fn handle_follow_up(app: &mut App, key: KeyEvent) -> Action {
     if key.code == KeyCode::Esc {
         app.mode = AppMode::Normal;
@@ -827,7 +933,7 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             Some(DisplayRow::DiffLine { entry_idx, .. }) => Some(*entry_idx),
             None => None,
         };
-        entry_idx.is_some_and(|idx| app.entries[idx].commit.is_working_copy)
+        entry_idx.is_some_and(|idx| app.entries[idx].commit.is_working_copy())
     });
 
     if is_wc {
@@ -1006,6 +1112,9 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
                 },
             };
             Action::None
+        }
+        PendingSelection::WorkspaceForget { flags } => {
+            Action::RunJj(JJCommand::WorkspaceForget { name, flags })
         }
     }
 }
