@@ -364,6 +364,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             Action::None
         }
         AppAction::EditRevsetInEditor => Action::EditRevsetInEditor,
+        AppAction::ResetRevset => {
+            app.request_revset_load(None, false);
+            Action::None
+        }
         AppAction::ShowHelp => {
             app.mode = AppMode::Help;
             Action::None

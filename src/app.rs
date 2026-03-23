@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use compact_str::format_compact;
 use tui_input::Input;
@@ -14,6 +15,41 @@ use crate::types::{
     PendingCommand, PendingSelection, RowKey, SearchFocus, SearchScopes, SearchState, Selection,
     SelectionContext, SelectionKind, TargetOperation, VisualRange,
 };
+
+// ---------------------------------------------------------------------------
+// Persisted state -- saved to .jj/kojutsu-state.json across app restarts.
+// ---------------------------------------------------------------------------
+
+const STATE_FILE: &str = "kojutsu-state.json";
+
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PersistedState {
+    pub revset: Option<String>,
+    pub show_line_numbers: bool,
+    pub ignore_immutable: bool,
+    pub ignore_working_copy: bool,
+    pub debug: bool,
+}
+
+fn state_path(repo_path: &Path) -> std::path::PathBuf {
+    repo_path.join(".jj").join(STATE_FILE)
+}
+
+pub fn load_persisted_state(repo_path: &Path) -> PersistedState {
+    let path = state_path(repo_path);
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
+        Err(_) => PersistedState::default(),
+    }
+}
+
+pub fn save_persisted_state(repo_path: &Path, state: &PersistedState) {
+    let path = state_path(repo_path);
+    if let Ok(json) = serde_json::to_string_pretty(state) {
+        let _ = std::fs::write(&path, json);
+    }
+}
 
 pub enum Loadable<T> {
     NotRequested,
@@ -372,6 +408,23 @@ impl App {
 
     pub fn take_repo_requests(&mut self) -> Vec<RepoRequest> {
         std::mem::take(&mut self.pending_repo_requests)
+    }
+
+    pub fn to_persisted_state(&self) -> PersistedState {
+        PersistedState {
+            revset: Some(self.revset.clone()).filter(|s| !s.is_empty()),
+            show_line_numbers: self.show_line_numbers,
+            ignore_immutable: self.toggles.contains(CommandFlags::IGNORE_IMMUTABLE),
+            ignore_working_copy: self.toggles.contains(CommandFlags::IGNORE_WORKING_COPY),
+            debug: self.toggles.contains(CommandFlags::DEBUG),
+        }
+    }
+
+    pub fn apply_persisted_state(&mut self, state: &PersistedState) {
+        self.show_line_numbers = state.show_line_numbers;
+        self.toggles.set(CommandFlags::IGNORE_IMMUTABLE, state.ignore_immutable);
+        self.toggles.set(CommandFlags::IGNORE_WORKING_COPY, state.ignore_working_copy);
+        self.toggles.set(CommandFlags::DEBUG, state.debug);
     }
 
     /// Get the scroll offset from the last render.

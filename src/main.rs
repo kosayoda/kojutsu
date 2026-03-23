@@ -86,12 +86,14 @@ fn main() -> Result<()> {
     let (event_tx, event_rx) = mpsc::channel();
     let (repo_requests, repo_responses) = RepoService::spawn(repo_path.clone());
     let _repo_forwarder = repo_responses.spawn_forwarder(event_tx.clone(), AppEvent::Repo);
-    let requested_revset = cli.revisions.clone();
+    let persisted = kojutsu::app::load_persisted_state(&repo_path);
+    let requested_revset = cli.revisions.clone().or_else(|| persisted.revset.clone());
     let mut app = App::new(
         Vec::new(),
         requested_revset.clone().unwrap_or_default(),
         repo_path.display().to_string(),
     );
+    app.apply_persisted_state(&persisted);
     app.request_revset_load(requested_revset, true);
     flush_repo_requests(&mut app, &repo_requests);
     let mut terminal = kojutsu::terminal::init()?;
@@ -147,6 +149,7 @@ fn main() -> Result<()> {
         flush_repo_requests(&mut app, &repo_requests);
     }
 
+    kojutsu::app::save_persisted_state(&repo_path, &app.to_persisted_state());
     terminal_events.stop();
     kojutsu::terminal::restore()?;
     Ok(())
