@@ -58,6 +58,13 @@ pub enum JJCommand {
         dest: RebaseTarget,
         flags: CommandFlags,
     },
+    Restore {
+        from: Option<ChangeId>,
+        into: Option<ChangeId>,
+        changes_in: Option<ChangeId>,
+        selection: ChangeSelection,
+        flags: CommandFlags,
+    },
     BookmarkCreate {
         name: String,
         change_id: ChangeId,
@@ -164,6 +171,7 @@ impl JJCommand {
             | JJCommand::Edit { flags, .. }
             | JJCommand::New { flags, .. }
             | JJCommand::Rebase { flags, .. }
+            | JJCommand::Restore { flags, .. }
             | JJCommand::BookmarkCreate { flags, .. }
             | JJCommand::BookmarkSet { flags, .. }
             | JJCommand::BookmarkDelete { flags, .. }
@@ -251,6 +259,37 @@ impl JJCommand {
                 args.push(change_id.to_string());
                 args.push(dest.kind.flag().to_string());
                 args.push(dest.target.to_string());
+                args
+            }
+            JJCommand::Restore {
+                from,
+                into,
+                changes_in,
+                selection,
+                ..
+            } => {
+                let mut args = vec!["restore".to_string()];
+                push_flags(
+                    &mut args,
+                    flags,
+                    &[
+                        (CommandFlags::INTERACTIVE, "--interactive"),
+                        (CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
+                    ],
+                );
+                if let Some(id) = from {
+                    args.push("--from".to_string());
+                    args.push(id.to_string());
+                }
+                if let Some(id) = into {
+                    args.push("--into".to_string());
+                    args.push(id.to_string());
+                }
+                if let Some(id) = changes_in {
+                    args.push("--changes-in".to_string());
+                    args.push(id.to_string());
+                }
+                push_change_selection(&mut args, selection);
                 args
             }
             JJCommand::BookmarkCreate {
@@ -480,6 +519,12 @@ impl JJCommand {
             } => {
                 message.is_none()
                     || flags.contains(CommandFlags::INTERACTIVE)
+                    || matches!(selection, ChangeSelection::Lines(_))
+            }
+            JJCommand::Restore {
+                selection, flags, ..
+            } => {
+                flags.contains(CommandFlags::INTERACTIVE)
                     || matches!(selection, ChangeSelection::Lines(_))
             }
             _ => false,

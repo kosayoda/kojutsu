@@ -438,6 +438,15 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
         AppAction::RebaseBranch => {
             enter_target_select(app, TargetOperation::Rebase(RebaseSource::Branch), flags)
         }
+        AppAction::Restore => make_command(app, |id| JJCommand::Restore {
+            from: None,
+            into: None,
+            changes_in: Some(id),
+            selection: build_change_selection(app),
+            flags,
+        }),
+        AppAction::RestoreFrom => enter_target_select(app, TargetOperation::RestoreFrom, flags),
+        AppAction::RestoreInto => enter_target_select(app, TargetOperation::RestoreInto, flags),
 
         // Bookmark commands
         AppAction::BookmarkCreate => {

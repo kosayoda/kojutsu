@@ -72,6 +72,9 @@ pub enum AppAction {
     RebaseRevision,
     RebaseSource,
     RebaseBranch,
+    Restore,
+    RestoreFrom,
+    RestoreInto,
     EditRevset,
     EditRevsetInEditor,
     BookmarkCreate,
@@ -315,6 +318,23 @@ impl Default for Keymap {
                     bind("b", AppAction::RebaseBranch, "branch…", C),
                 ],
             ),
+            // Restore submenu
+            prefix(
+                "shift-r",
+                "restore",
+                C,
+                vec![
+                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                    toggle(
+                        "d",
+                        CommandFlags::RESTORE_DESCENDANTS,
+                        "restore descendants",
+                    ),
+                    bind("shift-r", AppAction::Restore, "changes-in", C),
+                    bind("f", AppAction::RestoreFrom, "from…", C),
+                    bind("t", AppAction::RestoreInto, "into…", C),
+                ],
+            ),
             // Squash submenu
             prefix(
                 "s",
@@ -543,6 +563,9 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
     use SelectionKind::{Commit, File, Line};
     match action {
         AppAction::Squash | AppAction::SquashSelect(_) => &[Commit, File, Line],
+        AppAction::Restore | AppAction::RestoreFrom | AppAction::RestoreInto => {
+            &[Commit, File, Line]
+        }
         AppAction::Commit | AppAction::CommitWithMessage => &[Commit, File, Line],
         AppAction::Absorb => &[Commit, File],
         AppAction::Abandon

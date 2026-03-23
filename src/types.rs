@@ -566,6 +566,8 @@ impl PendingCommand {
 pub enum TargetOperation {
     Squash(SquashKind),
     Rebase(RebaseSource),
+    RestoreFrom,
+    RestoreInto,
     BookmarkMove { bookmark_name: String },
     DuplicateOnto,
 }
@@ -584,6 +586,8 @@ impl TargetOperation {
                 RebaseSource::Source => "rebase source",
                 RebaseSource::Branch => "rebase branch",
             },
+            TargetOperation::RestoreFrom => "restore from",
+            TargetOperation::RestoreInto => "restore into",
             TargetOperation::BookmarkMove { .. } => "move bookmark",
             TargetOperation::DuplicateOnto => "duplicate onto",
         }
@@ -606,6 +610,28 @@ impl TargetOperation {
             TargetOperation::Rebase(source_mode) => {
                 rebase_follow_up(source, target, source_mode, flags)
             }
+            TargetOperation::RestoreFrom => vec![FollowUpOption {
+                key: ' ',
+                label: "restore",
+                action: FollowUpAction::Execute(JJCommand::Restore {
+                    from: Some(target),
+                    into: None,
+                    changes_in: None,
+                    selection,
+                    flags,
+                }),
+            }],
+            TargetOperation::RestoreInto => vec![FollowUpOption {
+                key: ' ',
+                label: "restore",
+                action: FollowUpAction::Execute(JJCommand::Restore {
+                    from: None,
+                    into: Some(target),
+                    changes_in: None,
+                    selection,
+                    flags,
+                }),
+            }],
             TargetOperation::BookmarkMove { bookmark_name } => {
                 // Bookmark move executes immediately -- no follow-up choice.
                 vec![FollowUpOption {
