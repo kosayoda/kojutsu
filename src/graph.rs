@@ -69,7 +69,7 @@ pub fn render(entries: &[DagEntry]) -> Vec<GraphLines> {
             // rely on positional indexing.
             let message = format!("{NODE_SENTINEL}\n{CONT_SENTINEL}");
             let row = renderer.next_row(
-                entry.commit.graph_id.clone(),
+                entry.commit.graph_id.to_string(),
                 parents,
                 glyph.to_string(),
                 message,

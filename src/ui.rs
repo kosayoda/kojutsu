@@ -360,7 +360,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                         graph_node,
                         graph_cont,
                         &entry.commit,
-                        app.unfolded[*entry_idx]
+                        app.is_commit_unfolded(*entry_idx)
                             .then(|| app.commit_stats(*entry_idx))
                             .flatten(),
                         is_source,
@@ -396,11 +396,7 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                         .files_for_entry(*entry_idx)
                         .expect("visible file row must be loaded");
                     let file = &files[file_idx.raw()];
-                    let is_unfolded = app
-                        .file_unfolded
-                        .get(&(*entry_idx, *file_idx))
-                        .copied()
-                        .unwrap_or(false);
+                    let is_unfolded = app.is_file_unfolded(*entry_idx, *file_idx);
                     let sel_state = app.file_selection_state(*entry_idx, *file_idx);
                     render_file_line(file, is_unfolded, sel_state, row_search.as_ref())
                 }

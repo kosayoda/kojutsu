@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,11 +9,12 @@ use std::thread;
 
 use tokio::runtime::{Builder, Runtime};
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+use tokio::sync::Semaphore;
 use tokio::task::{spawn_local, JoinHandle, LocalSet};
 
 use crate::dag::{DagEntry, DiffLine, FileChange, LineStats};
-use crate::idx::{EntryIdx, FileIdx};
 use crate::repo::JjRepo;
+use crate::types::CommitId;
 
 pub struct RepoService;
 
@@ -33,13 +35,10 @@ enum RepoRequestKind {
         refresh: bool,
     },
     LoadCommitDetails {
-        entry_idx: EntryIdx,
-        commit_id: String,
+        commit_id: CommitId,
     },
     LoadFileDiff {
-        entry_idx: EntryIdx,
-        file_idx: FileIdx,
-        commit_id: String,
+        commit_id: CommitId,
         path: String,
     },
 }
@@ -61,22 +60,22 @@ pub enum RepoResult {
         error: String,
     },
     CommitDetailsLoaded {
-        entry_idx: EntryIdx,
+        commit_id: CommitId,
         files: Vec<FileChange>,
         stats: LineStats,
     },
     CommitDetailsFailed {
-        entry_idx: EntryIdx,
+        commit_id: CommitId,
         error: String,
     },
     FileDiffLoaded {
-        entry_idx: EntryIdx,
-        file_idx: FileIdx,
+        commit_id: CommitId,
+        path: String,
         lines: Vec<DiffLine>,
     },
     FileDiffFailed {
-        entry_idx: EntryIdx,
-        file_idx: FileIdx,
+        commit_id: CommitId,
+        path: String,
         error: String,
     },
 }
@@ -89,30 +88,17 @@ impl RepoRequest {
         }
     }
 
-    pub fn load_commit_details(entry_idx: EntryIdx, commit_id: String) -> Self {
+    pub fn load_commit_details(commit_id: CommitId) -> Self {
         Self {
             epoch: 0,
-            kind: RepoRequestKind::LoadCommitDetails {
-                entry_idx,
-                commit_id,
-            },
+            kind: RepoRequestKind::LoadCommitDetails { commit_id },
         }
     }
 
-    pub fn load_file_diff(
-        entry_idx: EntryIdx,
-        file_idx: FileIdx,
-        commit_id: String,
-        path: String,
-    ) -> Self {
+    pub fn load_file_diff(commit_id: CommitId, path: String) -> Self {
         Self {
             epoch: 0,
-            kind: RepoRequestKind::LoadFileDiff {
-                entry_idx,
-                file_idx,
-                commit_id,
-                path,
-            },
+            kind: RepoRequestKind::LoadFileDiff { commit_id, path },
         }
     }
 }
@@ -180,6 +166,9 @@ struct RepoServiceState {
     current_epoch: Arc<AtomicU64>,
     revset_task: Option<JoinHandle<()>>,
     detail_tasks: Vec<JoinHandle<()>>,
+    in_flight_commit_details: Rc<RefCell<HashSet<CommitId>>>,
+    in_flight_file_diffs: Rc<RefCell<HashSet<(CommitId, String)>>>,
+    detail_semaphore: Arc<Semaphore>,
 }
 
 impl RepoServiceState {
@@ -195,6 +184,9 @@ impl RepoServiceState {
             current_epoch,
             revset_task: None,
             detail_tasks: Vec::new(),
+            in_flight_commit_details: Rc::new(RefCell::new(HashSet::new())),
+            in_flight_file_diffs: Rc::new(RefCell::new(HashSet::new())),
+            detail_semaphore: Arc::new(Semaphore::new(4)),
         }
     }
 
@@ -214,16 +206,12 @@ impl RepoServiceState {
             RepoRequestKind::LoadRevset { revset, refresh } => {
                 self.spawn_revset_task(epoch, revset, refresh)
             }
-            RepoRequestKind::LoadCommitDetails {
-                entry_idx,
-                commit_id,
-            } => self.spawn_commit_details_task(epoch, entry_idx, commit_id),
-            RepoRequestKind::LoadFileDiff {
-                entry_idx,
-                file_idx,
-                commit_id,
-                path,
-            } => self.spawn_file_diff_task(epoch, entry_idx, file_idx, commit_id, path),
+            RepoRequestKind::LoadCommitDetails { commit_id } => {
+                self.spawn_commit_details_task(epoch, commit_id)
+            }
+            RepoRequestKind::LoadFileDiff { commit_id, path } => {
+                self.spawn_file_diff_task(epoch, commit_id, path)
+            }
         }
     }
 
@@ -292,15 +280,25 @@ impl RepoServiceState {
         }));
     }
 
-    fn spawn_commit_details_task(&mut self, epoch: u64, entry_idx: EntryIdx, commit_id: String) {
+    fn spawn_commit_details_task(&mut self, epoch: u64, commit_id: CommitId) {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
+        if !self
+            .in_flight_commit_details
+            .borrow_mut()
+            .insert(commit_id.clone())
+        {
+            return;
+        }
         let Some(active_repo) = self.repo.borrow().as_ref().cloned() else {
+            self.in_flight_commit_details
+                .borrow_mut()
+                .remove(&commit_id);
             self.send_if_current(
                 epoch,
                 RepoResult::CommitDetailsFailed {
-                    entry_idx,
+                    commit_id,
                     error: "repository not loaded yet".to_string(),
                 },
             );
@@ -309,14 +307,20 @@ impl RepoServiceState {
 
         let result_tx = self.result_tx.clone();
         let current_epoch = Arc::clone(&self.current_epoch);
+        let in_flight = Rc::clone(&self.in_flight_commit_details);
+        let detail_semaphore = Arc::clone(&self.detail_semaphore);
         self.detail_tasks.push(spawn_local(async move {
-            match active_repo.commit_details(&commit_id).await {
+            let _permit = detail_semaphore
+                .acquire_owned()
+                .await
+                .expect("detail semaphore closed");
+            match active_repo.commit_details(commit_id.as_str()).await {
                 Ok((files, stats)) => send_if_current(
                     &result_tx,
                     current_epoch.as_ref(),
                     epoch,
                     RepoResult::CommitDetailsLoaded {
-                        entry_idx,
+                        commit_id: commit_id.clone(),
                         files,
                         stats,
                     },
@@ -326,31 +330,30 @@ impl RepoServiceState {
                     current_epoch.as_ref(),
                     epoch,
                     RepoResult::CommitDetailsFailed {
-                        entry_idx,
+                        commit_id: commit_id.clone(),
                         error: format!("{err:#}"),
                     },
                 ),
             }
+            in_flight.borrow_mut().remove(&commit_id);
         }));
     }
 
-    fn spawn_file_diff_task(
-        &mut self,
-        epoch: u64,
-        entry_idx: EntryIdx,
-        file_idx: FileIdx,
-        commit_id: String,
-        path: String,
-    ) {
+    fn spawn_file_diff_task(&mut self, epoch: u64, commit_id: CommitId, path: String) {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
+        let key = (commit_id.clone(), path.clone());
+        if !self.in_flight_file_diffs.borrow_mut().insert(key.clone()) {
+            return;
+        }
         let Some(active_repo) = self.repo.borrow().as_ref().cloned() else {
+            self.in_flight_file_diffs.borrow_mut().remove(&key);
             self.send_if_current(
                 epoch,
                 RepoResult::FileDiffFailed {
-                    entry_idx,
-                    file_idx,
+                    commit_id,
+                    path,
                     error: "repository not loaded yet".to_string(),
                 },
             );
@@ -359,15 +362,21 @@ impl RepoServiceState {
 
         let result_tx = self.result_tx.clone();
         let current_epoch = Arc::clone(&self.current_epoch);
+        let in_flight = Rc::clone(&self.in_flight_file_diffs);
+        let detail_semaphore = Arc::clone(&self.detail_semaphore);
         self.detail_tasks.push(spawn_local(async move {
-            match active_repo.file_diff(&commit_id, &path).await {
+            let _permit = detail_semaphore
+                .acquire_owned()
+                .await
+                .expect("detail semaphore closed");
+            match active_repo.file_diff(commit_id.as_str(), &path).await {
                 Ok(lines) => send_if_current(
                     &result_tx,
                     current_epoch.as_ref(),
                     epoch,
                     RepoResult::FileDiffLoaded {
-                        entry_idx,
-                        file_idx,
+                        commit_id: commit_id.clone(),
+                        path: path.clone(),
                         lines,
                     },
                 ),
@@ -376,12 +385,13 @@ impl RepoServiceState {
                     current_epoch.as_ref(),
                     epoch,
                     RepoResult::FileDiffFailed {
-                        entry_idx,
-                        file_idx,
+                        commit_id: commit_id.clone(),
+                        path: path.clone(),
                         error: format!("{err:#}"),
                     },
                 ),
             }
+            in_flight.borrow_mut().remove(&key);
         }));
     }
 
@@ -399,6 +409,8 @@ impl RepoServiceState {
         for handle in self.detail_tasks.drain(..) {
             handle.abort();
         }
+        self.in_flight_commit_details.borrow_mut().clear();
+        self.in_flight_file_diffs.borrow_mut().clear();
     }
 }
 

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use color_eyre::eyre::Context;
 use color_eyre::Result;
 use futures::StreamExt as _;
-use jj_lib::backend::CommitId;
+use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::commit::Commit;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
 use jj_lib::fileset::FilesetAliasesMap;
@@ -34,7 +34,7 @@ use crate::dag::{
     AuthorInfo, BookmarkInfo, CommitInfo, DagEntry, DiffLine, DiffLineKind, Edge, EdgeKind,
     FileChange, FileStatus, LineStats, RemoteBookmarkInfo, ShortId,
 };
-use crate::types::ChangeId;
+use crate::types::{ChangeId, CommitId as UiCommitId};
 
 /// Number of hex characters to show for change/commit IDs.
 const DISPLAY_ID_LEN: usize = 8;
@@ -237,13 +237,14 @@ impl JjRepo {
         // Collect the set of commit IDs in the log revset so we can safely
         // filter the prioritize revset (prioritize_branch panics if given an
         // ID that doesn't exist in the input iterator).
-        let log_commit_ids: std::collections::HashSet<CommitId> = revset.iter().flatten().collect();
+        let log_commit_ids: std::collections::HashSet<BackendCommitId> =
+            revset.iter().flatten().collect();
 
         // Wrap the graph iterator with TopoGroupedGraphIterator for proper
         // branch grouping, then prioritize branches matching the config
         // (default: present(@)) so they appear on the leftmost column.
         let graph_iter = revset.iter_graph();
-        let mut topo_iter: TopoGroupedGraphIterator<CommitId, CommitId, _, _> =
+        let mut topo_iter: TopoGroupedGraphIterator<BackendCommitId, BackendCommitId, _, _> =
             TopoGroupedGraphIterator::new(graph_iter, |id| id);
 
         // Evaluate the log-graph-prioritize revset and call prioritize_branch()
@@ -286,7 +287,8 @@ impl JjRepo {
 
         // Pre-build a map from commit ID to remote bookmarks pointing at it.
         // O(M) once per refresh, then O(1) per commit lookup.
-        let mut remote_bookmark_map: HashMap<CommitId, Vec<(String, String)>> = HashMap::new();
+        let mut remote_bookmark_map: HashMap<BackendCommitId, Vec<(String, String)>> =
+            HashMap::new();
         for (symbol, remote_ref) in repo.view().all_remote_bookmarks() {
             if let Some(commit_id) = remote_ref.target.as_normal() {
                 remote_bookmark_map
@@ -302,7 +304,7 @@ impl JjRepo {
         // Iterate graph nodes
         let mut entries = Vec::new();
         for node_result in topo_iter {
-            let (commit_id, edges): GraphNode<CommitId> =
+            let (commit_id, edges): GraphNode<BackendCommitId> =
                 node_result.wrap_err("error iterating revset graph")?;
             let commit = repo
                 .store()
@@ -389,7 +391,7 @@ impl JjRepo {
         commit_hex_id: &str,
     ) -> Result<(Vec<FileChange>, LineStats)> {
         let repo = self.repo.as_ref();
-        let commit_id = CommitId::try_from_hex(commit_hex_id)
+        let commit_id = BackendCommitId::try_from_hex(commit_hex_id)
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
         let commit = repo
             .store()
@@ -470,7 +472,7 @@ impl JjRepo {
     /// Compute the line-level diff for a single file in a commit.
     pub async fn file_diff(&self, commit_hex_id: &str, path: &str) -> Result<Vec<DiffLine>> {
         let repo = self.repo.as_ref();
-        let commit_id = CommitId::try_from_hex(commit_hex_id)
+        let commit_id = BackendCommitId::try_from_hex(commit_hex_id)
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
         let commit = repo
             .store()
@@ -588,7 +590,7 @@ impl JjRepo {
         id_prefix_index: &jj_lib::id_prefix::IdPrefixIndex<'_>,
         is_immutable: bool,
         dirty_bookmarks: &HashSet<&RefName>,
-        remote_bookmark_map: &HashMap<CommitId, Vec<(String, String)>>,
+        remote_bookmark_map: &HashMap<BackendCommitId, Vec<(String, String)>>,
     ) -> Result<CommitInfo> {
         let repo = self.repo.as_ref();
 
@@ -696,7 +698,7 @@ impl JjRepo {
         };
 
         // Full commit ID hex for graph rendering (stable key).
-        let graph_id = commit.id().hex();
+        let graph_id = UiCommitId::new(commit.id().hex());
 
         Ok(CommitInfo {
             graph_id,

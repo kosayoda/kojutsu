@@ -10,7 +10,7 @@ use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, IndexVec};
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo_service::{RepoRequest, RepoResult};
 use crate::types::{
-    ChangeId, DisplayRow, FileRef, FileSelectionState, FollowUpOption, GlobalToggle,
+    ChangeId, CommitId, DisplayRow, FileRef, FileSelectionState, FollowUpOption, GlobalToggle,
     PendingCommand, PendingSelection, RowKey, SearchFocus, SearchScopes, SearchState, Selection,
     SelectionContext, SelectionKind, TargetOperation, VisualRange,
 };
@@ -21,6 +21,8 @@ pub enum Loadable<T> {
     Loaded(T),
     Failed(String),
 }
+
+type FileDiffCacheKey = (CommitId, String);
 
 impl<T> Loadable<T> {
     fn loaded(&self) -> Option<&T> {
@@ -126,16 +128,16 @@ pub struct App {
     pub repo_root: String,
     /// Current interaction mode.
     pub mode: AppMode,
-    /// Per-commit fold state: true = unfolded (showing files).
-    pub unfolded: IndexVec<EntryIdx, bool>,
-    /// Per-file fold state: (entry_idx, file_idx) -> unfolded.
-    pub file_unfolded: HashMap<(EntryIdx, FileIdx), bool>,
-    /// Lazily loaded file changes, keyed by entry index.
-    pub file_states: HashMap<EntryIdx, Loadable<Vec<FileChange>>>,
-    /// Lazily loaded diff lines, keyed by (entry_idx, file_idx).
-    pub diff_states: HashMap<(EntryIdx, FileIdx), Loadable<Vec<DiffLine>>>,
-    /// Lazily loaded per-commit line stats, keyed by entry index.
-    pub commit_stats_states: HashMap<EntryIdx, Loadable<LineStats>>,
+    /// Per-commit fold state, keyed by commit graph id.
+    pub unfolded_commits: HashSet<CommitId>,
+    /// Per-file fold state, keyed by (commit graph id, path).
+    pub unfolded_files: HashSet<FileDiffCacheKey>,
+    /// Lazily loaded file changes, keyed by commit graph id.
+    pub file_states: HashMap<CommitId, Loadable<Vec<FileChange>>>,
+    /// Lazily loaded diff lines, keyed by (commit graph id, path).
+    pub diff_states: HashMap<FileDiffCacheKey, Loadable<Vec<DiffLine>>>,
+    /// Lazily loaded per-commit line stats, keyed by commit graph id.
+    pub commit_stats_states: HashMap<CommitId, Loadable<LineStats>>,
     /// Current revset load status.
     pub revset_state: Loadable<()>,
     /// Revset currently being requested, if any.
@@ -167,11 +169,6 @@ impl App {
     pub fn new(entries: Vec<DagEntry>, revset: String, repo_root: String) -> Self {
         let entries = IndexVec::from_vec(entries);
         let graph = IndexVec::from_vec(graph::render(entries.as_slice()));
-        let mut unfolded = IndexVec::new();
-        for _ in 0..entries.len() {
-            unfolded.push(false);
-        }
-
         let mut app = Self {
             entries,
             graph,
@@ -183,8 +180,8 @@ impl App {
             revset_draft: None,
             repo_root,
             mode: AppMode::Normal,
-            unfolded,
-            file_unfolded: HashMap::new(),
+            unfolded_commits: HashSet::new(),
+            unfolded_files: HashSet::new(),
             file_states: HashMap::new(),
             diff_states: HashMap::new(),
             commit_stats_states: HashMap::new(),
@@ -213,7 +210,7 @@ impl App {
         for (entry_idx, gl) in self.graph.iter_enumerated() {
             self.rows.push(DisplayRow::CommitNode { entry_idx });
 
-            if self.unfolded[entry_idx] {
+            if self.is_commit_unfolded(entry_idx) {
                 if let Some(files) = self.files_for_entry(entry_idx) {
                     for file_idx_raw in 0..files.len() {
                         let file_idx = FileIdx::new(file_idx_raw);
@@ -223,12 +220,7 @@ impl App {
                         });
 
                         // If this file is unfolded, show diff lines.
-                        if self
-                            .file_unfolded
-                            .get(&(entry_idx, file_idx))
-                            .copied()
-                            .unwrap_or(false)
-                        {
+                        if self.is_file_unfolded(entry_idx, file_idx) {
                             if let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) {
                                 for line_idx_raw in 0..diff_lines.len() {
                                     self.rows.push(DisplayRow::DiffLine {
@@ -317,19 +309,49 @@ impl App {
         self.entries[entry_idx].commit.description.as_deref()
     }
 
+    fn commit_id(&self, entry_idx: EntryIdx) -> &CommitId {
+        &self.entries[entry_idx].commit.graph_id
+    }
+
+    fn change_id_for_commit_key(&self, commit_id: &CommitId) -> Option<ChangeId> {
+        self.entries
+            .iter()
+            .find(|entry| entry.commit.graph_id == *commit_id)
+            .map(|entry| entry.commit.change_id.change_id())
+    }
+
+    fn file_key(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<FileDiffCacheKey> {
+        let path = self
+            .files_for_entry(entry_idx)?
+            .get(file_idx.raw())?
+            .path
+            .clone();
+        Some((self.commit_id(entry_idx).clone(), path))
+    }
+
+    pub fn is_commit_unfolded(&self, entry_idx: EntryIdx) -> bool {
+        self.unfolded_commits.contains(self.commit_id(entry_idx))
+    }
+
+    pub fn is_file_unfolded(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> bool {
+        self.file_key(entry_idx, file_idx)
+            .is_some_and(|key| self.unfolded_files.contains(&key))
+    }
+
     pub fn files_for_entry(&self, entry_idx: EntryIdx) -> Option<&Vec<FileChange>> {
-        self.file_states.get(&entry_idx).and_then(Loadable::loaded)
+        self.file_states
+            .get(self.commit_id(entry_idx))
+            .and_then(Loadable::loaded)
     }
 
     pub fn diff_lines(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<&Vec<DiffLine>> {
-        self.diff_states
-            .get(&(entry_idx, file_idx))
-            .and_then(Loadable::loaded)
+        let key = self.file_key(entry_idx, file_idx)?;
+        self.diff_states.get(&key).and_then(Loadable::loaded)
     }
 
     pub fn commit_stats(&self, entry_idx: EntryIdx) -> Option<LineStats> {
         self.commit_stats_states
-            .get(&entry_idx)
+            .get(self.commit_id(entry_idx))
             .and_then(Loadable::loaded)
             .copied()
     }
@@ -397,11 +419,7 @@ impl App {
                 file_idx,
             }) => {
                 // Collapsed file → commit-level. Expanded → file-level.
-                !self
-                    .file_unfolded
-                    .get(&(*entry_idx, *file_idx))
-                    .copied()
-                    .unwrap_or(false)
+                !self.is_file_unfolded(*entry_idx, *file_idx)
             }
             _ => false, // DiffLine, GraphLink → file-level
         }
@@ -522,7 +540,7 @@ impl App {
     /// Toggle selection for all files in a commit (select all / deselect all).
     /// Only works when the commit is unfolded.
     pub fn toggle_commit_selection(&mut self, entry_idx: EntryIdx) {
-        if !self.unfolded[entry_idx] {
+        if !self.is_commit_unfolded(entry_idx) {
             return;
         }
         if self.files_for_entry(entry_idx).is_none() {
@@ -742,8 +760,8 @@ impl App {
         // Count selectable lines (added/removed) in the diff.
         // If all are selected, promote to Full.
         let selectable_count = self
-            .diff_states
-            .get(&(entry_idx, file_idx))
+            .file_key(entry_idx, file_idx)
+            .and_then(|key| self.diff_states.get(&key))
             .and_then(Loadable::loaded)
             .map(|diff_lines| {
                 diff_lines
@@ -990,9 +1008,7 @@ impl App {
             } => {
                 scopes.contains(SearchScopes::PATH)
                     && self
-                        .file_states
-                        .get(entry_idx)
-                        .and_then(Loadable::loaded)
+                        .files_for_entry(*entry_idx)
                         .and_then(|files| files.get(file_idx.raw()))
                         .is_some_and(|file| contains(file.path.as_str()))
             }
@@ -1003,16 +1019,12 @@ impl App {
             } => {
                 (scopes.contains(SearchScopes::LINE)
                     && self
-                        .diff_states
-                        .get(&(*entry_idx, *file_idx))
-                        .and_then(Loadable::loaded)
+                        .diff_lines(*entry_idx, *file_idx)
                         .and_then(|lines| lines.get(line_idx.raw()))
                         .is_some_and(|line| contains(line.content.as_str())))
                     || (scopes.contains(SearchScopes::PATH)
                         && self
-                            .file_states
-                            .get(entry_idx)
-                            .and_then(Loadable::loaded)
+                            .files_for_entry(*entry_idx)
                             .and_then(|files| files.get(file_idx.raw()))
                             .is_some_and(|file| contains(file.path.as_str())))
             }
@@ -1174,9 +1186,7 @@ impl App {
         {
             let cid = self.entries[*entry_idx].commit.change_id.change_id();
             if let Some(file) = self
-                .file_states
-                .get(entry_idx)
-                .and_then(Loadable::loaded)
+                .files_for_entry(*entry_idx)
                 .and_then(|f| f.get(file_idx.raw()))
             {
                 return cid == vr.change_id
@@ -1252,10 +1262,9 @@ impl App {
         let line_data: Vec<(ChangeId, String, Option<u32>, Option<u32>)> = self
             .diff_states
             .iter()
-            .filter_map(|((eidx, fidx), diff_lines)| {
+            .filter_map(|((commit_id, path), diff_lines)| {
                 let diff_lines = diff_lines.loaded()?;
-                let cid = self.entries[*eidx].commit.change_id.change_id();
-                let path = &self.files_for_entry(*eidx)?[fidx.raw()].path;
+                let cid = self.change_id_for_commit_key(commit_id)?;
                 if cid != vr.change_id || path != &vr.path {
                     return None;
                 }
@@ -1402,22 +1411,31 @@ impl App {
     }
 
     fn apply_entries(&mut self, entries: Vec<DagEntry>) {
+        let previous_commit = self
+            .selected_entry_idx()
+            .map(|entry_idx| self.commit_id(entry_idx).clone());
         let entries = IndexVec::from_vec(entries);
         self.graph = IndexVec::from_vec(graph::render(entries.as_slice()));
-        let mut unfolded = IndexVec::new();
-        for _ in 0..entries.len() {
-            unfolded.push(false);
-        }
-        self.unfolded = unfolded;
-        self.file_unfolded.clear();
-        self.file_states.clear();
-        self.diff_states.clear();
-        self.commit_stats_states.clear();
         self.visual_anchor = None;
         self.visual_range = None;
         self.entries = entries;
-        self.cursor = 0;
         self.rebuild_rows();
+
+        if let Some(previous_commit) = previous_commit {
+            if let Some((entry_idx, _)) = self
+                .entries
+                .iter_enumerated()
+                .find(|(_, entry)| entry.commit.graph_id == previous_commit)
+            {
+                if let Some(row_idx) = self
+                    .rows
+                    .iter()
+                    .position(|row| matches!(row, DisplayRow::CommitNode { entry_idx: idx } if *idx == entry_idx))
+                {
+                    self.cursor = row_idx;
+                }
+            }
+        }
     }
 
     pub fn handle_repo_result(&mut self, result: RepoResult) {
@@ -1447,85 +1465,78 @@ impl App {
                 };
             }
             RepoResult::CommitDetailsLoaded {
-                entry_idx,
+                commit_id,
                 files,
                 stats,
             } => {
                 self.status_message = None;
-                self.file_states.insert(entry_idx, Loadable::Loaded(files));
+                self.file_states
+                    .insert(commit_id.clone(), Loadable::Loaded(files));
                 self.commit_stats_states
-                    .insert(entry_idx, Loadable::Loaded(stats));
+                    .insert(commit_id, Loadable::Loaded(stats));
                 self.rebuild_rows();
             }
-            RepoResult::CommitDetailsFailed { entry_idx, error } => {
+            RepoResult::CommitDetailsFailed { commit_id, error } => {
                 self.file_states
-                    .insert(entry_idx, Loadable::Failed(error.clone()));
+                    .insert(commit_id.clone(), Loadable::Failed(error.clone()));
                 self.commit_stats_states
-                    .insert(entry_idx, Loadable::Failed(error));
-                let change_id = self.entries[entry_idx].commit.change_id.change_id();
-                self.status_message = Some(format!("failed to load files for {change_id}"));
+                    .insert(commit_id.clone(), Loadable::Failed(error));
+                self.status_message = Some(format!("failed to load files for {commit_id}"));
                 self.rebuild_rows();
             }
             RepoResult::FileDiffLoaded {
-                entry_idx,
-                file_idx,
+                commit_id,
+                path,
                 lines,
             } => {
                 self.status_message = None;
                 self.diff_states
-                    .insert((entry_idx, file_idx), Loadable::Loaded(lines));
+                    .insert((commit_id, path), Loadable::Loaded(lines));
                 self.rebuild_rows();
             }
             RepoResult::FileDiffFailed {
-                entry_idx,
-                file_idx,
+                commit_id,
+                path,
                 error,
             } => {
                 self.diff_states
-                    .insert((entry_idx, file_idx), Loadable::Failed(error));
-                if let Some(file) = self
-                    .files_for_entry(entry_idx)
-                    .and_then(|files| files.get(file_idx.raw()))
-                {
-                    self.status_message = Some(format!("failed to load diff for {}", file.path));
-                } else {
-                    self.status_message = Some("failed to load diff".to_string());
-                }
+                    .insert((commit_id, path.clone()), Loadable::Failed(error));
+                self.status_message = Some(format!("failed to load diff for {path}"));
                 self.rebuild_rows();
             }
         }
     }
 
     fn toggle_commit_fold(&mut self, entry_idx: EntryIdx) {
-        if self.unfolded[entry_idx] {
-            self.unfolded[entry_idx] = false;
+        let commit_id = self.commit_id(entry_idx).clone();
+        if self.is_commit_unfolded(entry_idx) {
+            self.unfolded_commits.remove(&commit_id);
         } else {
             let should_request = !matches!(
-                self.file_states.get(&entry_idx),
+                self.file_states.get(&commit_id),
                 Some(Loadable::Loading | Loadable::Loaded(_))
             );
             if should_request {
-                let graph_id = &self.entries[entry_idx].commit.graph_id;
-                self.file_states.insert(entry_idx, Loadable::Loading);
+                self.file_states
+                    .insert(commit_id.clone(), Loadable::Loading);
                 self.commit_stats_states
-                    .insert(entry_idx, Loadable::Loading);
+                    .insert(commit_id.clone(), Loadable::Loading);
                 self.pending_repo_requests
-                    .push(RepoRequest::load_commit_details(
-                        entry_idx,
-                        graph_id.clone(),
-                    ));
+                    .push(RepoRequest::load_commit_details(commit_id.clone()));
             }
-            self.unfolded[entry_idx] = true;
+            self.unfolded_commits.insert(commit_id);
         }
         self.rebuild_rows();
     }
 
     fn toggle_file_fold(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
-        let key = (entry_idx, file_idx);
-        let currently_unfolded = self.file_unfolded.get(&key).copied().unwrap_or(false);
+        let Some(key) = self.file_key(entry_idx, file_idx) else {
+            return;
+        };
+        let currently_unfolded = self.unfolded_files.contains(&key);
 
         if currently_unfolded {
-            self.file_unfolded.insert(key, false);
+            self.unfolded_files.remove(&key);
             // Clear visual range if it's for this file.
             if let Some(vr) = &self.visual_range {
                 let cid = self.entries[entry_idx].commit.change_id.change_id();
@@ -1545,23 +1556,12 @@ impl App {
                 Some(Loadable::Loading | Loadable::Loaded(_))
             );
             if should_request {
-                if let Some((path, commit_id)) = self
-                    .files_for_entry(entry_idx)
-                    .and_then(|files| files.get(file_idx.raw()))
-                    .map(|file| {
-                        (
-                            file.path.clone(),
-                            self.entries[entry_idx].commit.graph_id.clone(),
-                        )
-                    })
-                {
-                    self.diff_states.insert(key, Loadable::Loading);
-                    self.pending_repo_requests.push(RepoRequest::load_file_diff(
-                        entry_idx, file_idx, commit_id, path,
-                    ));
-                }
+                let (commit_id, path) = key.clone();
+                self.diff_states.insert(key.clone(), Loadable::Loading);
+                self.pending_repo_requests
+                    .push(RepoRequest::load_file_diff(commit_id, path));
             }
-            self.file_unfolded.insert(key, true);
+            self.unfolded_files.insert(key);
         }
         self.rebuild_rows();
     }

@@ -342,7 +342,7 @@ fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
             "{}{} ({}){}{} {}",
             c.change_id.display,
             suffix,
-            &c.graph_id[..8],
+            &c.graph_id.as_str()[..8],
             flags_str,
             bm_str,
             desc

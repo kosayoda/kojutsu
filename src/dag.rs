@@ -1,6 +1,6 @@
 use jiff::Timestamp;
 
-use crate::types::ChangeId;
+use crate::types::{ChangeId, CommitId};
 
 /// A short display ID with a unique prefix highlighted.
 ///
@@ -23,7 +23,7 @@ impl ShortId {
 /// Commit metadata extracted from jj-lib, with no jj-lib types leaking out.
 pub struct CommitInfo {
     /// Full commit ID hex, used as stable key for graph rendering.
-    pub graph_id: String,
+    pub graph_id: CommitId,
     /// Short change ID (reverse hex) with unique prefix length.
     pub change_id: ShortId,
     /// Short commit ID (hex) with unique prefix length.
