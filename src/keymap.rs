@@ -625,6 +625,47 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
     }
 }
 
+pub fn action_label(action: AppAction) -> &'static str {
+    match action {
+        AppAction::Abandon => "abandon",
+        AppAction::Absorb => "absorb",
+        AppAction::Commit => "commit",
+        AppAction::CommitWithMessage => "commit",
+        AppAction::Describe => "describe",
+        AppAction::DescribeInEditor => "describe",
+        AppAction::Edit => "edit",
+        AppAction::New | AppAction::NewInsertAfter | AppAction::NewInsertBefore => "new",
+        AppAction::Squash | AppAction::SquashSelect(_) => "squash",
+        AppAction::RebaseRevision | AppAction::RebaseSource | AppAction::RebaseBranch => "rebase",
+        AppAction::Restore | AppAction::RestoreFrom | AppAction::RestoreInto => "restore",
+        AppAction::Split
+        | AppAction::SplitOnto
+        | AppAction::SplitAfter
+        | AppAction::SplitBefore => "split",
+        AppAction::BookmarkCreate
+        | AppAction::BookmarkSet
+        | AppAction::BookmarkDelete
+        | AppAction::BookmarkForget
+        | AppAction::BookmarkMove
+        | AppAction::BookmarkRename
+        | AppAction::BookmarkAdvance
+        | AppAction::BookmarkTrack
+        | AppAction::BookmarkUntrack => "bookmark",
+        AppAction::Undo => "undo",
+        AppAction::Redo => "redo",
+        AppAction::GitFetch
+        | AppAction::GitFetchAllRemotes
+        | AppAction::GitPush
+        | AppAction::GitPushAll
+        | AppAction::GitPushChange
+        | AppAction::GitExport
+        | AppAction::GitImport => "git",
+        AppAction::Duplicate | AppAction::DuplicateOnto => "duplicate",
+        AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
+        _ => "action",
+    }
+}
+
 pub fn selection_kind_set_for_action(action: AppAction) -> SelectionKindSet {
     action_supported_selection_kinds(action)
         .iter()

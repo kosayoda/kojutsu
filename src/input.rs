@@ -9,7 +9,8 @@ use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{ChangeSelection, JJCommand};
 use crate::keymap::{
-    self, action_supported_selection_kinds, AppAction, CommandFlags, Keymap, LookupResult,
+    self, action_label, action_supported_selection_kinds, AppAction, CommandFlags, Keymap,
+    LookupResult,
 };
 use crate::repo::JjRepo;
 use crate::types::{
@@ -180,6 +181,17 @@ fn dispatch_action(app: &mut App, jj: &JjRepo, action: AppAction, flags: Command
     if app.selection_active()
         && !action_supported_selection_kinds(action).contains(&app.selection_kind())
     {
+        let kind = app.selection_kind();
+        let kind_label = match kind {
+            SelectionKind::Commit => "commit",
+            SelectionKind::File => "file",
+            SelectionKind::Line => "line",
+        };
+        app.last_command = Some(format!(
+            "{} does not support {} selection",
+            action_label(action),
+            kind_label
+        ));
         return Action::None;
     }
 

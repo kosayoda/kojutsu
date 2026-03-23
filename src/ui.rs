@@ -9,7 +9,8 @@ use crate::app::{App, AppMode, GLOBAL_TOGGLES};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, ShortId};
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, Keymap, KeymapNode};
 use crate::types::{
-    DisplayRow, FileSelectionState, FollowUpOption, SearchFocus, SearchScopes, SEARCH_SCOPE_SPECS,
+    DisplayRow, FileSelectionState, FollowUpOption, SearchFocus, SearchScopes, SelectionContext,
+    SEARCH_SCOPE_SPECS,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -155,6 +156,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
                 children,
                 *flags,
                 app.selection.submenu_suffix(),
+                &app.selection,
             );
         }
         AppMode::CommandOutput {
@@ -552,6 +554,7 @@ fn render_help_column(
     frame.render_widget(table, area);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_submenu(
     frame: &mut Frame,
     area: Rect,
@@ -560,6 +563,7 @@ fn draw_submenu(
     children: &[(keymap_parser::Node, KeymapNode)],
     flags: CommandFlags,
     selection_suffix: Option<String>,
+    selection: &SelectionContext,
 ) {
     // Build toggle indicators for the title bar.
     let mut toggle_spans: Vec<Span> = Vec::new();
@@ -614,25 +618,42 @@ fn draw_submenu(
     // Content: action hints.
     let mut action_spans: Vec<Span> = Vec::new();
     for (key_node, child) in children.iter() {
-        let desc = match child {
-            KeymapNode::Action { description, .. } => *description,
-            KeymapNode::Prefix { label, .. } => *label,
+        let (desc, blocked) = match child {
+            KeymapNode::Action {
+                action,
+                description,
+                ..
+            } => {
+                let blocked = selection.is_active()
+                    && !keymap::action_supported_selection_kinds(*action)
+                        .contains(&selection.kind());
+                (*description, blocked)
+            }
+            KeymapNode::Prefix { label, .. } => (*label, false),
             KeymapNode::Toggle { .. } => continue,
         };
         if !action_spans.is_empty() {
             action_spans.push(Span::raw("  "));
         }
         let key_str = keymap::display_key(key_node);
-        action_spans.push(Span::styled(
-            format!("({key_str})"),
+        let key_style = if blocked {
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
+        } else {
             Style::default()
                 .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD),
-        ));
-        action_spans.push(Span::styled(
-            format!(" {desc}"),
-            Style::default().fg(Color::White),
-        ));
+                .add_modifier(Modifier::BOLD)
+        };
+        let desc_style = if blocked {
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
+        } else {
+            Style::default().fg(Color::White)
+        };
+        action_spans.push(Span::styled(format!("({key_str})"), key_style));
+        action_spans.push(Span::styled(format!(" {desc}"), desc_style));
     }
     frame.render_widget(Paragraph::new(Line::from(action_spans)), inner);
 }
