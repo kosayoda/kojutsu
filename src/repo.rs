@@ -34,7 +34,7 @@ use jj_lib::repo_path::RepoPathBuf;
 
 use crate::dag::{
     AuthorInfo, BookmarkInfo, CommitInfo, DagEntry, DiffLine, DiffLineKind, Edge, EdgeKind,
-    FileChange, FileStatus, RemoteBookmarkInfo, ShortId,
+    FileChange, FileStatus, LineStats, RemoteBookmarkInfo, ShortId,
 };
 use crate::types::ChangeId;
 
@@ -536,6 +536,75 @@ impl JjRepo {
         }
 
         Ok(lines)
+    }
+
+    /// Compute added/removed line totals for a commit.
+    pub fn commit_line_stats(&self, commit_hex_id: &str) -> Result<LineStats> {
+        let repo = self.repo.as_ref();
+        let commit_id = CommitId::try_from_hex(commit_hex_id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
+        let commit = repo
+            .store()
+            .get_commit(&commit_id)
+            .wrap_err("failed to load commit for diff")?;
+
+        let parent_tree = commit.parent_tree(repo).block_on()?;
+        let commit_tree = commit.tree();
+        let labels = ConflictLabels::unlabeled();
+        let materialize_options = ConflictMaterializeOptions {
+            marker_style: jj_lib::conflicts::ConflictMarkerStyle::Git,
+            marker_len: None,
+            merge: jj_lib::tree_merge::MergeOptions {
+                hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
+                same_change: jj_lib::merge::SameChange::Accept,
+            },
+        };
+
+        let mut stats = LineStats::default();
+        let mut diff_stream = parent_tree.diff_stream(&commit_tree, &EverythingMatcher);
+        while let Some(entry) = diff_stream.next().block_on() {
+            let values = match entry.values {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let before_mat =
+                materialize_tree_value(repo.store(), &entry.path, values.before, &labels)
+                    .block_on()?;
+            let after_mat =
+                materialize_tree_value(repo.store(), &entry.path, values.after, &labels)
+                    .block_on()?;
+
+            let before_part = git_diff_part(&entry.path, before_mat, &materialize_options)
+                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+            let after_part = git_diff_part(&entry.path, after_mat, &materialize_options)
+                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+
+            if before_part.content.is_binary || after_part.content.is_binary {
+                continue;
+            }
+
+            let contents = Diff::new(
+                before_part.content.contents.as_ref(),
+                after_part.content.contents.as_ref(),
+            );
+            let hunks = unified::unified_diff_hunks(contents, 3, Default::default());
+            for hunk in &hunks {
+                for (line_type, _) in &hunk.lines {
+                    match line_type {
+                        DiffLineType::Added => {
+                            stats.added = stats.added.saturating_add(1);
+                        }
+                        DiffLineType::Removed => {
+                            stats.removed = stats.removed.saturating_add(1);
+                        }
+                        DiffLineType::Context => {}
+                    }
+                }
+            }
+        }
+
+        Ok(stats)
     }
 
     fn extract_commit_info(

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use compact_str::format_compact;
 use tui_input::Input;
 
-use crate::dag::{DagEntry, DiffLine, DiffLineKind, FileChange};
+use crate::dag::{DagEntry, DiffLine, DiffLineKind, FileChange, LineStats};
 use crate::graph::{self, GraphLines};
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, IndexVec};
 
@@ -118,6 +118,8 @@ pub struct App {
     pub file_cache: HashMap<EntryIdx, Vec<FileChange>>,
     /// Lazily loaded diff lines, keyed by (entry_idx, file_idx).
     pub diff_cache: HashMap<(EntryIdx, FileIdx), Vec<DiffLine>>,
+    /// Lazily loaded per-commit line stats, keyed by entry index.
+    pub commit_stats_cache: HashMap<EntryIdx, LineStats>,
     /// Global toggles that persist across commands.
     pub toggles: CommandFlags,
     /// Display string of the last command executed (shown in status bar).
@@ -161,6 +163,7 @@ impl App {
             file_unfolded: HashMap::new(),
             file_cache: HashMap::new(),
             diff_cache: HashMap::new(),
+            commit_stats_cache: HashMap::new(),
             toggles: CommandFlags::empty(),
             last_command: None,
             show_line_numbers: false,
@@ -1322,6 +1325,7 @@ impl App {
         self.file_unfolded.clear();
         self.file_cache.clear();
         self.diff_cache.clear();
+        self.commit_stats_cache.clear();
         self.visual_anchor = None;
         self.visual_range = None;
         self.entries = entries;
@@ -1338,6 +1342,11 @@ impl App {
                 let graph_id = &self.entries[entry_idx].commit.graph_id;
                 let files = jj.file_changes(graph_id).unwrap_or_default();
                 self.file_cache.insert(entry_idx, files);
+            }
+            if !self.commit_stats_cache.contains_key(&entry_idx) {
+                let graph_id = &self.entries[entry_idx].commit.graph_id;
+                let stats = jj.commit_line_stats(graph_id).unwrap_or_default();
+                self.commit_stats_cache.insert(entry_idx, stats);
             }
             self.unfolded[entry_idx] = true;
         }

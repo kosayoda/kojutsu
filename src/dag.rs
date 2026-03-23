@@ -20,7 +20,6 @@ impl ShortId {
     }
 }
 
-
 /// Commit metadata extracted from jj-lib, with no jj-lib types leaking out.
 pub struct CommitInfo {
     /// Full commit ID hex, used as stable key for graph rendering.
@@ -53,6 +52,12 @@ pub struct CommitInfo {
     /// Remote bookmarks pointing at this commit (excluding those already
     /// represented by a local bookmark with the same name).
     pub remote_bookmarks: Vec<RemoteBookmarkInfo>,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct LineStats {
+    pub added: u32,
+    pub removed: u32,
 }
 
 /// A local bookmark with its tracking status.

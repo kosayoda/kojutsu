@@ -6,7 +6,7 @@ use ratatui::widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragrap
 use ratatui::Frame;
 
 use crate::app::{App, AppMode, GLOBAL_TOGGLES};
-use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, ShortId};
+use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats, ShortId};
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, Keymap, KeymapNode};
 use crate::types::{
     DisplayRow, FileSelectionState, FollowUpOption, SearchFocus, SearchScopes, SelectionContext,
@@ -358,6 +358,9 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                         graph_node,
                         graph_cont,
                         &entry.commit,
+                        app.unfolded[*entry_idx]
+                            .then(|| app.commit_stats_cache.get(entry_idx).copied())
+                            .flatten(),
                         is_source,
                         row_search.as_ref(),
                     )
@@ -879,6 +882,7 @@ fn render_commit_item<'a>(
     graph_node: &'a str,
     graph_cont: &str,
     c: &'a CommitInfo,
+    line_stats: Option<LineStats>,
     is_source: bool,
     search: Option<&SearchRender<'_>>,
 ) -> ListItem<'static> {
@@ -1092,6 +1096,19 @@ fn render_commit_item<'a>(
         }
     } else {
         push_short_id(&mut line1, &c.commit_id, Color::Blue);
+    }
+
+    if let Some(stats) = line_stats {
+        line1.push(Span::raw(" "));
+        line1.push(Span::styled(
+            format!("+{}", stats.added),
+            Style::default().fg(Color::Green),
+        ));
+        line1.push(Span::raw(" "));
+        line1.push(Span::styled(
+            format!("-{}", stats.removed),
+            Style::default().fg(Color::Red),
+        ));
     }
 
     // Hidden indicator
