@@ -1753,6 +1753,9 @@ impl App {
                 self.status_message = Some(format!("failed to load diff for {path}"));
                 self.rebuild_rows();
             }
+            RepoResult::WorkspaceUpdatedStale { message } => {
+                self.status_message = Some(message);
+            }
         }
     }
 

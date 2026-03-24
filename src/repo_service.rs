@@ -59,6 +59,10 @@ pub enum RepoResult {
         revset: String,
         error: String,
     },
+    /// The workspace was stale and has been (or failed to be) recovered.
+    WorkspaceUpdatedStale {
+        message: String,
+    },
     CommitDetailsLoaded {
         commit_id: CommitId,
         files: Vec<FileChange>,
@@ -228,7 +232,34 @@ impl RepoServiceState {
             let requested_revset = revset.clone().unwrap_or_default();
 
             let active_repo = if refresh || repo.borrow().is_none() {
-                JjRepo::snapshot(&repo_path);
+                if let Err(err) = JjRepo::snapshot(&repo_path) {
+                    if err.contains("stale") {
+                        match JjRepo::update_stale(&repo_path) {
+                            Ok(()) => {
+                                let _ = result_tx.send(RepoResult::WorkspaceUpdatedStale {
+                                    message: "workspace was stale — updated".to_string(),
+                                });
+                                // Retry snapshot after update-stale.
+                                let _ = JjRepo::snapshot(&repo_path);
+                            }
+                            Err(update_err) => {
+                                send_if_current(
+                                    &result_tx,
+                                    current_epoch.as_ref(),
+                                    epoch,
+                                    RepoResult::RevsetFailed {
+                                        revset: requested_revset,
+                                        error: format!(
+                                            "workspace is stale and update-stale failed:\n{update_err}"
+                                        ),
+                                    },
+                                );
+                                return;
+                            }
+                        }
+                    }
+                    // Non-stale snapshot errors are non-fatal (e.g. no working copy).
+                }
                 match JjRepo::open_async(&repo_path).await {
                     Ok(opened_repo) => {
                         let opened_repo = Rc::new(opened_repo);

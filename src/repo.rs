@@ -62,14 +62,39 @@ impl JjRepo {
     /// Trigger a working copy snapshot so the repo reflects the current
     /// filesystem state. Shells out to `jj status` which snapshots as a
     /// side effect.
-    pub fn snapshot(repo_path: &Path) {
-        let _ = std::process::Command::new("jj")
+    pub fn snapshot(repo_path: &Path) -> Result<(), String> {
+        let output = std::process::Command::new("jj")
             .arg("status")
             .arg("-R")
             .arg(repo_path)
             .arg("--quiet")
             .arg("--color=never")
-            .output();
+            .output()
+            .map_err(|e| format!("failed to run jj: {e}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Err(stderr)
+        }
+    }
+
+    /// Run `jj workspace update-stale` to recover a stale working copy.
+    pub fn update_stale(repo_path: &Path) -> Result<(), String> {
+        let output = std::process::Command::new("jj")
+            .arg("workspace")
+            .arg("update-stale")
+            .arg("-R")
+            .arg(repo_path)
+            .arg("--color=never")
+            .output()
+            .map_err(|e| format!("failed to run jj: {e}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            Err(stderr)
+        }
     }
 
     /// Open the jj workspace rooted at `path`.

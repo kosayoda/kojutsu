@@ -74,7 +74,7 @@ fn main() -> Result<()> {
     let repo_path = cli.repository.canonicalize().unwrap_or(cli.repository);
 
     if cli.debug_graph {
-        JjRepo::snapshot(&repo_path);
+        let _ = JjRepo::snapshot(&repo_path);
         let jj = JjRepo::open(&repo_path)?;
         let revset = cli.revisions.unwrap_or_else(|| jj.default_revset());
         let entries = jj.evaluate_revset(&revset)?;
