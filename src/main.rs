@@ -142,7 +142,9 @@ fn main() -> Result<()> {
                 update_revset(&mut app, revset_str);
             }
             Action::EditRevsetInEditor => {
+                terminal_events.stop();
                 edit_revset_in_editor(&mut app, &mut terminal);
+                terminal_events = spawn_terminal_events(event_tx.clone());
             }
             Action::None => {}
         }

@@ -293,9 +293,24 @@ impl JjRepo {
         }
 
         // Set up ID prefix index for shortest unique prefixes.
-        // Disambiguate globally (against all commits) to guarantee prefixes
-        // are never ambiguous when used with jj commands.
-        let id_prefix_context = IdPrefixContext::default();
+        // Use revsets.short-prefixes if configured, fall back to the log revset
+        // (matching jj-cli behavior).
+        let id_prefix_context = {
+            let short_prefixes_str = self
+                .settings
+                .config()
+                .get::<String>("revsets.short-prefixes")
+                .unwrap_or_else(|_| self.default_revset());
+            let mut diag = RevsetDiagnostics::new();
+            let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
+            if let Ok(expression) =
+                jj_lib::revset::parse(&mut diag, &short_prefixes_str, &context)
+            {
+                ctx.disambiguate_within(expression)
+            } else {
+                ctx
+            }
+        };
         let id_prefix_index = id_prefix_context
             .populate(repo)
             .wrap_err("failed to populate ID prefix index")?;
