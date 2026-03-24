@@ -698,8 +698,12 @@ impl JjRepo {
             .cloned()
             .unwrap_or_default();
 
-        // Empty
-        let is_empty = commit.is_empty(repo).unwrap_or(false);
+        // Skip merge commits because `is_empty` triggers expensive tree merging
+        let is_empty = if commit.parent_ids().len() <= 1 {
+            commit.is_empty(repo).unwrap_or(false)
+        } else {
+            false
+        };
 
         // Conflicts
         let has_conflict = commit.has_conflict();
