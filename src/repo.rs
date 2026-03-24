@@ -133,6 +133,18 @@ impl JjRepo {
         })
     }
 
+    /// Reload the repo at the latest operation head without re-opening the
+    /// workspace. Much faster than `open_async` on refresh.
+    pub async fn reload_at_head(&mut self) -> Result<()> {
+        let repo = self
+            .repo
+            .reload_at_head()
+            .await
+            .wrap_err("failed to reload repo at HEAD")?;
+        self.repo = repo;
+        Ok(())
+    }
+
     /// Build config stack: jj-lib defaults + vendored CLI defaults + user + repo.
     fn load_config(workspace_path: &Path) -> Result<StackedConfig> {
         let mut config = StackedConfig::with_defaults();
@@ -259,12 +271,6 @@ impl JjRepo {
         let immutable_revset = self.evaluate_immutable(&context, &symbol_resolver);
         let is_immutable = immutable_revset.as_ref().map(|r| r.containing_fn());
 
-        // Collect the set of commit IDs in the log revset so we can safely
-        // filter the prioritize revset (prioritize_branch panics if given an
-        // ID that doesn't exist in the input iterator).
-        let log_commit_ids: std::collections::HashSet<BackendCommitId> =
-            revset.iter().flatten().collect();
-
         // Wrap the graph iterator with TopoGroupedGraphIterator for proper
         // branch grouping, then prioritize branches matching the config
         // (default: present(@)) so they appear on the leftmost column.
@@ -276,6 +282,9 @@ impl JjRepo {
         // only for commits that are actually in the log revset.
         let prioritize_revset = self.evaluate_prioritize(&context, &symbol_resolver);
         if let Some(ref prio) = prioritize_revset {
+            // Collect log commit IDs only when needed for filtering.
+            let log_commit_ids: std::collections::HashSet<BackendCommitId> =
+                revset.iter().flatten().collect();
             for commit_id in prio.iter().flatten() {
                 if log_commit_ids.contains(&commit_id) {
                     topo_iter.prioritize_branch(commit_id);
@@ -326,6 +335,19 @@ impl JjRepo {
             }
         }
 
+        // Pre-build workspace → commit reverse map (O(W) once, O(1) per commit).
+        let mut wc_commit_workspaces: HashMap<&BackendCommitId, Vec<crate::dag::WorkspaceAnnotation>> =
+            HashMap::new();
+        for (ws_name, commit_id) in repo.view().wc_commit_ids() {
+            wc_commit_workspaces
+                .entry(commit_id)
+                .or_default()
+                .push(crate::dag::WorkspaceAnnotation {
+                    name: ws_name.as_str().to_string(),
+                    is_current: *ws_name == self.workspace_name,
+                });
+        }
+
         // Iterate graph nodes
         let mut entries = Vec::new();
         for node_result in topo_iter {
@@ -347,6 +369,7 @@ impl JjRepo {
                 immutable,
                 &dirty_bookmarks,
                 &remote_bookmark_map,
+                &wc_commit_workspaces,
             )?;
             let dag_edges = edges
                 .into_iter()
@@ -616,6 +639,7 @@ impl JjRepo {
         is_immutable: bool,
         dirty_bookmarks: &HashSet<&RefName>,
         remote_bookmark_map: &HashMap<BackendCommitId, Vec<(String, String)>>,
+        wc_commit_workspaces: &HashMap<&BackendCommitId, Vec<crate::dag::WorkspaceAnnotation>>,
     ) -> Result<CommitInfo> {
         let repo = self.repo.as_ref();
 
@@ -668,16 +692,11 @@ impl JjRepo {
             timestamp,
         };
 
-        // Workspaces
-        let workspaces: Vec<crate::dag::WorkspaceAnnotation> = repo
-            .view()
-            .workspaces_for_wc_commit_id(commit.id())
-            .into_iter()
-            .map(|ws_name| crate::dag::WorkspaceAnnotation {
-                is_current: ws_name == self.workspace_name,
-                name: ws_name.as_str().to_string(),
-            })
-            .collect();
+        // Workspaces (O(1) lookup from pre-built map)
+        let workspaces = wc_commit_workspaces
+            .get(commit.id())
+            .cloned()
+            .unwrap_or_default();
 
         // Empty
         let is_empty = commit.is_empty(repo).unwrap_or(false);

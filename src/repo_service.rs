@@ -231,7 +231,8 @@ impl RepoServiceState {
         self.revset_task = Some(spawn_local(async move {
             let requested_revset = revset.clone().unwrap_or_default();
 
-            let active_repo = if refresh || repo.borrow().is_none() {
+            let active_repo = if repo.borrow().is_none() {
+                // Initial load: snapshot working copy, then open workspace.
                 if let Err(err) = JjRepo::snapshot(&repo_path) {
                     if err.contains("stale") {
                         match JjRepo::update_stale(&repo_path) {
@@ -239,7 +240,6 @@ impl RepoServiceState {
                                 let _ = result_tx.send(RepoResult::WorkspaceUpdatedStale {
                                     message: "workspace was stale — updated".to_string(),
                                 });
-                                // Retry snapshot after update-stale.
                                 let _ = JjRepo::snapshot(&repo_path);
                             }
                             Err(update_err) => {
@@ -258,13 +258,38 @@ impl RepoServiceState {
                             }
                         }
                     }
-                    // Non-stale snapshot errors are non-fatal (e.g. no working copy).
                 }
                 match JjRepo::open_async(&repo_path).await {
                     Ok(opened_repo) => {
                         let opened_repo = Rc::new(opened_repo);
                         repo.replace(Some(Rc::clone(&opened_repo)));
                         opened_repo
+                    }
+                    Err(err) => {
+                        send_if_current(
+                            &result_tx,
+                            current_epoch.as_ref(),
+                            epoch,
+                            RepoResult::RevsetFailed {
+                                revset: requested_revset,
+                                error: format!("{err:#}"),
+                            },
+                        );
+                        return;
+                    }
+                }
+            } else if refresh {
+                // Refresh: reload at latest operation head (fast path).
+                // jj commands already snapshot, so skip subprocess call.
+                let existing = repo.take().unwrap();
+                let mut jj_repo = Rc::try_unwrap(existing)
+                    .ok()
+                    .expect("repo should have single owner during refresh");
+                match jj_repo.reload_at_head().await {
+                    Ok(()) => {
+                        let reloaded = Rc::new(jj_repo);
+                        repo.replace(Some(Rc::clone(&reloaded)));
+                        reloaded
                     }
                     Err(err) => {
                         send_if_current(

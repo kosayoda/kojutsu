@@ -69,6 +69,7 @@ pub struct BookmarkInfo {
 }
 
 /// A workspace that has a commit as its working copy.
+#[derive(Clone)]
 pub struct WorkspaceAnnotation {
     /// Workspace name (e.g., "default", "feature").
     pub name: String,
