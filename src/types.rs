@@ -127,35 +127,14 @@ impl SelectionSummary {
     }
 
     pub fn display_text(&self) -> Option<String> {
-        let file_noun = pluralize!(self.full_file_count, "file", "files");
-        let line_noun = pluralize!(self.line_count, "line", "lines");
-
-        if self.file_count == 0 && self.line_count == 0 {
-            return None;
-        }
-
-        if self.line_count == 0 {
-            return Some(format!("{} {} selected", self.full_file_count, file_noun));
-        }
-
-        if !self.has_full_files && self.file_count == 1 {
-            return Some(format!("{} {} selected", self.line_count, line_noun));
-        }
-
-        if self.has_full_files && self.line_count > 0 {
-            return Some(format!(
-                "{} {} + {} {} selected",
-                self.full_file_count, file_noun, self.line_count, line_noun
-            ));
-        }
-
-        Some(format!(
-            "{} {} in {} {} selected",
-            self.line_count, line_noun, self.file_count, file_noun
-        ))
+        self.format_summary(" selected")
     }
 
     pub fn submenu_suffix(&self) -> Option<String> {
+        self.format_summary("")
+    }
+
+    fn format_summary(&self, suffix: &str) -> Option<String> {
         let file_noun = pluralize!(self.full_file_count, "file", "files");
         let line_noun = pluralize!(self.line_count, "line", "lines");
 
@@ -164,21 +143,25 @@ impl SelectionSummary {
         }
 
         if self.line_count == 0 {
-            return Some(format!("{} {}", self.full_file_count, file_noun));
+            return Some(format!(
+                "{} {}{suffix}",
+                self.full_file_count, file_noun
+            ));
         }
 
         if !self.has_full_files && self.file_count == 1 {
-            return Some(format!("{} {}", self.line_count, line_noun));
+            return Some(format!("{} {}{suffix}", self.line_count, line_noun));
         }
 
         if self.has_full_files && self.line_count > 0 {
             return Some(format!(
-                "{} {} + {} {}",
+                "{} {} + {} {}{suffix}",
                 self.full_file_count, file_noun, self.line_count, line_noun
             ));
         }
+
         Some(format!(
-            "{} {} in {} {}",
+            "{} {} in {} {}{suffix}",
             self.line_count, line_noun, self.file_count, file_noun
         ))
     }
@@ -288,6 +271,12 @@ impl SelectionContext {
         self.ensure_kind(kind);
         if self.explicit.insert(selection) {
             self.recompute_summary();
+        }
+    }
+
+    pub fn toggle(&mut self, kind: SelectionKind, selection: Selection) {
+        if !self.remove(&selection) {
+            self.insert(kind, selection);
         }
     }
 

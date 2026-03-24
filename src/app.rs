@@ -68,6 +68,10 @@ impl<T> Loadable<T> {
             _ => None,
         }
     }
+
+    fn should_request(&self) -> bool {
+        matches!(self, Self::NotRequested | Self::Failed(_))
+    }
 }
 
 /// All global toggles. Single source of truth for status bar rendering,
@@ -605,9 +609,7 @@ impl App {
             .retain(|s| !matches!(s, Selection::Line { file_ref: f, .. } if f.path == path));
 
         let sel = Selection::File(FileRef { change_id, path });
-        if !self.selection.remove(&sel) {
-            self.selection.insert(SelectionKind::File, sel);
-        }
+        self.selection.toggle(SelectionKind::File, sel);
     }
 
     /// Toggle selection for all files in a commit (select all / deselect all).
@@ -697,9 +699,7 @@ impl App {
             old_line,
             new_line,
         };
-        if !self.selection.remove(&sel) {
-            self.selection.insert(SelectionKind::Line, sel);
-        }
+        self.selection.toggle(SelectionKind::Line, sel);
     }
 
     /// Toggle all added/removed lines in a hunk (triggered by space on a header line).
@@ -1007,12 +1007,26 @@ impl App {
     }
 
     fn recompute_search_matches(&mut self) {
+        let preferred = self
+            .search
+            .as_ref()
+            .map(|s| s.restore_cursor.min(self.rows.len().saturating_sub(1)))
+            .unwrap_or(0);
+        self.recompute_search_matches_at(preferred, true);
+    }
+
+    /// Recompute search match indices without moving the cursor.
+    /// Used after DAG refresh to keep highlights valid.
+    fn refresh_search_matches(&mut self) {
+        self.recompute_search_matches_at(self.cursor, false);
+    }
+
+    fn recompute_search_matches_at(&mut self, preferred: usize, move_cursor: bool) {
         let Some(search) = &self.search else {
             return;
         };
         let query = search.query().to_string();
         let scopes = search.scopes;
-        let preferred = search.restore_cursor.min(self.rows.len().saturating_sub(1));
 
         let mut matches = Vec::new();
         if !query.is_empty() && !scopes.is_empty() {
@@ -1037,46 +1051,11 @@ impl App {
         if let Some(search) = &mut self.search {
             search.matches = matches;
             search.current_match = current_match;
-            if let Some(idx) = current_match {
-                self.cursor = search.matches[idx];
+            if move_cursor {
+                if let Some(idx) = current_match {
+                    self.cursor = search.matches[idx];
+                }
             }
-        }
-    }
-
-    /// Recompute search match indices without moving the cursor.
-    /// Used after DAG refresh to keep highlights valid.
-    fn refresh_search_matches(&mut self) {
-        let Some(search) = &self.search else {
-            return;
-        };
-        let query = search.query().to_string();
-        let scopes = search.scopes;
-        if query.is_empty() || scopes.is_empty() {
-            if let Some(search) = &mut self.search {
-                search.matches.clear();
-                search.current_match = None;
-            }
-            return;
-        }
-        let mut matches = Vec::new();
-        for row_idx in 0..self.rows.len() {
-            if self.row_matches(row_idx, &query, scopes) {
-                matches.push(row_idx);
-            }
-        }
-        let current_match = if matches.is_empty() {
-            None
-        } else {
-            Some(
-                matches
-                    .iter()
-                    .position(|&row| row >= self.cursor)
-                    .unwrap_or(0),
-            )
-        };
-        if let Some(search) = &mut self.search {
-            search.matches = matches;
-            search.current_match = current_match;
         }
     }
 
@@ -1581,10 +1560,7 @@ impl App {
             let change_id = entry.commit.change_id.change_id();
             if self.unfolded_commits.contains(&change_id) {
                 let commit_id = &entry.commit.graph_id;
-                if !matches!(
-                    self.file_states.get(commit_id),
-                    Some(Loadable::Loading | Loadable::Loaded(_))
-                ) {
+                if self.file_states.get(commit_id).map_or(true, Loadable::should_request) {
                     self.file_states
                         .insert(commit_id.clone(), Loadable::Loading);
                     self.commit_stats_states
@@ -1704,10 +1680,7 @@ impl App {
                         let fold_key = (change_id.clone(), file.path.clone());
                         if self.unfolded_files.contains(&fold_key) {
                             let cache_key = (commit_id.clone(), file.path.clone());
-                            if !matches!(
-                                self.diff_states.get(&cache_key),
-                                Some(Loadable::Loading | Loadable::Loaded(_))
-                            ) {
+                            if self.diff_states.get(&cache_key).map_or(true, Loadable::should_request) {
                                 self.diff_states.insert(cache_key, Loadable::Loading);
                                 self.pending_repo_requests.push(
                                     RepoRequest::load_file_diff(
@@ -1765,11 +1738,7 @@ impl App {
         if self.is_commit_unfolded(entry_idx) {
             self.unfolded_commits.remove(&change_id);
         } else {
-            let should_request = !matches!(
-                self.file_states.get(&commit_id),
-                Some(Loadable::Loading | Loadable::Loaded(_))
-            );
-            if should_request {
+            if self.file_states.get(&commit_id).map_or(true, Loadable::should_request) {
                 self.file_states
                     .insert(commit_id.clone(), Loadable::Loading);
                 self.commit_stats_states
@@ -1807,12 +1776,7 @@ impl App {
             let cache_key = self.file_cache_key(entry_idx, file_idx);
             let should_request = cache_key
                 .as_ref()
-                .map_or(true, |k| {
-                    !matches!(
-                        self.diff_states.get(k),
-                        Some(Loadable::Loading | Loadable::Loaded(_))
-                    )
-                });
+                .map_or(true, |k| self.diff_states.get(k).map_or(true, Loadable::should_request));
             if should_request {
                 if let Some(cache_key) = cache_key {
                     let (commit_id, path) = cache_key.clone();
