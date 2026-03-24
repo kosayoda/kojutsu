@@ -4,11 +4,12 @@ use crate::types::{ChangeId, CommitId};
 
 /// A short display ID with a unique prefix highlighted.
 ///
-/// For example, if the full hex is `xvzwolmwrq...` and the shortest unique
-/// prefix is 4 chars, we store `display = "xvzwolmw"` (8 chars) and
-/// `prefix_len = 4`.  The UI renders the prefix bright and the rest dimmed.
+/// Shows at least 8 chars, extended if needed for uniqueness. For example,
+/// if the shortest unique prefix is 4 chars: `display = "xvzwolmw"` (8 chars),
+/// `prefix_len = 4`. If the prefix is 10 chars: `display = "xvzwolmwrq"` (10 chars),
+/// `prefix_len = 10`. The UI renders the prefix bright and the rest dimmed.
 pub struct ShortId {
-    /// Fixed-length display string (e.g. first 8 chars of hex).
+    /// Display string (at least 8 chars, longer if needed for uniqueness).
     pub display: String,
     /// Number of characters in `display` that form the unique prefix.
     pub prefix_len: usize,

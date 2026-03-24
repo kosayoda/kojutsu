@@ -293,16 +293,9 @@ impl JjRepo {
         }
 
         // Set up ID prefix index for shortest unique prefixes.
-        // Scope disambiguation to the log revset so prefixes only need to be
-        // unique among visible commits (matching jj-cli behavior).
-        let id_prefix_context = {
-            let mut diag = RevsetDiagnostics::new();
-            if let Ok(expression) = jj_lib::revset::parse(&mut diag, revset_str, &context) {
-                IdPrefixContext::default().disambiguate_within(expression)
-            } else {
-                IdPrefixContext::default()
-            }
-        };
+        // Disambiguate globally (against all commits) to guarantee prefixes
+        // are never ambiguous when used with jj commands.
+        let id_prefix_context = IdPrefixContext::default();
         let id_prefix_index = id_prefix_context
             .populate(repo)
             .wrap_err("failed to populate ID prefix index")?;
@@ -643,30 +636,32 @@ impl JjRepo {
     ) -> Result<CommitInfo> {
         let repo = self.repo.as_ref();
 
-        // Change ID: 8-char display with unique prefix highlighted
+        // Change ID: at least DISPLAY_ID_LEN chars, extended for uniqueness
         let change_prefix_len = id_prefix_index
             .shortest_change_prefix_len(repo, commit.change_id())
             .unwrap_or(DISPLAY_ID_LEN);
         let change_id_full = commit.change_id().reverse_hex();
+        let change_display_len = change_prefix_len.max(DISPLAY_ID_LEN);
         let change_id = ShortId {
             display: change_id_full
-                .get(..DISPLAY_ID_LEN)
+                .get(..change_display_len)
                 .unwrap_or(&change_id_full)
                 .to_string(),
-            prefix_len: change_prefix_len.min(DISPLAY_ID_LEN),
+            prefix_len: change_prefix_len,
         };
 
-        // Commit ID: 8-char display with unique prefix highlighted
+        // Commit ID: at least DISPLAY_ID_LEN chars, extended for uniqueness
         let commit_prefix_len = id_prefix_index
             .shortest_commit_prefix_len(repo, commit.id())
             .unwrap_or(DISPLAY_ID_LEN);
         let commit_id_full = commit.id().hex();
+        let commit_display_len = commit_prefix_len.max(DISPLAY_ID_LEN);
         let commit_id = ShortId {
             display: commit_id_full
-                .get(..DISPLAY_ID_LEN)
+                .get(..commit_display_len)
                 .unwrap_or(&commit_id_full)
                 .to_string(),
-            prefix_len: commit_prefix_len.min(DISPLAY_ID_LEN),
+            prefix_len: commit_prefix_len,
         };
 
         // Description
