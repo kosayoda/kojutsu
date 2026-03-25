@@ -155,7 +155,11 @@ pub enum AppMode {
     SelectFromList {
         title: String,
         items: Vec<String>,
-        selected: usize,
+        cursor: usize,
+        /// Indices of toggled items (multiselect mode only).
+        marked: HashSet<usize>,
+        /// Whether multiselect is enabled.
+        multi: bool,
         on_select: PendingSelection,
     },
 }

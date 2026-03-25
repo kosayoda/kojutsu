@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -408,7 +410,9 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 app.mode = AppMode::SelectFromList {
                     title: "forget workspace".to_string(),
                     items: workspaces,
-                    selected: 0,
+                    cursor: 0,
+                    marked: HashSet::new(),
+                    multi: false,
                     on_select: PendingSelection::WorkspaceForget { flags },
                 };
                 Action::None
@@ -1066,7 +1070,9 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
     app.mode = AppMode::SelectFromList {
         title: title.to_string(),
         items,
-        selected: 0,
+        cursor: 0,
+        marked: HashSet::new(),
+        multi: false,
         on_select,
     };
     Action::None
@@ -1076,18 +1082,36 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
     match key.code {
         KeyCode::Char('j') | KeyCode::Down => {
             if let AppMode::SelectFromList {
-                selected, items, ..
+                cursor, items, ..
             } = &mut app.mode
             {
-                if *selected + 1 < items.len() {
-                    *selected += 1;
+                if *cursor + 1 < items.len() {
+                    *cursor += 1;
                 }
             }
             Action::None
         }
         KeyCode::Char('k') | KeyCode::Up => {
-            if let AppMode::SelectFromList { selected, .. } = &mut app.mode {
-                *selected = selected.saturating_sub(1);
+            if let AppMode::SelectFromList { cursor, .. } = &mut app.mode {
+                *cursor = cursor.saturating_sub(1);
+            }
+            Action::None
+        }
+        KeyCode::Char(' ') => {
+            if let AppMode::SelectFromList {
+                cursor,
+                marked,
+                multi,
+                ..
+            } = &mut app.mode
+            {
+                if *multi {
+                    if marked.contains(cursor) {
+                        marked.remove(cursor);
+                    } else {
+                        marked.insert(*cursor);
+                    }
+                }
             }
             Action::None
         }
@@ -1095,13 +1119,30 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::SelectFromList {
                 items,
-                selected,
+                cursor,
+                marked,
+                multi,
                 on_select,
                 ..
             } = mode
             {
-                let name = items.into_iter().nth(selected).unwrap_or_default();
-                resolve_bookmark_selection(app, on_select, name)
+                if multi {
+                    let names: Vec<String> = if marked.is_empty() {
+                        // Nothing marked — use cursor item.
+                        vec![items.into_iter().nth(cursor).unwrap_or_default()]
+                    } else {
+                        let mut indices: Vec<usize> = marked.into_iter().collect();
+                        indices.sort();
+                        indices
+                            .into_iter()
+                            .filter_map(|i| items.get(i).cloned())
+                            .collect()
+                    };
+                    resolve_multi_selection(app, on_select, names)
+                } else {
+                    let name = items.into_iter().nth(cursor).unwrap_or_default();
+                    resolve_bookmark_selection(app, on_select, name)
+                }
             } else {
                 Action::None
             }
@@ -1158,6 +1199,15 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
             Action::RunJj(JJCommand::WorkspaceForget { name, flags })
         }
     }
+}
+
+/// After multiple items have been selected in multiselect mode, decide
+/// what to do. For now, falls through to single-item resolution for the
+/// first item. Commands will be wired to accept Vec<String> in a follow-up.
+fn resolve_multi_selection(app: &mut App, on_select: PendingSelection, names: Vec<String>) -> Action {
+    // TODO: wire commands to accept multiple names (e.g. BookmarkDelete { names: Vec<String> })
+    let name = names.into_iter().next().unwrap_or_default();
+    resolve_bookmark_selection(app, on_select, name)
 }
 
 /// Handle a mouse event.

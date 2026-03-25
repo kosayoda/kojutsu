@@ -226,14 +226,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
         AppMode::SelectFromList {
             title,
             items,
-            selected,
+            cursor,
+            marked,
+            multi,
             ..
         } => {
             // +2 for top border + bottom padding.
             let height = (items.len() as u16 + 2).min(overlay_base.height / 2).max(3);
             let overlay = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
-            draw_select_list(frame, overlay, title, items, *selected);
+            draw_select_list(frame, overlay, title, items, *cursor, marked, *multi);
         }
     }
 }
@@ -847,13 +849,27 @@ fn draw_follow_up(frame: &mut Frame, area: Rect, prompt: &str, options: &[Follow
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
-fn draw_select_list(frame: &mut Frame, area: Rect, title: &str, items: &[String], selected: usize) {
+fn draw_select_list(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    items: &[String],
+    cursor: usize,
+    marked: &std::collections::HashSet<usize>,
+    multi: bool,
+) {
     use ratatui::widgets::Padding;
+
+    let title_text = if multi && !marked.is_empty() {
+        format!(" {title} ({}/{} selected) ", marked.len(), items.len())
+    } else {
+        format!(" {title} ")
+    };
 
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(Color::DarkGray))
-        .title(format!(" {title} "))
+        .title(title_text)
         .title_style(
             Style::default()
                 .fg(Color::Cyan)
@@ -868,15 +884,30 @@ fn draw_select_list(frame: &mut Frame, area: Rect, title: &str, items: &[String]
         .iter()
         .enumerate()
         .map(|(i, item)| {
-            let marker = if i == selected { "▸ " } else { "  " };
-            let style = if i == selected {
+            let is_cursor = i == cursor;
+            let is_marked = marked.contains(&i);
+            let prefix = if multi {
+                match (is_cursor, is_marked) {
+                    (true, true) => "▸ ● ",
+                    (true, false) => "▸ ○ ",
+                    (false, true) => "  ● ",
+                    (false, false) => "  ○ ",
+                }
+            } else if is_cursor {
+                "▸ "
+            } else {
+                "  "
+            };
+            let style = if is_cursor {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
+            } else if is_marked {
+                Style::default().fg(Color::Yellow)
             } else {
                 Style::default().fg(Color::White)
             };
-            Line::from(Span::styled(format!("{marker}{item}"), style))
+            Line::from(Span::styled(format!("{prefix}{item}"), style))
         })
         .collect();
 
