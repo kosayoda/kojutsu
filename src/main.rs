@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 use clap::Parser;
 use color_eyre::Result;
-use crossterm::event::{Event, EventStream, KeyEventKind};
-use futures::StreamExt;
+use crossterm::event::{self, Event, KeyEventKind};
 
 use kojutsu::app::{App, AppMode, Loadable};
 use kojutsu::input::{self, Action};
@@ -22,7 +22,7 @@ enum AppEvent {
 }
 
 struct TerminalEvents {
-    stop_tx: tokio::sync::mpsc::UnboundedSender<()>,
+    stop_tx: mpsc::Sender<()>,
     join: thread::JoinHandle<()>,
 }
 
@@ -164,33 +164,21 @@ fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
 }
 
 fn spawn_terminal_events(event_tx: mpsc::Sender<AppEvent>) -> TerminalEvents {
-    let (stop_tx, mut stop_rx) = tokio::sync::mpsc::unbounded_channel();
-    let join = thread::spawn(move || {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("failed to build terminal runtime");
-        runtime.block_on(async move {
-            let mut events = EventStream::new();
-            loop {
-                tokio::select! {
-                    _ = stop_rx.recv() => break,
-                    maybe_event = events.next() => {
-                        let Some(result) = maybe_event else {
-                            break;
-                        };
-                        match result {
-                            Ok(event) => {
-                                if event_tx.send(AppEvent::Terminal(event)).is_err() {
-                                    break;
-                                }
-                            }
-                            Err(_) => break,
-                        }
+    let (stop_tx, stop_rx) = mpsc::channel();
+    let join = thread::spawn(move || loop {
+        if stop_rx.try_recv().is_ok() {
+            break;
+        }
+        if event::poll(Duration::from_millis(50)).unwrap_or(false) {
+            match event::read() {
+                Ok(ev) => {
+                    if event_tx.send(AppEvent::Terminal(ev)).is_err() {
+                        break;
                     }
                 }
+                Err(_) => break,
             }
-        });
+        }
     });
     TerminalEvents { stop_tx, join }
 }

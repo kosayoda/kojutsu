@@ -1,16 +1,11 @@
-use std::cell::RefCell;
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self as std_mpsc, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
 
-use tokio::runtime::{Builder, Runtime};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
-use tokio::sync::Semaphore;
-use tokio::task::{spawn_local, JoinHandle, LocalSet};
+use jj_lib::repo::Repo as _;
 
 use crate::dag::{DagEntry, DiffLine, FileChange, LineStats};
 use crate::repo::JjRepo;
@@ -20,7 +15,7 @@ pub struct RepoService;
 
 #[derive(Clone)]
 pub struct RepoRequestHandle {
-    request_tx: UnboundedSender<RepoRequest>,
+    request_tx: Sender<RepoRequest>,
     current_epoch: Arc<AtomicU64>,
 }
 
@@ -114,8 +109,8 @@ impl RepoRequest {
 
 impl RepoService {
     pub fn spawn(repo_path: PathBuf) -> (RepoRequestHandle, RepoResponseHandle) {
-        let (request_tx, request_rx) = unbounded_channel();
-        let (result_tx, result_rx) = std_mpsc::channel();
+        let (request_tx, request_rx) = mpsc::channel();
+        let (result_tx, result_rx) = mpsc::channel();
         let current_epoch = Arc::new(AtomicU64::new(0));
         let request_handle = RepoRequestHandle {
             request_tx,
@@ -124,10 +119,8 @@ impl RepoService {
         let response_handle = RepoResponseHandle { result_rx };
 
         thread::spawn(move || {
-            let runtime = build_runtime();
-            let local = LocalSet::new();
-            let service = RepoServiceState::new(repo_path, result_tx, current_epoch);
-            local.block_on(&runtime, service.run(request_rx));
+            let mut service = RepoServiceState::new(repo_path, result_tx, current_epoch);
+            service.run(request_rx);
         });
 
         (request_handle, response_handle)
@@ -170,14 +163,11 @@ impl RepoResponseHandle {
 
 struct RepoServiceState {
     repo_path: PathBuf,
-    repo: Rc<RefCell<Option<Arc<JjRepo>>>>,
+    repo: Option<JjRepo>,
     result_tx: Sender<RepoResult>,
     current_epoch: Arc<AtomicU64>,
-    revset_task: Option<JoinHandle<()>>,
-    detail_tasks: Vec<JoinHandle<()>>,
-    in_flight_commit_details: Rc<RefCell<HashSet<CommitId>>>,
-    in_flight_file_diffs: Rc<RefCell<HashSet<(CommitId, String)>>>,
-    detail_semaphore: Arc<Semaphore>,
+    in_flight_commit_details: HashSet<CommitId>,
+    in_flight_file_diffs: HashSet<(CommitId, String)>,
 }
 
 impl RepoServiceState {
@@ -188,217 +178,154 @@ impl RepoServiceState {
     ) -> Self {
         Self {
             repo_path,
-            repo: Rc::new(RefCell::new(None)),
+            repo: None,
             result_tx,
             current_epoch,
-            revset_task: None,
-            detail_tasks: Vec::new(),
-            in_flight_commit_details: Rc::new(RefCell::new(HashSet::new())),
-            in_flight_file_diffs: Rc::new(RefCell::new(HashSet::new())),
-            detail_semaphore: Arc::new(Semaphore::new(4)),
+            in_flight_commit_details: HashSet::new(),
+            in_flight_file_diffs: HashSet::new(),
         }
     }
 
-    async fn run(mut self, mut request_rx: UnboundedReceiver<RepoRequest>) {
-        while let Some(request) = request_rx.recv().await {
-            self.detail_tasks.retain(|task| !task.is_finished());
+    fn run(&mut self, request_rx: Receiver<RepoRequest>) {
+        while let Ok(request) = request_rx.recv() {
             self.handle_request(request);
         }
-
-        self.abort_revset_task();
-        self.abort_detail_tasks();
     }
 
     fn handle_request(&mut self, request: RepoRequest) {
         let RepoRequest { epoch, kind } = request;
         match kind {
             RepoRequestKind::LoadRevset { revset, refresh } => {
-                self.spawn_revset_task(epoch, revset, refresh)
+                self.in_flight_commit_details.clear();
+                self.in_flight_file_diffs.clear();
+                self.handle_revset(epoch, revset, refresh);
             }
             RepoRequestKind::LoadCommitDetails { commit_id } => {
-                self.spawn_commit_details_task(epoch, commit_id)
+                self.handle_commit_details(epoch, commit_id);
             }
             RepoRequestKind::LoadFileDiff { commit_id, path } => {
-                self.spawn_file_diff_task(epoch, commit_id, path)
+                self.handle_file_diff(epoch, commit_id, path);
             }
         }
     }
 
-    fn spawn_revset_task(&mut self, epoch: u64, revset: Option<String>, refresh: bool) {
-        self.abort_revset_task();
-        self.abort_detail_tasks();
+    fn handle_revset(&mut self, epoch: u64, revset: Option<String>, refresh: bool) {
+        let requested_revset = revset.clone().unwrap_or_default();
 
-        let repo_path = self.repo_path.clone();
-        let repo = Rc::clone(&self.repo);
-        let result_tx = self.result_tx.clone();
-        let current_epoch = Arc::clone(&self.current_epoch);
-
-        self.revset_task = Some(spawn_local(async move {
-            let requested_revset = revset.clone().unwrap_or_default();
-
-            let active_repo = if repo.borrow().is_none() {
-                // Initial load: snapshot working copy, then open workspace.
-                if let Err(err) = JjRepo::snapshot(&repo_path) {
-                    if err.contains("stale") {
-                        match JjRepo::update_stale(&repo_path) {
-                            Ok(()) => {
-                                let _ = result_tx.send(RepoResult::WorkspaceUpdatedStale {
-                                    message: "workspace was stale — updated".to_string(),
-                                });
-                                let _ = JjRepo::snapshot(&repo_path);
-                            }
-                            Err(update_err) => {
-                                send_if_current(
-                                    &result_tx,
-                                    current_epoch.as_ref(),
-                                    epoch,
-                                    RepoResult::RevsetFailed {
-                                        revset: requested_revset,
-                                        error: format!(
-                                            "workspace is stale and update-stale failed:\n{update_err}"
-                                        ),
-                                    },
-                                );
-                                return;
-                            }
+        if self.repo.is_none() {
+            // Initial load: snapshot working copy, then open workspace.
+            if let Err(err) = JjRepo::snapshot(&self.repo_path) {
+                if err.contains("stale") {
+                    match JjRepo::update_stale(&self.repo_path) {
+                        Ok(()) => {
+                            let _ = self.result_tx.send(RepoResult::WorkspaceUpdatedStale {
+                                message: "workspace was stale — updated".to_string(),
+                            });
+                            let _ = JjRepo::snapshot(&self.repo_path);
+                        }
+                        Err(update_err) => {
+                            self.send_if_current(
+                                epoch,
+                                RepoResult::RevsetFailed {
+                                    revset: requested_revset,
+                                    error: format!(
+                                        "workspace is stale and update-stale failed:\n{update_err}"
+                                    ),
+                                },
+                            );
+                            return;
                         }
                     }
                 }
-                match JjRepo::open_async(&repo_path).await {
-                    Ok(opened_repo) => {
-                        let opened_repo = Arc::new(opened_repo);
-                        repo.replace(Some(Arc::clone(&opened_repo)));
-                        opened_repo
-                    }
-                    Err(err) => {
-                        send_if_current(
-                            &result_tx,
-                            current_epoch.as_ref(),
-                            epoch,
-                            RepoResult::RevsetFailed {
-                                revset: requested_revset,
-                                error: format!("{err:#}"),
-                            },
-                        );
-                        return;
-                    }
-                }
-            } else if refresh {
-                // Refresh: reload at latest operation head (fast path).
-                // jj commands already snapshot, so skip subprocess call.
-                let existing = repo.take().unwrap();
-                let mut jj_repo = Arc::try_unwrap(existing)
-                    .ok()
-                    .expect("repo should have single owner during refresh");
-                match jj_repo.reload_at_head().await {
-                    Ok(()) => {
-                        let reloaded = Arc::new(jj_repo);
-                        repo.replace(Some(Arc::clone(&reloaded)));
-                        reloaded
-                    }
-                    Err(err) => {
-                        send_if_current(
-                            &result_tx,
-                            current_epoch.as_ref(),
-                            epoch,
-                            RepoResult::RevsetFailed {
-                                revset: requested_revset,
-                                error: format!("{err:#}"),
-                            },
-                        );
-                        return;
-                    }
-                }
-            } else {
-                repo.borrow()
-                    .as_ref()
-                    .cloned()
-                    .expect("repo should be loaded")
-            };
-
-            let effective_revset = revset.unwrap_or_else(|| active_repo.default_revset());
-            // Run evaluate_revset on a blocking thread so that jj-lib's
-            // internal pollster::block_on (used by is_empty for merge commits)
-            // doesn't conflict with our tokio async runtime.
-            let eval_repo = Arc::clone(&active_repo);
-            let eval_revset = effective_revset.clone();
-            let eval_result = tokio::task::spawn_blocking(move || {
-                let repo_root = eval_repo.workspace_root().display().to_string();
-                let entries = eval_repo.evaluate_revset(&eval_revset);
-                (entries, repo_root)
-            })
-            .await;
-            match eval_result {
-                Ok((Ok(entries), repo_root)) => {
-                    // Collect merge commit IDs for background is_empty computation.
-                    let merge_ids: Vec<String> = entries
-                        .iter()
-                        .filter(|e| e.commit.is_merge)
-                        .map(|e| e.commit.graph_id.as_str().to_string())
-                        .collect();
-
-                    send_if_current(
-                        &result_tx,
-                        current_epoch.as_ref(),
+            }
+            match JjRepo::open(&self.repo_path) {
+                Ok(repo) => self.repo = Some(repo),
+                Err(err) => {
+                    self.send_if_current(
                         epoch,
-                        RepoResult::RevsetLoaded {
-                            revset: effective_revset,
-                            repo_root,
-                            entries,
+                        RepoResult::RevsetFailed {
+                            revset: requested_revset,
+                            error: format!("{err:#}"),
                         },
                     );
-
-                    // Spawn background task to compute is_empty for merge commits.
-                    if !merge_ids.is_empty() {
-                        let empty_repo = Arc::clone(&active_repo);
-                        let empty_tx = result_tx.clone();
-                        tokio::task::spawn_blocking(move || {
-                            let statuses = empty_repo.compute_empty_statuses(&merge_ids);
-                            let statuses: Vec<_> = statuses
-                                .into_iter()
-                                .map(|(id, empty)| (CommitId::new(id), empty))
-                                .collect();
-                            let _ = empty_tx.send(RepoResult::EmptyStatusesLoaded { statuses });
-                        });
-                    }
+                    return;
                 }
-                Ok((Err(err), _)) => send_if_current(
-                    &result_tx,
-                    current_epoch.as_ref(),
+            }
+        } else if refresh {
+            // Refresh: reload at latest operation head (fast path).
+            let repo = self.repo.as_mut().unwrap();
+            if let Err(err) = repo.reload_at_head() {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::RevsetFailed {
+                        revset: requested_revset,
+                        error: format!("{err:#}"),
+                    },
+                );
+                return;
+            }
+        }
+
+        let repo = self.repo.as_ref().unwrap();
+        let effective_revset = revset.unwrap_or_else(|| repo.default_revset());
+        match repo.evaluate_revset(&effective_revset) {
+            Ok(entries) => {
+                // Collect merge commit IDs for background is_empty computation.
+                let merge_ids: Vec<String> = entries
+                    .iter()
+                    .filter(|e| e.commit.is_merge)
+                    .map(|e| e.commit.graph_id.as_str().to_string())
+                    .collect();
+
+                self.send_if_current(
+                    epoch,
+                    RepoResult::RevsetLoaded {
+                        revset: effective_revset,
+                        repo_root: repo.workspace_root().display().to_string(),
+                        entries,
+                    },
+                );
+
+                // Spawn background thread to compute is_empty for merge commits.
+                if !merge_ids.is_empty() {
+                    let inner = repo.inner_repo();
+                    let empty_tx = self.result_tx.clone();
+                    thread::spawn(move || {
+                        let statuses: Vec<_> = merge_ids
+                            .iter()
+                            .filter_map(|hex_id| {
+                                let commit_id =
+                                    jj_lib::backend::CommitId::try_from_hex(hex_id)?;
+                                let commit = inner.store().get_commit(&commit_id).ok()?;
+                                let empty = commit.is_empty(inner.as_ref()).unwrap_or(false);
+                                Some((CommitId::new(hex_id.clone()), empty))
+                            })
+                            .collect();
+                        let _ = empty_tx.send(RepoResult::EmptyStatusesLoaded { statuses });
+                    });
+                }
+            }
+            Err(err) => {
+                self.send_if_current(
                     epoch,
                     RepoResult::RevsetFailed {
                         revset: effective_revset,
                         error: format!("{err:#}"),
                     },
-                ),
-                Err(join_err) => send_if_current(
-                    &result_tx,
-                    current_epoch.as_ref(),
-                    epoch,
-                    RepoResult::RevsetFailed {
-                        revset: effective_revset,
-                        error: format!("revset evaluation panicked: {join_err}"),
-                    },
-                ),
+                );
             }
-        }));
+        }
     }
 
-    fn spawn_commit_details_task(&mut self, epoch: u64, commit_id: CommitId) {
+    fn handle_commit_details(&mut self, epoch: u64, commit_id: CommitId) {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
-        if !self
-            .in_flight_commit_details
-            .borrow_mut()
-            .insert(commit_id.clone())
-        {
+        if !self.in_flight_commit_details.insert(commit_id.clone()) {
             return;
         }
-        let Some(active_repo) = self.repo.borrow().as_ref().cloned() else {
-            self.in_flight_commit_details
-                .borrow_mut()
-                .remove(&commit_id);
+        let Some(repo) = self.repo.as_ref() else {
+            self.in_flight_commit_details.remove(&commit_id);
             self.send_if_current(
                 epoch,
                 RepoResult::CommitDetailsFailed {
@@ -409,51 +336,37 @@ impl RepoServiceState {
             return;
         };
 
-        let result_tx = self.result_tx.clone();
-        let current_epoch = Arc::clone(&self.current_epoch);
-        let in_flight = Rc::clone(&self.in_flight_commit_details);
-        let detail_semaphore = Arc::clone(&self.detail_semaphore);
-        self.detail_tasks.push(spawn_local(async move {
-            let _permit = detail_semaphore
-                .acquire_owned()
-                .await
-                .expect("detail semaphore closed");
-            match active_repo.commit_details(commit_id.as_str()).await {
-                Ok((files, stats, is_empty)) => send_if_current(
-                    &result_tx,
-                    current_epoch.as_ref(),
-                    epoch,
-                    RepoResult::CommitDetailsLoaded {
-                        commit_id: commit_id.clone(),
-                        files,
-                        stats,
-                        is_empty,
-                    },
-                ),
-                Err(err) => send_if_current(
-                    &result_tx,
-                    current_epoch.as_ref(),
-                    epoch,
-                    RepoResult::CommitDetailsFailed {
-                        commit_id: commit_id.clone(),
-                        error: format!("{err:#}"),
-                    },
-                ),
-            }
-            in_flight.borrow_mut().remove(&commit_id);
-        }));
+        match repo.commit_details(commit_id.as_str()) {
+            Ok((files, stats, is_empty)) => self.send_if_current(
+                epoch,
+                RepoResult::CommitDetailsLoaded {
+                    commit_id: commit_id.clone(),
+                    files,
+                    stats,
+                    is_empty,
+                },
+            ),
+            Err(err) => self.send_if_current(
+                epoch,
+                RepoResult::CommitDetailsFailed {
+                    commit_id: commit_id.clone(),
+                    error: format!("{err:#}"),
+                },
+            ),
+        }
+        self.in_flight_commit_details.remove(&commit_id);
     }
 
-    fn spawn_file_diff_task(&mut self, epoch: u64, commit_id: CommitId, path: String) {
+    fn handle_file_diff(&mut self, epoch: u64, commit_id: CommitId, path: String) {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
         let key = (commit_id.clone(), path.clone());
-        if !self.in_flight_file_diffs.borrow_mut().insert(key.clone()) {
+        if !self.in_flight_file_diffs.insert(key.clone()) {
             return;
         }
-        let Some(active_repo) = self.repo.borrow().as_ref().cloned() else {
-            self.in_flight_file_diffs.borrow_mut().remove(&key);
+        let Some(repo) = self.repo.as_ref() else {
+            self.in_flight_file_diffs.remove(&key);
             self.send_if_current(
                 epoch,
                 RepoResult::FileDiffFailed {
@@ -465,74 +378,30 @@ impl RepoServiceState {
             return;
         };
 
-        let result_tx = self.result_tx.clone();
-        let current_epoch = Arc::clone(&self.current_epoch);
-        let in_flight = Rc::clone(&self.in_flight_file_diffs);
-        let detail_semaphore = Arc::clone(&self.detail_semaphore);
-        self.detail_tasks.push(spawn_local(async move {
-            let _permit = detail_semaphore
-                .acquire_owned()
-                .await
-                .expect("detail semaphore closed");
-            match active_repo.file_diff(commit_id.as_str(), &path).await {
-                Ok(lines) => send_if_current(
-                    &result_tx,
-                    current_epoch.as_ref(),
-                    epoch,
-                    RepoResult::FileDiffLoaded {
-                        commit_id: commit_id.clone(),
-                        path: path.clone(),
-                        lines,
-                    },
-                ),
-                Err(err) => send_if_current(
-                    &result_tx,
-                    current_epoch.as_ref(),
-                    epoch,
-                    RepoResult::FileDiffFailed {
-                        commit_id: commit_id.clone(),
-                        path: path.clone(),
-                        error: format!("{err:#}"),
-                    },
-                ),
-            }
-            in_flight.borrow_mut().remove(&key);
-        }));
+        match repo.file_diff(commit_id.as_str(), &path) {
+            Ok(lines) => self.send_if_current(
+                epoch,
+                RepoResult::FileDiffLoaded {
+                    commit_id: commit_id.clone(),
+                    path: path.clone(),
+                    lines,
+                },
+            ),
+            Err(err) => self.send_if_current(
+                epoch,
+                RepoResult::FileDiffFailed {
+                    commit_id: commit_id.clone(),
+                    path: path.clone(),
+                    error: format!("{err:#}"),
+                },
+            ),
+        }
+        self.in_flight_file_diffs.remove(&key);
     }
 
     fn send_if_current(&self, epoch: u64, result: RepoResult) {
-        send_if_current(&self.result_tx, self.current_epoch.as_ref(), epoch, result);
-    }
-
-    fn abort_revset_task(&mut self) {
-        if let Some(handle) = self.revset_task.take() {
-            handle.abort();
+        if epoch == self.current_epoch.load(Ordering::SeqCst) {
+            let _ = self.result_tx.send(result);
         }
-    }
-
-    fn abort_detail_tasks(&mut self) {
-        for handle in self.detail_tasks.drain(..) {
-            handle.abort();
-        }
-        self.in_flight_commit_details.borrow_mut().clear();
-        self.in_flight_file_diffs.borrow_mut().clear();
-    }
-}
-
-fn build_runtime() -> Runtime {
-    Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("failed to build tokio runtime")
-}
-
-fn send_if_current(
-    result_tx: &Sender<RepoResult>,
-    current_epoch: &AtomicU64,
-    epoch: u64,
-    result: RepoResult,
-) {
-    if epoch == current_epoch.load(Ordering::SeqCst) {
-        let _ = result_tx.send(result);
     }
 }

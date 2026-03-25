@@ -5,6 +5,7 @@ use std::sync::Arc;
 use color_eyre::eyre::Context;
 use color_eyre::Result;
 use futures::StreamExt as _;
+use pollster::FutureExt as _;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::commit::Commit;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
@@ -99,11 +100,6 @@ impl JjRepo {
 
     /// Open the jj workspace rooted at `path`.
     pub fn open(path: &Path) -> Result<Self> {
-        pollster::block_on(Self::open_async(path))
-    }
-
-    /// Open the jj workspace rooted at `path`.
-    pub async fn open_async(path: &Path) -> Result<Self> {
         let config = Self::load_config(path)?;
         let settings = UserSettings::from_config(config)
             .wrap_err("failed to create jj settings from config")?;
@@ -121,7 +117,7 @@ impl JjRepo {
         let repo = workspace
             .repo_loader()
             .load_at_head()
-            .await
+            .block_on()
             .wrap_err("failed to load repo at HEAD")?;
 
         Ok(Self {
@@ -134,15 +130,20 @@ impl JjRepo {
     }
 
     /// Reload the repo at the latest operation head without re-opening the
-    /// workspace. Much faster than `open_async` on refresh.
-    pub async fn reload_at_head(&mut self) -> Result<()> {
+    /// workspace. Much faster than `open` on refresh.
+    pub fn reload_at_head(&mut self) -> Result<()> {
         let repo = self
             .repo
             .reload_at_head()
-            .await
+            .block_on()
             .wrap_err("failed to reload repo at HEAD")?;
         self.repo = repo;
         Ok(())
+    }
+
+    /// Get a clone of the inner `Arc<ReadonlyRepo>` for background work.
+    pub fn inner_repo(&self) -> Arc<ReadonlyRepo> {
+        Arc::clone(&self.repo)
     }
 
     /// Build config stack: jj-lib defaults + vendored CLI defaults + user + repo.
@@ -442,7 +443,7 @@ impl JjRepo {
     }
 
     /// Compute the file-level changes and line totals for a commit.
-    pub async fn commit_details(
+    pub fn commit_details(
         &self,
         commit_hex_id: &str,
     ) -> Result<(Vec<FileChange>, LineStats, bool)> {
@@ -456,7 +457,7 @@ impl JjRepo {
 
         let parent_tree = commit
             .parent_tree(repo)
-            .await
+            .block_on()
             .wrap_err("failed to get parent tree")?;
         let commit_tree = commit.tree();
 
@@ -473,7 +474,7 @@ impl JjRepo {
         };
         let mut diff_stream = parent_tree.diff_stream(&commit_tree, &EverythingMatcher);
 
-        while let Some(entry) = diff_stream.next().await {
+        while let Some(entry) = diff_stream.next().block_on() {
             let path = entry.path.as_internal_file_string().to_string();
             let values = match entry.values {
                 Ok(v) => v,
@@ -493,9 +494,11 @@ impl JjRepo {
             changes.push(FileChange { path, status });
 
             let before_mat =
-                materialize_tree_value(repo.store(), &entry.path, values.before, &labels).await?;
+                materialize_tree_value(repo.store(), &entry.path, values.before, &labels)
+                    .block_on()?;
             let after_mat =
-                materialize_tree_value(repo.store(), &entry.path, values.after, &labels).await?;
+                materialize_tree_value(repo.store(), &entry.path, values.after, &labels)
+                    .block_on()?;
 
             let before_part = git_diff_part(&entry.path, before_mat, &materialize_options)
                 .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
@@ -527,7 +530,7 @@ impl JjRepo {
     }
 
     /// Compute the line-level diff for a single file in a commit.
-    pub async fn file_diff(&self, commit_hex_id: &str, path: &str) -> Result<Vec<DiffLine>> {
+    pub fn file_diff(&self, commit_hex_id: &str, path: &str) -> Result<Vec<DiffLine>> {
         let repo = self.repo.as_ref();
         let commit_id = BackendCommitId::try_from_hex(commit_hex_id)
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
@@ -536,7 +539,7 @@ impl JjRepo {
             .get_commit(&commit_id)
             .wrap_err("failed to load commit for diff")?;
 
-        let parent_tree = commit.parent_tree(repo).await?;
+        let parent_tree = commit.parent_tree(repo).block_on()?;
         let commit_tree = commit.tree();
         let repo_path = RepoPathBuf::from_internal_string(path)
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
@@ -554,9 +557,9 @@ impl JjRepo {
         let after_value = commit_tree.path_value(&repo_path)?;
 
         let before_mat =
-            materialize_tree_value(repo.store(), &repo_path, before_value, &labels).await?;
+            materialize_tree_value(repo.store(), &repo_path, before_value, &labels).block_on()?;
         let after_mat =
-            materialize_tree_value(repo.store(), &repo_path, after_value, &labels).await?;
+            materialize_tree_value(repo.store(), &repo_path, after_value, &labels).block_on()?;
 
         let before_part = git_diff_part(&repo_path, before_mat, &materialize_options)
             .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
