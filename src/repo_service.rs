@@ -27,7 +27,6 @@ pub struct RepoResponseHandle {
 enum RepoRequestKind {
     Revset {
         revset: Option<String>,
-        refresh: bool,
     },
     Commit {
         commit_id: CommitId,
@@ -85,10 +84,10 @@ pub enum RepoResult {
 }
 
 impl RepoRequest {
-    pub fn load_revset(revset: Option<String>, refresh: bool) -> Self {
+    pub fn load_revset(revset: Option<String>) -> Self {
         Self {
             epoch: 0,
-            kind: RepoRequestKind::Revset { revset, refresh },
+            kind: RepoRequestKind::Revset { revset },
         }
     }
 
@@ -195,10 +194,10 @@ impl RepoServiceState {
     fn handle_request(&mut self, request: RepoRequest) {
         let RepoRequest { epoch, kind } = request;
         match kind {
-            RepoRequestKind::Revset { revset, refresh } => {
+            RepoRequestKind::Revset { revset } => {
                 self.in_flight_commit_details.clear();
                 self.in_flight_file_diffs.clear();
-                self.handle_revset(epoch, revset, refresh);
+                self.handle_revset(epoch, revset);
             }
             RepoRequestKind::Commit { commit_id } => {
                 self.handle_commit_details(epoch, commit_id);
@@ -209,52 +208,39 @@ impl RepoServiceState {
         }
     }
 
-    fn handle_revset(&mut self, epoch: u64, revset: Option<String>, refresh: bool) {
+    fn handle_revset(&mut self, epoch: u64, revset: Option<String>) {
         let requested_revset = revset.clone().unwrap_or_default();
 
-        if self.repo.is_none() {
-            // Initial load: snapshot working copy, then open workspace.
-            if let Err(err) = JjRepo::snapshot(&self.repo_path) {
-                if err.contains("stale") {
-                    match JjRepo::update_stale(&self.repo_path) {
-                        Ok(()) => {
-                            let _ = self.result_tx.send(RepoResult::WorkspaceUpdatedStale {
-                                message: "workspace was stale — updated".to_string(),
-                            });
-                            let _ = JjRepo::snapshot(&self.repo_path);
-                        }
-                        Err(update_err) => {
-                            self.send_if_current(
-                                epoch,
-                                RepoResult::RevsetFailed {
-                                    revset: requested_revset,
-                                    error: format!(
-                                        "workspace is stale and update-stale failed:\n{update_err}"
-                                    ),
-                                },
-                            );
-                            return;
-                        }
+        // Always do a full snapshot + open to pick up all changes.
+        self.repo = None;
+
+        if let Err(err) = JjRepo::snapshot(&self.repo_path) {
+            if err.contains("stale") {
+                match JjRepo::update_stale(&self.repo_path) {
+                    Ok(()) => {
+                        let _ = self.result_tx.send(RepoResult::WorkspaceUpdatedStale {
+                            message: "workspace was stale — updated".to_string(),
+                        });
+                        let _ = JjRepo::snapshot(&self.repo_path);
+                    }
+                    Err(update_err) => {
+                        self.send_if_current(
+                            epoch,
+                            RepoResult::RevsetFailed {
+                                revset: requested_revset,
+                                error: format!(
+                                    "workspace is stale and update-stale failed:\n{update_err}"
+                                ),
+                            },
+                        );
+                        return;
                     }
                 }
             }
-            match JjRepo::open(&self.repo_path) {
-                Ok(repo) => self.repo = Some(repo),
-                Err(err) => {
-                    self.send_if_current(
-                        epoch,
-                        RepoResult::RevsetFailed {
-                            revset: requested_revset,
-                            error: format!("{err:#}"),
-                        },
-                    );
-                    return;
-                }
-            }
-        } else if refresh {
-            // Refresh: reload at latest operation head (fast path).
-            let repo = self.repo.as_mut().unwrap();
-            if let Err(err) = repo.reload_at_head() {
+        }
+        match JjRepo::open(&self.repo_path) {
+            Ok(repo) => self.repo = Some(repo),
+            Err(err) => {
                 self.send_if_current(
                     epoch,
                     RepoResult::RevsetFailed {

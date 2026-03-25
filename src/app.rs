@@ -1495,12 +1495,12 @@ impl App {
         self.revset_draft.as_deref().unwrap_or(&self.revset)
     }
 
-    pub fn request_revset_load(&mut self, revset: Option<String>, refresh: bool) {
+    pub fn request_revset_load(&mut self, revset: Option<String>) {
         self.revset_state = Loadable::Loading;
         self.pending_revset = revset.clone();
         self.status_message = None;
         self.pending_repo_requests
-            .push(RepoRequest::load_revset(revset, refresh));
+            .push(RepoRequest::load_revset(revset));
     }
 
     fn apply_entries(&mut self, entries: Vec<DagEntry>) {

@@ -129,18 +129,6 @@ impl JjRepo {
         })
     }
 
-    /// Reload the repo at the latest operation head without re-opening the
-    /// workspace. Much faster than `open` on refresh.
-    pub fn reload_at_head(&mut self) -> Result<()> {
-        let repo = self
-            .repo
-            .reload_at_head()
-            .block_on()
-            .wrap_err("failed to reload repo at HEAD")?;
-        self.repo = repo;
-        Ok(())
-    }
-
     /// Get a clone of the inner `Arc<ReadonlyRepo>` for background work.
     pub fn inner_repo(&self) -> Arc<ReadonlyRepo> {
         Arc::clone(&self.repo)

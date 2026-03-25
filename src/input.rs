@@ -373,7 +373,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::EditRevsetInEditor => Action::EditRevsetInEditor,
         AppAction::ResetRevset => {
-            app.request_revset_load(None, false);
+            app.request_revset_load(None);
             Action::None
         }
         AppAction::WorkspaceAdd => {

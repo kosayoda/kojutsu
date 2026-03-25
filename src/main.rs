@@ -94,7 +94,7 @@ fn main() -> Result<()> {
         repo_path.display().to_string(),
     );
     app.apply_persisted_state(&persisted);
-    app.request_revset_load(requested_revset, true);
+    app.request_revset_load(requested_revset);
     flush_repo_requests(&mut app, &repo_requests);
     let mut terminal = kojutsu::terminal::init()?;
     let mut terminal_events = spawn_terminal_events(event_tx.clone());
@@ -195,7 +195,7 @@ fn refresh_app(app: &mut App) {
         Loadable::Loading => app.pending_revset.clone(),
         _ => Some(app.revset.clone()),
     };
-    app.request_revset_load(revset, true);
+    app.request_revset_load(revset);
 }
 
 fn suspend_and_run(
@@ -232,7 +232,7 @@ fn suspend_and_run(
 }
 
 fn update_revset(app: &mut App, revset_str: String) {
-    app.request_revset_load(Some(revset_str), false);
+    app.request_revset_load(Some(revset_str));
 }
 
 fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) {
