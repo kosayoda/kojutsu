@@ -199,6 +199,9 @@ pub struct App {
     pub last_command: Option<String>,
     /// Transient status notice shown in the status bar.
     pub status_message: Option<String>,
+    /// Mode to restore after an overlay (search/help) is dismissed.
+    /// Used when search or help is entered from TargetSelect/CommitSelect.
+    pub pre_overlay_mode: Option<AppMode>,
     /// Whether to show line numbers in diff views.
     pub show_line_numbers: bool,
     /// Current selection context: implicit commit under cursor, or explicit
@@ -240,6 +243,7 @@ impl App {
             toggles: CommandFlags::empty(),
             last_command: None,
             status_message: None,
+            pre_overlay_mode: None,
             show_line_numbers: false,
             selection: SelectionContext::new(),
             visual_anchor: None,
@@ -906,7 +910,15 @@ impl App {
             None => self.search = Some(SearchState::new(restore_cursor)),
         }
         self.recompute_search_matches();
-        self.mode = AppMode::SearchInput;
+        let old_mode = std::mem::replace(&mut self.mode, AppMode::SearchInput);
+        self.pre_overlay_mode = match old_mode {
+            AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. } => Some(old_mode),
+            _ => None,
+        };
+    }
+
+    fn restore_mode(&mut self) {
+        self.mode = self.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
     }
 
     pub fn cancel_search(&mut self) {
@@ -914,7 +926,7 @@ impl App {
             self.cursor = search.restore_cursor;
         }
         self.search = None;
-        self.mode = AppMode::Normal;
+        self.restore_mode();
     }
 
     /// Clear the active search without restoring the cursor.
@@ -923,7 +935,7 @@ impl App {
     /// user's intentional location after navigating matches.
     pub fn clear_search(&mut self) {
         self.search = None;
-        self.mode = AppMode::Normal;
+        self.restore_mode();
     }
 
     pub fn confirm_search(&mut self) {
@@ -934,7 +946,7 @@ impl App {
         if clear {
             self.search = None;
         }
-        self.mode = AppMode::Normal;
+        self.restore_mode();
     }
 
     pub fn search_next(&mut self) {

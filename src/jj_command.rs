@@ -531,11 +531,7 @@ impl JJCommand {
                 args
             }
             JJCommand::WorkspaceForget { name, .. } => {
-                vec![
-                    "workspace".to_string(),
-                    "forget".to_string(),
-                    name.clone(),
-                ]
+                vec!["workspace".to_string(), "forget".to_string(), name.clone()]
             }
             JJCommand::WorkspaceList { .. } => {
                 vec!["workspace".to_string(), "list".to_string()]

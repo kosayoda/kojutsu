@@ -5,7 +5,6 @@ use std::sync::Arc;
 use color_eyre::eyre::Context;
 use color_eyre::Result;
 use futures::StreamExt as _;
-use pollster::FutureExt as _;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::commit::Commit;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
@@ -24,6 +23,7 @@ use jj_lib::revset::{
 use jj_lib::settings::UserSettings;
 use jj_lib::time_util::DatePatternContext;
 use jj_lib::workspace::{default_working_copy_factories, Workspace};
+use pollster::FutureExt as _;
 
 use jj_lib::conflict_labels::ConflictLabels;
 use jj_lib::conflicts::{materialize_tree_value, ConflictMaterializeOptions};
@@ -292,8 +292,7 @@ impl JjRepo {
                 .unwrap_or_else(|_| self.default_revset());
             let mut diag = RevsetDiagnostics::new();
             let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
-            if let Ok(expression) =
-                jj_lib::revset::parse(&mut diag, &short_prefixes_str, &context)
+            if let Ok(expression) = jj_lib::revset::parse(&mut diag, &short_prefixes_str, &context)
             {
                 ctx.disambiguate_within(expression)
             } else {
@@ -333,16 +332,17 @@ impl JjRepo {
         }
 
         // Pre-build workspace → commit reverse map (O(W) once, O(1) per commit).
-        let mut wc_commit_workspaces: HashMap<&BackendCommitId, Vec<crate::dag::WorkspaceAnnotation>> =
-            HashMap::new();
+        let mut wc_commit_workspaces: HashMap<
+            &BackendCommitId,
+            Vec<crate::dag::WorkspaceAnnotation>,
+        > = HashMap::new();
         for (ws_name, commit_id) in repo.view().wc_commit_ids() {
-            wc_commit_workspaces
-                .entry(commit_id)
-                .or_default()
-                .push(crate::dag::WorkspaceAnnotation {
+            wc_commit_workspaces.entry(commit_id).or_default().push(
+                crate::dag::WorkspaceAnnotation {
                     name: ws_name.as_str().to_string(),
                     is_current: *ws_name == self.workspace_name,
-                });
+                },
+            );
         }
 
         // Iterate graph nodes

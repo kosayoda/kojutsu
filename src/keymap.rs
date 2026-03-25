@@ -7,6 +7,7 @@ use crate::{
 };
 
 bitflags::bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct SelectionKindSet: u8 {
         const COMMIT = 1 << 0;
         const FILE   = 1 << 1;
@@ -786,4 +787,114 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
     }
 
     groups
+}
+
+/// Help entries for TargetSelect / CommitSelect modes.
+pub fn select_mode_help_entries() -> Vec<(HelpGroup, Vec<HelpEntry>)> {
+    use HelpGroup::{General as G, Navigation as N};
+    let s = SelectionKindSet::ALL;
+
+    let nav = vec![
+        HelpEntry {
+            keys: "j / down".into(),
+            description: "move down".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "k / up".into(),
+            description: "move up".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "J".into(),
+            description: "next commit".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "K".into(),
+            description: "prev commit".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "ctrl-d / pagedown".into(),
+            description: "page down".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "ctrl-u / pageup".into(),
+            description: "page up".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "@".into(),
+            description: "jump to @".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "0".into(),
+            description: "go to top".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "$".into(),
+            description: "go to bottom".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "tab".into(),
+            description: "toggle fold".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "/".into(),
+            description: "search".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "ctrl-n".into(),
+            description: "next match".into(),
+            group: N,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "ctrl-p".into(),
+            description: "prev match".into(),
+            group: N,
+            selection_support: s,
+        },
+    ];
+
+    let general = vec![
+        HelpEntry {
+            keys: "Enter".into(),
+            description: "confirm selection".into(),
+            group: G,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "Esc".into(),
+            description: "cancel".into(),
+            group: G,
+            selection_support: s,
+        },
+        HelpEntry {
+            keys: "?".into(),
+            description: "help".into(),
+            group: G,
+            selection_support: s,
+        },
+    ];
+
+    vec![(N, nav), (G, general)]
 }

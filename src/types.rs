@@ -143,10 +143,7 @@ impl SelectionSummary {
         }
 
         if self.line_count == 0 {
-            return Some(format!(
-                "{} {}{suffix}",
-                self.full_file_count, file_noun
-            ));
+            return Some(format!("{} {}{suffix}", self.full_file_count, file_noun));
         }
 
         if !self.has_full_files && self.file_count == 1 {
@@ -485,10 +482,7 @@ pub enum PendingSelection {
 
 /// What to do after selecting a single commit in CommitSelect mode.
 pub enum PendingCommitSelect {
-    WorkspaceAdd {
-        path: String,
-        name: Option<String>,
-    },
+    WorkspaceAdd { path: String, name: Option<String> },
 }
 
 impl PendingCommitSelect {
@@ -567,10 +561,7 @@ pub enum PendingCommand {
     /// Workspace add step 1: collecting path. Text = path.
     WorkspaceAddPath { flags: CommandFlags },
     /// Workspace add step 2: path collected, collecting name. Text = name.
-    WorkspaceAddName {
-        path: String,
-        flags: CommandFlags,
-    },
+    WorkspaceAddName { path: String, flags: CommandFlags },
 }
 
 impl PendingCommand {
@@ -614,8 +605,7 @@ impl PendingCommand {
                 selection,
                 flags,
             },
-            PendingCommand::WorkspaceAddPath { .. }
-            | PendingCommand::WorkspaceAddName { .. } => {
+            PendingCommand::WorkspaceAddPath { .. } | PendingCommand::WorkspaceAddName { .. } => {
                 panic!("Workspace add steps handled separately in handle_text_input")
             }
         }

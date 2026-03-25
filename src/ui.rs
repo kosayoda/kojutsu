@@ -175,7 +175,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             draw_command_output(frame, overlay, command, output, *success);
         }
         AppMode::Help => {
-            let groups = keymap::help_entries(keymap);
+            let groups = match &app.pre_overlay_mode {
+                Some(AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. }) => {
+                    keymap::select_mode_help_entries()
+                }
+                _ => keymap::help_entries(keymap),
+            };
             // We need to balance first to compute the correct height.
             let (left, right) = balance_help_groups(&groups);
             let left_h: usize = left.iter().map(|(_, e)| e.len() + 1).sum();
@@ -880,13 +885,7 @@ fn draw_select_list(frame: &mut Frame, area: Rect, title: &str, items: &[String]
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_command_output(
-    frame: &mut Frame,
-    area: Rect,
-    command: &str,
-    output: &[u8],
-    _success: bool,
-) {
+fn draw_command_output(frame: &mut Frame, area: Rect, command: &str, output: &[u8], success: bool) {
     use ansi_to_tui::IntoText;
     use ratatui::widgets::Padding;
 
@@ -908,9 +907,10 @@ fn draw_command_output(
         }
     }
 
+    let border_color = if success { Color::DarkGray } else { Color::Red };
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(border_color))
         .padding(Padding::new(1, 1, 0, 0));
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }

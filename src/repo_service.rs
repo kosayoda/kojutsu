@@ -25,16 +25,9 @@ pub struct RepoResponseHandle {
 
 #[derive(Clone)]
 enum RepoRequestKind {
-    Revset {
-        revset: Option<String>,
-    },
-    Commit {
-        commit_id: CommitId,
-    },
-    FileDiff {
-        commit_id: CommitId,
-        path: String,
-    },
+    Revset { revset: Option<String> },
+    Commit { commit_id: CommitId },
+    FileDiff { commit_id: CommitId, path: String },
 }
 
 #[derive(Clone)]
@@ -129,9 +122,7 @@ impl RepoService {
 impl RepoRequestHandle {
     pub fn send(&self, mut request: RepoRequest) {
         request.epoch = match request.kind {
-            RepoRequestKind::Revset { .. } => {
-                self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1
-            }
+            RepoRequestKind::Revset { .. } => self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1,
             RepoRequestKind::Commit { .. } | RepoRequestKind::FileDiff { .. } => {
                 self.current_epoch.load(Ordering::SeqCst)
             }

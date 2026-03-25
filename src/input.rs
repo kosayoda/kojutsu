@@ -14,8 +14,7 @@ use crate::keymap::{
 };
 use crate::types::{
     ChangeId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
-    PendingCommitSelect, PendingSelection, RebaseSource, SelectionKind, SplitKind,
-    TargetOperation,
+    PendingCommitSelect, PendingSelection, RebaseSource, SelectionKind, SplitKind, TargetOperation,
 };
 
 /// Build the appropriate `ChangeSelection` from the current app state.
@@ -83,11 +82,14 @@ pub fn handle_key(app: &mut App, keymap: &'static Keymap, key: KeyEvent) -> Acti
             }
         }
         AppMode::Help => {
-            app.mode = AppMode::Normal;
+            app.mode = app.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
             if node.key == keymap_parser::Key::Esc {
                 Action::None
             } else {
-                handle_normal_key(app, keymap, &node)
+                match &app.mode {
+                    AppMode::Normal => handle_normal_key(app, keymap, &node),
+                    _ => Action::None, // in select mode, swallow the dismissal key
+                }
             }
         }
         AppMode::TextInput { .. } => handle_text_input(app, key),
@@ -411,8 +413,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 };
                 Action::None
             } else {
-                app.status_message =
-                    Some("no other workspace on this commit".to_string());
+                app.status_message = Some("no other workspace on this commit".to_string());
                 Action::None
             }
         }
@@ -750,9 +751,82 @@ fn enter_target_select(app: &mut App, operation: TargetOperation, flags: Command
     Action::None
 }
 
+/// Shared navigation for TargetSelect and CommitSelect modes.
+/// Returns `Some(Action)` if the key was handled, `None` if not recognized.
+fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<Action> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.move_down();
+            Some(Action::None)
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.move_up();
+            Some(Action::None)
+        }
+        KeyCode::Char('J') => {
+            app.move_down_section();
+            Some(Action::None)
+        }
+        KeyCode::Char('K') => {
+            app.move_up_section();
+            Some(Action::None)
+        }
+        KeyCode::Char('d') if ctrl => {
+            app.page_down(15);
+            Some(Action::None)
+        }
+        KeyCode::Char('u') if ctrl => {
+            app.page_up(15);
+            Some(Action::None)
+        }
+        KeyCode::PageDown => {
+            app.page_down(15);
+            Some(Action::None)
+        }
+        KeyCode::PageUp => {
+            app.page_up(15);
+            Some(Action::None)
+        }
+        KeyCode::Char('@') => {
+            app.jump_to_working_copy();
+            Some(Action::None)
+        }
+        KeyCode::Char('0') => {
+            app.move_to_top();
+            Some(Action::None)
+        }
+        KeyCode::Char('$') => {
+            app.move_to_bottom();
+            Some(Action::None)
+        }
+        KeyCode::Tab => {
+            app.toggle_fold();
+            Some(Action::None)
+        }
+        KeyCode::Char('/') => {
+            app.begin_search();
+            Some(Action::None)
+        }
+        KeyCode::Char('n') if ctrl => {
+            app.search_next();
+            Some(Action::None)
+        }
+        KeyCode::Char('p') if ctrl => {
+            app.search_prev();
+            Some(Action::None)
+        }
+        KeyCode::Char('?') => {
+            let old_mode = std::mem::replace(&mut app.mode, AppMode::Help);
+            app.pre_overlay_mode = Some(old_mode);
+            Some(Action::None)
+        }
+        _ => None,
+    }
+}
+
 fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
     match key.code {
-        // Confirm target selection.
         KeyCode::Enter => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::TargetSelect {
@@ -768,7 +842,6 @@ fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
                 let label = operation.label();
                 let selection = build_change_selection(app);
                 let mut options = operation.follow_up(source, target.clone(), flags, selection);
-                // If there's exactly one option, execute immediately.
                 if options.len() == 1 {
                     let opt = options.remove(0);
                     return match opt.action {
@@ -794,7 +867,6 @@ fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
             }
             Action::None
         }
-        // Cancel.
         KeyCode::Esc => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::TargetSelect { restore_cursor, .. } = mode {
@@ -802,24 +874,7 @@ fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
             }
             Action::None
         }
-        // Navigation keys pass through normally.
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.move_down();
-            Action::None
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.move_up();
-            Action::None
-        }
-        KeyCode::Char('J') => {
-            app.move_down_section();
-            Action::None
-        }
-        KeyCode::Char('K') => {
-            app.move_up_section();
-            Action::None
-        }
-        _ => Action::None,
+        _ => handle_select_navigation(app, &key).unwrap_or(Action::None),
     }
 }
 
@@ -827,10 +882,7 @@ fn handle_commit_select(app: &mut App, key: KeyEvent) -> Action {
     match key.code {
         KeyCode::Enter => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::CommitSelect {
-                pending, flags, ..
-            } = mode
-            {
+            if let AppMode::CommitSelect { pending, flags, .. } = mode {
                 let Some(target) = app.selected_change_id() else {
                     return Action::None;
                 };
@@ -847,24 +899,7 @@ fn handle_commit_select(app: &mut App, key: KeyEvent) -> Action {
             }
             Action::None
         }
-        // Navigation keys pass through.
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.move_down();
-            Action::None
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.move_up();
-            Action::None
-        }
-        KeyCode::Char('J') => {
-            app.move_down_section();
-            Action::None
-        }
-        KeyCode::Char('K') => {
-            app.move_up_section();
-            Action::None
-        }
-        _ => Action::None,
+        _ => handle_select_navigation(app, &key).unwrap_or(Action::None),
     }
 }
 
