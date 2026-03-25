@@ -109,6 +109,8 @@ pub enum AppMode {
         label: &'static str,
         children: &'static [(keymap_parser::Node, KeymapNode)],
         flags: CommandFlags,
+        /// Error message shown in the title bar (e.g., unbound key).
+        error: Option<String>,
     },
     /// Showing the result of a shell command. Dismissed on next keypress.
     CommandOutput {

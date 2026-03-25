@@ -106,8 +106,12 @@ fn handle_normal_key(app: &mut App, keymap: &'static Keymap, node: &keymap_parse
     }
 
     match keymap.lookup(node) {
-        LookupResult::Action(action) => dispatch_action(app, action, CommandFlags::empty()),
+        LookupResult::Action(action) => {
+            app.status_message = None;
+            dispatch_action(app, action, CommandFlags::empty())
+        }
         LookupResult::Prefix { label, children } => {
+            app.status_message = None;
             if app.selection_active() {
                 let kind = app.selection_kind();
                 let has_supported_action = children.iter().any(|(_, node)| match node {
@@ -125,11 +129,15 @@ fn handle_normal_key(app: &mut App, keymap: &'static Keymap, node: &keymap_parse
                 label,
                 children,
                 flags: CommandFlags::empty(),
+                error: None,
             };
             Action::None
         }
         LookupResult::Toggle(_) => Action::None, // toggles only work inside submenus
-        LookupResult::Unbound => Action::None,
+        LookupResult::Unbound => {
+            app.status_message = Some(format!("unknown key: {}", keymap::display_key(node)));
+            Action::None
+        }
     }
 }
 
@@ -152,18 +160,16 @@ fn handle_submenu_key(
             dispatch_action(app, action, flags)
         }
         LookupResult::Toggle(flag) => {
-            // Flip the flag, stay in submenu.
-            if let AppMode::Submenu { flags, .. } = &mut app.mode {
+            if let AppMode::Submenu { flags, error, .. } = &mut app.mode {
                 flags.toggle(flag);
+                *error = None;
             }
             Action::None
         }
-        LookupResult::Prefix { .. } => {
-            app.mode = AppMode::Normal;
-            Action::None
-        }
-        LookupResult::Unbound => {
-            app.mode = AppMode::Normal;
+        LookupResult::Prefix { .. } | LookupResult::Unbound => {
+            if let AppMode::Submenu { error, .. } = &mut app.mode {
+                *error = Some(format!("unknown key: {}", keymap::display_key(node)));
+            }
             Action::None
         }
     }

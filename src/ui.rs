@@ -144,6 +144,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             label,
             children,
             flags,
+            error,
         } => {
             // 1 line for top border (with title + toggles) + 1 line for actions.
             let overlay = overlay_area(overlay_base, 2);
@@ -157,6 +158,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
                 *flags,
                 app.selection.submenu_suffix(),
                 &app.selection,
+                error.as_deref(),
             );
         }
         AppMode::CommandOutput {
@@ -574,6 +576,7 @@ fn draw_submenu(
     flags: CommandFlags,
     selection_suffix: Option<String>,
     selection: &SelectionContext,
+    error: Option<&str>,
 ) {
     // Build toggle indicators for the title bar.
     let mut toggle_spans: Vec<Span> = Vec::new();
@@ -608,6 +611,16 @@ fn draw_submenu(
         format!(" {key} {display_label} ")
     };
 
+    // Error span for the title bar.
+    let error_spans: Vec<Span> = if let Some(err) = error {
+        vec![Span::styled(
+            format!(" {err} "),
+            Style::default().fg(Color::Red),
+        )]
+    } else {
+        Vec::new()
+    };
+
     // Block with title on the border.
     let block = Block::default()
         .borders(Borders::TOP)
@@ -620,6 +633,7 @@ fn draw_submenu(
                 .add_modifier(Modifier::BOLD),
         )
         .title(Line::from(toggle_spans))
+        .title(Line::from(error_spans))
         .title_alignment(Alignment::Left);
 
     let inner = block.inner(area);
