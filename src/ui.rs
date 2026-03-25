@@ -2,7 +2,7 @@ use itertools::Itertools;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, List, ListItem, ListState, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, List, ListItem, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::app::{App, AppMode, GLOBAL_TOGGLES};
@@ -447,13 +447,8 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                 .add_modifier(Modifier::BOLD),
         );
 
-    // ListState is ephemeral -- we build it from app.cursor each frame.
-    let mut list_state = ListState::default();
-    list_state.select(Some(app.cursor));
-    frame.render_stateful_widget(list, area, &mut list_state);
-
-    // Save scroll offset for mouse click translation.
-    app.last_scroll_offset = list_state.offset();
+    app.list_state.select(Some(app.cursor));
+    frame.render_stateful_widget(list, area, &mut app.list_state);
 }
 
 type HelpColumn<'a> = Vec<&'a (HelpGroup, Vec<HelpEntry>)>;

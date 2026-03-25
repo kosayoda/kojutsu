@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use compact_str::format_compact;
+use ratatui::widgets::ListState;
 use tui_input::Input;
 
 use crate::dag::{DagEntry, DiffLine, DiffLineKind, FileChange, LineStats};
@@ -167,8 +168,8 @@ pub struct App {
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
     pub cursor: usize,
-    /// Scroll offset of the list from the last render (set by ui::draw).
-    pub last_scroll_offset: usize,
+    /// Persisted list widget state (preserves scroll offset across frames).
+    pub list_state: ListState,
     /// Header height from the last render (for mouse click translation).
     pub last_header_height: u16,
     pub revset: String,
@@ -226,7 +227,7 @@ impl App {
             graph,
             rows: Vec::new(),
             cursor: 0,
-            last_scroll_offset: 0,
+            list_state: ListState::default(),
             last_header_height: 2,
             revset,
             revset_draft: None,
@@ -445,9 +446,9 @@ impl App {
         self.toggles.set(CommandFlags::DEBUG, state.debug);
     }
 
-    /// Get the scroll offset from the last render.
+    /// Get the scroll offset from the list state.
     pub fn scroll_offset(&self) -> usize {
-        self.last_scroll_offset
+        self.list_state.offset()
     }
 
     /// Move selection to the previous selectable row (commit, file, or diff line).
