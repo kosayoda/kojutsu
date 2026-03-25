@@ -37,6 +37,8 @@ pub struct CommitInfo {
     pub workspaces: Vec<WorkspaceAnnotation>,
     /// Whether this commit is empty (no diff from parent).
     pub is_empty: bool,
+    /// Whether this commit has multiple parents (merge commit).
+    pub is_merge: bool,
     /// Whether this commit has unresolved conflicts.
     pub has_conflict: bool,
     /// Whether this commit is immutable (ancestor of immutable_heads).

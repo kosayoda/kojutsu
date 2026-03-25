@@ -445,7 +445,7 @@ impl JjRepo {
     pub async fn commit_details(
         &self,
         commit_hex_id: &str,
-    ) -> Result<(Vec<FileChange>, LineStats)> {
+    ) -> Result<(Vec<FileChange>, LineStats, bool)> {
         let repo = self.repo.as_ref();
         let commit_id = BackendCommitId::try_from_hex(commit_hex_id)
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
@@ -522,7 +522,8 @@ impl JjRepo {
             }
         }
 
-        Ok((changes, stats))
+        let is_empty = changes.is_empty();
+        Ok((changes, stats, is_empty))
     }
 
     /// Compute the line-level diff for a single file in a commit.
@@ -708,8 +709,9 @@ impl JjRepo {
             .cloned()
             .unwrap_or_default();
 
-        // Skip merge commits because `is_empty` triggers expensive tree merging
-        let is_empty = if commit.parent_ids().len() <= 1 {
+        // Empty (skip merge commits — computed in background to avoid blocking)
+        let is_merge = commit.parent_ids().len() > 1;
+        let is_empty = if !is_merge {
             commit.is_empty(repo).unwrap_or(false)
         } else {
             false
@@ -774,6 +776,7 @@ impl JjRepo {
             author,
             workspaces,
             is_empty,
+            is_merge,
             has_conflict,
             is_immutable,
             is_divergent,
@@ -782,6 +785,20 @@ impl JjRepo {
             bookmarks,
             remote_bookmarks,
         })
+    }
+
+    /// Batch-compute `is_empty` for a set of commits (by hex ID).
+    /// Used to compute emptiness for merge commits in the background.
+    pub fn compute_empty_statuses(&self, commit_hex_ids: &[String]) -> Vec<(String, bool)> {
+        commit_hex_ids
+            .iter()
+            .filter_map(|hex_id| {
+                let commit_id = BackendCommitId::try_from_hex(hex_id)?;
+                let commit = self.repo.store().get_commit(&commit_id).ok()?;
+                let empty = commit.is_empty(self.repo.as_ref()).unwrap_or(false);
+                Some((hex_id.clone(), empty))
+            })
+            .collect()
     }
 }
 

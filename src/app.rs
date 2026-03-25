@@ -1671,8 +1671,17 @@ impl App {
                 commit_id,
                 files,
                 stats,
+                is_empty,
             } => {
                 self.status_message = None;
+                // Update is_empty for this commit (may have been skipped
+                // during initial load for merge commits).
+                for entry in self.entries.iter_mut() {
+                    if entry.commit.graph_id == commit_id {
+                        entry.commit.is_empty = is_empty;
+                        break;
+                    }
+                }
                 // Re-request diffs for files that were previously unfolded.
                 let change_id = self.change_id_for_commit_key(&commit_id);
                 if let Some(change_id) = &change_id {
@@ -1728,6 +1737,16 @@ impl App {
             }
             RepoResult::WorkspaceUpdatedStale { message } => {
                 self.status_message = Some(message);
+            }
+            RepoResult::EmptyStatusesLoaded { statuses } => {
+                for (commit_id, is_empty) in statuses {
+                    for entry in self.entries.iter_mut() {
+                        if entry.commit.graph_id == commit_id {
+                            entry.commit.is_empty = is_empty;
+                            break;
+                        }
+                    }
+                }
             }
         }
     }

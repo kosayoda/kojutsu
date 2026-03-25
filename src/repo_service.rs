@@ -63,10 +63,15 @@ pub enum RepoResult {
     WorkspaceUpdatedStale {
         message: String,
     },
+    /// Background-computed is_empty for merge commits.
+    EmptyStatusesLoaded {
+        statuses: Vec<(CommitId, bool)>,
+    },
     CommitDetailsLoaded {
         commit_id: CommitId,
         files: Vec<FileChange>,
         stats: LineStats,
+        is_empty: bool,
     },
     CommitDetailsFailed {
         commit_id: CommitId,
@@ -165,7 +170,7 @@ impl RepoResponseHandle {
 
 struct RepoServiceState {
     repo_path: PathBuf,
-    repo: Rc<RefCell<Option<Rc<JjRepo>>>>,
+    repo: Rc<RefCell<Option<Arc<JjRepo>>>>,
     result_tx: Sender<RepoResult>,
     current_epoch: Arc<AtomicU64>,
     revset_task: Option<JoinHandle<()>>,
@@ -261,8 +266,8 @@ impl RepoServiceState {
                 }
                 match JjRepo::open_async(&repo_path).await {
                     Ok(opened_repo) => {
-                        let opened_repo = Rc::new(opened_repo);
-                        repo.replace(Some(Rc::clone(&opened_repo)));
+                        let opened_repo = Arc::new(opened_repo);
+                        repo.replace(Some(Arc::clone(&opened_repo)));
                         opened_repo
                     }
                     Err(err) => {
@@ -282,13 +287,13 @@ impl RepoServiceState {
                 // Refresh: reload at latest operation head (fast path).
                 // jj commands already snapshot, so skip subprocess call.
                 let existing = repo.take().unwrap();
-                let mut jj_repo = Rc::try_unwrap(existing)
+                let mut jj_repo = Arc::try_unwrap(existing)
                     .ok()
                     .expect("repo should have single owner during refresh");
                 match jj_repo.reload_at_head().await {
                     Ok(()) => {
-                        let reloaded = Rc::new(jj_repo);
-                        repo.replace(Some(Rc::clone(&reloaded)));
+                        let reloaded = Arc::new(jj_repo);
+                        repo.replace(Some(Arc::clone(&reloaded)));
                         reloaded
                     }
                     Err(err) => {
@@ -312,24 +317,67 @@ impl RepoServiceState {
             };
 
             let effective_revset = revset.unwrap_or_else(|| active_repo.default_revset());
-            match active_repo.evaluate_revset(&effective_revset) {
-                Ok(entries) => send_if_current(
-                    &result_tx,
-                    current_epoch.as_ref(),
-                    epoch,
-                    RepoResult::RevsetLoaded {
-                        revset: effective_revset,
-                        repo_root: active_repo.workspace_root().display().to_string(),
-                        entries,
-                    },
-                ),
-                Err(err) => send_if_current(
+            // Run evaluate_revset on a blocking thread so that jj-lib's
+            // internal pollster::block_on (used by is_empty for merge commits)
+            // doesn't conflict with our tokio async runtime.
+            let eval_repo = Arc::clone(&active_repo);
+            let eval_revset = effective_revset.clone();
+            let eval_result = tokio::task::spawn_blocking(move || {
+                let repo_root = eval_repo.workspace_root().display().to_string();
+                let entries = eval_repo.evaluate_revset(&eval_revset);
+                (entries, repo_root)
+            })
+            .await;
+            match eval_result {
+                Ok((Ok(entries), repo_root)) => {
+                    // Collect merge commit IDs for background is_empty computation.
+                    let merge_ids: Vec<String> = entries
+                        .iter()
+                        .filter(|e| e.commit.is_merge)
+                        .map(|e| e.commit.graph_id.as_str().to_string())
+                        .collect();
+
+                    send_if_current(
+                        &result_tx,
+                        current_epoch.as_ref(),
+                        epoch,
+                        RepoResult::RevsetLoaded {
+                            revset: effective_revset,
+                            repo_root,
+                            entries,
+                        },
+                    );
+
+                    // Spawn background task to compute is_empty for merge commits.
+                    if !merge_ids.is_empty() {
+                        let empty_repo = Arc::clone(&active_repo);
+                        let empty_tx = result_tx.clone();
+                        tokio::task::spawn_blocking(move || {
+                            let statuses = empty_repo.compute_empty_statuses(&merge_ids);
+                            let statuses: Vec<_> = statuses
+                                .into_iter()
+                                .map(|(id, empty)| (CommitId::new(id), empty))
+                                .collect();
+                            let _ = empty_tx.send(RepoResult::EmptyStatusesLoaded { statuses });
+                        });
+                    }
+                }
+                Ok((Err(err), _)) => send_if_current(
                     &result_tx,
                     current_epoch.as_ref(),
                     epoch,
                     RepoResult::RevsetFailed {
                         revset: effective_revset,
                         error: format!("{err:#}"),
+                    },
+                ),
+                Err(join_err) => send_if_current(
+                    &result_tx,
+                    current_epoch.as_ref(),
+                    epoch,
+                    RepoResult::RevsetFailed {
+                        revset: effective_revset,
+                        error: format!("revset evaluation panicked: {join_err}"),
                     },
                 ),
             }
@@ -371,7 +419,7 @@ impl RepoServiceState {
                 .await
                 .expect("detail semaphore closed");
             match active_repo.commit_details(commit_id.as_str()).await {
-                Ok((files, stats)) => send_if_current(
+                Ok((files, stats, is_empty)) => send_if_current(
                     &result_tx,
                     current_epoch.as_ref(),
                     epoch,
@@ -379,6 +427,7 @@ impl RepoServiceState {
                         commit_id: commit_id.clone(),
                         files,
                         stats,
+                        is_empty,
                     },
                 ),
                 Err(err) => send_if_current(
