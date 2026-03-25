@@ -25,14 +25,14 @@ pub struct RepoResponseHandle {
 
 #[derive(Clone)]
 enum RepoRequestKind {
-    LoadRevset {
+    Revset {
         revset: Option<String>,
         refresh: bool,
     },
-    LoadCommitDetails {
+    Commit {
         commit_id: CommitId,
     },
-    LoadFileDiff {
+    FileDiff {
         commit_id: CommitId,
         path: String,
     },
@@ -58,9 +58,9 @@ pub enum RepoResult {
     WorkspaceUpdatedStale {
         message: String,
     },
-    /// Background-computed is_empty for merge commits.
-    EmptyStatusesLoaded {
-        statuses: Vec<(CommitId, bool)>,
+    /// Background-computed is_empty for a single merge commit.
+    CommitEmpty {
+        commit_id: CommitId,
     },
     CommitDetailsLoaded {
         commit_id: CommitId,
@@ -88,21 +88,21 @@ impl RepoRequest {
     pub fn load_revset(revset: Option<String>, refresh: bool) -> Self {
         Self {
             epoch: 0,
-            kind: RepoRequestKind::LoadRevset { revset, refresh },
+            kind: RepoRequestKind::Revset { revset, refresh },
         }
     }
 
     pub fn load_commit_details(commit_id: CommitId) -> Self {
         Self {
             epoch: 0,
-            kind: RepoRequestKind::LoadCommitDetails { commit_id },
+            kind: RepoRequestKind::Commit { commit_id },
         }
     }
 
     pub fn load_file_diff(commit_id: CommitId, path: String) -> Self {
         Self {
             epoch: 0,
-            kind: RepoRequestKind::LoadFileDiff { commit_id, path },
+            kind: RepoRequestKind::FileDiff { commit_id, path },
         }
     }
 }
@@ -130,10 +130,10 @@ impl RepoService {
 impl RepoRequestHandle {
     pub fn send(&self, mut request: RepoRequest) {
         request.epoch = match request.kind {
-            RepoRequestKind::LoadRevset { .. } => {
+            RepoRequestKind::Revset { .. } => {
                 self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1
             }
-            RepoRequestKind::LoadCommitDetails { .. } | RepoRequestKind::LoadFileDiff { .. } => {
+            RepoRequestKind::Commit { .. } | RepoRequestKind::FileDiff { .. } => {
                 self.current_epoch.load(Ordering::SeqCst)
             }
         };
@@ -195,15 +195,15 @@ impl RepoServiceState {
     fn handle_request(&mut self, request: RepoRequest) {
         let RepoRequest { epoch, kind } = request;
         match kind {
-            RepoRequestKind::LoadRevset { revset, refresh } => {
+            RepoRequestKind::Revset { revset, refresh } => {
                 self.in_flight_commit_details.clear();
                 self.in_flight_file_diffs.clear();
                 self.handle_revset(epoch, revset, refresh);
             }
-            RepoRequestKind::LoadCommitDetails { commit_id } => {
+            RepoRequestKind::Commit { commit_id } => {
                 self.handle_commit_details(epoch, commit_id);
             }
-            RepoRequestKind::LoadFileDiff { commit_id, path } => {
+            RepoRequestKind::FileDiff { commit_id, path } => {
                 self.handle_file_diff(epoch, commit_id, path);
             }
         }
@@ -291,17 +291,20 @@ impl RepoServiceState {
                     let inner = repo.inner_repo();
                     let empty_tx = self.result_tx.clone();
                     thread::spawn(move || {
-                        let statuses: Vec<_> = merge_ids
-                            .iter()
-                            .filter_map(|hex_id| {
-                                let commit_id =
-                                    jj_lib::backend::CommitId::try_from_hex(hex_id)?;
-                                let commit = inner.store().get_commit(&commit_id).ok()?;
-                                let empty = commit.is_empty(inner.as_ref()).unwrap_or(false);
-                                Some((CommitId::new(hex_id.clone()), empty))
-                            })
-                            .collect();
-                        let _ = empty_tx.send(RepoResult::EmptyStatusesLoaded { statuses });
+                        for hex_id in &merge_ids {
+                            let Some(backend_id) = jj_lib::backend::CommitId::try_from_hex(hex_id)
+                            else {
+                                continue;
+                            };
+                            let Ok(commit) = inner.store().get_commit(&backend_id) else {
+                                continue;
+                            };
+                            if commit.is_empty(inner.as_ref()).unwrap_or(false) {
+                                let _ = empty_tx.send(RepoResult::CommitEmpty {
+                                    commit_id: CommitId::new(hex_id.clone()),
+                                });
+                            }
+                        }
                     });
                 }
             }

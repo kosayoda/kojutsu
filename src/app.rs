@@ -432,8 +432,10 @@ impl App {
 
     pub fn apply_persisted_state(&mut self, state: &PersistedState) {
         self.show_line_numbers = state.show_line_numbers;
-        self.toggles.set(CommandFlags::IGNORE_IMMUTABLE, state.ignore_immutable);
-        self.toggles.set(CommandFlags::IGNORE_WORKING_COPY, state.ignore_working_copy);
+        self.toggles
+            .set(CommandFlags::IGNORE_IMMUTABLE, state.ignore_immutable);
+        self.toggles
+            .set(CommandFlags::IGNORE_WORKING_COPY, state.ignore_working_copy);
         self.toggles.set(CommandFlags::DEBUG, state.debug);
     }
 
@@ -1560,7 +1562,11 @@ impl App {
             let change_id = entry.commit.change_id.change_id();
             if self.unfolded_commits.contains(&change_id) {
                 let commit_id = &entry.commit.graph_id;
-                if self.file_states.get(commit_id).map_or(true, Loadable::should_request) {
+                if self
+                    .file_states
+                    .get(commit_id)
+                    .is_none_or(Loadable::should_request)
+                {
                     self.file_states
                         .insert(commit_id.clone(), Loadable::Loading);
                     self.commit_stats_states
@@ -1594,9 +1600,7 @@ impl App {
                 .iter_enumerated()
                 .find(|(_, entry)| entry.commit.change_id.change_id() == change_id)
             {
-                let find_row = |pred: &dyn Fn(&DisplayRow) -> bool| {
-                    self.rows.iter().position(pred)
-                };
+                let find_row = |pred: &dyn Fn(&DisplayRow) -> bool| self.rows.iter().position(pred);
 
                 let restored = diff_line_idx
                     .and_then(|li| {
@@ -1689,14 +1693,16 @@ impl App {
                         let fold_key = (change_id.clone(), file.path.clone());
                         if self.unfolded_files.contains(&fold_key) {
                             let cache_key = (commit_id.clone(), file.path.clone());
-                            if self.diff_states.get(&cache_key).map_or(true, Loadable::should_request) {
+                            if self
+                                .diff_states
+                                .get(&cache_key)
+                                .is_none_or(Loadable::should_request)
+                            {
                                 self.diff_states.insert(cache_key, Loadable::Loading);
-                                self.pending_repo_requests.push(
-                                    RepoRequest::load_file_diff(
-                                        commit_id.clone(),
-                                        file.path.clone(),
-                                    ),
-                                );
+                                self.pending_repo_requests.push(RepoRequest::load_file_diff(
+                                    commit_id.clone(),
+                                    file.path.clone(),
+                                ));
                             }
                         }
                     }
@@ -1738,13 +1744,11 @@ impl App {
             RepoResult::WorkspaceUpdatedStale { message } => {
                 self.status_message = Some(message);
             }
-            RepoResult::EmptyStatusesLoaded { statuses } => {
-                for (commit_id, is_empty) in statuses {
-                    for entry in self.entries.iter_mut() {
-                        if entry.commit.graph_id == commit_id {
-                            entry.commit.is_empty = is_empty;
-                            break;
-                        }
+            RepoResult::CommitEmpty { commit_id } => {
+                for entry in self.entries.iter_mut() {
+                    if entry.commit.graph_id == commit_id {
+                        entry.commit.is_empty = true;
+                        break;
                     }
                 }
             }
@@ -1757,7 +1761,11 @@ impl App {
         if self.is_commit_unfolded(entry_idx) {
             self.unfolded_commits.remove(&change_id);
         } else {
-            if self.file_states.get(&commit_id).map_or(true, Loadable::should_request) {
+            if self
+                .file_states
+                .get(&commit_id)
+                .is_none_or(Loadable::should_request)
+            {
                 self.file_states
                     .insert(commit_id.clone(), Loadable::Loading);
                 self.commit_stats_states
@@ -1795,7 +1803,7 @@ impl App {
             let cache_key = self.file_cache_key(entry_idx, file_idx);
             let should_request = cache_key
                 .as_ref()
-                .map_or(true, |k| self.diff_states.get(k).map_or(true, Loadable::should_request));
+                .is_none_or(|k| self.diff_states.get(k).is_none_or(Loadable::should_request));
             if should_request {
                 if let Some(cache_key) = cache_key {
                     let (commit_id, path) = cache_key.clone();
