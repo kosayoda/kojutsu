@@ -82,11 +82,11 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     BookmarkDelete {
-        name: String,
+        names: Vec<String>,
         flags: CommandFlags,
     },
     BookmarkForget {
-        name: String,
+        names: Vec<String>,
         flags: CommandFlags,
     },
     BookmarkMove {
@@ -162,7 +162,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     WorkspaceForget {
-        name: String,
+        names: Vec<String>,
         flags: CommandFlags,
     },
     WorkspaceList {
@@ -362,11 +362,15 @@ impl JJCommand {
                 args.push(name.clone());
                 args
             }
-            JJCommand::BookmarkDelete { name, .. } => {
-                vec!["bookmark".to_string(), "delete".to_string(), name.clone()]
+            JJCommand::BookmarkDelete { names, .. } => {
+                let mut args = vec!["bookmark".to_string(), "delete".to_string()];
+                args.extend(names.iter().cloned());
+                args
             }
-            JJCommand::BookmarkForget { name, .. } => {
-                vec!["bookmark".to_string(), "forget".to_string(), name.clone()]
+            JJCommand::BookmarkForget { names, .. } => {
+                let mut args = vec!["bookmark".to_string(), "forget".to_string()];
+                args.extend(names.iter().cloned());
+                args
             }
             JJCommand::BookmarkMove { name, target, .. } => {
                 let mut args = vec!["bookmark".to_string(), "move".to_string()];
@@ -530,8 +534,10 @@ impl JJCommand {
                 args.push(path.clone());
                 args
             }
-            JJCommand::WorkspaceForget { name, .. } => {
-                vec!["workspace".to_string(), "forget".to_string(), name.clone()]
+            JJCommand::WorkspaceForget { names, .. } => {
+                let mut args = vec!["workspace".to_string(), "forget".to_string()];
+                args.extend(names.iter().cloned());
+                args
             }
             JJCommand::WorkspaceList { .. } => {
                 vec!["workspace".to_string(), "list".to_string()]

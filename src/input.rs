@@ -403,7 +403,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 .unwrap_or_default();
             if workspaces.len() == 1 {
                 Action::RunJj(JJCommand::WorkspaceForget {
-                    name: workspaces.into_iter().next().unwrap(),
+                    names: workspaces,
                     flags,
                 })
             } else if workspaces.len() > 1 {
@@ -412,7 +412,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     items: workspaces,
                     cursor: 0,
                     marked: HashSet::new(),
-                    multi: false,
+                    multi: true,
                     on_select: PendingSelection::WorkspaceForget { flags },
                 };
                 Action::None
@@ -1067,12 +1067,14 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
         return resolve_bookmark_selection(app, on_select, items.into_iter().next().unwrap());
     }
 
+    let multi = matches!(kind, PendingSelectionKind::Delete | PendingSelectionKind::Forget);
+
     app.mode = AppMode::SelectFromList {
         title: title.to_string(),
         items,
         cursor: 0,
         marked: HashSet::new(),
-        multi: false,
+        multi,
         on_select,
     };
     Action::None
@@ -1160,18 +1162,14 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
 fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: String) -> Action {
     match on_select {
         PendingSelection::BookmarkDelete { flags, .. } => {
-            let cmd = JJCommand::BookmarkDelete { name, flags };
-            Action::RunJj(cmd)
+            Action::RunJj(JJCommand::BookmarkDelete { names: vec![name], flags })
         }
         PendingSelection::BookmarkForget { flags, .. } => {
-            let cmd = JJCommand::BookmarkForget { name, flags };
-            Action::RunJj(cmd)
+            Action::RunJj(JJCommand::BookmarkForget { names: vec![name], flags })
         }
         PendingSelection::BookmarkMove {
             change_id, flags, ..
         } => {
-            // Enter target selection mode. We'll store the bookmark name
-            // in a new TargetOperation variant.
             app.mode = AppMode::TargetSelect {
                 prompt: "move bookmark",
                 source: change_id,
@@ -1184,7 +1182,6 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
             Action::None
         }
         PendingSelection::BookmarkRename { flags, .. } => {
-            // Enter text input for new name, pre-fill with old name.
             app.mode = AppMode::TextInput {
                 prompt: "rename to: ".to_string(),
                 input: Input::new(name.clone()),
@@ -1196,18 +1193,28 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
             Action::None
         }
         PendingSelection::WorkspaceForget { flags } => {
-            Action::RunJj(JJCommand::WorkspaceForget { name, flags })
+            Action::RunJj(JJCommand::WorkspaceForget { names: vec![name], flags })
         }
     }
 }
 
-/// After multiple items have been selected in multiselect mode, decide
-/// what to do. For now, falls through to single-item resolution for the
-/// first item. Commands will be wired to accept Vec<String> in a follow-up.
 fn resolve_multi_selection(app: &mut App, on_select: PendingSelection, names: Vec<String>) -> Action {
-    // TODO: wire commands to accept multiple names (e.g. BookmarkDelete { names: Vec<String> })
-    let name = names.into_iter().next().unwrap_or_default();
-    resolve_bookmark_selection(app, on_select, name)
+    match on_select {
+        PendingSelection::BookmarkDelete { flags, .. } => {
+            Action::RunJj(JJCommand::BookmarkDelete { names, flags })
+        }
+        PendingSelection::BookmarkForget { flags, .. } => {
+            Action::RunJj(JJCommand::BookmarkForget { names, flags })
+        }
+        PendingSelection::WorkspaceForget { flags } => {
+            Action::RunJj(JJCommand::WorkspaceForget { names, flags })
+        }
+        // Move/Rename should never reach here (multi: false), but handle gracefully.
+        other => {
+            let name = names.into_iter().next().unwrap_or_default();
+            resolve_bookmark_selection(app, other, name)
+        }
+    }
 }
 
 /// Handle a mouse event.
