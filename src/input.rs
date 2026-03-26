@@ -407,13 +407,17 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     flags,
                 })
             } else if workspaces.len() > 1 {
+                let filtered_indices = (0..workspaces.len()).collect();
                 app.mode = AppMode::SelectFromList {
                     title: "forget workspace".to_string(),
                     items: workspaces,
+                    filtered_indices,
                     cursor: 0,
                     scroll_offset: 0,
                     marked: HashSet::new(),
                     multi: true,
+                    filter: String::new(),
+                    filtering: false,
                     on_select: PendingSelection::WorkspaceForget { flags },
                 };
                 Action::None
@@ -553,13 +557,18 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 app.status_message = Some("no untracked remote bookmarks".to_string());
                 return Action::None;
             }
+            let items = app.untracked_bookmarks.clone();
+            let filtered_indices = (0..items.len()).collect();
             app.mode = AppMode::SelectFromList {
                 title: "track bookmark".to_string(),
-                items: app.untracked_bookmarks.clone(),
+                items,
+                filtered_indices,
                 cursor: 0,
                 scroll_offset: 0,
                 marked: HashSet::new(),
                 multi: true,
+                filter: String::new(),
+                filtering: false,
                 on_select: PendingSelection::BookmarkTrack { flags },
             };
             Action::None
@@ -569,13 +578,18 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 app.status_message = Some("no tracked remote bookmarks".to_string());
                 return Action::None;
             }
+            let items = app.tracked_bookmarks.clone();
+            let filtered_indices = (0..items.len()).collect();
             app.mode = AppMode::SelectFromList {
                 title: "untrack bookmark".to_string(),
-                items: app.tracked_bookmarks.clone(),
+                items,
+                filtered_indices,
                 cursor: 0,
                 scroll_offset: 0,
                 marked: HashSet::new(),
                 multi: true,
+                filter: String::new(),
+                filtering: false,
                 on_select: PendingSelection::BookmarkUntrack { flags },
             };
             Action::None
@@ -1048,35 +1062,89 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
 
     let multi = matches!(kind, PendingSelectionKind::Delete | PendingSelectionKind::Forget);
 
+    let filtered_indices = (0..items.len()).collect();
     app.mode = AppMode::SelectFromList {
         title: title.to_string(),
         items,
+        filtered_indices,
         cursor: 0,
         scroll_offset: 0,
         marked: HashSet::new(),
         multi,
+        filter: String::new(),
+        filtering: false,
         on_select,
     };
     Action::None
 }
 
+/// Recompute which items match the filter.
+fn recompute_list_filter(items: &[String], filter: &str) -> Vec<usize> {
+    if filter.is_empty() {
+        return (0..items.len()).collect();
+    }
+    let lower = filter.to_lowercase();
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| item.to_lowercase().contains(&lower))
+        .map(|(i, _)| i)
+        .collect()
+}
+
 fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
     use keymap_parser::Key;
 
-    // Use key_event_to_node for consistent modifier handling.
     let node = keymap::key_event_to_node(&key);
     let ctrl = node
         .as_ref()
         .is_some_and(|n| (n.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0);
     let node_key = node.map(|n| n.key);
 
+    // While filtering, intercept all keys except Tab/Esc/Enter.
+    let is_filtering = matches!(&app.mode, AppMode::SelectFromList { filtering: true, .. });
+    if is_filtering {
+        match key.code {
+            KeyCode::Char(c) if !ctrl => {
+                if let AppMode::SelectFromList {
+                    filter, items, filtered_indices, cursor, scroll_offset, ..
+                } = &mut app.mode
+                {
+                    filter.push(c);
+                    *filtered_indices = recompute_list_filter(items, filter);
+                    *cursor = 0;
+                    *scroll_offset = 0;
+                }
+                return Action::None;
+            }
+            KeyCode::Backspace => {
+                if let AppMode::SelectFromList {
+                    filter, items, filtered_indices, cursor, scroll_offset, ..
+                } = &mut app.mode
+                {
+                    filter.pop();
+                    *filtered_indices = recompute_list_filter(items, filter);
+                    *cursor = (*cursor).min(filtered_indices.len().saturating_sub(1));
+                    *scroll_offset = 0;
+                }
+                return Action::None;
+            }
+            // Tab, Esc, Enter fall through to the main match below.
+            _ if matches!(node_key, Some(Key::Tab) | Some(Key::Esc) | Some(Key::Enter)) => {}
+            // All other keys (arrows, etc.) are swallowed while filtering.
+            _ => return Action::None,
+        }
+    }
+
     match node_key {
         Some(Key::Char('j')) | Some(Key::Down) => {
             if let AppMode::SelectFromList {
-                cursor, items, ..
+                cursor,
+                filtered_indices,
+                ..
             } = &mut app.mode
             {
-                if *cursor + 1 < items.len() {
+                if *cursor + 1 < filtered_indices.len() {
                     *cursor += 1;
                 }
             }
@@ -1089,8 +1157,13 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             Action::None
         }
         Some(Key::Char('d')) if ctrl => {
-            if let AppMode::SelectFromList { cursor, items, .. } = &mut app.mode {
-                *cursor = (*cursor + 10).min(items.len().saturating_sub(1));
+            if let AppMode::SelectFromList {
+                cursor,
+                filtered_indices,
+                ..
+            } = &mut app.mode
+            {
+                *cursor = (*cursor + 10).min(filtered_indices.len().saturating_sub(1));
             }
             Action::None
         }
@@ -1101,8 +1174,13 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             Action::None
         }
         Some(Key::PageDown) => {
-            if let AppMode::SelectFromList { cursor, items, .. } = &mut app.mode {
-                *cursor = (*cursor + 10).min(items.len().saturating_sub(1));
+            if let AppMode::SelectFromList {
+                cursor,
+                filtered_indices,
+                ..
+            } = &mut app.mode
+            {
+                *cursor = (*cursor + 10).min(filtered_indices.len().saturating_sub(1));
             }
             Action::None
         }
@@ -1119,24 +1197,38 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             Action::None
         }
         Some(Key::Char('$')) => {
-            if let AppMode::SelectFromList { cursor, items, .. } = &mut app.mode {
-                *cursor = items.len().saturating_sub(1);
+            if let AppMode::SelectFromList {
+                cursor,
+                filtered_indices,
+                ..
+            } = &mut app.mode
+            {
+                *cursor = filtered_indices.len().saturating_sub(1);
+            }
+            Action::None
+        }
+        Some(Key::Tab) => {
+            if let AppMode::SelectFromList { filtering, .. } = &mut app.mode {
+                *filtering = !*filtering;
             }
             Action::None
         }
         Some(Key::Space) => {
             if let AppMode::SelectFromList {
                 cursor,
+                filtered_indices,
                 marked,
                 multi,
                 ..
             } = &mut app.mode
             {
                 if *multi {
-                    if marked.contains(cursor) {
-                        marked.remove(cursor);
-                    } else {
-                        marked.insert(*cursor);
+                    if let Some(&orig_idx) = filtered_indices.get(*cursor) {
+                        if marked.contains(&orig_idx) {
+                            marked.remove(&orig_idx);
+                        } else {
+                            marked.insert(orig_idx);
+                        }
                     }
                 }
             }
@@ -1146,6 +1238,7 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::SelectFromList {
                 items,
+                filtered_indices,
                 cursor,
                 marked,
                 multi,
@@ -1155,7 +1248,9 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             {
                 if multi {
                     let names: Vec<String> = if marked.is_empty() {
-                        vec![items.into_iter().nth(cursor).unwrap_or_default()]
+                        // Nothing marked — use cursor item (translated through filter).
+                        let orig_idx = filtered_indices.get(cursor).copied().unwrap_or(0);
+                        vec![items.into_iter().nth(orig_idx).unwrap_or_default()]
                     } else {
                         let mut indices: Vec<usize> = marked.into_iter().collect();
                         indices.sort();
@@ -1166,7 +1261,8 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
                     };
                     resolve_multi_selection(app, on_select, names)
                 } else {
-                    let name = items.into_iter().nth(cursor).unwrap_or_default();
+                    let orig_idx = filtered_indices.get(cursor).copied().unwrap_or(0);
+                    let name = items.into_iter().nth(orig_idx).unwrap_or_default();
                     resolve_bookmark_selection(app, on_select, name)
                 }
             } else {
@@ -1174,6 +1270,13 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             }
         }
         Some(Key::Esc) => {
+            // If filtering, just exit filter focus — keep the filter text.
+            if let AppMode::SelectFromList { filtering, .. } = &mut app.mode {
+                if *filtering {
+                    *filtering = false;
+                    return Action::None;
+                }
+            }
             app.mode = AppMode::Normal;
             Action::None
         }

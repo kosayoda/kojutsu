@@ -226,17 +226,34 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
         AppMode::SelectFromList {
             title,
             items,
+            filtered_indices,
             cursor,
             scroll_offset,
             marked,
             multi,
+            filter,
+            filtering,
             ..
         } => {
             // +2 for top border + bottom padding.
-            let height = (items.len() as u16 + 2).min(overlay_base.height / 2).max(3);
+            let height = (filtered_indices.len() as u16 + 2)
+                .min(overlay_base.height / 2)
+                .max(3);
             let overlay = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
-            draw_select_list(frame, overlay, title, items, *cursor, scroll_offset, marked, *multi);
+            draw_select_list(
+                frame,
+                overlay,
+                title,
+                items,
+                filtered_indices,
+                *cursor,
+                scroll_offset,
+                marked,
+                *multi,
+                filter,
+                *filtering,
+            );
         }
     }
 }
@@ -850,56 +867,86 @@ fn draw_follow_up(frame: &mut Frame, area: Rect, prompt: &str, options: &[Follow
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_select_list(
     frame: &mut Frame,
     area: Rect,
     title: &str,
     items: &[String],
+    filtered_indices: &[usize],
     cursor: usize,
     scroll_offset: &mut usize,
     marked: &std::collections::HashSet<usize>,
     multi: bool,
+    filter: &str,
+    filtering: bool,
 ) {
     use ratatui::widgets::Padding;
 
-    let title_text = if multi && !marked.is_empty() {
-        format!(" {title} ({}/{} selected) ", marked.len(), items.len())
+    // Build title: " title [filter: text] (count) "
+    let title_prefix = format!(" {title} ");
+    let title_prefix_len = title_prefix.len();
+    let mut title_spans: Vec<Span> = vec![Span::styled(
+        title_prefix,
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )];
+
+    // Always show [filter: ] — add a space after the text for the cursor to sit in.
+    let filter_label = format!("[filter: {filter} ] ");
+    let filter_cursor_offset = title_prefix_len + "[filter: ".len();
+    let filter_style = if filtering {
+        Style::default().fg(Color::White)
+    } else if !filter.is_empty() {
+        Style::default().fg(Color::DarkGray)
     } else {
-        format!(" {title} ")
+        Style::default().fg(Color::DarkGray)
     };
+    title_spans.push(Span::styled(&filter_label, filter_style));
+
+    if filtered_indices.len() != items.len() {
+        title_spans.push(Span::styled(
+            format!("({}/{}) ", filtered_indices.len(), items.len()),
+            Style::default().fg(Color::DarkGray),
+        ));
+    } else if multi && !marked.is_empty() {
+        title_spans.push(Span::styled(
+            format!("({} selected) ", marked.len()),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
 
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(Color::DarkGray))
-        .title(title_text)
-        .title_style(
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        )
+        .title(Line::from(title_spans))
         .padding(Padding::new(1, 1, 0, 0));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let visible_h = inner.height as usize;
+    let list_h = inner.height as usize;
+
+    // Scroll clamping.
     if cursor < *scroll_offset {
         *scroll_offset = cursor;
     }
-    if visible_h > 0 && cursor >= *scroll_offset + visible_h {
-        *scroll_offset = cursor + 1 - visible_h;
+    if list_h > 0 && cursor >= *scroll_offset + list_h {
+        *scroll_offset = cursor + 1 - list_h;
     }
-    let max_offset = items.len().saturating_sub(visible_h);
+    let max_offset = filtered_indices.len().saturating_sub(list_h);
     *scroll_offset = (*scroll_offset).min(max_offset);
 
-    let lines: Vec<Line> = items
+    let lines: Vec<Line> = filtered_indices
         .iter()
         .enumerate()
         .skip(*scroll_offset)
-        .take(visible_h)
-        .map(|(i, item)| {
-            let is_cursor = i == cursor;
-            let is_marked = marked.contains(&i);
+        .take(list_h)
+        .map(|(filter_idx, &orig_idx)| {
+            let item = &items[orig_idx];
+            let is_cursor = filter_idx == cursor;
+            let is_marked = marked.contains(&orig_idx);
             let prefix = if multi {
                 match (is_cursor, is_marked) {
                     (true, true) => "▸ ● ",
@@ -926,6 +973,14 @@ fn draw_select_list(
         .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
+
+    // Show blinking cursor in the title bar when filter is focused.
+    if filtering {
+        // Title border starts at area.x, title text offset by border char.
+        // filter_cursor_offset = " title " + "[filter: " — points right after the colon+space.
+        let cursor_x = area.x + filter_cursor_offset as u16 + filter.len() as u16;
+        frame.set_cursor_position((cursor_x, area.y));
+    }
 }
 
 fn draw_command_output(frame: &mut Frame, area: Rect, command: &str, output: &[u8], success: bool) {
