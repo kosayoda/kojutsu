@@ -411,6 +411,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     title: "forget workspace".to_string(),
                     items: workspaces,
                     cursor: 0,
+                    scroll_offset: 0,
                     marked: HashSet::new(),
                     multi: true,
                     on_select: PendingSelection::WorkspaceForget { flags },
@@ -548,18 +549,34 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::BookmarkAdvance => enter_bookmark_advance(app, flags),
         AppAction::BookmarkTrack => {
-            app.mode = AppMode::TextInput {
-                prompt: "track bookmark: ".to_string(),
-                input: Input::new(String::new()),
-                on_submit: PendingCommand::BookmarkTrack { flags },
+            if app.untracked_bookmarks.is_empty() {
+                app.status_message = Some("no untracked remote bookmarks".to_string());
+                return Action::None;
+            }
+            app.mode = AppMode::SelectFromList {
+                title: "track bookmark".to_string(),
+                items: app.untracked_bookmarks.clone(),
+                cursor: 0,
+                scroll_offset: 0,
+                marked: HashSet::new(),
+                multi: true,
+                on_select: PendingSelection::BookmarkTrack { flags },
             };
             Action::None
         }
         AppAction::BookmarkUntrack => {
-            app.mode = AppMode::TextInput {
-                prompt: "untrack bookmark: ".to_string(),
-                input: Input::new(String::new()),
-                on_submit: PendingCommand::BookmarkUntrack { flags },
+            if app.tracked_bookmarks.is_empty() {
+                app.status_message = Some("no tracked remote bookmarks".to_string());
+                return Action::None;
+            }
+            app.mode = AppMode::SelectFromList {
+                title: "untrack bookmark".to_string(),
+                items: app.tracked_bookmarks.clone(),
+                cursor: 0,
+                scroll_offset: 0,
+                marked: HashSet::new(),
+                multi: true,
+                on_select: PendingSelection::BookmarkUntrack { flags },
             };
             Action::None
         }
@@ -757,70 +774,32 @@ fn enter_target_select(app: &mut App, operation: TargetOperation, flags: Command
 
 /// Shared navigation for TargetSelect and CommitSelect modes.
 /// Returns `Some(Action)` if the key was handled, `None` if not recognized.
+///
+/// Uses `key_event_to_node` for consistent key matching with the keymap system.
 fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<Action> {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.move_down();
-            Some(Action::None)
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.move_up();
-            Some(Action::None)
-        }
-        KeyCode::Char('J') => {
-            app.move_down_section();
-            Some(Action::None)
-        }
-        KeyCode::Char('K') => {
-            app.move_up_section();
-            Some(Action::None)
-        }
-        KeyCode::Char('d') if ctrl => {
-            app.page_down(15);
-            Some(Action::None)
-        }
-        KeyCode::Char('u') if ctrl => {
-            app.page_up(15);
-            Some(Action::None)
-        }
-        KeyCode::PageDown => {
-            app.page_down(15);
-            Some(Action::None)
-        }
-        KeyCode::PageUp => {
-            app.page_up(15);
-            Some(Action::None)
-        }
-        KeyCode::Char('@') => {
-            app.jump_to_working_copy();
-            Some(Action::None)
-        }
-        KeyCode::Char('0') => {
-            app.move_to_top();
-            Some(Action::None)
-        }
-        KeyCode::Char('$') => {
-            app.move_to_bottom();
-            Some(Action::None)
-        }
-        KeyCode::Tab => {
-            app.toggle_fold();
-            Some(Action::None)
-        }
-        KeyCode::Char('/') => {
-            app.begin_search();
-            Some(Action::None)
-        }
-        KeyCode::Char('n') if ctrl => {
-            app.search_next();
-            Some(Action::None)
-        }
-        KeyCode::Char('p') if ctrl => {
-            app.search_prev();
-            Some(Action::None)
-        }
-        KeyCode::Char('?') => {
+    use keymap_parser::Key;
+
+    let node = keymap::key_event_to_node(key)?;
+    let shift = (node.modifiers & keymap_parser::Modifier::Shift as u8) != 0;
+    let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
+
+    match (node.key, shift, ctrl) {
+        (Key::Char('j'), true, _) => { app.move_down_section(); Some(Action::None) }
+        (Key::Char('k'), true, _) => { app.move_up_section(); Some(Action::None) }
+        (Key::Char('d'), _, true) => { app.page_down(15); Some(Action::None) }
+        (Key::Char('u'), _, true) => { app.page_up(15); Some(Action::None) }
+        (Key::Char('n'), _, true) => { app.search_next(); Some(Action::None) }
+        (Key::Char('p'), _, true) => { app.search_prev(); Some(Action::None) }
+        (Key::Char('j'), _, _) | (Key::Down, _, _) => { app.move_down(); Some(Action::None) }
+        (Key::Char('k'), _, _) | (Key::Up, _, _) => { app.move_up(); Some(Action::None) }
+        (Key::PageDown, _, _) => { app.page_down(15); Some(Action::None) }
+        (Key::PageUp, _, _) => { app.page_up(15); Some(Action::None) }
+        (Key::Char('@'), _, _) => { app.jump_to_working_copy(); Some(Action::None) }
+        (Key::Char('0'), _, _) => { app.move_to_top(); Some(Action::None) }
+        (Key::Char('$'), _, _) => { app.move_to_bottom(); Some(Action::None) }
+        (Key::Tab, _, _) => { app.toggle_fold(); Some(Action::None) }
+        (Key::Char('/'), _, _) => { app.begin_search(); Some(Action::None) }
+        (Key::Char('?'), _, _) => {
             let old_mode = std::mem::replace(&mut app.mode, AppMode::Help);
             app.pre_overlay_mode = Some(old_mode);
             Some(Action::None)
@@ -1073,6 +1052,7 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
         title: title.to_string(),
         items,
         cursor: 0,
+        scroll_offset: 0,
         marked: HashSet::new(),
         multi,
         on_select,
@@ -1081,8 +1061,17 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
 }
 
 fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
+    use keymap_parser::Key;
+
+    // Use key_event_to_node for consistent modifier handling.
+    let node = keymap::key_event_to_node(&key);
+    let ctrl = node
+        .as_ref()
+        .is_some_and(|n| (n.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0);
+    let node_key = node.map(|n| n.key);
+
+    match node_key {
+        Some(Key::Char('j')) | Some(Key::Down) => {
             if let AppMode::SelectFromList {
                 cursor, items, ..
             } = &mut app.mode
@@ -1093,13 +1082,49 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             }
             Action::None
         }
-        KeyCode::Char('k') | KeyCode::Up => {
+        Some(Key::Char('k')) | Some(Key::Up) => {
             if let AppMode::SelectFromList { cursor, .. } = &mut app.mode {
                 *cursor = cursor.saturating_sub(1);
             }
             Action::None
         }
-        KeyCode::Char(' ') => {
+        Some(Key::Char('d')) if ctrl => {
+            if let AppMode::SelectFromList { cursor, items, .. } = &mut app.mode {
+                *cursor = (*cursor + 10).min(items.len().saturating_sub(1));
+            }
+            Action::None
+        }
+        Some(Key::Char('u')) if ctrl => {
+            if let AppMode::SelectFromList { cursor, .. } = &mut app.mode {
+                *cursor = cursor.saturating_sub(10);
+            }
+            Action::None
+        }
+        Some(Key::PageDown) => {
+            if let AppMode::SelectFromList { cursor, items, .. } = &mut app.mode {
+                *cursor = (*cursor + 10).min(items.len().saturating_sub(1));
+            }
+            Action::None
+        }
+        Some(Key::PageUp) => {
+            if let AppMode::SelectFromList { cursor, .. } = &mut app.mode {
+                *cursor = cursor.saturating_sub(10);
+            }
+            Action::None
+        }
+        Some(Key::Char('0')) => {
+            if let AppMode::SelectFromList { cursor, .. } = &mut app.mode {
+                *cursor = 0;
+            }
+            Action::None
+        }
+        Some(Key::Char('$')) => {
+            if let AppMode::SelectFromList { cursor, items, .. } = &mut app.mode {
+                *cursor = items.len().saturating_sub(1);
+            }
+            Action::None
+        }
+        Some(Key::Space) => {
             if let AppMode::SelectFromList {
                 cursor,
                 marked,
@@ -1117,7 +1142,7 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             }
             Action::None
         }
-        KeyCode::Enter => {
+        Some(Key::Enter) => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::SelectFromList {
                 items,
@@ -1130,7 +1155,6 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             {
                 if multi {
                     let names: Vec<String> = if marked.is_empty() {
-                        // Nothing marked — use cursor item.
                         vec![items.into_iter().nth(cursor).unwrap_or_default()]
                     } else {
                         let mut indices: Vec<usize> = marked.into_iter().collect();
@@ -1149,7 +1173,7 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
                 Action::None
             }
         }
-        KeyCode::Esc => {
+        Some(Key::Esc) => {
             app.mode = AppMode::Normal;
             Action::None
         }
@@ -1195,7 +1219,30 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
         PendingSelection::WorkspaceForget { flags } => {
             Action::RunJj(JJCommand::WorkspaceForget { names: vec![name], flags })
         }
+        PendingSelection::BookmarkTrack { flags } => {
+            Action::RunJj(JJCommand::BookmarkTrack {
+                bookmarks: parse_remote_bookmarks(vec![name]),
+                flags,
+            })
+        }
+        PendingSelection::BookmarkUntrack { flags } => {
+            Action::RunJj(JJCommand::BookmarkUntrack {
+                bookmarks: parse_remote_bookmarks(vec![name]),
+                flags,
+            })
+        }
     }
+}
+
+/// Parse `"name@remote"` display strings into `(name, remote)` tuples.
+fn parse_remote_bookmarks(names: Vec<String>) -> Vec<(String, String)> {
+    names
+        .into_iter()
+        .filter_map(|s| {
+            let (name, remote) = s.rsplit_once('@')?;
+            Some((name.to_string(), remote.to_string()))
+        })
+        .collect()
 }
 
 fn resolve_multi_selection(app: &mut App, on_select: PendingSelection, names: Vec<String>) -> Action {
@@ -1208,6 +1255,18 @@ fn resolve_multi_selection(app: &mut App, on_select: PendingSelection, names: Ve
         }
         PendingSelection::WorkspaceForget { flags } => {
             Action::RunJj(JJCommand::WorkspaceForget { names, flags })
+        }
+        PendingSelection::BookmarkTrack { flags } => {
+            Action::RunJj(JJCommand::BookmarkTrack {
+                bookmarks: parse_remote_bookmarks(names),
+                flags,
+            })
+        }
+        PendingSelection::BookmarkUntrack { flags } => {
+            Action::RunJj(JJCommand::BookmarkUntrack {
+                bookmarks: parse_remote_bookmarks(names),
+                flags,
+            })
         }
         // Move/Rename should never reach here (multi: false), but handle gracefully.
         other => {

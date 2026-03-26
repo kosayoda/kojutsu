@@ -104,11 +104,13 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     BookmarkTrack {
-        name: String,
+        /// Each entry is `(bookmark_name, remote_name)`.
+        bookmarks: Vec<(String, String)>,
         flags: CommandFlags,
     },
     BookmarkUntrack {
-        name: String,
+        /// Each entry is `(bookmark_name, remote_name)`.
+        bookmarks: Vec<(String, String)>,
         flags: CommandFlags,
     },
     Undo {
@@ -402,11 +404,23 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::BookmarkTrack { name, .. } => {
-                vec!["bookmark".to_string(), "track".to_string(), name.clone()]
+            JJCommand::BookmarkTrack { bookmarks, .. } => {
+                let mut args = vec!["bookmark".to_string(), "track".to_string()];
+                for (name, remote) in bookmarks {
+                    args.push(name.clone());
+                    args.push("--remote".to_string());
+                    args.push(remote.clone());
+                }
+                args
             }
-            JJCommand::BookmarkUntrack { name, .. } => {
-                vec!["bookmark".to_string(), "untrack".to_string(), name.clone()]
+            JJCommand::BookmarkUntrack { bookmarks, .. } => {
+                let mut args = vec!["bookmark".to_string(), "untrack".to_string()];
+                for (name, remote) in bookmarks {
+                    args.push(name.clone());
+                    args.push("--remote".to_string());
+                    args.push(remote.clone());
+                }
+                args
             }
             JJCommand::Undo { .. } => vec!["undo".to_string()],
             JJCommand::Redo { .. } => vec!["redo".to_string()],

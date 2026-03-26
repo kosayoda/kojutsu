@@ -478,6 +478,10 @@ pub enum PendingSelection {
     },
     /// Forget a workspace (text is the workspace name from the list).
     WorkspaceForget { flags: CommandFlags },
+    /// Track remote bookmarks.
+    BookmarkTrack { flags: CommandFlags },
+    /// Untrack remote bookmarks.
+    BookmarkUntrack { flags: CommandFlags },
 }
 
 /// What to do after selecting a single commit in CommitSelect mode.
@@ -549,10 +553,6 @@ pub enum PendingCommand {
         old_name: String,
         flags: CommandFlags,
     },
-    /// Track a remote bookmark (text is "name@remote").
-    BookmarkTrack { flags: CommandFlags },
-    /// Untrack a remote bookmark (text is "name@remote").
-    BookmarkUntrack { flags: CommandFlags },
     /// Commit with inline message (text is the message).
     Commit {
         flags: CommandFlags,
@@ -594,12 +594,6 @@ impl PendingCommand {
                 new_name: text,
                 flags,
             },
-            PendingCommand::BookmarkTrack { flags } => {
-                JJCommand::BookmarkTrack { name: text, flags }
-            }
-            PendingCommand::BookmarkUntrack { flags } => {
-                JJCommand::BookmarkUntrack { name: text, flags }
-            }
             PendingCommand::Commit { flags, selection } => JJCommand::Commit {
                 message: Some(text),
                 selection,

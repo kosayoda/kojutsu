@@ -137,7 +137,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
         height: main_area.height + status_area.height,
     };
 
-    match &app.mode {
+    match &mut app.mode {
         AppMode::Normal => {}
         AppMode::Submenu {
             key,
@@ -227,6 +227,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             title,
             items,
             cursor,
+            scroll_offset,
             marked,
             multi,
             ..
@@ -235,7 +236,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
             let height = (items.len() as u16 + 2).min(overlay_base.height / 2).max(3);
             let overlay = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, overlay);
-            draw_select_list(frame, overlay, title, items, *cursor, marked, *multi);
+            draw_select_list(frame, overlay, title, items, *cursor, scroll_offset, marked, *multi);
         }
     }
 }
@@ -855,6 +856,7 @@ fn draw_select_list(
     title: &str,
     items: &[String],
     cursor: usize,
+    scroll_offset: &mut usize,
     marked: &std::collections::HashSet<usize>,
     multi: bool,
 ) {
@@ -880,9 +882,21 @@ fn draw_select_list(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    let visible_h = inner.height as usize;
+    if cursor < *scroll_offset {
+        *scroll_offset = cursor;
+    }
+    if visible_h > 0 && cursor >= *scroll_offset + visible_h {
+        *scroll_offset = cursor + 1 - visible_h;
+    }
+    let max_offset = items.len().saturating_sub(visible_h);
+    *scroll_offset = (*scroll_offset).min(max_offset);
+
     let lines: Vec<Line> = items
         .iter()
         .enumerate()
+        .skip(*scroll_offset)
+        .take(visible_h)
         .map(|(i, item)| {
             let is_cursor = i == cursor;
             let is_marked = marked.contains(&i);

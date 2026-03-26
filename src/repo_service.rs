@@ -41,6 +41,8 @@ pub enum RepoResult {
         revset: String,
         repo_root: String,
         entries: Vec<DagEntry>,
+        untracked_bookmarks: Vec<String>,
+        tracked_bookmarks: Vec<String>,
     },
     RevsetFailed {
         revset: String,
@@ -254,12 +256,17 @@ impl RepoServiceState {
                     .map(|e| e.commit.graph_id.as_str().to_string())
                     .collect();
 
+                let untracked_bookmarks = repo.untracked_remote_bookmarks();
+                let tracked_bookmarks = repo.tracked_remote_bookmarks();
+
                 self.send_if_current(
                     epoch,
                     RepoResult::RevsetLoaded {
                         revset: effective_revset,
                         repo_root: repo.workspace_root().display().to_string(),
                         entries,
+                        untracked_bookmarks,
+                        tracked_bookmarks,
                     },
                 );
 

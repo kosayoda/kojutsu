@@ -156,6 +156,8 @@ pub enum AppMode {
         title: String,
         items: Vec<String>,
         cursor: usize,
+        /// Scroll offset for the list viewport.
+        scroll_offset: usize,
         /// Indices of toggled items (multiselect mode only).
         marked: HashSet<usize>,
         /// Whether multiselect is enabled.
@@ -192,6 +194,10 @@ pub struct App {
     pub diff_states: HashMap<FileDiffCacheKey, Loadable<Vec<DiffLine>>>,
     /// Lazily loaded per-commit line stats, keyed by commit graph id.
     pub commit_stats_states: HashMap<CommitId, Loadable<LineStats>>,
+    /// Remote bookmarks not yet tracked (for bookmark track selection).
+    pub untracked_bookmarks: Vec<String>,
+    /// Remote bookmarks that are tracked (for bookmark untrack selection).
+    pub tracked_bookmarks: Vec<String>,
     /// Current revset load status.
     pub revset_state: Loadable<()>,
     /// Revset currently being requested, if any.
@@ -242,6 +248,8 @@ impl App {
             file_states: HashMap::new(),
             diff_states: HashMap::new(),
             commit_stats_states: HashMap::new(),
+            untracked_bookmarks: Vec::new(),
+            tracked_bookmarks: Vec::new(),
             revset_state: Loadable::NotRequested,
             pending_revset: None,
             pending_repo_requests: Vec::new(),
@@ -1670,12 +1678,16 @@ impl App {
                 revset,
                 repo_root,
                 entries,
+                untracked_bookmarks,
+                tracked_bookmarks,
             } => {
                 self.status_message = None;
                 self.revset = revset;
                 self.revset_draft = None;
                 self.pending_revset = None;
                 self.repo_root = repo_root;
+                self.untracked_bookmarks = untracked_bookmarks;
+                self.tracked_bookmarks = tracked_bookmarks;
                 self.revset_state = Loadable::Loaded(());
                 self.apply_entries(entries);
             }

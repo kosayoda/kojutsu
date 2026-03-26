@@ -134,6 +134,30 @@ impl JjRepo {
         Arc::clone(&self.repo)
     }
 
+    /// Remote bookmarks that are not yet tracked locally.
+    pub fn untracked_remote_bookmarks(&self) -> Vec<String> {
+        self.repo
+            .view()
+            .all_remote_bookmarks()
+            .filter(|(_, remote_ref)| !remote_ref.is_tracked())
+            .map(|(symbol, _)| {
+                format!("{}@{}", symbol.name.as_str(), symbol.remote.as_str())
+            })
+            .collect()
+    }
+
+    /// Remote bookmarks that are tracked locally.
+    pub fn tracked_remote_bookmarks(&self) -> Vec<String> {
+        self.repo
+            .view()
+            .all_remote_bookmarks()
+            .filter(|(_, remote_ref)| remote_ref.is_tracked())
+            .map(|(symbol, _)| {
+                format!("{}@{}", symbol.name.as_str(), symbol.remote.as_str())
+            })
+            .collect()
+    }
+
     /// Build config stack: jj-lib defaults + vendored CLI defaults + user + repo.
     fn load_config(workspace_path: &Path) -> Result<StackedConfig> {
         let mut config = StackedConfig::with_defaults();
