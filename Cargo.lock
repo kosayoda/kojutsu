@@ -1961,6 +1961,7 @@ dependencies = [
  "jiff",
  "jj-lib",
  "keymap_parser",
+ "mio",
  "pollster",
  "ratatui",
  "sapling-renderdag",

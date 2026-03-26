@@ -1,7 +1,7 @@
+use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc};
 use std::thread;
-use std::time::Duration;
 
 use clap::Parser;
 use color_eyre::Result;
@@ -22,7 +22,7 @@ enum AppEvent {
 }
 
 struct TerminalEvents {
-    stop_tx: mpsc::Sender<()>,
+    waker: Arc<mio::Waker>,
     join: thread::JoinHandle<()>,
 }
 
@@ -163,29 +163,54 @@ fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
     }
 }
 
+const STDIN_TOKEN: mio::Token = mio::Token(0);
+const WAKE_TOKEN: mio::Token = mio::Token(1);
+
 fn spawn_terminal_events(event_tx: mpsc::Sender<AppEvent>) -> TerminalEvents {
-    let (stop_tx, stop_rx) = mpsc::channel();
-    let join = thread::spawn(move || loop {
-        if stop_rx.try_recv().is_ok() {
-            break;
-        }
-        if event::poll(Duration::from_millis(50)).unwrap_or(false) {
-            match event::read() {
-                Ok(ev) => {
-                    if event_tx.send(AppEvent::Terminal(ev)).is_err() {
-                        break;
-                    }
+    let poll = mio::Poll::new().expect("failed to create mio Poll");
+    let waker =
+        Arc::new(mio::Waker::new(poll.registry(), WAKE_TOKEN).expect("failed to create Waker"));
+
+    let waker_clone = Arc::clone(&waker);
+    let join = thread::spawn(move || {
+        let mut poll = poll;
+        let stdin_fd = std::io::stdin().as_raw_fd();
+        let mut source = mio::unix::SourceFd(&stdin_fd);
+        poll.registry()
+            .register(&mut source, STDIN_TOKEN, mio::Interest::READABLE)
+            .expect("failed to register stdin");
+
+        let mut events = mio::Events::with_capacity(2);
+        loop {
+            if poll.poll(&mut events, None).is_err() {
+                break;
+            }
+            for ev in &events {
+                match ev.token() {
+                    WAKE_TOKEN => return,
+                    STDIN_TOKEN => match event::read() {
+                        Ok(ev) => {
+                            if event_tx.send(AppEvent::Terminal(ev)).is_err() {
+                                return;
+                            }
+                        }
+                        Err(_) => return,
+                    },
+                    _ => {}
                 }
-                Err(_) => break,
             }
         }
     });
-    TerminalEvents { stop_tx, join }
+
+    TerminalEvents {
+        waker: waker_clone,
+        join,
+    }
 }
 
 impl TerminalEvents {
     fn stop(self) {
-        let _ = self.stop_tx.send(());
+        let _ = self.waker.wake();
         let _ = self.join.join();
     }
 }
