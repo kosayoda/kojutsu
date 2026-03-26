@@ -134,27 +134,35 @@ impl JjRepo {
         Arc::clone(&self.repo)
     }
 
-    /// Remote bookmarks that are not yet tracked locally.
-    pub fn untracked_remote_bookmarks(&self) -> Vec<String> {
+    fn remote_bookmarks(
+        &'_ self,
+    ) -> impl Iterator<
+        Item = (
+            jj_lib::ref_name::RemoteRefSymbol<'_>,
+            &'_ jj_lib::op_store::RemoteRef,
+        ),
+    > {
+        // Exclude the synthetic `git` remote (colocated repos).
         self.repo
             .view()
             .all_remote_bookmarks()
+            .filter(|(symbol, _)| symbol.remote.as_str() != "git")
+    }
+
+    /// Remote bookmarks that are not yet tracked locally.
+    pub fn untracked_remote_bookmarks(&self) -> Vec<String> {
+        self.remote_bookmarks()
             .filter(|(_, remote_ref)| !remote_ref.is_tracked())
-            .map(|(symbol, _)| {
-                format!("{}@{}", symbol.name.as_str(), symbol.remote.as_str())
-            })
+            .map(|(symbol, _)| format!("{}@{}", symbol.name.as_str(), symbol.remote.as_str()))
             .collect()
     }
 
     /// Remote bookmarks that are tracked locally.
+    /// Excludes the synthetic `git` remote (colocated repos).
     pub fn tracked_remote_bookmarks(&self) -> Vec<String> {
-        self.repo
-            .view()
-            .all_remote_bookmarks()
+        self.remote_bookmarks()
             .filter(|(_, remote_ref)| remote_ref.is_tracked())
-            .map(|(symbol, _)| {
-                format!("{}@{}", symbol.name.as_str(), symbol.remote.as_str())
-            })
+            .map(|(symbol, _)| format!("{}@{}", symbol.name.as_str(), symbol.remote.as_str()))
             .collect()
     }
 
