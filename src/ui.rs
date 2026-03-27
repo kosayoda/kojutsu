@@ -290,9 +290,9 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
             ]),
             Line::from(vec![
                 Span::styled(
-                format!("revset ({}/5): ", app.active_preset + 1),
-                Style::default().fg(Color::DarkGray),
-            ),
+                    format!("revset ({}/5): ", app.active_preset + 1),
+                    Style::default().fg(Color::DarkGray),
+                ),
                 Span::styled(&app.revset, Style::default().fg(Color::Cyan)),
             ]),
         ]
@@ -1290,10 +1290,7 @@ fn render_commit_item<'a>(
 
     if let Some(desc) = &c.description {
         if c.has_conflict {
-            line2.push(Span::styled(
-                "(conflict) ",
-                Style::default().fg(Color::Red),
-            ));
+            line2.push(Span::styled("(conflict) ", Style::default().fg(Color::Red)));
         }
         if c.is_empty {
             line2.push(Span::styled(
@@ -1325,10 +1322,7 @@ fn render_commit_item<'a>(
         }
     } else {
         if c.has_conflict {
-            line2.push(Span::styled(
-                "(conflict) ",
-                Style::default().fg(Color::Red),
-            ));
+            line2.push(Span::styled("(conflict) ", Style::default().fg(Color::Red)));
         }
         let placeholder = if c.is_empty {
             "(empty)"

@@ -1530,9 +1530,9 @@ impl App {
     pub fn jump_to_bookmark(&mut self, name: &str) {
         for (idx, entry) in self.entries.iter_enumerated() {
             if entry.commit.bookmarks.iter().any(|b| b.name == name) {
-                if let Some(pos) = self.rows.iter().position(|r| {
-                    matches!(r, DisplayRow::CommitNode { entry_idx } if *entry_idx == idx)
-                }) {
+                if let Some(pos) = self.rows.iter().position(
+                    |r| matches!(r, DisplayRow::CommitNode { entry_idx } if *entry_idx == idx),
+                ) {
                     self.cursor = pos;
                     return;
                 }

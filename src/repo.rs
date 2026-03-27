@@ -512,7 +512,11 @@ impl JjRepo {
             };
 
             let has_conflict = !values.after.is_resolved();
-            changes.push(FileChange { path, status, has_conflict });
+            changes.push(FileChange {
+                path,
+                status,
+                has_conflict,
+            });
 
             let before_mat =
                 materialize_tree_value(repo.store(), &entry.path, values.before, &labels)

@@ -847,21 +847,66 @@ fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<Action> {
     let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
 
     match (node.key, shift, ctrl) {
-        (Key::Char('j'), true, _) => { app.move_down_section(); Some(Action::None) }
-        (Key::Char('k'), true, _) => { app.move_up_section(); Some(Action::None) }
-        (Key::Char('d'), _, true) => { app.page_down(15); Some(Action::None) }
-        (Key::Char('u'), _, true) => { app.page_up(15); Some(Action::None) }
-        (Key::Char('n'), _, true) => { app.search_next(); Some(Action::None) }
-        (Key::Char('p'), _, true) => { app.search_prev(); Some(Action::None) }
-        (Key::Char('j'), _, _) | (Key::Down, _, _) => { app.move_down(); Some(Action::None) }
-        (Key::Char('k'), _, _) | (Key::Up, _, _) => { app.move_up(); Some(Action::None) }
-        (Key::PageDown, _, _) => { app.page_down(15); Some(Action::None) }
-        (Key::PageUp, _, _) => { app.page_up(15); Some(Action::None) }
-        (Key::Char('@'), _, _) => { app.jump_to_working_copy(); Some(Action::None) }
-        (Key::Char('0'), _, _) => { app.move_to_top(); Some(Action::None) }
-        (Key::Char('$'), _, _) => { app.move_to_bottom(); Some(Action::None) }
-        (Key::Tab, _, _) => { app.toggle_fold(); Some(Action::None) }
-        (Key::Char('/'), _, _) => { app.begin_search(); Some(Action::None) }
+        (Key::Char('j'), true, _) => {
+            app.move_down_section();
+            Some(Action::None)
+        }
+        (Key::Char('k'), true, _) => {
+            app.move_up_section();
+            Some(Action::None)
+        }
+        (Key::Char('d'), _, true) => {
+            app.page_down(15);
+            Some(Action::None)
+        }
+        (Key::Char('u'), _, true) => {
+            app.page_up(15);
+            Some(Action::None)
+        }
+        (Key::Char('n'), _, true) => {
+            app.search_next();
+            Some(Action::None)
+        }
+        (Key::Char('p'), _, true) => {
+            app.search_prev();
+            Some(Action::None)
+        }
+        (Key::Char('j'), _, _) | (Key::Down, _, _) => {
+            app.move_down();
+            Some(Action::None)
+        }
+        (Key::Char('k'), _, _) | (Key::Up, _, _) => {
+            app.move_up();
+            Some(Action::None)
+        }
+        (Key::PageDown, _, _) => {
+            app.page_down(15);
+            Some(Action::None)
+        }
+        (Key::PageUp, _, _) => {
+            app.page_up(15);
+            Some(Action::None)
+        }
+        (Key::Char('@'), _, _) => {
+            app.jump_to_working_copy();
+            Some(Action::None)
+        }
+        (Key::Char('0'), _, _) => {
+            app.move_to_top();
+            Some(Action::None)
+        }
+        (Key::Char('$'), _, _) => {
+            app.move_to_bottom();
+            Some(Action::None)
+        }
+        (Key::Tab, _, _) => {
+            app.toggle_fold();
+            Some(Action::None)
+        }
+        (Key::Char('/'), _, _) => {
+            app.begin_search();
+            Some(Action::None)
+        }
         (Key::Char('?'), _, _) => {
             let old_mode = std::mem::replace(&mut app.mode, AppMode::Help);
             app.pre_overlay_mode = Some(old_mode);
@@ -1109,7 +1154,10 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
         return resolve_bookmark_selection(app, on_select, items.into_iter().next().unwrap());
     }
 
-    let multi = matches!(kind, PendingSelectionKind::Delete | PendingSelectionKind::Forget);
+    let multi = matches!(
+        kind,
+        PendingSelectionKind::Delete | PendingSelectionKind::Forget
+    );
 
     let filtered_indices = (0..items.len()).collect();
     app.mode = AppMode::SelectFromList {
@@ -1151,12 +1199,23 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
     let node_key = node.map(|n| n.key);
 
     // While filtering, intercept all keys except Tab/Esc/Enter.
-    let is_filtering = matches!(&app.mode, AppMode::SelectFromList { filtering: true, .. });
+    let is_filtering = matches!(
+        &app.mode,
+        AppMode::SelectFromList {
+            filtering: true,
+            ..
+        }
+    );
     if is_filtering {
         match key.code {
             KeyCode::Char(c) if !ctrl => {
                 if let AppMode::SelectFromList {
-                    filter, items, filtered_indices, cursor, scroll_offset, ..
+                    filter,
+                    items,
+                    filtered_indices,
+                    cursor,
+                    scroll_offset,
+                    ..
                 } = &mut app.mode
                 {
                     filter.push(c);
@@ -1168,7 +1227,12 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             }
             KeyCode::Backspace => {
                 if let AppMode::SelectFromList {
-                    filter, items, filtered_indices, cursor, scroll_offset, ..
+                    filter,
+                    items,
+                    filtered_indices,
+                    cursor,
+                    scroll_offset,
+                    ..
                 } = &mut app.mode
                 {
                     filter.pop();
@@ -1338,10 +1402,16 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
 fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: String) -> Action {
     match on_select {
         PendingSelection::BookmarkDelete { flags, .. } => {
-            Action::RunJj(JJCommand::BookmarkDelete { names: vec![name], flags })
+            Action::RunJj(JJCommand::BookmarkDelete {
+                names: vec![name],
+                flags,
+            })
         }
         PendingSelection::BookmarkForget { flags, .. } => {
-            Action::RunJj(JJCommand::BookmarkForget { names: vec![name], flags })
+            Action::RunJj(JJCommand::BookmarkForget {
+                names: vec![name],
+                flags,
+            })
         }
         PendingSelection::BookmarkMove {
             change_id, flags, ..
@@ -1368,21 +1438,18 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
             };
             Action::None
         }
-        PendingSelection::WorkspaceForget { flags } => {
-            Action::RunJj(JJCommand::WorkspaceForget { names: vec![name], flags })
-        }
-        PendingSelection::BookmarkTrack { flags } => {
-            Action::RunJj(JJCommand::BookmarkTrack {
-                bookmarks: parse_remote_bookmarks(vec![name]),
-                flags,
-            })
-        }
-        PendingSelection::BookmarkUntrack { flags } => {
-            Action::RunJj(JJCommand::BookmarkUntrack {
-                bookmarks: parse_remote_bookmarks(vec![name]),
-                flags,
-            })
-        }
+        PendingSelection::WorkspaceForget { flags } => Action::RunJj(JJCommand::WorkspaceForget {
+            names: vec![name],
+            flags,
+        }),
+        PendingSelection::BookmarkTrack { flags } => Action::RunJj(JJCommand::BookmarkTrack {
+            bookmarks: parse_remote_bookmarks(vec![name]),
+            flags,
+        }),
+        PendingSelection::BookmarkUntrack { flags } => Action::RunJj(JJCommand::BookmarkUntrack {
+            bookmarks: parse_remote_bookmarks(vec![name]),
+            flags,
+        }),
         PendingSelection::GitPushBookmark { flags } => {
             Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
                 bookmarks: vec![name],
@@ -1403,7 +1470,11 @@ fn parse_remote_bookmarks(names: Vec<String>) -> Vec<(String, String)> {
         .collect()
 }
 
-fn resolve_multi_selection(app: &mut App, on_select: PendingSelection, names: Vec<String>) -> Action {
+fn resolve_multi_selection(
+    app: &mut App,
+    on_select: PendingSelection,
+    names: Vec<String>,
+) -> Action {
     match on_select {
         PendingSelection::BookmarkDelete { flags, .. } => {
             Action::RunJj(JJCommand::BookmarkDelete { names, flags })
@@ -1414,18 +1485,14 @@ fn resolve_multi_selection(app: &mut App, on_select: PendingSelection, names: Ve
         PendingSelection::WorkspaceForget { flags } => {
             Action::RunJj(JJCommand::WorkspaceForget { names, flags })
         }
-        PendingSelection::BookmarkTrack { flags } => {
-            Action::RunJj(JJCommand::BookmarkTrack {
-                bookmarks: parse_remote_bookmarks(names),
-                flags,
-            })
-        }
-        PendingSelection::BookmarkUntrack { flags } => {
-            Action::RunJj(JJCommand::BookmarkUntrack {
-                bookmarks: parse_remote_bookmarks(names),
-                flags,
-            })
-        }
+        PendingSelection::BookmarkTrack { flags } => Action::RunJj(JJCommand::BookmarkTrack {
+            bookmarks: parse_remote_bookmarks(names),
+            flags,
+        }),
+        PendingSelection::BookmarkUntrack { flags } => Action::RunJj(JJCommand::BookmarkUntrack {
+            bookmarks: parse_remote_bookmarks(names),
+            flags,
+        }),
         PendingSelection::GitPushBookmark { flags } => {
             Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
                 bookmarks: names,
