@@ -482,6 +482,8 @@ pub enum PendingSelection {
     BookmarkTrack { flags: CommandFlags },
     /// Untrack remote bookmarks.
     BookmarkUntrack { flags: CommandFlags },
+    /// Push bookmarks to remote.
+    GitPushBookmark { flags: CommandFlags },
 }
 
 /// What to do after selecting a single commit in CommitSelect mode.

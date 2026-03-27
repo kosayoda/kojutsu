@@ -117,6 +117,7 @@ pub enum AppAction {
     StartSearch,
     NextMatch,
     PrevMatch,
+    GitPushBookmark,
     SwitchPreset(usize),
 }
 
@@ -305,9 +306,17 @@ impl Default for Keymap {
                         "fetch all remotes",
                         C,
                     ),
-                    bind("p", AppAction::GitPush, "push", C),
-                    bind("shift-p", AppAction::GitPushAll, "push all bookmarks", C),
-                    bind("c", AppAction::GitPushChange, "push change", C),
+                    prefix(
+                        "p",
+                        "push",
+                        C,
+                        vec![
+                            bind("p", AppAction::GitPush, "push", C),
+                            bind("a", AppAction::GitPushAll, "all bookmarks", C),
+                            bind("c", AppAction::GitPushChange, "change", C),
+                            bind("b", AppAction::GitPushBookmark, "bookmark", C),
+                        ],
+                    ),
                     bind("e", AppAction::GitExport, "export (jj→git)", C),
                     bind("i", AppAction::GitImport, "import (git→jj)", C),
                 ],
@@ -682,6 +691,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         | AppAction::GitPush
         | AppAction::GitPushAll
         | AppAction::GitPushChange
+        | AppAction::GitPushBookmark
         | AppAction::GitExport
         | AppAction::GitImport => "git",
         AppAction::Duplicate | AppAction::DuplicateOnto => "duplicate",

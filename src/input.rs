@@ -170,7 +170,17 @@ fn handle_submenu_key(
             }
             Action::None
         }
-        LookupResult::Prefix { .. } | LookupResult::Unbound => {
+        LookupResult::Prefix { label, children } => {
+            app.mode = AppMode::Submenu {
+                key: keymap::display_key(node),
+                label,
+                children,
+                flags,
+                error: None,
+            };
+            Action::None
+        }
+        LookupResult::Unbound => {
             if let AppMode::Submenu { error, .. } = &mut app.mode {
                 *error = Some(format!("unknown key: {}", keymap::display_key(node)));
             }
@@ -625,6 +635,34 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             };
             Action::SuspendAndRunJj(JJCommand::GitPushChange { change_id, flags })
+        }
+        AppAction::GitPushBookmark => {
+            let bookmarks = app.selected_bookmarks().unwrap_or(&[]);
+            if bookmarks.is_empty() {
+                app.status_message = Some("no bookmarks on this commit".to_string());
+                return Action::None;
+            }
+            let items: Vec<String> = bookmarks.iter().map(|b| b.name.clone()).collect();
+            if items.len() == 1 {
+                return Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
+                    bookmarks: items,
+                    flags,
+                });
+            }
+            let filtered_indices = (0..items.len()).collect();
+            app.mode = AppMode::SelectFromList {
+                title: "push bookmark".to_string(),
+                items,
+                filtered_indices,
+                cursor: 0,
+                scroll_offset: 0,
+                marked: HashSet::new(),
+                multi: true,
+                filter: String::new(),
+                filtering: false,
+                on_select: PendingSelection::GitPushBookmark { flags },
+            };
+            Action::None
         }
         AppAction::GitExport => Action::RunJj(JJCommand::GitExport { flags }),
         AppAction::GitImport => Action::RunJj(JJCommand::GitImport { flags }),
@@ -1345,6 +1383,12 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
                 flags,
             })
         }
+        PendingSelection::GitPushBookmark { flags } => {
+            Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
+                bookmarks: vec![name],
+                flags,
+            })
+        }
     }
 }
 
@@ -1379,6 +1423,12 @@ fn resolve_multi_selection(app: &mut App, on_select: PendingSelection, names: Ve
         PendingSelection::BookmarkUntrack { flags } => {
             Action::RunJj(JJCommand::BookmarkUntrack {
                 bookmarks: parse_remote_bookmarks(names),
+                flags,
+            })
+        }
+        PendingSelection::GitPushBookmark { flags } => {
+            Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
+                bookmarks: names,
                 flags,
             })
         }

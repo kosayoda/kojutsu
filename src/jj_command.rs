@@ -131,6 +131,10 @@ pub enum JJCommand {
         change_id: ChangeId,
         flags: CommandFlags,
     },
+    GitPushBookmark {
+        bookmarks: Vec<String>,
+        flags: CommandFlags,
+    },
     GitExport {
         flags: CommandFlags,
     },
@@ -208,6 +212,7 @@ impl JJCommand {
             | JJCommand::GitFetch { flags, .. }
             | JJCommand::GitPush { flags, .. }
             | JJCommand::GitPushChange { flags, .. }
+            | JJCommand::GitPushBookmark { flags, .. }
             | JJCommand::GitExport { flags, .. }
             | JJCommand::GitImport { flags, .. }
             | JJCommand::Absorb { flags, .. }
@@ -463,6 +468,15 @@ impl JJCommand {
                 let mut args = vec!["git".to_string(), "push".to_string()];
                 args.push("-c".to_string());
                 args.push(change_id.to_string());
+                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
+                args
+            }
+            JJCommand::GitPushBookmark { bookmarks, .. } => {
+                let mut args = vec!["git".to_string(), "push".to_string()];
+                for name in bookmarks {
+                    args.push("--bookmark".to_string());
+                    args.push(name.clone());
+                }
                 push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
             }
