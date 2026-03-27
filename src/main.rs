@@ -188,14 +188,24 @@ fn spawn_terminal_events(event_tx: mpsc::Sender<AppEvent>) -> TerminalEvents {
             for ev in &events {
                 match ev.token() {
                     WAKE_TOKEN => return,
-                    STDIN_TOKEN => match event::read() {
-                        Ok(ev) => {
-                            if event_tx.send(AppEvent::Terminal(ev)).is_err() {
-                                return;
+                    STDIN_TOKEN => {
+                        // Read the first event, then drain any events
+                        // crossterm buffered internally since mio won't
+                        // re-trigger for bytes already consumed from stdin.
+                        loop {
+                            match event::read() {
+                                Ok(ev) => {
+                                    if event_tx.send(AppEvent::Terminal(ev)).is_err() {
+                                        return;
+                                    }
+                                }
+                                Err(_) => return,
+                            }
+                            if !event::poll(std::time::Duration::ZERO).unwrap_or(false) {
+                                break;
                             }
                         }
-                        Err(_) => return,
-                    },
+                    }
                     _ => {}
                 }
             }
