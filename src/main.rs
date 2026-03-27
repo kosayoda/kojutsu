@@ -229,8 +229,9 @@ fn suspend_and_run(
     terminal: &mut kojutsu::terminal::Term,
     cmd: JJCommand,
 ) {
-    // Store the display string before running (cmd is consumed by run_interactive).
+    // Store the display string and jump target before running (cmd is consumed).
     let display = cmd.display();
+    let jump = cmd.jump_target();
 
     // Leave the alternate screen so the editor can use the terminal.
     let _ = kojutsu::terminal::restore();
@@ -242,6 +243,7 @@ fn suspend_and_run(
     *terminal = kojutsu::terminal::init().expect("failed to re-init terminal");
 
     if result.success {
+        app.jump_after_refresh = jump;
         app.clear_selection();
         refresh_app(app);
     }
@@ -376,6 +378,7 @@ fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
 }
 
 fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
+    let jump = cmd.jump_target();
     let result = cmd.run(repo_path);
 
     app.last_command = Some(result.display.clone());
@@ -386,6 +389,7 @@ fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
     };
 
     if result.success {
+        app.jump_after_refresh = jump;
         app.clear_selection();
         refresh_app(app);
     }

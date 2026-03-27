@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use crate::app::GLOBAL_TOGGLES;
+use crate::app::{JumpTarget, GLOBAL_TOGGLES};
 use crate::keymap::CommandFlags;
 use crate::types::{ChangeId, MessageMode, RebaseSource, RebaseTarget, SplitTarget, SquashTarget};
 
@@ -217,6 +217,26 @@ impl JJCommand {
             | JJCommand::WorkspaceAdd { flags, .. }
             | JJCommand::WorkspaceForget { flags, .. }
             | JJCommand::WorkspaceList { flags, .. } => *flags,
+        }
+    }
+
+    /// Where to jump the cursor after this command succeeds.
+    pub fn jump_target(&self) -> Option<JumpTarget> {
+        match self {
+            // Commands that move @.
+            JJCommand::New { .. }
+            | JJCommand::Edit { .. }
+            | JJCommand::Commit { .. }
+            | JJCommand::Squash { .. }
+            | JJCommand::Abandon { .. }
+            | JJCommand::Absorb { .. }
+            | JJCommand::Split { .. } => Some(JumpTarget::WorkingCopy),
+            // Track: jump to the first tracked bookmark's commit.
+            JJCommand::BookmarkTrack { bookmarks, .. } => bookmarks
+                .first()
+                .map(|(name, _)| JumpTarget::Bookmark(name.clone())),
+            // Everything else: use normal ChangeId restoration.
+            _ => None,
         }
     }
 

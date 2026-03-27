@@ -101,6 +101,14 @@ pub const GLOBAL_TOGGLES: &[GlobalToggle] = &[
     },
 ];
 
+/// Where to jump the cursor after the next DAG refresh.
+pub enum JumpTarget {
+    /// Jump to the working copy commit (@).
+    WorkingCopy,
+    /// Jump to the commit that has this local bookmark.
+    Bookmark(String),
+}
+
 /// The current interaction mode.
 pub enum AppMode {
     /// Normal browsing.
@@ -242,6 +250,8 @@ pub struct App {
     pub search: Option<SearchState>,
     /// Last-used search scopes (persisted across restarts).
     pub search_scopes: SearchScopes,
+    /// Where to jump the cursor after the next DAG refresh.
+    pub jump_after_refresh: Option<JumpTarget>,
 }
 
 impl App {
@@ -281,6 +291,7 @@ impl App {
             visual_range: None,
             search: None,
             search_scopes: SearchScopes::DEFAULT,
+            jump_after_refresh: None,
         };
         app.rebuild_rows();
         app
@@ -1516,6 +1527,19 @@ impl App {
         }
     }
 
+    pub fn jump_to_bookmark(&mut self, name: &str) {
+        for (idx, entry) in self.entries.iter_enumerated() {
+            if entry.commit.bookmarks.iter().any(|b| b.name == name) {
+                if let Some(pos) = self.rows.iter().position(|r| {
+                    matches!(r, DisplayRow::CommitNode { entry_idx } if *entry_idx == idx)
+                }) {
+                    self.cursor = pos;
+                    return;
+                }
+            }
+        }
+    }
+
     /// Move cursor up by `n` selectable rows (commits or files).
     pub fn page_up(&mut self, n: usize) {
         for _ in 0..n {
@@ -1708,6 +1732,14 @@ impl App {
                 if let Some(row_idx) = restored {
                     self.cursor = row_idx;
                 }
+            }
+        }
+
+        // Apply post-refresh jump target if set.
+        if let Some(target) = self.jump_after_refresh.take() {
+            match target {
+                JumpTarget::WorkingCopy => self.jump_to_working_copy(),
+                JumpTarget::Bookmark(name) => self.jump_to_bookmark(&name),
             }
         }
 
