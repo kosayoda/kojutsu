@@ -1035,6 +1035,8 @@ fn render_commit_item<'a>(
 ) -> ListItem<'static> {
     let graph_color = if is_source {
         Color::Yellow
+    } else if c.has_conflict {
+        Color::Red
     } else {
         match c.glyph() {
             crate::dag::Glyph::WorkingCopy => Color::Green,
@@ -1287,6 +1289,12 @@ fn render_commit_item<'a>(
     ));
 
     if let Some(desc) = &c.description {
+        if c.has_conflict {
+            line2.push(Span::styled(
+                "(conflict) ",
+                Style::default().fg(Color::Red),
+            ));
+        }
         if c.is_empty {
             line2.push(Span::styled(
                 "(empty) ",
@@ -1316,6 +1324,12 @@ fn render_commit_item<'a>(
             line2.push(Span::styled(desc.clone(), desc_style));
         }
     } else {
+        if c.has_conflict {
+            line2.push(Span::styled(
+                "(conflict) ",
+                Style::default().fg(Color::Red),
+            ));
+        }
         let placeholder = if c.is_empty {
             "(empty)"
         } else {
@@ -1336,10 +1350,14 @@ fn render_file_line(
     sel_state: FileSelectionState,
     search: Option<&SearchRender<'_>>,
 ) -> ListItem<'static> {
-    let (marker, color) = match file.status {
-        FileStatus::Added => ("A", Color::Green),
-        FileStatus::Modified => ("M", Color::Cyan),
-        FileStatus::Deleted => ("D", Color::Red),
+    let (marker, color) = if file.has_conflict {
+        ("C", Color::Red)
+    } else {
+        match file.status {
+            FileStatus::Added => ("A", Color::Green),
+            FileStatus::Modified => ("M", Color::Cyan),
+            FileStatus::Deleted => ("D", Color::Red),
+        }
     };
 
     let fold_char = if is_unfolded { "▾" } else { "▸" };

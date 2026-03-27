@@ -178,6 +178,7 @@ pub enum EdgeKind {
 pub struct FileChange {
     pub path: String,
     pub status: FileStatus,
+    pub has_conflict: bool,
 }
 
 pub enum FileStatus {
