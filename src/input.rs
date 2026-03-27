@@ -380,6 +380,17 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.request_revset_load(None);
             Action::None
         }
+        AppAction::SwitchPreset(slot) => {
+            // Save current revset to current slot before switching.
+            app.revset_presets[app.active_preset] = Some(app.revset.clone());
+            app.active_preset = slot;
+            if let Some(revset) = &app.revset_presets[slot] {
+                Action::UpdateRevset(revset.clone())
+            } else {
+                app.request_revset_load(None);
+                Action::None
+            }
+        }
         AppAction::WorkspaceAdd => {
             app.mode = AppMode::TextInput {
                 prompt: "workspace path: ".to_string(),

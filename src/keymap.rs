@@ -117,6 +117,7 @@ pub enum AppAction {
     StartSearch,
     NextMatch,
     PrevMatch,
+    SwitchPreset(usize),
 }
 
 // ---------------------------------------------------------------------------
@@ -218,6 +219,12 @@ impl Default for Keymap {
             bind("@", AppAction::JumpToWorkingCopy, "jump to @", N),
             bind("0", AppAction::MoveToTop, "go to top", N),
             bind("$", AppAction::MoveToBottom, "go to bottom", N),
+            // Revset presets
+            bind("1", AppAction::SwitchPreset(0), "preset 1", G),
+            bind("2", AppAction::SwitchPreset(1), "preset 2", G),
+            bind("3", AppAction::SwitchPreset(2), "preset 3", G),
+            bind("4", AppAction::SwitchPreset(3), "preset 4", G),
+            bind("5", AppAction::SwitchPreset(4), "preset 5", G),
             // Fold / Select
             bind("tab", AppAction::ToggleFold, "toggle fold", N),
             bind("space", AppAction::ToggleSelect, "toggle select", N),

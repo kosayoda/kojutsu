@@ -32,6 +32,8 @@ pub struct PersistedState {
     pub ignore_working_copy: bool,
     pub debug: bool,
     pub search_scopes: u8,
+    pub revset_presets: Vec<Option<String>>,
+    pub active_preset: usize,
 }
 
 fn state_path(repo_path: &Path) -> std::path::PathBuf {
@@ -189,6 +191,10 @@ pub struct App {
     pub revset: String,
     /// Last failed revset attempt (pre-fills the input on retry).
     pub revset_draft: Option<String>,
+    /// 5 revset preset slots (auto-saved on change).
+    pub revset_presets: [Option<String>; 5],
+    /// Active preset slot (0-4).
+    pub active_preset: usize,
     pub repo_root: String,
     /// Current interaction mode.
     pub mode: AppMode,
@@ -251,6 +257,8 @@ impl App {
             last_header_height: 2,
             revset,
             revset_draft: None,
+            revset_presets: Default::default(),
+            active_preset: 0,
             repo_root,
             mode: AppMode::Normal,
             unfolded_commits: HashSet::new(),
@@ -458,6 +466,8 @@ impl App {
             ignore_working_copy: self.toggles.contains(CommandFlags::IGNORE_WORKING_COPY),
             debug: self.toggles.contains(CommandFlags::DEBUG),
             search_scopes: self.search_scopes.bits(),
+            revset_presets: self.revset_presets.to_vec(),
+            active_preset: self.active_preset,
         }
     }
 
@@ -471,6 +481,10 @@ impl App {
         if state.search_scopes != 0 {
             self.search_scopes = SearchScopes::from_bits_truncate(state.search_scopes);
         }
+        for (i, preset) in state.revset_presets.iter().enumerate().take(5) {
+            self.revset_presets[i] = preset.clone();
+        }
+        self.active_preset = state.active_preset.min(4);
     }
 
     /// Get the scroll offset from the list state.
@@ -1717,6 +1731,7 @@ impl App {
                 self.untracked_bookmarks = untracked_bookmarks;
                 self.tracked_bookmarks = tracked_bookmarks;
                 self.revset_state = Loadable::Loaded(());
+                self.revset_presets[self.active_preset] = Some(self.revset.clone());
                 self.apply_entries(entries);
             }
             RepoResult::RevsetFailed { revset, error } => {

@@ -276,7 +276,10 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("repository: ", Style::default().fg(Color::DarkGray)),
             Span::styled(&app.repo_root, Style::default().fg(Color::White)),
             Span::raw(HEADER_SEP),
-            Span::styled("revset: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("revset ({}/5): ", app.active_preset + 1),
+                Style::default().fg(Color::DarkGray),
+            ),
             Span::styled(&app.revset, Style::default().fg(Color::Cyan)),
         ])]
     } else {
@@ -286,7 +289,10 @@ fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
                 Span::styled(&app.repo_root, Style::default().fg(Color::White)),
             ]),
             Line::from(vec![
-                Span::styled("revset: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                format!("revset ({}/5): ", app.active_preset + 1),
+                Style::default().fg(Color::DarkGray),
+            ),
                 Span::styled(&app.revset, Style::default().fg(Color::Cyan)),
             ]),
         ]
