@@ -31,6 +31,7 @@ pub struct PersistedState {
     pub ignore_immutable: bool,
     pub ignore_working_copy: bool,
     pub debug: bool,
+    pub search_scopes: u8,
 }
 
 fn state_path(repo_path: &Path) -> std::path::PathBuf {
@@ -233,6 +234,8 @@ pub struct App {
     pub visual_range: Option<VisualRange>,
     /// Active search state. Search remains active after closing the input.
     pub search: Option<SearchState>,
+    /// Last-used search scopes (persisted across restarts).
+    pub search_scopes: SearchScopes,
 }
 
 impl App {
@@ -269,6 +272,7 @@ impl App {
             visual_anchor: None,
             visual_range: None,
             search: None,
+            search_scopes: SearchScopes::DEFAULT,
         };
         app.rebuild_rows();
         app
@@ -453,6 +457,7 @@ impl App {
             ignore_immutable: self.toggles.contains(CommandFlags::IGNORE_IMMUTABLE),
             ignore_working_copy: self.toggles.contains(CommandFlags::IGNORE_WORKING_COPY),
             debug: self.toggles.contains(CommandFlags::DEBUG),
+            search_scopes: self.search_scopes.bits(),
         }
     }
 
@@ -463,6 +468,9 @@ impl App {
         self.toggles
             .set(CommandFlags::IGNORE_WORKING_COPY, state.ignore_working_copy);
         self.toggles.set(CommandFlags::DEBUG, state.debug);
+        if state.search_scopes != 0 {
+            self.search_scopes = SearchScopes::from_bits_truncate(state.search_scopes);
+        }
     }
 
     /// Get the scroll offset from the list state.
@@ -927,7 +935,11 @@ impl App {
                 search.restore_cursor = restore_cursor;
                 search.focus = SearchFocus::Query;
             }
-            None => self.search = Some(SearchState::new(restore_cursor)),
+            None => {
+                let mut s = SearchState::new(restore_cursor);
+                s.scopes = self.search_scopes;
+                self.search = Some(s);
+            }
         }
         self.recompute_search_matches();
         let old_mode = std::mem::replace(&mut self.mode, AppMode::SearchInput);
@@ -941,7 +953,14 @@ impl App {
         self.mode = self.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
     }
 
+    fn save_search_scopes(&mut self) {
+        if let Some(search) = &self.search {
+            self.search_scopes = search.scopes;
+        }
+    }
+
     pub fn cancel_search(&mut self) {
+        self.save_search_scopes();
         if let Some(search) = &self.search {
             self.cursor = search.restore_cursor;
         }
@@ -954,11 +973,13 @@ impl App {
     /// Used from plain normal mode, where the current cursor position is the
     /// user's intentional location after navigating matches.
     pub fn clear_search(&mut self) {
+        self.save_search_scopes();
         self.search = None;
         self.restore_mode();
     }
 
     pub fn confirm_search(&mut self) {
+        self.save_search_scopes();
         let clear = self
             .search
             .as_ref()
