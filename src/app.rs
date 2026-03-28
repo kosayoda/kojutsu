@@ -1,7 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use compact_str::format_compact;
 use ratatui::widgets::ListState;
 use tui_input::Input;
 
@@ -383,14 +382,7 @@ impl App {
     /// parent commit.
     pub fn selected_change_id(&self) -> Option<ChangeId> {
         let entry_idx = self.selected_entry_idx()?;
-        let commit = &self.entries[entry_idx].commit;
-        let id = &commit.change_id;
-        let prefix = &id.display[..id.prefix_len.min(id.display.len())];
-        if let Some(suffix) = commit.change_id_suffix {
-            Some(ChangeId::new(format_compact!("{prefix}/{suffix}")))
-        } else {
-            Some(ChangeId::new(prefix))
-        }
+        Some(self.entries[entry_idx].commit.unique_prefix())
     }
 
     /// Get the bookmarks of the commit the cursor is on.
@@ -410,14 +402,14 @@ impl App {
     }
 
     fn change_id(&self, entry_idx: EntryIdx) -> ChangeId {
-        self.entries[entry_idx].commit.change_id.change_id()
+        self.entries[entry_idx].commit.unique_change_id()
     }
 
     fn change_id_for_commit_key(&self, commit_id: &CommitId) -> Option<ChangeId> {
         self.entries
-            .iter()
-            .find(|entry| entry.commit.graph_id == *commit_id)
-            .map(|entry| entry.commit.change_id.change_id())
+            .iter_enumerated()
+            .find(|(_, entry)| entry.commit.graph_id == *commit_id)
+            .map(|(idx, _)| self.change_id(idx))
     }
 
     fn file_cache_key(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<FileDiffCacheKey> {

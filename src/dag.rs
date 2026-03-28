@@ -1,3 +1,4 @@
+use compact_str::format_compact;
 use jiff::Timestamp;
 
 use crate::types::{ChangeId, CommitId};
@@ -141,6 +142,27 @@ impl CommitInfo {
             Glyph::Immutable
         } else {
             Glyph::Normal
+        }
+    }
+
+    /// A ChangeId that's unique even among divergent commits (includes suffix).
+    /// Uses the full display string as the base.
+    pub fn unique_change_id(&self) -> ChangeId {
+        match self.change_id_suffix {
+            Some(suffix) => {
+                ChangeId::new(format_compact!("{}/{suffix}", self.change_id.display))
+            }
+            None => self.change_id.change_id(),
+        }
+    }
+
+    /// Short unique prefix with suffix if divergent. Used for jj CLI arguments.
+    pub fn unique_prefix(&self) -> ChangeId {
+        let prefix =
+            &self.change_id.display[..self.change_id.prefix_len.min(self.change_id.display.len())];
+        match self.change_id_suffix {
+            Some(suffix) => ChangeId::new(format_compact!("{prefix}/{suffix}")),
+            None => ChangeId::new(prefix),
         }
     }
 }

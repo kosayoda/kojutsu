@@ -389,14 +389,8 @@ fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     let gl = &app.graph[*entry_idx];
                     let graph_node = gl.node.as_str();
                     let graph_cont = gl.cont.as_str();
-                    let is_source = target_select_source.is_some_and(|src| {
-                        let id = &entry.commit.change_id;
-                        let prefix = &id.display[..id.prefix_len.min(id.display.len())];
-                        match entry.commit.change_id_suffix {
-                            Some(suffix) => src == format!("{prefix}/{suffix}"),
-                            None => src == prefix,
-                        }
-                    });
+                    let is_source = target_select_source
+                        .is_some_and(|src| src == entry.commit.unique_prefix().as_str());
                     render_commit_item(
                         graph_node,
                         graph_cont,
