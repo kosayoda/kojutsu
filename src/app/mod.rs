@@ -107,6 +107,28 @@ pub const GLOBAL_TOGGLES: &[GlobalToggle] = &[
     },
 ];
 
+/// Active visual selection mode.
+pub enum VisualMode {
+    /// Visual selection of diff lines within one file.
+    Lines {
+        /// Row index where `v` was pressed.
+        anchor: usize,
+    },
+    /// Visual selection of commits along a branch.
+    Commits {
+        /// Entry where `v` was pressed.
+        anchor: EntryIdx,
+        /// Ordered path from newest to oldest along Direct edges (inclusive).
+        path: Vec<EntryIdx>,
+    },
+}
+
+/// Persistent visual range (survives exiting visual mode with `v`).
+pub enum PersistentVisualRange {
+    Lines(VisualRange),
+    Commits(Vec<EntryIdx>),
+}
+
 /// Where to jump the cursor after the next DAG refresh.
 pub enum JumpTarget {
     /// Jump to the working copy commit (@).
@@ -283,12 +305,11 @@ pub struct App {
     /// Current selection context: implicit commit under cursor, or explicit
     /// homogeneous file/line selection.
     pub selection: SelectionContext,
-    /// Visual mode anchor row index. When `Some`, visual selection is actively
-    /// being extended. Only valid on DiffLine rows.
-    pub visual_anchor: Option<usize>,
+    /// Active visual selection mode (line or commit).
+    pub visual: Option<VisualMode>,
     /// Persistent visual range (survives exiting visual mode with `v`).
-    /// Cleared on file collapse, refresh, or starting a new visual selection.
-    pub visual_range: Option<VisualRange>,
+    /// Cleared on refresh, file collapse, or starting a new visual selection.
+    pub visual_persistent: Option<PersistentVisualRange>,
     /// Active search state. Search remains active after closing the input.
     pub search: Option<SearchState>,
     /// Last-used search scopes (persisted across restarts).
@@ -330,8 +351,8 @@ impl App {
             pre_overlay_mode: None,
             show_line_numbers: false,
             selection: SelectionContext::new(),
-            visual_anchor: None,
-            visual_range: None,
+            visual: None,
+            visual_persistent: None,
             search: None,
             search_scopes: SearchScopes::DEFAULT,
             jump_after_refresh: None,

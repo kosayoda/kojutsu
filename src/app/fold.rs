@@ -131,19 +131,19 @@ impl App {
 
         if currently_unfolded {
             self.unfolded_files.remove(&fold_key);
-            // Clear visual range if it's for this file.
-            if let Some(vr) = &self.visual_range {
+            // Clear visual state if it's for this file.
+            if let Some(super::PersistentVisualRange::Lines(vr)) = &self.visual_persistent {
                 let cid = self.change_id(entry_idx);
                 if let Some(file) = self
                     .files_for_entry(entry_idx)
                     .and_then(|f| f.get(file_idx.raw()))
                 {
                     if cid == vr.change_id && file.path == vr.path {
-                        self.visual_range = None;
+                        self.visual_persistent = None;
                     }
                 }
             }
-            self.visual_anchor = None;
+            self.visual = None;
         } else {
             let cache_key = self.file_cache_key(entry_idx, file_idx);
             let should_request = cache_key

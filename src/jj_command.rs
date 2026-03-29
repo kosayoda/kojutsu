@@ -20,7 +20,7 @@ pub enum ChangeSelection {
 #[derive(Debug, Clone)]
 pub enum JJCommand {
     Abandon {
-        change_id: ChangeId,
+        change_ids: Vec<ChangeId>,
         flags: CommandFlags,
     },
     /// Describe with an inline message (non-interactive).
@@ -249,7 +249,7 @@ impl JJCommand {
     pub fn args(&self) -> Vec<String> {
         let flags = self.flags();
         let mut args = match self {
-            JJCommand::Abandon { change_id, .. } => {
+            JJCommand::Abandon { change_ids, .. } => {
                 let mut args = vec!["abandon".to_string()];
                 push_flags(
                     &mut args,
@@ -259,7 +259,9 @@ impl JJCommand {
                         (CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
                     ],
                 );
-                args.push(change_id.to_string());
+                for id in change_ids {
+                    args.push(id.to_string());
+                }
                 args
             }
             JJCommand::Describe {

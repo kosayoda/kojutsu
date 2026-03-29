@@ -42,6 +42,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     let graph_cont = gl.cont.as_str();
                     let is_source = target_select_source
                         .is_some_and(|src| src == entry.commit.unique_prefix().as_str());
+                    let is_selected = app.is_commit_selected(*entry_idx);
+                    let in_visual = app.is_in_visual_commit_range(*entry_idx);
                     render_commit_item(
                         graph_node,
                         graph_cont,
@@ -50,6 +52,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                             .then(|| app.commit_stats(*entry_idx))
                             .flatten(),
                         is_source,
+                        is_selected,
+                        in_visual,
                         row_search.as_ref(),
                     )
                 }
@@ -68,6 +72,19 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                             .map(|s| s.row_state)
                             .unwrap_or(SearchRowState::None),
                     )];
+                    // Continue visual + selection bars through graph links.
+                    let is_selected = app.is_commit_selected(*entry_idx);
+                    let in_visual = app.is_in_visual_commit_range(*entry_idx);
+                    spans.push(if in_visual {
+                        Span::styled("│", Style::default().fg(Color::Cyan))
+                    } else {
+                        Span::raw(" ")
+                    });
+                    spans.push(if is_selected {
+                        Span::styled("▎", Style::default().fg(Color::Yellow))
+                    } else {
+                        Span::raw(" ")
+                    });
                     spans.push(Span::styled(
                         graph_str.to_string(),
                         Style::default().fg(Color::DarkGray),
@@ -134,6 +151,8 @@ fn render_commit_item<'a>(
     c: &'a CommitInfo,
     line_stats: Option<LineStats>,
     is_source: bool,
+    is_selected: bool,
+    in_visual: bool,
     search: Option<&SearchRender<'_>>,
 ) -> ListItem<'static> {
     let graph_color = if is_source {
@@ -156,9 +175,18 @@ fn render_commit_item<'a>(
     let mut line1: Vec<Span<'static>> = Vec::new();
     line1.push(search_gutter(search_state));
 
-    // Source marker for target selection mode.
-    if is_source {
-        line1.push(Span::styled("► ", Style::default().fg(Color::Yellow)));
+    // Visual range column + selection column + spacer.
+    line1.push(if in_visual {
+        Span::styled("│", Style::default().fg(Color::Cyan))
+    } else {
+        Span::raw(" ")
+    });
+    if is_selected {
+        line1.push(Span::styled("▎", Style::default().fg(Color::Yellow)));
+    } else if is_source {
+        line1.push(Span::styled("►", Style::default().fg(Color::Yellow)));
+    } else {
+        line1.push(Span::raw(" "));
     }
 
     // Graph prefix (properly padded by the renderer).
@@ -384,6 +412,17 @@ fn render_commit_item<'a>(
     // --- Line 2: graph_cont  description ---
     let mut line2: Vec<Span<'static>> = Vec::new();
     line2.push(search_gutter(search_state));
+    // Continue visual + selection bars on line 2.
+    line2.push(if in_visual {
+        Span::styled("│", Style::default().fg(Color::Cyan))
+    } else {
+        Span::raw(" ")
+    });
+    line2.push(if is_selected {
+        Span::styled("▎", Style::default().fg(Color::Yellow))
+    } else {
+        Span::raw(" ")
+    });
 
     // Graph continuation prefix (properly padded by the renderer).
     line2.push(Span::styled(
@@ -460,7 +499,7 @@ fn render_file_line(
     let fold_char = if is_unfolded { "▾" } else { "▸" };
     let select_char = match sel_state {
         FileSelectionState::Full => "●",
-        FileSelectionState::Partial => "◐",
+        FileSelectionState::Partial => "○",
         FileSelectionState::None => " ",
     };
 
@@ -520,14 +559,14 @@ fn render_diff_line(
     let mut spans = vec![search_gutter(
         search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
     )];
-    // Left margin: visual range bar │ + selection indicator ●.
+    // Left margin: visual range bar │ + selection indicator ▎.
     let is_selectable =
         diff_line.kind == DiffLineKind::Added || diff_line.kind == DiffLineKind::Removed;
     if is_selectable {
         let bar = if in_visual { "│" } else { " " };
-        let dot = if is_selected { "●" } else { " " };
+        let sel = if is_selected { "▎" } else { " " };
         spans.push(Span::styled(bar, Style::default().fg(Color::Cyan)));
-        spans.push(Span::styled(dot, Style::default().fg(Color::Yellow)));
+        spans.push(Span::styled(sel, Style::default().fg(Color::Yellow)));
     } else {
         spans.push(Span::raw("  "));
     }

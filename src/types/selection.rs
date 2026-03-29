@@ -34,6 +34,7 @@ pub enum Selection {
 }
 
 pub struct SelectionSummary {
+    pub commit_count: usize,
     pub file_count: usize,
     pub full_file_count: usize,
     pub line_count: usize,
@@ -43,6 +44,7 @@ pub struct SelectionSummary {
 impl SelectionSummary {
     pub fn empty() -> Self {
         Self {
+            commit_count: 0,
             file_count: 0,
             full_file_count: 0,
             line_count: 0,
@@ -59,6 +61,11 @@ impl SelectionSummary {
     }
 
     fn format_summary(&self, suffix: &str) -> Option<String> {
+        if self.commit_count > 0 {
+            let noun = pluralize!(self.commit_count, "commit", "commits");
+            return Some(format!("{} {}{suffix}", self.commit_count, noun));
+        }
+
         let file_noun = pluralize!(self.full_file_count, "file", "files");
         let line_noun = pluralize!(self.line_count, "line", "lines");
 
@@ -205,21 +212,26 @@ impl SelectionContext {
         let mut files = std::collections::HashSet::new();
         let mut full_files = std::collections::HashSet::new();
         let mut line_count = 0usize;
+        let mut commit_count = 0usize;
         let mut has_full_files = false;
 
         for selection in &self.explicit {
-            files.insert(selection.path().to_string());
             match selection {
-                Selection::Commit(_) => {}
+                Selection::Commit(_) => commit_count += 1,
                 Selection::File(file_ref) => {
+                    files.insert(file_ref.path.clone());
                     has_full_files = true;
                     full_files.insert(file_ref.path.clone());
                 }
-                Selection::Line { .. } => line_count += 1,
+                Selection::Line { file_ref, .. } => {
+                    files.insert(file_ref.path.clone());
+                    line_count += 1;
+                }
             }
         }
 
         self.summary = SelectionSummary {
+            commit_count,
             file_count: files.len(),
             full_file_count: full_files.len(),
             line_count,

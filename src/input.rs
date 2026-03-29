@@ -207,7 +207,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         return Action::None;
     }
 
-    // Visual mode intercepts: constrain movement and handle space/v/esc.
+    // Visual mode intercepts (line or commit): constrain movement, handle v/space/esc.
     if app.in_visual_mode() {
         match action {
             AppAction::MoveDown => {
@@ -219,13 +219,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             }
             AppAction::ToggleSelect => {
-                // space while actively selecting: toggle the range and persist.
-                app.toggle_visual_selection();
+                app.persist_visual_selection();
                 return Action::None;
             }
             AppAction::EnterVisualMode => {
-                // v again: exit visual mode, persist the range.
-                app.toggle_visual_mode();
+                app.exit_visual_mode();
                 return Action::None;
             }
             AppAction::Quit => {
@@ -233,7 +231,6 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::Quit;
             }
             _ => {
-                // Any other action cancels visual mode (no persistence).
                 app.cancel_visual_mode();
             }
         }
@@ -298,10 +295,9 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             Action::None
         }
         AppAction::ToggleSelect => {
-            // If cursor is on a line within a persistent visual range,
-            // toggle the entire range.
+            // If cursor is in a persistent visual range, toggle it into selections.
             if app.cursor_in_persistent_visual_range() {
-                app.toggle_visual_selection();
+                app.toggle_persistent_visual_selection();
                 return Action::None;
             }
 
@@ -357,7 +353,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             Action::None
         }
         AppAction::EnterVisualMode => {
-            app.toggle_visual_mode();
+            app.enter_visual_mode();
             Action::None
         }
         AppAction::StartSearch => {
@@ -434,8 +430,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.mode = AppMode::Help;
             Action::None
         }
-        AppAction::Abandon => make_command(app, |id| JJCommand::Abandon {
-            change_id: id,
+        AppAction::Abandon => make_multi_command(app, |ids| JJCommand::Abandon {
+            change_ids: ids,
             flags,
         }),
         AppAction::Absorb => make_command(app, |id| JJCommand::Absorb {
@@ -644,8 +640,23 @@ fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action {
     }
 }
 
-/// Helper: build a command action from the selected change ID.
+/// Helper: build a command from multiple selected change IDs (or cursor fallback).
+fn make_multi_command(app: &App, build: impl FnOnce(Vec<ChangeId>) -> JJCommand) -> Action {
+    let ids = app.selected_change_ids();
+    if ids.is_empty() {
+        return Action::None;
+    }
+    run_cmd(build(ids))
+}
+
+/// Helper: build a single-commit command from the cursor change ID.
+///
+/// Returns `Action::None` if multi-commit selection is active (single-commit
+/// commands should not silently act on just the cursor).
 fn make_command(app: &App, build: impl FnOnce(ChangeId) -> JJCommand) -> Action {
+    if app.selection_kind() == SelectionKind::Commit && app.selection_active() {
+        return Action::None;
+    }
     let Some(change_id) = app.selected_change_id() else {
         return Action::None;
     };

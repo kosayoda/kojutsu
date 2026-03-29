@@ -43,12 +43,43 @@ impl App {
         self.selection.toggle(SelectionKind::File, sel);
     }
 
-    /// Toggle selection for all files in a commit (select all / deselect all).
-    /// Only works when the commit is unfolded.
+    /// Toggle commit selection. Behavior depends on fold state:
+    /// - Folded: toggle commit-level selection (multi-commit).
+    /// - Unfolded: toggle all files in commit (select all / deselect all).
     pub fn toggle_commit_selection(&mut self, entry_idx: EntryIdx) {
-        if !self.is_commit_unfolded(entry_idx) {
-            return;
+        if self.is_commit_unfolded(entry_idx) {
+            self.toggle_commit_file_selection(entry_idx);
+        } else {
+            let change_id = self.entries[entry_idx].commit.change_id.change_id();
+            self.selection.ensure_kind(SelectionKind::Commit);
+            self.selection
+                .toggle(SelectionKind::Commit, Selection::Commit(change_id));
         }
+    }
+
+    /// Check if a commit is in the explicit commit selection set.
+    pub fn is_commit_selected(&self, entry_idx: EntryIdx) -> bool {
+        let change_id = self.entries[entry_idx].commit.change_id.change_id();
+        self.selection.contains(&Selection::Commit(change_id))
+    }
+
+    /// Get the change IDs of explicitly selected commits, or fall back to cursor.
+    pub fn selected_change_ids(&self) -> Vec<ChangeId> {
+        if self.selection_kind() == SelectionKind::Commit && self.selection_active() {
+            self.selection
+                .iter()
+                .filter_map(|s| match s {
+                    Selection::Commit(id) => Some(id.clone()),
+                    _ => None,
+                })
+                .collect()
+        } else {
+            self.selected_change_id().into_iter().collect()
+        }
+    }
+
+    /// Toggle all files in an unfolded commit (select all / deselect all).
+    fn toggle_commit_file_selection(&mut self, entry_idx: EntryIdx) {
         if self.files_for_entry(entry_idx).is_none() {
             return;
         }

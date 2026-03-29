@@ -1,59 +1,219 @@
-use super::App;
-use crate::dag::DiffLineKind;
+use super::{App, PersistentVisualRange, VisualMode};
+use crate::dag::{DiffLineKind, EdgeKind};
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::types::{
     ChangeId, DisplayRow, FileRef, Selection, SelectionKind, VisualRange,
 };
 
 impl App {
-    /// Toggle visual mode.
-    ///
-    /// - If not in visual mode: start visual selection on current line (must be
-    ///   an Added/Removed diff line). Clears any persistent visual range.
-    /// - If in visual mode: exit and persist the current range as a `VisualRange`.
-    pub fn toggle_visual_mode(&mut self) {
-        if self.visual_anchor.is_some() {
-            // Exit visual mode → persist the range.
-            self.persist_visual_range();
-            self.visual_anchor = None;
-        } else if let Some(DisplayRow::DiffLine {
-            entry_idx,
-            file_idx,
-            line_idx,
-        }) = self.rows.get(self.cursor)
-        {
-            let Some(diff_lines) = self.diff_lines(*entry_idx, *file_idx) else {
-                return;
-            };
-            let dl = &diff_lines[line_idx.raw()];
-            if dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed {
-                self.visual_range = None; // clear any old persistent range
-                self.visual_anchor = Some(self.cursor);
+    // -----------------------------------------------------------------------
+    // Shared lifecycle
+    // -----------------------------------------------------------------------
+
+    /// Whether any visual mode is active (line or commit).
+    pub fn in_visual_mode(&self) -> bool {
+        self.visual.is_some()
+    }
+
+    /// Enter visual mode based on the current cursor row type.
+    /// CommitNode → commit visual mode, DiffLine → line visual mode.
+    pub fn enter_visual_mode(&mut self) {
+        match self.rows.get(self.cursor) {
+            Some(DisplayRow::CommitNode { entry_idx }) => {
+                let entry_idx = *entry_idx;
+                self.visual = Some(VisualMode::Commits {
+                    anchor: entry_idx,
+                    path: vec![entry_idx],
+                });
+                self.visual_persistent = None;
             }
+            Some(DisplayRow::DiffLine {
+                entry_idx,
+                file_idx,
+                line_idx,
+            }) => {
+                let Some(diff_lines) = self.diff_lines(*entry_idx, *file_idx) else {
+                    return;
+                };
+                let dl = &diff_lines[line_idx.raw()];
+                if dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed {
+                    self.visual = Some(VisualMode::Lines {
+                        anchor: self.cursor,
+                    });
+                    self.visual_persistent = None;
+                }
+            }
+            _ => {}
         }
     }
 
-    /// Exit visual mode, discarding the range (no persistence).
+    /// Exit visual mode with `v`: persist the range but don't create selections.
+    pub fn exit_visual_mode(&mut self) {
+        match self.visual.take() {
+            Some(VisualMode::Lines { anchor }) => {
+                self.visual_persistent = self.compute_line_range(anchor);
+            }
+            Some(VisualMode::Commits { path, .. }) => {
+                if !path.is_empty() {
+                    self.visual_persistent = Some(PersistentVisualRange::Commits(path));
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// Cancel visual mode without persisting (Esc or other action).
     pub fn cancel_visual_mode(&mut self) {
-        self.visual_anchor = None;
+        self.visual = None;
     }
 
-    /// Whether visual mode is actively selecting (anchor set).
-    pub fn in_visual_mode(&self) -> bool {
-        self.visual_anchor.is_some()
+    /// Space in visual mode: convert range to explicit selections and exit.
+    pub fn persist_visual_selection(&mut self) {
+        match self.visual.take() {
+            Some(VisualMode::Lines { anchor }) => {
+                self.visual_persistent = self.compute_line_range(anchor);
+                self.toggle_line_visual_selection();
+            }
+            Some(VisualMode::Commits { path, .. }) => {
+                self.visual_persistent = Some(PersistentVisualRange::Commits(path));
+                self.toggle_commit_visual_selection();
+            }
+            None => {}
+        }
     }
 
-    /// Get the active visual range as (lo, hi) row indices (inclusive).
-    /// Only valid while `in_visual_mode()` is true.
-    fn active_visual_row_range(&self) -> Option<(usize, usize)> {
-        self.visual_anchor
-            .map(|anchor| (anchor.min(self.cursor), anchor.max(self.cursor)))
+    /// Check if the cursor is in a persistent visual range (for space toggle).
+    pub fn cursor_in_persistent_visual_range(&self) -> bool {
+        match &self.visual_persistent {
+            Some(PersistentVisualRange::Lines(vr)) => {
+                if let Some(DisplayRow::DiffLine {
+                    entry_idx,
+                    file_idx,
+                    line_idx,
+                }) = self.rows.get(self.cursor)
+                {
+                    let cid = self.entries[*entry_idx].commit.change_id.change_id();
+                    if let Some(file) = self
+                        .files_for_entry(*entry_idx)
+                        .and_then(|f| f.get(file_idx.raw()))
+                    {
+                        return cid == vr.change_id
+                            && file.path == vr.path
+                            && *line_idx >= vr.start_line
+                            && *line_idx <= vr.end_line;
+                    }
+                }
+                false
+            }
+            Some(PersistentVisualRange::Commits(range)) => {
+                match self.rows.get(self.cursor) {
+                    Some(DisplayRow::CommitNode { entry_idx }) => range.contains(entry_idx),
+                    _ => false,
+                }
+            }
+            None => false,
+        }
     }
 
-    /// Get the (entry_idx, file_idx) of the visual mode anchor.
-    fn visual_file(&self) -> Option<(EntryIdx, FileIdx)> {
-        let anchor = self.visual_anchor?;
-        match self.rows.get(anchor) {
+    /// Space on a persistent visual range: toggle into/out of explicit selections.
+    pub fn toggle_persistent_visual_selection(&mut self) {
+        match &self.visual_persistent {
+            Some(PersistentVisualRange::Lines(_)) => {
+                self.toggle_line_visual_selection();
+            }
+            Some(PersistentVisualRange::Commits(_)) => {
+                self.toggle_commit_visual_selection();
+            }
+            None => {}
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Movement (dispatches based on variant)
+    // -----------------------------------------------------------------------
+
+    pub fn visual_move_down(&mut self) {
+        match &self.visual {
+            Some(VisualMode::Lines { .. }) => self.line_visual_move_down(),
+            Some(VisualMode::Commits { .. }) => self.commit_visual_move_down(),
+            None => {}
+        }
+    }
+
+    pub fn visual_move_up(&mut self) {
+        match &self.visual {
+            Some(VisualMode::Lines { .. }) => self.line_visual_move_up(),
+            Some(VisualMode::Commits { .. }) => self.commit_visual_move_up(),
+            None => {}
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Range queries (for rendering)
+    // -----------------------------------------------------------------------
+
+    /// Check if a diff line is in the visual range (active or persistent).
+    pub fn is_in_visual_range(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        line_idx: DiffLineIdx,
+    ) -> bool {
+        // Check active line visual range.
+        if let Some(VisualMode::Lines { anchor }) = &self.visual {
+            let lo = (*anchor).min(self.cursor);
+            let hi = (*anchor).max(self.cursor);
+            if let Some(row_idx) = self.rows.iter().position(|r| {
+                matches!(r, DisplayRow::DiffLine { entry_idx: e, file_idx: f, line_idx: l }
+                    if *e == entry_idx && *f == file_idx && *l == line_idx)
+            }) {
+                return row_idx >= lo && row_idx <= hi;
+            }
+        }
+
+        // Check persistent line range.
+        if let Some(PersistentVisualRange::Lines(vr)) = &self.visual_persistent {
+            let cid = self.entries[entry_idx].commit.change_id.change_id();
+            if let Some(files) = self.files_for_entry(entry_idx) {
+                if let Some(file) = files.get(file_idx.raw()) {
+                    if cid == vr.change_id
+                        && file.path == vr.path
+                        && line_idx >= vr.start_line
+                        && line_idx <= vr.end_line
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Check if a commit is in the visual range (active or persistent).
+    pub fn is_in_visual_commit_range(&self, entry_idx: EntryIdx) -> bool {
+        if let Some(VisualMode::Commits { path, .. }) = &self.visual {
+            if path.contains(&entry_idx) {
+                return true;
+            }
+        }
+        if let Some(PersistentVisualRange::Commits(range)) = &self.visual_persistent {
+            if range.contains(&entry_idx) {
+                return true;
+            }
+        }
+        false
+    }
+
+    // -----------------------------------------------------------------------
+    // Line visual mode internals
+    // -----------------------------------------------------------------------
+
+    fn visual_line_file(&self) -> Option<(EntryIdx, FileIdx)> {
+        let Some(VisualMode::Lines { anchor }) = &self.visual else {
+            return None;
+        };
+        match self.rows.get(*anchor) {
             Some(DisplayRow::DiffLine {
                 entry_idx,
                 file_idx,
@@ -63,13 +223,55 @@ impl App {
         }
     }
 
-    /// Persist the current active visual range as a `VisualRange`.
-    fn persist_visual_range(&mut self) {
-        let Some((lo, hi)) = self.active_visual_row_range() else {
+    fn line_visual_move_down(&mut self) {
+        let Some((anchor_entry, anchor_file)) = self.visual_line_file() else {
             return;
         };
+        for j in (self.cursor + 1)..self.rows.len() {
+            if matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+                continue;
+            }
+            match &self.rows[j] {
+                DisplayRow::DiffLine {
+                    entry_idx,
+                    file_idx,
+                    ..
+                } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
+                    self.cursor = j;
+                    return;
+                }
+                _ => return,
+            }
+        }
+    }
 
-        // Find the DiffLineIdx bounds from the row range.
+    fn line_visual_move_up(&mut self) {
+        let Some((anchor_entry, anchor_file)) = self.visual_line_file() else {
+            return;
+        };
+        for j in (0..self.cursor).rev() {
+            if matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+                continue;
+            }
+            match &self.rows[j] {
+                DisplayRow::DiffLine {
+                    entry_idx,
+                    file_idx,
+                    ..
+                } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
+                    self.cursor = j;
+                    return;
+                }
+                _ => return,
+            }
+        }
+    }
+
+    /// Compute the persistent line range from the given anchor and current cursor.
+    fn compute_line_range(&self, anchor: usize) -> Option<PersistentVisualRange> {
+        let lo = anchor.min(self.cursor);
+        let hi = anchor.max(self.cursor);
+
         let mut start_line = None;
         let mut end_line = None;
         let mut change_id = None;
@@ -94,141 +296,26 @@ impl App {
             }
         }
 
-        if let (Some(start), Some(end), Some(change_id), Some(p)) =
-            (start_line, end_line, change_id, path)
-        {
-            self.visual_range = Some(VisualRange {
-                change_id,
-                path: p,
-                start_line: start,
-                end_line: end,
-            });
+        match (start_line, end_line, change_id, path) {
+            (Some(start), Some(end), Some(change_id), Some(p)) => {
+                Some(PersistentVisualRange::Lines(VisualRange {
+                    change_id,
+                    path: p,
+                    start_line: start,
+                    end_line: end,
+                }))
+            }
+            _ => None,
         }
     }
 
-    /// Check if a diff line is within the visual range (active or persistent).
-    pub fn is_in_visual_range(
-        &self,
-        entry_idx: EntryIdx,
-        file_idx: FileIdx,
-        line_idx: DiffLineIdx,
-    ) -> bool {
-        // Check active visual range first (while selecting).
-        if let Some((lo, hi)) = self.active_visual_row_range() {
-            // Check by row index (the cursor range).
-            if let Some(row_idx) = self.rows.iter().position(|r| {
-                matches!(r, DisplayRow::DiffLine { entry_idx: e, file_idx: f, line_idx: l }
-                    if *e == entry_idx && *f == file_idx && *l == line_idx)
-            }) {
-                return row_idx >= lo && row_idx <= hi;
-            }
-        }
-
-        // Check persistent visual range.
-        if let Some(vr) = &self.visual_range {
-            let cid = self.entries[entry_idx].commit.change_id.change_id();
-            if let Some(files) = self.files_for_entry(entry_idx) {
-                if let Some(file) = files.get(file_idx.raw()) {
-                    if cid == vr.change_id
-                        && file.path == vr.path
-                        && line_idx >= vr.start_line
-                        && line_idx <= vr.end_line
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Check if the cursor is on a line within the persistent visual range.
-    pub fn cursor_in_persistent_visual_range(&self) -> bool {
-        let Some(vr) = &self.visual_range else {
-            return false;
-        };
-        if let Some(DisplayRow::DiffLine {
-            entry_idx,
-            file_idx,
-            line_idx,
-        }) = self.rows.get(self.cursor)
-        {
-            let cid = self.entries[*entry_idx].commit.change_id.change_id();
-            if let Some(file) = self
-                .files_for_entry(*entry_idx)
-                .and_then(|f| f.get(file_idx.raw()))
-            {
-                return cid == vr.change_id
-                    && file.path == vr.path
-                    && *line_idx >= vr.start_line
-                    && *line_idx <= vr.end_line;
-            }
-        }
-        false
-    }
-
-    /// Move cursor down, constrained to the same file's diff lines (visual mode).
-    pub fn visual_move_down(&mut self) {
-        let Some((anchor_entry, anchor_file)) = self.visual_file() else {
+    /// Toggle all selectable lines in a persistent visual line range.
+    fn toggle_line_visual_selection(&mut self) {
+        let Some(PersistentVisualRange::Lines(vr)) = &self.visual_persistent else {
             return;
         };
-        for j in (self.cursor + 1)..self.rows.len() {
-            if matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
-                continue;
-            }
-            match &self.rows[j] {
-                DisplayRow::DiffLine {
-                    entry_idx,
-                    file_idx,
-                    ..
-                } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
-                    self.cursor = j;
-                    return;
-                }
-                _ => return, // hit file/commit boundary, stop
-            }
-        }
-    }
+        let vr = vr.clone();
 
-    /// Move cursor up, constrained to the same file's diff lines (visual mode).
-    pub fn visual_move_up(&mut self) {
-        let Some((anchor_entry, anchor_file)) = self.visual_file() else {
-            return;
-        };
-        for j in (0..self.cursor).rev() {
-            if matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
-                continue;
-            }
-            match &self.rows[j] {
-                DisplayRow::DiffLine {
-                    entry_idx,
-                    file_idx,
-                    ..
-                } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
-                    self.cursor = j;
-                    return;
-                }
-                _ => return, // hit file/commit boundary, stop
-            }
-        }
-    }
-
-    /// Toggle all selectable lines in a visual range (active or persistent).
-    /// If active visual mode, persists the range first.
-    /// Clears the persistent range after toggling.
-    pub fn toggle_visual_selection(&mut self) {
-        // If actively selecting, persist first.
-        if self.visual_anchor.is_some() {
-            self.persist_visual_range();
-            self.visual_anchor = None;
-        }
-
-        let Some(vr) = self.visual_range.clone() else {
-            return;
-        };
-
-        // Collect line data from the persistent range before mutating.
         let line_data: Vec<(ChangeId, String, Option<u32>, Option<u32>)> = self
             .diff_states
             .iter()
@@ -266,15 +353,12 @@ impl App {
             return;
         }
 
-        // If all are already selected, deselect. Otherwise select.
         let all_selected = line_data.iter().all(|(cid, path, ol, nl)| {
-            let file_ref = FileRef {
-                change_id: cid.clone(),
-                path: path.clone(),
-            };
-
             self.selection.contains(&Selection::Line {
-                file_ref,
+                file_ref: FileRef {
+                    change_id: cid.clone(),
+                    path: path.clone(),
+                },
                 old_line: *ol,
                 new_line: *nl,
             })
@@ -313,6 +397,149 @@ impl App {
                     },
                 );
             }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Commit visual mode internals
+    // -----------------------------------------------------------------------
+
+    fn commit_visual_move_down(&mut self) {
+        let Some(VisualMode::Commits { anchor, path }) = &self.visual else {
+            return;
+        };
+        let anchor = *anchor;
+
+        // If anchor is at the bottom (last), cursor is at top — shrink from top.
+        if path.len() > 1 && path.last() == Some(&anchor) {
+            let Some(VisualMode::Commits { path, .. }) = &mut self.visual else {
+                return;
+            };
+            path.remove(0);
+            let target = path[0];
+            self.jump_cursor_to_commit(target);
+            return;
+        }
+
+        // Otherwise extend at the bottom: follow Direct parent edge of the last entry.
+        let tail = match &self.visual {
+            Some(VisualMode::Commits { path, .. }) => path.last().copied(),
+            _ => None,
+        };
+        let Some(tail) = tail else { return };
+        if let Some(parent) = self.single_direct_parent(tail) {
+            let Some(VisualMode::Commits { path, .. }) = &mut self.visual else {
+                return;
+            };
+            path.push(parent);
+            self.jump_cursor_to_commit(parent);
+        }
+    }
+
+    fn commit_visual_move_up(&mut self) {
+        let Some(VisualMode::Commits { anchor, path }) = &self.visual else {
+            return;
+        };
+        let anchor = *anchor;
+
+        // If anchor is at the top (first), cursor is at bottom — shrink from bottom.
+        if path.len() > 1 && path.first() == Some(&anchor) {
+            let Some(VisualMode::Commits { path, .. }) = &mut self.visual else {
+                return;
+            };
+            path.pop();
+            let target = *path.last().unwrap();
+            self.jump_cursor_to_commit(target);
+            return;
+        }
+
+        // Otherwise extend at the top: find the unique child of the first entry.
+        let head = match &self.visual {
+            Some(VisualMode::Commits { path, .. }) => path.first().copied(),
+            _ => None,
+        };
+        let Some(head) = head else { return };
+        if let Some(child) = self.single_direct_child(head) {
+            let Some(VisualMode::Commits { path, .. }) = &mut self.visual else {
+                return;
+            };
+            path.insert(0, child);
+            self.jump_cursor_to_commit(child);
+        }
+    }
+
+    /// Toggle all commits in the persistent visual commit range as explicit selections.
+    fn toggle_commit_visual_selection(&mut self) {
+        let Some(PersistentVisualRange::Commits(range)) = &self.visual_persistent else {
+            return;
+        };
+
+        self.selection.ensure_kind(SelectionKind::Commit);
+        let all_selected = range.iter().all(|idx| {
+            let cid = self.entries[*idx].commit.change_id.change_id();
+            self.selection.contains(&Selection::Commit(cid))
+        });
+
+        // Clone the range to avoid borrowing self.visual_persistent while mutating selection.
+        let range: Vec<EntryIdx> = range.clone();
+        if all_selected {
+            for idx in &range {
+                let cid = self.entries[*idx].commit.change_id.change_id();
+                self.selection.remove(&Selection::Commit(cid));
+            }
+        } else {
+            for idx in &range {
+                let cid = self.entries[*idx].commit.change_id.change_id();
+                self.selection
+                    .insert(SelectionKind::Commit, Selection::Commit(cid));
+            }
+        }
+    }
+
+    fn single_direct_parent(&self, entry_idx: EntryIdx) -> Option<EntryIdx> {
+        let entry = &self.entries[entry_idx];
+        let direct: Vec<_> = entry
+            .edges
+            .iter()
+            .filter(|e| matches!(e.kind, EdgeKind::Direct))
+            .collect();
+        if direct.len() != 1 {
+            return None;
+        }
+        self.find_entry_by_edge_target(&direct[0].target)
+    }
+
+    fn single_direct_child(&self, entry_idx: EntryIdx) -> Option<EntryIdx> {
+        let graph_id = self.entries[entry_idx].commit.graph_id.as_str();
+        let children: Vec<EntryIdx> = self
+            .entries
+            .iter_enumerated()
+            .filter(|(_, e)| {
+                e.edges.iter().any(|edge| {
+                    matches!(edge.kind, EdgeKind::Direct) && edge.target.as_str() == graph_id
+                })
+            })
+            .map(|(idx, _)| idx)
+            .collect();
+        if children.len() == 1 {
+            Some(children[0])
+        } else {
+            None
+        }
+    }
+
+    fn find_entry_by_edge_target(&self, target: &ChangeId) -> Option<EntryIdx> {
+        self.entries
+            .iter_enumerated()
+            .find(|(_, e)| e.commit.graph_id.as_str() == target.as_str())
+            .map(|(idx, _)| idx)
+    }
+
+    fn jump_cursor_to_commit(&mut self, entry_idx: EntryIdx) {
+        if let Some(pos) = self.rows.iter().position(|r| {
+            matches!(r, DisplayRow::CommitNode { entry_idx: e } if *e == entry_idx)
+        }) {
+            self.cursor = pos;
         }
     }
 }

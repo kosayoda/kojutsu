@@ -44,19 +44,9 @@ impl App {
         });
         let entries = IndexVec::from_vec(entries);
         self.graph = IndexVec::from_vec(graph::render(entries.as_slice()));
-        self.visual_anchor = None;
+        self.visual = None;
+        self.visual_persistent = None;
         self.entries = entries;
-
-        // Prune visual_range if the change no longer exists.
-        if let Some(vr) = &self.visual_range {
-            let still_exists = self
-                .entries
-                .iter()
-                .any(|e| e.commit.change_id.change_id() == vr.change_id);
-            if !still_exists {
-                self.visual_range = None;
-            }
-        }
 
         // Collect new CommitIds so we can prune stale caches.
         let live_commit_ids: HashSet<CommitId> = self
