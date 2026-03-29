@@ -1,0 +1,101 @@
+use ratatui::layout::{Alignment, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::Frame;
+
+use crate::app::{App, GLOBAL_TOGGLES};
+
+/// Minimum separator between repo and revset when on a single line.
+pub(super) const HEADER_SEP: &str = "  ";
+
+pub(super) fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
+    let header = if area.height == 1 {
+        // Single-line: "repository: <path>  revset: <revset>"
+        vec![Line::from(vec![
+            Span::styled("repository: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(&app.repo_root, Style::default().fg(Color::White)),
+            Span::raw(HEADER_SEP),
+            Span::styled(
+                format!("revset ({}/5): ", app.active_preset + 1),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(&app.revset, Style::default().fg(Color::Cyan)),
+        ])]
+    } else {
+        vec![
+            Line::from(vec![
+                Span::styled("repository: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&app.repo_root, Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled(
+                    format!("revset ({}/5): ", app.active_preset + 1),
+                    Style::default().fg(Color::DarkGray),
+                ),
+                Span::styled(&app.revset, Style::default().fg(Color::Cyan)),
+            ]),
+        ]
+    };
+    frame.render_widget(Paragraph::new(header), area);
+}
+
+pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+    // Build toggle indicators for the title bar.
+    let mut toggle_spans: Vec<Span> = Vec::new();
+    for toggle in GLOBAL_TOGGLES {
+        let active = app.toggles.contains(toggle.flag);
+        let style = if active {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        toggle_spans.push(Span::styled(
+            format!(" [{}] {} ", toggle.hint, toggle.label),
+            style,
+        ));
+    }
+
+    if let Some(text) = app.selection.display_text() {
+        toggle_spans.push(Span::styled(
+            format!(" {text} "),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray))
+        .title("")
+        .title(" Status ")
+        .title_style(Style::default().fg(Color::Cyan).bold())
+        .title_alignment(Alignment::Left)
+        .title(Line::from(toggle_spans))
+        .title(
+            Line::from(Span::styled(" ? Help ", Style::default().fg(Color::White))).right_aligned(),
+        )
+        .title(Line::from("").right_aligned());
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let content = if let Some(search) = &app.search {
+        let pos = search.current_match.map(|i| i + 1).unwrap_or(0);
+        format!(
+            "search: {} ({}/{})",
+            search.query(),
+            pos,
+            search.matches.len()
+        )
+    } else if let Some(status) = &app.status_message {
+        status.clone()
+    } else {
+        app.last_command.clone().unwrap_or_default()
+    };
+    let line = Line::from(Span::styled(content, Style::default().fg(Color::DarkGray)));
+    frame.render_widget(Paragraph::new(line), inner);
+}

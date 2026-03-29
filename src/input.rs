@@ -1,10 +1,7 @@
-use std::collections::HashSet;
-
 use ratatui::crossterm::event::{
     Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
 use tui_input::backend::crossterm::EventHandler;
-use tui_input::Input;
 
 use crate::app::{App, AppMode};
 use crate::dag::DiffLineKind;
@@ -378,11 +375,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::Refresh => Action::Refresh,
         AppAction::EditRevset => {
             let prefill = app.revset_input_text().to_string();
-            app.mode = AppMode::TextInput {
-                prompt: "revset: ".to_string(),
-                input: Input::new(prefill),
-                on_submit: PendingCommand::Revset,
-            };
+            app.mode = AppMode::text_input("revset: ", prefill, PendingCommand::Revset);
             Action::None
         }
         AppAction::EditRevsetInEditor => Action::EditRevsetInEditor,
@@ -402,11 +395,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             }
         }
         AppAction::WorkspaceAdd => {
-            app.mode = AppMode::TextInput {
-                prompt: "workspace path: ".to_string(),
-                input: Input::new(String::new()),
-                on_submit: PendingCommand::WorkspaceAddPath { flags },
-            };
+            app.mode = AppMode::text_input("workspace path: ", "", PendingCommand::WorkspaceAddPath { flags });
             Action::None
         }
         AppAction::WorkspaceForget => {
@@ -428,19 +417,12 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     flags,
                 })
             } else if workspaces.len() > 1 {
-                let filtered_indices = (0..workspaces.len()).collect();
-                app.mode = AppMode::SelectFromList {
-                    title: "forget workspace".to_string(),
-                    items: workspaces,
-                    filtered_indices,
-                    cursor: 0,
-                    scroll_offset: 0,
-                    marked: HashSet::new(),
-                    multi: true,
-                    filter: String::new(),
-                    filtering: false,
-                    on_select: PendingSelection::WorkspaceForget { flags },
-                };
+                app.mode = AppMode::select_from_list(
+                    "forget workspace",
+                    workspaces,
+                    true,
+                    PendingSelection::WorkspaceForget { flags },
+                );
                 Action::None
             } else {
                 app.status_message = Some("no other workspace on this commit".to_string());
@@ -470,14 +452,14 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             Action::SuspendAndRunJj(cmd)
         }
         AppAction::CommitWithMessage => {
-            app.mode = AppMode::TextInput {
-                prompt: "commit message: ".to_string(),
-                input: Input::new(String::new()),
-                on_submit: PendingCommand::Commit {
+            app.mode = AppMode::text_input(
+                "commit message: ",
+                "",
+                PendingCommand::Commit {
                     flags,
                     selection: build_change_selection(app),
                 },
-            };
+            );
             Action::None
         }
         AppAction::Describe => enter_describe_input(app, flags),
@@ -573,48 +555,20 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             enter_bookmark_select(app, flags, PendingSelectionKind::Rename)
         }
         AppAction::BookmarkAdvance => enter_bookmark_advance(app, flags),
-        AppAction::BookmarkTrack => {
-            if app.untracked_bookmarks.is_empty() {
-                app.status_message = Some("no untracked remote bookmarks".to_string());
-                return Action::None;
-            }
-            let items = app.untracked_bookmarks.clone();
-            let filtered_indices = (0..items.len()).collect();
-            app.mode = AppMode::SelectFromList {
-                title: "track bookmark".to_string(),
-                items,
-                filtered_indices,
-                cursor: 0,
-                scroll_offset: 0,
-                marked: HashSet::new(),
-                multi: true,
-                filter: String::new(),
-                filtering: false,
-                on_select: PendingSelection::BookmarkTrack { flags },
-            };
-            Action::None
-        }
-        AppAction::BookmarkUntrack => {
-            if app.tracked_bookmarks.is_empty() {
-                app.status_message = Some("no tracked remote bookmarks".to_string());
-                return Action::None;
-            }
-            let items = app.tracked_bookmarks.clone();
-            let filtered_indices = (0..items.len()).collect();
-            app.mode = AppMode::SelectFromList {
-                title: "untrack bookmark".to_string(),
-                items,
-                filtered_indices,
-                cursor: 0,
-                scroll_offset: 0,
-                marked: HashSet::new(),
-                multi: true,
-                filter: String::new(),
-                filtering: false,
-                on_select: PendingSelection::BookmarkUntrack { flags },
-            };
-            Action::None
-        }
+        AppAction::BookmarkTrack => enter_remote_bookmark_select(
+            app,
+            &app.untracked_bookmarks.clone(),
+            "no untracked remote bookmarks",
+            "track bookmark",
+            PendingSelection::BookmarkTrack { flags },
+        ),
+        AppAction::BookmarkUntrack => enter_remote_bookmark_select(
+            app,
+            &app.tracked_bookmarks.clone(),
+            "no tracked remote bookmarks",
+            "untrack bookmark",
+            PendingSelection::BookmarkUntrack { flags },
+        ),
 
         AppAction::Undo => make_command(app, |_| JJCommand::Undo { flags }),
         AppAction::Redo => make_command(app, |_| JJCommand::Redo { flags }),
@@ -649,19 +603,12 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     flags,
                 });
             }
-            let filtered_indices = (0..items.len()).collect();
-            app.mode = AppMode::SelectFromList {
-                title: "push bookmark".to_string(),
+            app.mode = AppMode::select_from_list(
+                "push bookmark",
                 items,
-                filtered_indices,
-                cursor: 0,
-                scroll_offset: 0,
-                marked: HashSet::new(),
-                multi: true,
-                filter: String::new(),
-                filtering: false,
-                on_select: PendingSelection::GitPushBookmark { flags },
-            };
+                true,
+                PendingSelection::GitPushBookmark { flags },
+            );
             Action::None
         }
         AppAction::GitExport => Action::RunJj(JJCommand::GitExport { flags }),
@@ -677,12 +624,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
     }
 }
 
-/// Helper: build a command action from the selected change ID.
-fn make_command(app: &App, build: impl FnOnce(ChangeId) -> JJCommand) -> Action {
-    let Some(change_id) = app.selected_change_id() else {
-        return Action::None;
-    };
-    let cmd = build(change_id);
+/// Turn a command into the appropriate run/suspend action.
+fn run_cmd(cmd: JJCommand) -> Action {
     if cmd.is_interactive() {
         Action::SuspendAndRunJj(cmd)
     } else {
@@ -690,16 +633,31 @@ fn make_command(app: &App, build: impl FnOnce(ChangeId) -> JJCommand) -> Action 
     }
 }
 
+/// Dispatch a follow-up action (execute command or enter text input).
+fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action {
+    match action {
+        FollowUpAction::Execute(cmd) => run_cmd(cmd),
+        FollowUpAction::TextInput { prompt, pending } => {
+            app.mode = AppMode::text_input(prompt, "", pending);
+            Action::None
+        }
+    }
+}
+
+/// Helper: build a command action from the selected change ID.
+fn make_command(app: &App, build: impl FnOnce(ChangeId) -> JJCommand) -> Action {
+    let Some(change_id) = app.selected_change_id() else {
+        return Action::None;
+    };
+    run_cmd(build(change_id))
+}
+
 fn enter_describe_input(app: &mut App, flags: CommandFlags) -> Action {
     let Some(change_id) = app.selected_change_id() else {
         return Action::None;
     };
     let current_desc = app.selected_description().unwrap_or("").to_string();
-    app.mode = AppMode::TextInput {
-        prompt: "describe: ".to_string(),
-        input: Input::new(current_desc),
-        on_submit: PendingCommand::Describe { change_id, flags },
-    };
+    app.mode = AppMode::text_input("describe: ", current_desc, PendingCommand::Describe { change_id, flags });
     Action::None
 }
 
@@ -715,11 +673,11 @@ fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
                 match on_submit {
                     PendingCommand::Revset => Action::UpdateRevset(text),
                     PendingCommand::WorkspaceAddPath { flags } => {
-                        app.mode = AppMode::TextInput {
-                            prompt: "workspace name (enter for default): ".to_string(),
-                            input: Input::new(String::new()),
-                            on_submit: PendingCommand::WorkspaceAddName { path: text, flags },
-                        };
+                        app.mode = AppMode::text_input(
+                            "workspace name (enter for default): ",
+                            "",
+                            PendingCommand::WorkspaceAddName { path: text, flags },
+                        );
                         Action::None
                     }
                     PendingCommand::WorkspaceAddName { path, flags } => {
@@ -935,23 +893,7 @@ fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
                 let mut options = operation.follow_up(source, target.clone(), flags, selection);
                 if options.len() == 1 {
                     let opt = options.remove(0);
-                    return match opt.action {
-                        FollowUpAction::Execute(cmd) => {
-                            if cmd.is_interactive() {
-                                Action::SuspendAndRunJj(cmd)
-                            } else {
-                                Action::RunJj(cmd)
-                            }
-                        }
-                        FollowUpAction::TextInput { prompt, pending } => {
-                            app.mode = AppMode::TextInput {
-                                prompt,
-                                input: Input::new(String::new()),
-                                on_submit: pending,
-                            };
-                            Action::None
-                        }
-                    };
+                    return execute_follow_up(app, opt.action);
                 }
                 let prompt = format!("{label} {target}:");
                 app.mode = AppMode::FollowUp { prompt, options };
@@ -1015,28 +957,29 @@ fn handle_follow_up(app: &mut App, key: KeyEvent) -> Action {
         return Action::None;
     };
 
-    match option.action {
-        FollowUpAction::Execute(cmd) => {
-            if cmd.is_interactive() {
-                Action::SuspendAndRunJj(cmd)
-            } else {
-                Action::RunJj(cmd)
-            }
-        }
-        FollowUpAction::TextInput { prompt, pending } => {
-            app.mode = AppMode::TextInput {
-                prompt,
-                input: Input::new(String::new()),
-                on_submit: pending,
-            };
-            Action::None
-        }
-    }
+    execute_follow_up(app, option.action)
 }
 
 // ---------------------------------------------------------------------------
 // Bookmark helpers
 // ---------------------------------------------------------------------------
+
+/// Show a select-from-list for remote bookmarks, or a status message if empty.
+fn enter_remote_bookmark_select(
+    app: &mut App,
+    bookmarks: &[String],
+    empty_msg: &str,
+    title: &str,
+    on_select: PendingSelection,
+) -> Action {
+    if bookmarks.is_empty() {
+        app.status_message = Some(empty_msg.to_string());
+        return Action::None;
+    }
+    let items = bookmarks.to_vec();
+    app.mode = AppMode::select_from_list(title, items, true, on_select);
+    Action::None
+}
 
 enum BookmarkTextAction {
     Create,
@@ -1116,11 +1059,7 @@ fn enter_bookmark_text_input(
         BookmarkTextAction::Set => PendingCommand::BookmarkSet { change_id, flags },
     };
 
-    app.mode = AppMode::TextInput {
-        prompt: prompt.to_string(),
-        input: Input::new(String::new()),
-        on_submit,
-    };
+    app.mode = AppMode::text_input(prompt, "", on_submit);
     Action::None
 }
 
@@ -1159,19 +1098,7 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
         PendingSelectionKind::Delete | PendingSelectionKind::Forget
     );
 
-    let filtered_indices = (0..items.len()).collect();
-    app.mode = AppMode::SelectFromList {
-        title: title.to_string(),
-        items,
-        filtered_indices,
-        cursor: 0,
-        scroll_offset: 0,
-        marked: HashSet::new(),
-        multi,
-        filter: String::new(),
-        filtering: false,
-        on_select,
-    };
+    app.mode = AppMode::select_from_list(title, items, multi, on_select);
     Action::None
 }
 
@@ -1428,14 +1355,11 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
             Action::None
         }
         PendingSelection::BookmarkRename { flags, .. } => {
-            app.mode = AppMode::TextInput {
-                prompt: "rename to: ".to_string(),
-                input: Input::new(name.clone()),
-                on_submit: PendingCommand::BookmarkRename {
-                    old_name: name,
-                    flags,
-                },
-            };
+            app.mode = AppMode::text_input(
+                "rename to: ",
+                name.clone(),
+                PendingCommand::BookmarkRename { old_name: name, flags },
+            );
             Action::None
         }
         PendingSelection::WorkspaceForget { flags } => Action::RunJj(JJCommand::WorkspaceForget {
