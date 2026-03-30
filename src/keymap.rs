@@ -299,12 +299,14 @@ impl Default for Keymap {
                 C,
                 vec![
                     toggle("d", CommandFlags::DRY_RUN, "dry run (push only)"),
-                    bind("f", AppAction::GitFetch, "fetch", C),
-                    bind(
-                        "shift-f",
-                        AppAction::GitFetchAllRemotes,
-                        "fetch all remotes",
+                    prefix(
+                        "f",
+                        "fetch",
                         C,
+                        vec![
+                            bind("f", AppAction::GitFetch, "fetch", C),
+                            bind("a", AppAction::GitFetchAllRemotes, "all remotes", C),
+                        ],
                     ),
                     prefix(
                         "p",
@@ -317,8 +319,8 @@ impl Default for Keymap {
                             bind("b", AppAction::GitPushBookmark, "bookmark", C),
                         ],
                     ),
-                    bind("e", AppAction::GitExport, "export (jj→git)", C),
-                    bind("i", AppAction::GitImport, "import (git→jj)", C),
+                    bind("e", AppAction::GitExport, "export (jj -> git)", C),
+                    bind("i", AppAction::GitImport, "import (git -> jj)", C),
                 ],
             ),
             // New submenu
