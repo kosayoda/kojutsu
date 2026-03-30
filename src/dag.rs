@@ -82,11 +82,14 @@ pub struct WorkspaceAnnotation {
 }
 
 /// A remote bookmark (e.g., `main@origin`).
+#[derive(Clone)]
 pub struct RemoteBookmarkInfo {
     /// Bookmark name (e.g., "main").
     pub name: String,
     /// Remote name (e.g., "origin").
     pub remote: String,
+    /// Whether the remote target matches the local target.
+    pub synced: bool,
 }
 
 #[derive(Debug, Clone, Copy)]

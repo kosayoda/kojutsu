@@ -257,10 +257,7 @@ fn render_commit_item<'a>(
         }
     }
     if c.is_divergent {
-        line1.push(Span::styled(
-            "??",
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
-        ));
+        line1.push(Span::styled(" (divergent)", Style::default().fg(Color::Red)));
     }
     line1.push(Span::raw(" "));
 
