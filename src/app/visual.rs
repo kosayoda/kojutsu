@@ -228,15 +228,20 @@ impl App {
             return;
         };
         for j in (self.cursor + 1)..self.rows.len() {
-            if matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
-                continue;
-            }
             match &self.rows[j] {
+                DisplayRow::GraphLink { .. } => continue,
                 DisplayRow::DiffLine {
                     entry_idx,
                     file_idx,
-                    ..
+                    line_idx,
                 } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
+                    // Skip context lines.
+                    if self.diff_lines(*entry_idx, *file_idx)
+                        .and_then(|lines| lines.get(line_idx.raw()))
+                        .is_some_and(|dl| dl.kind == DiffLineKind::Context)
+                    {
+                        continue;
+                    }
                     self.cursor = j;
                     return;
                 }
@@ -250,15 +255,20 @@ impl App {
             return;
         };
         for j in (0..self.cursor).rev() {
-            if matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
-                continue;
-            }
             match &self.rows[j] {
+                DisplayRow::GraphLink { .. } => continue,
                 DisplayRow::DiffLine {
                     entry_idx,
                     file_idx,
-                    ..
+                    line_idx,
                 } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
+                    // Skip context lines.
+                    if self.diff_lines(*entry_idx, *file_idx)
+                        .and_then(|lines| lines.get(line_idx.raw()))
+                        .is_some_and(|dl| dl.kind == DiffLineKind::Context)
+                    {
+                        continue;
+                    }
                     self.cursor = j;
                     return;
                 }

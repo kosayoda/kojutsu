@@ -1,11 +1,29 @@
 use super::App;
+use crate::dag::DiffLineKind;
 use crate::types::DisplayRow;
 
 impl App {
+    /// Whether a row should be skipped during navigation.
+    /// Skips graph links and context diff lines (not actionable).
+    fn is_row_skippable(&self, row_idx: usize) -> bool {
+        match &self.rows[row_idx] {
+            DisplayRow::GraphLink { .. } => true,
+            DisplayRow::DiffLine {
+                entry_idx,
+                file_idx,
+                line_idx,
+            } => self
+                .diff_lines(*entry_idx, *file_idx)
+                .and_then(|lines| lines.get(line_idx.raw()))
+                .is_some_and(|dl| dl.kind == DiffLineKind::Context),
+            _ => false,
+        }
+    }
+
     /// Move selection to the previous selectable row (commit, file, or diff line).
     pub fn move_up(&mut self) {
         for j in (0..self.cursor).rev() {
-            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+            if !self.is_row_skippable(j) {
                 self.cursor = j;
                 return;
             }
@@ -15,7 +33,7 @@ impl App {
     /// Move selection to the next selectable row (commit, file, or diff line).
     pub fn move_down(&mut self) {
         for j in (self.cursor + 1)..self.rows.len() {
-            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+            if !self.is_row_skippable(j) {
                 self.cursor = j;
                 return;
             }
@@ -25,7 +43,7 @@ impl App {
     /// Move selection to the first selectable row.
     pub fn move_to_top(&mut self) {
         for j in 0..self.rows.len() {
-            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+            if !self.is_row_skippable(j) {
                 self.cursor = j;
                 return;
             }
@@ -35,7 +53,7 @@ impl App {
     /// Move selection to the last selectable row.
     pub fn move_to_bottom(&mut self) {
         for j in (0..self.rows.len()).rev() {
-            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+            if !self.is_row_skippable(j) {
                 self.cursor = j;
                 return;
             }
@@ -154,17 +172,17 @@ impl App {
     }
 
     /// Select a specific row index (e.g. from mouse click), snapping to the
-    /// nearest non-graph-link row at or after `row`.
+    /// nearest non-skippable row at or after `row`.
     pub fn select_row(&mut self, row: usize) {
         let target = row.min(self.rows.len().saturating_sub(1));
         for j in target..self.rows.len() {
-            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+            if !self.is_row_skippable(j) {
                 self.cursor = j;
                 return;
             }
         }
         for j in (0..target).rev() {
-            if !matches!(self.rows[j], DisplayRow::GraphLink { .. }) {
+            if !self.is_row_skippable(j) {
                 self.cursor = j;
                 return;
             }
