@@ -71,7 +71,12 @@ fn main() -> Result<()> {
         return kojutsu::diff_tool::apply(selection_path, left, right);
     }
 
-    let repo_path = cli.repository.canonicalize().unwrap_or(cli.repository);
+    let repo_path = if cli.repository == std::path::Path::new(".") {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        find_workspace_dir(&cwd).to_path_buf()
+    } else {
+        cli.repository.canonicalize().unwrap_or(cli.repository)
+    };
 
     if cli.debug_graph {
         let _ = JjRepo::snapshot(&repo_path);
@@ -403,4 +408,12 @@ fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
         app.clear_selection();
         refresh_app(app);
     }
+}
+
+/// Find the nearest ancestor directory containing a `.jj/` workspace.
+/// Matches jj CLI behavior (`cli_util.rs::find_workspace_dir`).
+fn find_workspace_dir(cwd: &std::path::Path) -> &std::path::Path {
+    cwd.ancestors()
+        .find(|path| path.join(".jj").is_dir())
+        .unwrap_or(cwd)
 }
