@@ -92,7 +92,7 @@ impl App {
                     line_idx,
                 }) = self.rows.get(self.cursor)
                 {
-                    let cid = self.entries[*entry_idx].commit.change_id.change_id();
+                    let cid = self.entries[*entry_idx].commit.unique_change_id();
                     if let Some(file) = self
                         .files_for_entry(*entry_idx)
                         .and_then(|f| f.get(file_idx.raw()))
@@ -173,7 +173,7 @@ impl App {
 
         // Check persistent line range.
         if let Some(PersistentVisualRange::Lines(vr)) = &self.visual_persistent {
-            let cid = self.entries[entry_idx].commit.change_id.change_id();
+            let cid = self.entries[entry_idx].commit.unique_change_id();
             if let Some(files) = self.files_for_entry(entry_idx) {
                 if let Some(file) = files.get(file_idx.raw()) {
                     if cid == vr.change_id
@@ -296,7 +296,7 @@ impl App {
             {
                 if start_line.is_none() {
                     start_line = Some(*line_idx);
-                    change_id = Some(self.entries[*entry_idx].commit.change_id.change_id());
+                    change_id = Some(self.entries[*entry_idx].commit.unique_change_id());
                     path = self
                         .files_for_entry(*entry_idx)
                         .and_then(|files| files.get(file_idx.raw()))
@@ -486,7 +486,7 @@ impl App {
 
         self.selection.ensure_kind(SelectionKind::Commit);
         let all_selected = range.iter().all(|idx| {
-            let cid = self.entries[*idx].commit.change_id.change_id();
+            let cid = self.entries[*idx].commit.unique_change_id();
             self.selection.contains(&Selection::Commit(cid))
         });
 
@@ -494,12 +494,12 @@ impl App {
         let range: Vec<EntryIdx> = range.clone();
         if all_selected {
             for idx in &range {
-                let cid = self.entries[*idx].commit.change_id.change_id();
+                let cid = self.entries[*idx].commit.unique_change_id();
                 self.selection.remove(&Selection::Commit(cid));
             }
         } else {
             for idx in &range {
-                let cid = self.entries[*idx].commit.change_id.change_id();
+                let cid = self.entries[*idx].commit.unique_change_id();
                 self.selection
                     .insert(SelectionKind::Commit, Selection::Commit(cid));
             }

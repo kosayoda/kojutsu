@@ -26,7 +26,7 @@ impl App {
     /// existing selections, clears the old selections first (selections are
     /// scoped to one commit at a time).
     pub fn toggle_file_selection(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
-        let change_id: ChangeId = self.entries[entry_idx].commit.change_id.change_id();
+        let change_id: ChangeId = self.entries[entry_idx].commit.unique_change_id();
         let Some(files) = self.files_for_entry(entry_idx) else {
             return;
         };
@@ -50,7 +50,7 @@ impl App {
         if self.is_commit_unfolded(entry_idx) {
             self.toggle_commit_file_selection(entry_idx);
         } else {
-            let change_id = self.entries[entry_idx].commit.change_id.change_id();
+            let change_id = self.entries[entry_idx].commit.unique_change_id();
             self.selection.ensure_kind(SelectionKind::Commit);
             self.selection
                 .toggle(SelectionKind::Commit, Selection::Commit(change_id));
@@ -59,7 +59,7 @@ impl App {
 
     /// Check if a commit is in the explicit commit selection set.
     pub fn is_commit_selected(&self, entry_idx: EntryIdx) -> bool {
-        let change_id = self.entries[entry_idx].commit.change_id.change_id();
+        let change_id = self.entries[entry_idx].commit.unique_change_id();
         self.selection.contains(&Selection::Commit(change_id))
     }
 
@@ -84,7 +84,7 @@ impl App {
             return;
         }
 
-        let change_id = self.entries[entry_idx].commit.change_id.change_id();
+        let change_id = self.entries[entry_idx].commit.unique_change_id();
         self.clear_other_commits(&change_id);
         self.selection.ensure_kind(SelectionKind::File);
 
@@ -127,7 +127,7 @@ impl App {
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     ) {
-        let change_id = self.entries[entry_idx].commit.change_id.change_id();
+        let change_id = self.entries[entry_idx].commit.unique_change_id();
         let Some(files) = self.files_for_entry(entry_idx) else {
             return;
         };
@@ -171,7 +171,7 @@ impl App {
         file_idx: FileIdx,
         header_line_idx: DiffLineIdx,
     ) {
-        let change_id = self.entries[entry_idx].commit.change_id.change_id();
+        let change_id = self.entries[entry_idx].commit.unique_change_id();
         let Some(files) = self.files_for_entry(entry_idx) else {
             return;
         };
@@ -229,7 +229,7 @@ impl App {
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     ) -> bool {
-        let change_id = &self.entries[entry_idx].commit.change_id.change_id();
+        let change_id = &self.entries[entry_idx].commit.unique_change_id();
         let Some(files) = self.files_for_entry(entry_idx) else {
             return false;
         };
@@ -264,7 +264,7 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
     ) -> FileSelectionState {
-        let change_id = &self.entries[entry_idx].commit.change_id.change_id();
+        let change_id = &self.entries[entry_idx].commit.unique_change_id();
         let Some(files) = self.files_for_entry(entry_idx) else {
             return FileSelectionState::None;
         };

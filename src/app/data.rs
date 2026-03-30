@@ -64,7 +64,7 @@ impl App {
         // Re-request data for commits that are still unfolded but whose
         // new CommitId has no cached file data (happens after mutation).
         for entry in self.entries.iter() {
-            let change_id = entry.commit.change_id.change_id();
+            let change_id = entry.commit.unique_change_id();
             if self.unfolded_commits.contains(&change_id) {
                 let commit_id = &entry.commit.graph_id;
                 if self
@@ -86,7 +86,7 @@ impl App {
         let live_change_ids: HashSet<ChangeId> = self
             .entries
             .iter()
-            .map(|e| e.commit.change_id.change_id())
+            .map(|e| e.commit.unique_change_id())
             .collect();
         self.unfolded_commits
             .retain(|k| live_change_ids.contains(k));
@@ -103,7 +103,7 @@ impl App {
             if let Some((entry_idx, _)) = self
                 .entries
                 .iter_enumerated()
-                .find(|(_, entry)| entry.commit.change_id.change_id() == change_id)
+                .find(|(_, entry)| entry.commit.unique_change_id() == change_id)
             {
                 let find_row = |pred: &dyn Fn(&DisplayRow) -> bool| self.rows.iter().position(pred);
 
