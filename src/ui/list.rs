@@ -38,7 +38,14 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .enumerate()
         .map(|(row_idx, row)| {
             if row_idx < vis_start || row_idx >= vis_end {
-                return ListItem::new("");
+                // Placeholder must match the real item's line count so
+                // ratatui's scroll offset stays correct (CommitNode = 2 lines).
+                return match row {
+                    DisplayRow::CommitNode { .. } => {
+                        ListItem::new(vec![Line::raw(""), Line::raw("")])
+                    }
+                    _ => ListItem::new(""),
+                };
             }
             let row_search = search_ctx.as_ref().map(|ctx| SearchRender {
                 row_state: search_row_state(app, row_idx),

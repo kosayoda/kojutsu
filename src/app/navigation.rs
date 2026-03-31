@@ -171,6 +171,25 @@ impl App {
         }
     }
 
+    /// Map a screen line (relative to the list area top) to a row index,
+    /// accounting for multi-line items (CommitNode = 2 lines, others = 1).
+    pub fn row_at_screen_line(&self, screen_line: usize) -> usize {
+        let offset = self.list_state.offset();
+        let mut lines_consumed = 0;
+        for idx in offset..self.rows.len() {
+            let height = match self.rows[idx] {
+                DisplayRow::CommitNode { .. } => 2,
+                _ => 1,
+            };
+            if lines_consumed + height > screen_line {
+                return idx;
+            }
+            lines_consumed += height;
+        }
+        // Past the end — clamp to last row.
+        self.rows.len().saturating_sub(1)
+    }
+
     /// Select a specific row index (e.g. from mouse click), snapping to the
     /// nearest non-skippable row at or after `row`.
     pub fn select_row(&mut self, row: usize) {

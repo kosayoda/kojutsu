@@ -1450,13 +1450,15 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
             app.mode = AppMode::Normal;
-            let row = (mouse.row.saturating_sub(list_offset)) as usize + app.scroll_offset();
+            let screen_line = (mouse.row.saturating_sub(list_offset)) as usize;
+            let row = app.row_at_screen_line(screen_line);
             app.select_row(row);
             Action::None
         }
         MouseEventKind::Down(MouseButton::Right) => {
             app.mode = AppMode::Normal;
-            let row = (mouse.row.saturating_sub(list_offset)) as usize + app.scroll_offset();
+            let screen_line = (mouse.row.saturating_sub(list_offset)) as usize;
+            let row = app.row_at_screen_line(screen_line);
             app.select_row(row);
             app.toggle_fold();
             Action::None
