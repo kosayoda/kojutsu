@@ -25,11 +25,21 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
         row_state: SearchRowState::None,
     });
 
+    // Only build full ListItems for rows near the visible window.
+    // Off-screen rows get a cheap placeholder — ratatui's List still sees
+    // the correct total item count for scroll math.
+    let offset = app.list_state.offset();
+    let vis_start = offset.saturating_sub(20);
+    let vis_end = (offset + area.height as usize + 20).min(app.rows.len());
+
     let items: Vec<ListItem> = app
         .rows
         .iter()
         .enumerate()
         .map(|(row_idx, row)| {
+            if row_idx < vis_start || row_idx >= vis_end {
+                return ListItem::new("");
+            }
             let row_search = search_ctx.as_ref().map(|ctx| SearchRender {
                 row_state: search_row_state(app, row_idx),
                 ..*ctx

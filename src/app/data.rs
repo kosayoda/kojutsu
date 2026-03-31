@@ -283,6 +283,31 @@ impl App {
                     }
                 }
             }
+            RepoResult::DivergenceInfo { updates } => {
+                for (commit_id, is_divergent, is_hidden, change_id_suffix) in updates {
+                    for entry in self.entries.iter_mut() {
+                        if entry.commit.graph_id == commit_id {
+                            entry.commit.is_divergent = is_divergent;
+                            entry.commit.is_hidden = is_hidden;
+                            entry.commit.change_id_suffix = change_id_suffix;
+                            break;
+                        }
+                    }
+                }
+            }
+            RepoResult::PrefixLengths { updates } => {
+                for (commit_id, change_display, change_prefix_len, commit_display, commit_prefix_len) in updates {
+                    for entry in self.entries.iter_mut() {
+                        if entry.commit.graph_id == commit_id {
+                            entry.commit.change_id.display = change_display;
+                            entry.commit.change_id.prefix_len = change_prefix_len;
+                            entry.commit.commit_id.display = commit_display;
+                            entry.commit.commit_id.prefix_len = commit_prefix_len;
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
 }

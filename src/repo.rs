@@ -313,27 +313,9 @@ impl JjRepo {
             }
         }
 
-        // Set up ID prefix index for shortest unique prefixes.
-        // Use revsets.short-prefixes if configured, fall back to the log revset
-        // (matching jj-cli behavior).
-        let id_prefix_context = {
-            let short_prefixes_str = self
-                .settings
-                .config()
-                .get::<String>("revsets.short-prefixes")
-                .unwrap_or_else(|_| self.default_revset());
-            let mut diag = RevsetDiagnostics::new();
-            let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
-            if let Ok(expression) = jj_lib::revset::parse(&mut diag, &short_prefixes_str, &context)
-            {
-                ctx.disambiguate_within(expression)
-            } else {
-                ctx
-            }
-        };
-        let id_prefix_index = id_prefix_context
-            .populate(repo)
-            .wrap_err("failed to populate ID prefix index")?;
+        // ID prefix disambiguation is deferred to a background thread
+        // (see compute_prefix_lengths) to avoid evaluating a second revset
+        // during the initial load. We use DISPLAY_ID_LEN as a placeholder.
 
         // Pre-build the set of local bookmarks that differ from their tracked
         // remote counterpart (O(M) once, then O(1) per bookmark lookup).
@@ -399,7 +381,6 @@ impl JjRepo {
 
             let info = self.extract_commit_info(
                 &commit,
-                &id_prefix_index,
                 immutable,
                 &dirty_bookmarks,
                 &remote_bookmark_map,
@@ -677,7 +658,6 @@ impl JjRepo {
     fn extract_commit_info(
         &self,
         commit: &Commit,
-        id_prefix_index: &jj_lib::id_prefix::IdPrefixIndex<'_>,
         is_immutable: bool,
         dirty_bookmarks: &HashSet<&RefName>,
         remote_bookmark_map: &HashMap<BackendCommitId, Vec<RemoteBookmarkInfo>>,
@@ -685,32 +665,24 @@ impl JjRepo {
     ) -> Result<CommitInfo> {
         let repo = self.repo.as_ref();
 
-        // Change ID: at least DISPLAY_ID_LEN chars, extended for uniqueness
-        let change_prefix_len = id_prefix_index
-            .shortest_change_prefix_len(repo, commit.change_id())
-            .unwrap_or(DISPLAY_ID_LEN);
+        // Change ID: use fixed DISPLAY_ID_LEN; accurate prefix computed in background.
         let change_id_full = commit.change_id().reverse_hex();
-        let change_display_len = change_prefix_len.max(DISPLAY_ID_LEN);
         let change_id = ShortId {
             display: change_id_full
-                .get(..change_display_len)
+                .get(..DISPLAY_ID_LEN)
                 .unwrap_or(&change_id_full)
                 .to_string(),
-            prefix_len: change_prefix_len,
+            prefix_len: DISPLAY_ID_LEN,
         };
 
-        // Commit ID: at least DISPLAY_ID_LEN chars, extended for uniqueness
-        let commit_prefix_len = id_prefix_index
-            .shortest_commit_prefix_len(repo, commit.id())
-            .unwrap_or(DISPLAY_ID_LEN);
+        // Commit ID: use fixed DISPLAY_ID_LEN; accurate prefix computed in background.
         let commit_id_full = commit.id().hex();
-        let commit_display_len = commit_prefix_len.max(DISPLAY_ID_LEN);
         let commit_id = ShortId {
             display: commit_id_full
-                .get(..commit_display_len)
+                .get(..DISPLAY_ID_LEN)
                 .unwrap_or(&commit_id_full)
                 .to_string(),
-            prefix_len: commit_prefix_len,
+            prefix_len: DISPLAY_ID_LEN,
         };
 
         // Description
@@ -742,13 +714,10 @@ impl JjRepo {
             .cloned()
             .unwrap_or_default();
 
-        // Empty (skip merge commits — computed in background to avoid blocking)
+        // Empty status is deferred to a background thread for all commits
+        // (see repo_service.rs) to avoid blocking the initial load.
         let is_merge = commit.parent_ids().len() > 1;
-        let is_empty = if !is_merge {
-            commit.is_empty(repo).unwrap_or(false)
-        } else {
-            false
-        };
+        let is_empty = false;
 
         // Conflicts
         let has_conflict = commit.has_conflict();
@@ -776,24 +745,13 @@ impl JjRepo {
             })
             .unwrap_or_default();
 
-        // Hidden, divergent, and change ID disambiguation.
-        let resolved_targets = repo.resolve_change_id(commit.change_id()).ok().flatten();
-
-        let is_divergent = resolved_targets
-            .as_ref()
-            .is_some_and(|targets| targets.is_divergent());
-
-        let is_hidden = commit.is_hidden(repo).unwrap_or(false);
-
-        // Compute disambiguation suffix (e.g., /5 in ztmnmkvk/5) only for
-        // hidden or divergent commits where disambiguation is needed.
-        let change_id_suffix = if is_hidden || is_divergent {
-            resolved_targets
-                .as_ref()
-                .and_then(|targets| targets.find_offset(commit.id()))
-        } else {
-            None
-        };
+        // Divergence, hidden status, and change ID disambiguation are
+        // deferred to a background thread (see compute_divergence_info)
+        // because resolve_change_id() and is_hidden() are expensive
+        // per-commit index lookups.
+        let is_divergent = false;
+        let is_hidden = false;
+        let change_id_suffix = None;
 
         // Full commit ID hex for graph rendering (stable key).
         let graph_id = UiCommitId::new(commit.id().hex());
@@ -818,7 +776,7 @@ impl JjRepo {
     }
 
     /// Batch-compute `is_empty` for a set of commits (by hex ID).
-    /// Used to compute emptiness for merge commits in the background.
+    /// Used to compute emptiness for commits in the background.
     pub fn compute_empty_statuses(&self, commit_hex_ids: &[String]) -> Vec<(String, bool)> {
         commit_hex_ids
             .iter()
@@ -827,6 +785,107 @@ impl JjRepo {
                 let commit = self.repo.store().get_commit(&commit_id).ok()?;
                 let empty = commit.is_empty(self.repo.as_ref()).unwrap_or(false);
                 Some((hex_id.clone(), empty))
+            })
+            .collect()
+    }
+
+    /// Compute shortest unique prefix lengths for a set of commits.
+    /// Called in a background thread after the initial revset load.
+    /// Returns (commit_hex_id, change_display, change_prefix_len, commit_display, commit_prefix_len).
+    pub fn compute_prefix_lengths(
+        &self,
+        commit_hex_ids: &[String],
+    ) -> Result<Vec<(String, String, usize, String, usize)>> {
+        let repo = self.repo.as_ref();
+        let extensions = RevsetExtensions::default();
+        let fileset_aliases_map = FilesetAliasesMap::new();
+        let path_converter = RepoPathUiConverter::Fs {
+            cwd: self.workspace_root.clone(),
+            base: self.workspace_root.clone(),
+        };
+        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
+
+        let id_prefix_context = {
+            let short_prefixes_str = self
+                .settings
+                .config()
+                .get::<String>("revsets.short-prefixes")
+                .unwrap_or_else(|_| self.default_revset());
+            let mut diag = RevsetDiagnostics::new();
+            let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
+            if let Ok(expression) = jj_lib::revset::parse(&mut diag, &short_prefixes_str, &context)
+            {
+                ctx.disambiguate_within(expression)
+            } else {
+                ctx
+            }
+        };
+        let id_prefix_index = id_prefix_context
+            .populate(repo)
+            .wrap_err("failed to populate ID prefix index")?;
+
+        let results = commit_hex_ids
+            .iter()
+            .filter_map(|hex_id| {
+                let commit_id = BackendCommitId::try_from_hex(hex_id)?;
+                let commit = repo.store().get_commit(&commit_id).ok()?;
+
+                let change_prefix_len = id_prefix_index
+                    .shortest_change_prefix_len(repo, commit.change_id())
+                    .unwrap_or(DISPLAY_ID_LEN);
+                let change_id_full = commit.change_id().reverse_hex();
+                let change_display_len = change_prefix_len.max(DISPLAY_ID_LEN);
+                let change_display = change_id_full
+                    .get(..change_display_len)
+                    .unwrap_or(&change_id_full)
+                    .to_string();
+
+                let commit_prefix_len = id_prefix_index
+                    .shortest_commit_prefix_len(repo, &commit_id)
+                    .unwrap_or(DISPLAY_ID_LEN);
+                let commit_id_full = commit_id.hex();
+                let commit_display_len = commit_prefix_len.max(DISPLAY_ID_LEN);
+                let commit_display = commit_id_full
+                    .get(..commit_display_len)
+                    .unwrap_or(&commit_id_full)
+                    .to_string();
+
+                Some((
+                    hex_id.clone(),
+                    change_display,
+                    change_prefix_len,
+                    commit_display,
+                    commit_prefix_len,
+                ))
+            })
+            .collect();
+
+        Ok(results)
+    }
+
+    /// Batch-compute divergence and hidden status for a set of commits.
+    /// Called in a background thread after the initial revset load.
+    pub fn compute_divergence_info(
+        repo: &Arc<ReadonlyRepo>,
+        commit_hex_ids: &[String],
+    ) -> Vec<(String, bool, bool, Option<usize>)> {
+        commit_hex_ids
+            .iter()
+            .filter_map(|hex_id| {
+                let commit_id = BackendCommitId::try_from_hex(hex_id)?;
+                let commit = repo.store().get_commit(&commit_id).ok()?;
+                let resolved = repo.resolve_change_id(commit.change_id()).ok().flatten();
+                let is_divergent = resolved
+                    .as_ref()
+                    .is_some_and(|targets| targets.is_divergent());
+                let is_hidden = commit.is_hidden(repo.as_ref()).unwrap_or(false);
+                if !is_divergent && !is_hidden {
+                    return None;
+                }
+                let suffix = resolved
+                    .as_ref()
+                    .and_then(|targets| targets.find_offset(commit.id()));
+                Some((hex_id.clone(), is_divergent, is_hidden, suffix))
             })
             .collect()
     }

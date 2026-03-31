@@ -52,9 +52,20 @@ pub enum RepoResult {
     WorkspaceUpdatedStale {
         message: String,
     },
-    /// Background-computed is_empty for a single merge commit.
+    /// Background-computed is_empty for a single commit.
     CommitEmpty {
         commit_id: CommitId,
+    },
+    /// Background-computed divergence and hidden status for commits.
+    /// Only contains entries that are divergent or hidden.
+    DivergenceInfo {
+        /// (commit_id, is_divergent, is_hidden, change_id_suffix)
+        updates: Vec<(CommitId, bool, bool, Option<usize>)>,
+    },
+    /// Background-computed shortest unique prefix lengths for IDs.
+    PrefixLengths {
+        /// (commit_id, change_display, change_prefix_len, commit_display, commit_prefix_len)
+        updates: Vec<(CommitId, String, usize, String, usize)>,
     },
     CommitDetailsLoaded {
         commit_id: CommitId,
@@ -249,10 +260,13 @@ impl RepoServiceState {
         let effective_revset = revset.unwrap_or_else(|| repo.default_revset());
         match repo.evaluate_revset(&effective_revset) {
             Ok(entries) => {
-                // Collect merge commit IDs for background is_empty computation.
-                let merge_ids: Vec<String> = entries
+                // Collect all commit IDs for background is_empty computation.
+                // (Previously only merge commits were deferred; now all commits
+                // defer is_empty to keep the initial load fast.)
+
+                // Collect commit IDs before sending entries (which moves them).
+                let all_ids: Vec<String> = entries
                     .iter()
-                    .filter(|e| e.commit.is_merge)
                     .map(|e| e.commit.graph_id.as_str().to_string())
                     .collect();
 
@@ -270,12 +284,13 @@ impl RepoServiceState {
                     },
                 );
 
-                // Spawn background thread to compute is_empty for merge commits.
-                if !merge_ids.is_empty() {
+                // Spawn background thread to compute is_empty for all commits.
+                {
+                    let empty_ids = all_ids.clone();
                     let inner = repo.inner_repo();
                     let empty_tx = self.result_tx.clone();
                     thread::spawn(move || {
-                        for hex_id in &merge_ids {
+                        for hex_id in &empty_ids {
                             let Some(backend_id) = jj_lib::backend::CommitId::try_from_hex(hex_id)
                             else {
                                 continue;
@@ -288,6 +303,50 @@ impl RepoServiceState {
                                     commit_id: CommitId::new(hex_id.clone()),
                                 });
                             }
+                        }
+                    });
+                }
+
+                // Spawn background thread to compute divergence/hidden status.
+                {
+                    let inner = repo.inner_repo();
+                    let div_ids = all_ids.clone();
+                    let div_tx = self.result_tx.clone();
+                    thread::spawn(move || {
+                        let updates = JjRepo::compute_divergence_info(&inner, &div_ids);
+                        if !updates.is_empty() {
+                            let _ = div_tx.send(RepoResult::DivergenceInfo {
+                                updates: updates
+                                    .into_iter()
+                                    .map(|(id, div, hid, suf)| {
+                                        (CommitId::new(id), div, hid, suf)
+                                    })
+                                    .collect(),
+                            });
+                        }
+                    });
+                }
+
+                // Spawn background thread to compute shortest unique ID prefixes.
+                {
+                    let prefix_tx = self.result_tx.clone();
+                    let repo_path = self.repo_path.clone();
+                    thread::spawn(move || {
+                        let Ok(bg_repo) = JjRepo::open(&repo_path) else {
+                            return;
+                        };
+                        let Ok(updates) = bg_repo.compute_prefix_lengths(&all_ids) else {
+                            return;
+                        };
+                        if !updates.is_empty() {
+                            let _ = prefix_tx.send(RepoResult::PrefixLengths {
+                                updates: updates
+                                    .into_iter()
+                                    .map(|(id, cd, cpl, cid, cipl)| {
+                                        (CommitId::new(id), cd, cpl, cid, cipl)
+                                    })
+                                    .collect(),
+                            });
                         }
                     });
                 }
