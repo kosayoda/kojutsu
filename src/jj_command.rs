@@ -462,14 +462,28 @@ impl JJCommand {
                 if *all {
                     args.push("--all".to_string());
                 }
-                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
+                push_flags(
+                    &mut args,
+                    flags,
+                    &[
+                        (CommandFlags::DRY_RUN, "--dry-run"),
+                        (CommandFlags::ALLOW_NEW, "--allow-new"),
+                    ],
+                );
                 args
             }
             JJCommand::GitPushChange { change_id, .. } => {
                 let mut args = vec!["git".to_string(), "push".to_string()];
                 args.push("-c".to_string());
                 args.push(change_id.to_string());
-                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
+                push_flags(
+                    &mut args,
+                    flags,
+                    &[
+                        (CommandFlags::DRY_RUN, "--dry-run"),
+                        (CommandFlags::ALLOW_NEW, "--allow-new"),
+                    ],
+                );
                 args
             }
             JJCommand::GitPushBookmark { bookmarks, .. } => {
@@ -478,7 +492,14 @@ impl JJCommand {
                     args.push("--bookmark".to_string());
                     args.push(name.clone());
                 }
-                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
+                push_flags(
+                    &mut args,
+                    flags,
+                    &[
+                        (CommandFlags::DRY_RUN, "--dry-run"),
+                        (CommandFlags::ALLOW_NEW, "--allow-new"),
+                    ],
+                );
                 args
             }
             JJCommand::GitExport { .. } => vec!["git".to_string(), "export".to_string()],
