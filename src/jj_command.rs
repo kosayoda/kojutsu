@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use crate::app::{JumpTarget, GLOBAL_TOGGLES};
+use crate::dag::BookmarkRef;
 use crate::keymap::CommandFlags;
 use crate::types::{ChangeId, MessageMode, RebaseSource, RebaseTarget, SplitTarget, SquashTarget};
 
@@ -104,13 +105,11 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     BookmarkTrack {
-        /// Each entry is `(bookmark_name, remote_name)`.
-        bookmarks: Vec<(String, String)>,
+        bookmarks: Vec<BookmarkRef>,
         flags: CommandFlags,
     },
     BookmarkUntrack {
-        /// Each entry is `(bookmark_name, remote_name)`.
-        bookmarks: Vec<(String, String)>,
+        bookmarks: Vec<BookmarkRef>,
         flags: CommandFlags,
     },
     Undo {
@@ -239,7 +238,7 @@ impl JJCommand {
             // Track: jump to the first tracked bookmark's commit.
             JJCommand::BookmarkTrack { bookmarks, .. } => bookmarks
                 .first()
-                .map(|(name, _)| JumpTarget::Bookmark(name.clone())),
+                .map(|br| JumpTarget::Bookmark(br.name.clone())),
             // Everything else: use normal ChangeId restoration.
             _ => None,
         }
@@ -433,19 +432,19 @@ impl JJCommand {
             }
             JJCommand::BookmarkTrack { bookmarks, .. } => {
                 let mut args = vec!["bookmark".to_string(), "track".to_string()];
-                for (name, remote) in bookmarks {
-                    args.push(name.clone());
+                for br in bookmarks {
+                    args.push(br.name.clone());
                     args.push("--remote".to_string());
-                    args.push(remote.clone());
+                    args.push(br.remote.clone());
                 }
                 args
             }
             JJCommand::BookmarkUntrack { bookmarks, .. } => {
                 let mut args = vec!["bookmark".to_string(), "untrack".to_string()];
-                for (name, remote) in bookmarks {
-                    args.push(name.clone());
+                for br in bookmarks {
+                    args.push(br.name.clone());
                     args.push("--remote".to_string());
-                    args.push(remote.clone());
+                    args.push(br.remote.clone());
                 }
                 args
             }

@@ -57,7 +57,7 @@ impl App {
 
         self.file_states.retain(|k, _| live_commit_ids.contains(k));
         self.diff_states
-            .retain(|(k, _), _| live_commit_ids.contains(k));
+            .retain(|k, _| live_commit_ids.contains(&k.commit_id));
         self.commit_stats_states
             .retain(|k, _| live_commit_ids.contains(k));
 
@@ -91,7 +91,7 @@ impl App {
         self.unfolded_commits
             .retain(|k| live_change_ids.contains(k));
         self.unfolded_files
-            .retain(|(k, _)| live_change_ids.contains(k));
+            .retain(|k| live_change_ids.contains(&k.change_id));
         self.selection
             .retain(|s| live_change_ids.contains(s.change_id()));
 
@@ -208,9 +208,15 @@ impl App {
                 let change_id = self.change_id_for_commit_key(&commit_id);
                 if let Some(change_id) = &change_id {
                     for file in &files {
-                        let fold_key = (change_id.clone(), file.path.clone());
+                        let fold_key = super::FileFoldKey {
+                            change_id: change_id.clone(),
+                            path: file.path.clone(),
+                        };
                         if self.unfolded_files.contains(&fold_key) {
-                            let cache_key = (commit_id.clone(), file.path.clone());
+                            let cache_key = super::FileDiffCacheKey {
+                                commit_id: commit_id.clone(),
+                                path: file.path.clone(),
+                            };
                             if self
                                 .diff_states
                                 .get(&cache_key)
@@ -245,8 +251,10 @@ impl App {
                 lines,
             } => {
                 self.status_message = None;
-                self.diff_states
-                    .insert((commit_id, path), Loadable::Loaded(lines));
+                self.diff_states.insert(
+                    super::FileDiffCacheKey { commit_id, path },
+                    Loadable::Loaded(lines),
+                );
                 self.rebuild_rows();
             }
             RepoResult::FileDiffFailed {
@@ -254,8 +262,13 @@ impl App {
                 path,
                 error,
             } => {
-                self.diff_states
-                    .insert((commit_id, path.clone()), Loadable::Failed(error));
+                self.diff_states.insert(
+                    super::FileDiffCacheKey {
+                        commit_id,
+                        path: path.clone(),
+                    },
+                    Loadable::Failed(error),
+                );
                 self.status_message = Some(format!("failed to load diff for {path}"));
                 self.rebuild_rows();
             }

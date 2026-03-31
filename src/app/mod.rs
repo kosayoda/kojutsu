@@ -68,8 +68,17 @@ pub enum Loadable<T> {
     Failed(String),
 }
 
-type FileDiffCacheKey = (CommitId, String);
-type FileFoldKey = (ChangeId, String);
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct FileDiffCacheKey {
+    pub commit_id: CommitId,
+    pub path: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct FileFoldKey {
+    pub change_id: ChangeId,
+    pub path: String,
+}
 
 impl<T> Loadable<T> {
     fn loaded(&self) -> Option<&T> {
@@ -411,7 +420,10 @@ impl App {
             .get(file_idx.raw())?
             .path
             .clone();
-        Some((self.commit_id(entry_idx).clone(), path))
+        Some(FileDiffCacheKey {
+            commit_id: self.commit_id(entry_idx).clone(),
+            path,
+        })
     }
 
     pub(crate) fn file_fold_key(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<FileFoldKey> {
@@ -420,7 +432,10 @@ impl App {
             .get(file_idx.raw())?
             .path
             .clone();
-        Some((self.change_id(entry_idx), path))
+        Some(FileFoldKey {
+            change_id: self.change_id(entry_idx),
+            path,
+        })
     }
 
     pub fn is_commit_unfolded(&self, entry_idx: EntryIdx) -> bool {

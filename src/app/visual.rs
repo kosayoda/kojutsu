@@ -5,6 +5,14 @@ use crate::types::{
     ChangeId, DisplayRow, FileRef, Selection, SelectionKind, VisualRange,
 };
 
+/// A single line within a visual selection range (used during toggle).
+struct LineSelection {
+    change_id: ChangeId,
+    path: String,
+    old_line: Option<u32>,
+    new_line: Option<u32>,
+}
+
 impl App {
     // -----------------------------------------------------------------------
     // Shared lifecycle
@@ -326,13 +334,13 @@ impl App {
         };
         let vr = vr.clone();
 
-        let line_data: Vec<(ChangeId, String, Option<u32>, Option<u32>)> = self
+        let line_data: Vec<LineSelection> = self
             .diff_states
             .iter()
-            .filter_map(|((commit_id, path), diff_lines)| {
+            .filter_map(|(cache_key, diff_lines)| {
                 let diff_lines = diff_lines.loaded()?;
-                let cid = self.change_id_for_commit_key(commit_id)?;
-                if cid != vr.change_id || path != &vr.path {
+                let cid = self.change_id_for_commit_key(&cache_key.commit_id)?;
+                if cid != vr.change_id || cache_key.path != vr.path {
                     return None;
                 }
                 let lines: Vec<_> = diff_lines
@@ -345,13 +353,11 @@ impl App {
                     .filter(|(_, dl)| {
                         dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed
                     })
-                    .map(|(_, dl)| {
-                        (
-                            vr.change_id.clone(),
-                            vr.path.clone(),
-                            dl.old_line,
-                            dl.new_line,
-                        )
+                    .map(|(_, dl)| LineSelection {
+                        change_id: vr.change_id.clone(),
+                        path: vr.path.clone(),
+                        old_line: dl.old_line,
+                        new_line: dl.new_line,
                     })
                     .collect();
                 Some(lines)
@@ -363,47 +369,47 @@ impl App {
             return;
         }
 
-        let all_selected = line_data.iter().all(|(cid, path, ol, nl)| {
+        let all_selected = line_data.iter().all(|ls| {
             self.selection.contains(&Selection::Line {
                 file_ref: FileRef {
-                    change_id: cid.clone(),
-                    path: path.clone(),
+                    change_id: ls.change_id.clone(),
+                    path: ls.path.clone(),
                 },
-                old_line: *ol,
-                new_line: *nl,
+                old_line: ls.old_line,
+                new_line: ls.new_line,
             })
         });
 
         if all_selected {
-            for (cid, path, ol, nl) in &line_data {
+            for ls in &line_data {
                 self.selection.remove(&Selection::Line {
                     file_ref: FileRef {
-                        change_id: cid.clone(),
-                        path: path.clone(),
+                        change_id: ls.change_id.clone(),
+                        path: ls.path.clone(),
                     },
-                    old_line: *ol,
-                    new_line: *nl,
+                    old_line: ls.old_line,
+                    new_line: ls.new_line,
                 });
             }
         } else {
-            if let Some((cid, ..)) = line_data.first() {
-                self.clear_other_commits(cid);
+            if let Some(ls) = line_data.first() {
+                self.clear_other_commits(&ls.change_id);
             }
             self.selection.ensure_kind(SelectionKind::Line);
-            for (cid, path, ol, nl) in line_data {
+            for ls in line_data {
                 self.selection.remove(&Selection::File(FileRef {
-                    change_id: cid.clone(),
-                    path: path.clone(),
+                    change_id: ls.change_id.clone(),
+                    path: ls.path.clone(),
                 }));
                 self.selection.insert(
                     SelectionKind::Line,
                     Selection::Line {
                         file_ref: FileRef {
-                            change_id: cid,
-                            path,
+                            change_id: ls.change_id,
+                            path: ls.path,
                         },
-                        old_line: ol,
-                        new_line: nl,
+                        old_line: ls.old_line,
+                        new_line: ls.new_line,
                     },
                 );
             }

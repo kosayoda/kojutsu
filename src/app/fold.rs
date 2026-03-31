@@ -151,7 +151,8 @@ impl App {
                 .is_none_or(|k| self.diff_states.get(k).is_none_or(Loadable::should_request));
             if should_request {
                 if let Some(cache_key) = cache_key {
-                    let (commit_id, path) = cache_key.clone();
+                    let commit_id = cache_key.commit_id.clone();
+                    let path = cache_key.path.clone();
                     self.diff_states.insert(cache_key, Loadable::Loading);
                     self.pending_repo_requests
                         .push(RepoRequest::load_file_diff(commit_id, path));

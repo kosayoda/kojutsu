@@ -81,6 +81,13 @@ pub struct WorkspaceAnnotation {
     pub is_current: bool,
 }
 
+/// A bookmark name + remote pair (e.g., for track/untrack operations).
+#[derive(Debug, Clone)]
+pub struct BookmarkRef {
+    pub name: String,
+    pub remote: String,
+}
+
 /// A remote bookmark (e.g., `main@origin`).
 #[derive(Clone)]
 pub struct RemoteBookmarkInfo {

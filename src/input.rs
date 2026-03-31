@@ -4,7 +4,7 @@ use ratatui::crossterm::event::{
 use tui_input::backend::crossterm::EventHandler;
 
 use crate::app::{App, AppMode};
-use crate::dag::DiffLineKind;
+use crate::dag::{BookmarkRef, DiffLineKind};
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{ChangeSelection, JJCommand};
 use crate::keymap::{
@@ -1394,13 +1394,16 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
     }
 }
 
-/// Parse `"name@remote"` display strings into `(name, remote)` tuples.
-fn parse_remote_bookmarks(names: Vec<String>) -> Vec<(String, String)> {
+/// Parse `"name@remote"` display strings into `BookmarkRef` values.
+fn parse_remote_bookmarks(names: Vec<String>) -> Vec<BookmarkRef> {
     names
         .into_iter()
         .filter_map(|s| {
             let (name, remote) = s.rsplit_once('@')?;
-            Some((name.to_string(), remote.to_string()))
+            Some(BookmarkRef {
+                name: name.to_string(),
+                remote: remote.to_string(),
+            })
         })
         .collect()
 }
