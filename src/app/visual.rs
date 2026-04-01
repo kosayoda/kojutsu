@@ -464,7 +464,7 @@ impl App {
                 return;
             };
             path.pop();
-            let target = *path.last().unwrap();
+            let target = *path.last().expect("path has >1 element after length check");
             self.jump_cursor_to_commit(target);
             return;
         }

@@ -1967,6 +1967,7 @@ dependencies = [
  "sapling-renderdag",
  "serde",
  "serde_json",
+ "shlex",
  "signal-hook",
  "strum 0.28.0",
  "tempfile",

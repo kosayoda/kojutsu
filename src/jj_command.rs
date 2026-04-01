@@ -1,10 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use compact_str::format_compact;
+
 use crate::app::{JumpTarget, GLOBAL_TOGGLES};
 use crate::dag::BookmarkRef;
 use crate::keymap::CommandFlags;
-use crate::types::{ChangeId, MessageMode, RebaseSource, RebaseTarget, SplitTarget, SquashTarget};
+use crate::types::{ChangeId, MessageMode, RebaseSource, RebaseTarget, SplitTarget, SquashTarget, Str};
 
 /// How to filter changes for squash/commit operations.
 #[derive(Debug, Clone)]
@@ -12,7 +14,7 @@ pub enum ChangeSelection {
     /// Include all changes (no filtering).
     All,
     /// Include only these files (maps to [FILESETS] positional args).
-    Files(Vec<String>),
+    Files(Vec<Str>),
     /// Line-level selection (maps to --interactive --tool with selection JSON).
     Lines(PathBuf),
 }
@@ -245,11 +247,11 @@ impl JJCommand {
     }
 
     /// Build the CLI arguments for `jj`.
-    pub fn args(&self) -> Vec<String> {
+    pub fn args(&self) -> Vec<Str> {
         let flags = self.flags();
         let mut args = match self {
             JJCommand::Abandon { change_ids, .. } => {
-                let mut args = vec!["abandon".to_string()];
+                let mut args: Vec<Str> = vec!["abandon".into()];
                 push_flags(
                     &mut args,
                     flags,
@@ -259,24 +261,25 @@ impl JJCommand {
                     ],
                 );
                 for id in change_ids {
-                    args.push(id.to_string());
+                    args.push(format_compact!("{id}"));
                 }
                 args
             }
             JJCommand::Describe {
                 change_id, message, ..
             } => {
-                let mut args = vec!["describe".to_string()];
-                args.push("-m".to_string());
-                args.push(message.clone());
-                args.push(change_id.to_string());
-                args
+                vec![
+                    "describe".into(),
+                    "-m".into(),
+                    Str::from(message.as_str()),
+                    format_compact!("{change_id}"),
+                ]
             }
             JJCommand::DescribeInEditor { change_id, .. } => {
-                vec!["describe".to_string(), change_id.to_string()]
+                vec!["describe".into(), format_compact!("{change_id}")]
             }
             JJCommand::Edit { change_id, .. } => {
-                vec!["edit".to_string(), change_id.to_string()]
+                vec!["edit".into(), format_compact!("{change_id}")]
             }
             JJCommand::New {
                 change_id,
@@ -284,14 +287,14 @@ impl JJCommand {
                 insert_before,
                 ..
             } => {
-                let mut args = vec!["new".to_string()];
+                let mut args: Vec<Str> = vec!["new".into()];
                 if *insert_after {
-                    args.push("--insert-after".to_string());
+                    args.push("--insert-after".into());
                 }
                 if *insert_before {
-                    args.push("--insert-before".to_string());
+                    args.push("--insert-before".into());
                 }
-                args.push(change_id.to_string());
+                args.push(format_compact!("{change_id}"));
                 push_flags(&mut args, flags, &[(CommandFlags::NO_EDIT, "--no-edit")]);
                 args
             }
@@ -301,15 +304,15 @@ impl JJCommand {
                 dest,
                 ..
             } => {
-                let mut args = vec!["rebase".to_string()];
+                let mut args: Vec<Str> = vec!["rebase".into()];
                 match source_mode {
-                    RebaseSource::Revision => args.push("-r".to_string()),
-                    RebaseSource::Source => args.push("-s".to_string()),
-                    RebaseSource::Branch => args.push("-b".to_string()),
+                    RebaseSource::Revision => args.push("-r".into()),
+                    RebaseSource::Source => args.push("-s".into()),
+                    RebaseSource::Branch => args.push("-b".into()),
                 }
-                args.push(change_id.to_string());
-                args.push(dest.kind.flag().to_string());
-                args.push(dest.target.to_string());
+                args.push(format_compact!("{change_id}"));
+                args.push(format_compact!("{}", dest.kind.flag()));
+                args.push(format_compact!("{}", dest.target));
                 args
             }
             JJCommand::Restore {
@@ -319,7 +322,7 @@ impl JJCommand {
                 selection,
                 ..
             } => {
-                let mut args = vec!["restore".to_string()];
+                let mut args: Vec<Str> = vec!["restore".into()];
                 push_flags(
                     &mut args,
                     flags,
@@ -329,16 +332,16 @@ impl JJCommand {
                     ],
                 );
                 if let Some(id) = from {
-                    args.push("--from".to_string());
-                    args.push(id.to_string());
+                    args.push("--from".into());
+                    args.push(format_compact!("{id}"));
                 }
                 if let Some(id) = into {
-                    args.push("--into".to_string());
-                    args.push(id.to_string());
+                    args.push("--into".into());
+                    args.push(format_compact!("{id}"));
                 }
                 if let Some(id) = changes_in {
-                    args.push("--changes-in".to_string());
-                    args.push(id.to_string());
+                    args.push("--changes-in".into());
+                    args.push(format_compact!("{id}"));
                 }
                 push_change_selection(&mut args, selection);
                 args
@@ -349,7 +352,8 @@ impl JJCommand {
                 selection,
                 ..
             } => {
-                let mut args = vec!["split".to_string(), "-r".to_string(), change_id.to_string()];
+                let mut args: Vec<Str> =
+                    vec!["split".into(), "-r".into(), format_compact!("{change_id}")];
                 push_flags(
                     &mut args,
                     flags,
@@ -359,8 +363,8 @@ impl JJCommand {
                     ],
                 );
                 if let Some(t) = target {
-                    args.push(t.kind.flag().to_string());
-                    args.push(t.target.to_string());
+                    args.push(format_compact!("{}", t.kind.flag()));
+                    args.push(format_compact!("{}", t.target));
                 }
                 push_change_selection(&mut args, selection);
                 args
@@ -369,98 +373,98 @@ impl JJCommand {
                 name, change_id, ..
             } => {
                 vec![
-                    "bookmark".to_string(),
-                    "create".to_string(),
-                    "-r".to_string(),
-                    change_id.to_string(),
-                    name.clone(),
+                    "bookmark".into(),
+                    "create".into(),
+                    "-r".into(),
+                    format_compact!("{change_id}"),
+                    Str::from(name.as_str()),
                 ]
             }
             JJCommand::BookmarkSet {
                 name, change_id, ..
             } => {
-                let mut args = vec!["bookmark".to_string(), "set".to_string()];
+                let mut args: Vec<Str> = vec!["bookmark".into(), "set".into()];
                 push_flags(
                     &mut args,
                     flags,
                     &[(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
                 );
-                args.push("-r".to_string());
-                args.push(change_id.to_string());
-                args.push(name.clone());
+                args.push("-r".into());
+                args.push(format_compact!("{change_id}"));
+                args.push(Str::from(name.as_str()));
                 args
             }
             JJCommand::BookmarkDelete { names, .. } => {
-                let mut args = vec!["bookmark".to_string(), "delete".to_string()];
-                args.extend(names.iter().cloned());
+                let mut args: Vec<Str> = vec!["bookmark".into(), "delete".into()];
+                args.extend(names.iter().map(|n| Str::from(n.as_str())));
                 args
             }
             JJCommand::BookmarkForget { names, .. } => {
-                let mut args = vec!["bookmark".to_string(), "forget".to_string()];
-                args.extend(names.iter().cloned());
+                let mut args: Vec<Str> = vec!["bookmark".into(), "forget".into()];
+                args.extend(names.iter().map(|n| Str::from(n.as_str())));
                 args
             }
             JJCommand::BookmarkMove { name, target, .. } => {
-                let mut args = vec!["bookmark".to_string(), "move".to_string()];
+                let mut args: Vec<Str> = vec!["bookmark".into(), "move".into()];
                 push_flags(
                     &mut args,
                     flags,
                     &[(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
                 );
-                args.push("--to".to_string());
-                args.push(target.to_string());
-                args.push(name.to_string());
+                args.push("--to".into());
+                args.push(format_compact!("{target}"));
+                args.push(Str::from(name.as_str()));
                 args
             }
             JJCommand::BookmarkRename {
                 old_name, new_name, ..
             } => {
                 vec![
-                    "bookmark".to_string(),
-                    "rename".to_string(),
-                    old_name.clone(),
-                    new_name.clone(),
+                    "bookmark".into(),
+                    "rename".into(),
+                    Str::from(old_name.as_str()),
+                    Str::from(new_name.as_str()),
                 ]
             }
             JJCommand::BookmarkAdvance { change_id, .. } => {
-                let mut args = vec!["bookmark".to_string(), "advance".to_string()];
+                let mut args: Vec<Str> = vec!["bookmark".into(), "advance".into()];
                 if let Some(id) = change_id {
-                    args.push("--to".to_string());
-                    args.push(id.to_string());
+                    args.push("--to".into());
+                    args.push(format_compact!("{id}"));
                 }
                 args
             }
             JJCommand::BookmarkTrack { bookmarks, .. } => {
-                let mut args = vec!["bookmark".to_string(), "track".to_string()];
+                let mut args: Vec<Str> = vec!["bookmark".into(), "track".into()];
                 for br in bookmarks {
-                    args.push(br.name.clone());
-                    args.push("--remote".to_string());
-                    args.push(br.remote.clone());
+                    args.push(Str::from(br.name.as_str()));
+                    args.push("--remote".into());
+                    args.push(Str::from(br.remote.as_str()));
                 }
                 args
             }
             JJCommand::BookmarkUntrack { bookmarks, .. } => {
-                let mut args = vec!["bookmark".to_string(), "untrack".to_string()];
+                let mut args: Vec<Str> = vec!["bookmark".into(), "untrack".into()];
                 for br in bookmarks {
-                    args.push(br.name.clone());
-                    args.push("--remote".to_string());
-                    args.push(br.remote.clone());
+                    args.push(Str::from(br.name.as_str()));
+                    args.push("--remote".into());
+                    args.push(Str::from(br.remote.as_str()));
                 }
                 args
             }
-            JJCommand::Undo { .. } => vec!["undo".to_string()],
-            JJCommand::Redo { .. } => vec!["redo".to_string()],
+            JJCommand::Undo { .. } => vec!["undo".into()],
+            JJCommand::Redo { .. } => vec!["redo".into()],
             JJCommand::GitFetch { all_remotes, .. } => {
-                let mut args = vec!["git".to_string(), "fetch".to_string()];
+                let mut args: Vec<Str> = vec!["git".into(), "fetch".into()];
                 if *all_remotes {
-                    args.push("--all-remotes".to_string());
+                    args.push("--all-remotes".into());
                 }
                 args
             }
             JJCommand::GitPush { all, .. } => {
-                let mut args = vec!["git".to_string(), "push".to_string()];
+                let mut args: Vec<Str> = vec!["git".into(), "push".into()];
                 if *all {
-                    args.push("--all".to_string());
+                    args.push("--all".into());
                 }
                 push_flags(
                     &mut args,
@@ -473,9 +477,9 @@ impl JJCommand {
                 args
             }
             JJCommand::GitPushChange { change_id, .. } => {
-                let mut args = vec!["git".to_string(), "push".to_string()];
-                args.push("-c".to_string());
-                args.push(change_id.to_string());
+                let mut args: Vec<Str> = vec!["git".into(), "push".into()];
+                args.push("-c".into());
+                args.push(format_compact!("{change_id}"));
                 push_flags(
                     &mut args,
                     flags,
@@ -487,10 +491,10 @@ impl JJCommand {
                 args
             }
             JJCommand::GitPushBookmark { bookmarks, .. } => {
-                let mut args = vec!["git".to_string(), "push".to_string()];
+                let mut args: Vec<Str> = vec!["git".into(), "push".into()];
                 for name in bookmarks {
-                    args.push("--bookmark".to_string());
-                    args.push(name.clone());
+                    args.push("--bookmark".into());
+                    args.push(Str::from(name.as_str()));
                 }
                 push_flags(
                     &mut args,
@@ -502,19 +506,21 @@ impl JJCommand {
                 );
                 args
             }
-            JJCommand::GitExport { .. } => vec!["git".to_string(), "export".to_string()],
-            JJCommand::GitImport { .. } => vec!["git".to_string(), "import".to_string()],
+            JJCommand::GitExport { .. } => vec!["git".into(), "export".into()],
+            JJCommand::GitImport { .. } => vec!["git".into(), "import".into()],
             JJCommand::Absorb {
                 from, selection, ..
             } => {
-                let mut args = vec!["absorb".to_string()];
+                let mut args: Vec<Str> = vec!["absorb".into()];
                 if let Some(id) = from {
-                    args.push("--from".to_string());
-                    args.push(id.to_string());
+                    args.push("--from".into());
+                    args.push(format_compact!("{id}"));
                 }
                 match selection {
                     ChangeSelection::All => {}
-                    ChangeSelection::Files(paths) => args.extend(paths.iter().cloned()),
+                    ChangeSelection::Files(paths) => {
+                        args.extend(paths.iter().cloned());
+                    }
                     ChangeSelection::Lines(_) => {
                         debug_assert!(false, "line selection should be blocked for absorb");
                     }
@@ -524,15 +530,15 @@ impl JJCommand {
             JJCommand::Commit {
                 message, selection, ..
             } => {
-                let mut args = vec!["commit".to_string()];
+                let mut args: Vec<Str> = vec!["commit".into()];
                 push_flags(
                     &mut args,
                     flags,
                     &[(CommandFlags::INTERACTIVE, "--interactive")],
                 );
                 if let Some(msg) = message {
-                    args.push("-m".to_string());
-                    args.push(msg.clone());
+                    args.push("-m".into());
+                    args.push(Str::from(msg.as_str()));
                 }
                 push_change_selection(&mut args, selection);
                 args
@@ -540,10 +546,10 @@ impl JJCommand {
             JJCommand::Duplicate {
                 change_id, onto, ..
             } => {
-                let mut args = vec!["duplicate".to_string(), change_id.to_string()];
+                let mut args: Vec<Str> = vec!["duplicate".into(), format_compact!("{change_id}")];
                 if let Some(target) = onto {
-                    args.push("--onto".to_string());
-                    args.push(target.to_string());
+                    args.push("--onto".into());
+                    args.push(format_compact!("{target}"));
                 }
                 args
             }
@@ -554,7 +560,7 @@ impl JJCommand {
                 selection,
                 ..
             } => {
-                let mut args = vec!["squash".to_string()];
+                let mut args: Vec<Str> = vec!["squash".into()];
                 push_flags(
                     &mut args,
                     flags,
@@ -566,23 +572,23 @@ impl JJCommand {
                 match message {
                     MessageMode::Default => {}
                     MessageMode::Inline(msg) => {
-                        args.push("-m".to_string());
-                        args.push(msg.clone());
+                        args.push("-m".into());
+                        args.push(Str::from(msg.as_str()));
                     }
                     MessageMode::UseDestination => {
-                        args.push("--use-destination-message".to_string());
+                        args.push("--use-destination-message".into());
                     }
                 }
                 match target {
                     None => {
-                        args.push("-r".to_string());
-                        args.push(change_id.to_string());
+                        args.push("-r".into());
+                        args.push(format_compact!("{change_id}"));
                     }
                     Some(t) => {
-                        args.push("--from".to_string());
-                        args.push(change_id.to_string());
-                        args.push(t.kind.flag().to_string());
-                        args.push(t.target.to_string());
+                        args.push("--from".into());
+                        args.push(format_compact!("{change_id}"));
+                        args.push(format_compact!("{}", t.kind.flag()));
+                        args.push(format_compact!("{}", t.target));
                     }
                 }
                 push_change_selection(&mut args, selection);
@@ -594,23 +600,23 @@ impl JJCommand {
                 revision,
                 ..
             } => {
-                let mut args = vec!["workspace".to_string(), "add".to_string()];
+                let mut args: Vec<Str> = vec!["workspace".into(), "add".into()];
                 if let Some(n) = name {
-                    args.push("--name".to_string());
-                    args.push(n.clone());
+                    args.push("--name".into());
+                    args.push(Str::from(n.as_str()));
                 }
-                args.push("-r".to_string());
-                args.push(revision.to_string());
-                args.push(path.clone());
+                args.push("-r".into());
+                args.push(format_compact!("{revision}"));
+                args.push(Str::from(path.as_str()));
                 args
             }
             JJCommand::WorkspaceForget { names, .. } => {
-                let mut args = vec!["workspace".to_string(), "forget".to_string()];
-                args.extend(names.iter().cloned());
+                let mut args: Vec<Str> = vec!["workspace".into(), "forget".into()];
+                args.extend(names.iter().map(|n| Str::from(n.as_str())));
                 args
             }
             JJCommand::WorkspaceList { .. } => {
-                vec!["workspace".to_string(), "list".to_string()]
+                vec!["workspace".into(), "list".into()]
             }
         };
 
@@ -625,19 +631,9 @@ impl JJCommand {
     /// display looks like a valid shell command the user could copy-paste.
     pub fn display(&self) -> String {
         let args = self.args();
-        let quoted: Vec<String> = args
-            .iter()
-            .map(|a| {
-                if a.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c))
-                    || a.is_empty()
-                {
-                    format!("{:?}", a)
-                } else {
-                    a.clone()
-                }
-            })
-            .collect();
-        format!("$ jj {}", quoted.join(" "))
+        let joined = shlex::try_join(args.iter().map(|s| s.as_str()))
+            .expect("jj arguments should not contain NUL bytes");
+        format!("$ jj {joined}")
     }
 
     /// Whether this command needs an interactive terminal (editor/diff tool).
@@ -683,32 +679,17 @@ impl JJCommand {
         let args = self.args();
         let display = self.display();
 
-        // Ignore SIGINT in the parent while the child runs. Without this,
-        // Ctrl-C during an SSH password prompt (or editor) would kill both
-        // the child and our process. The child still receives SIGINT normally
-        // since it has its own signal disposition after exec.
-        //
-        // We use signal_hook::flag to set an AtomicBool on SIGINT instead of
-        // the default terminate-the-process behavior.
-        let interrupted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let sigint_hook =
-            signal_hook::flag::register(signal_hook::consts::SIGINT, interrupted.clone()).ok();
-
-        let result = Command::new("jj")
-            .args(&args)
-            .arg("-R")
-            .arg(repo_path)
-            .current_dir(repo_path)
-            .stdin(std::process::Stdio::inherit())
-            .stdout(std::process::Stdio::inherit())
-            .stderr(std::process::Stdio::inherit())
-            .status();
-
-        // Restore default SIGINT handling.
-        if let Some(id) = sigint_hook {
-            signal_hook::low_level::unregister(id);
-        }
-        let was_interrupted = interrupted.load(std::sync::atomic::Ordering::Relaxed);
+        let (result, was_interrupted) = with_sigint_suppressed(|| {
+            Command::new("jj")
+                .args(&args)
+                .arg("-R")
+                .arg(repo_path)
+                .current_dir(repo_path)
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit())
+                .status()
+        });
 
         match result {
             Ok(status) => {
@@ -740,25 +721,18 @@ impl JJCommand {
         let args = self.args();
         let display = self.display();
 
-        let interrupted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let sigint_hook =
-            signal_hook::flag::register(signal_hook::consts::SIGINT, interrupted.clone()).ok();
-
-        let result = Command::new("jj")
-            .args(&args)
-            .arg("-R")
-            .arg(repo_path)
-            .arg("--color=always")
-            .current_dir(repo_path)
-            .stdin(std::process::Stdio::inherit())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .output();
-
-        if let Some(id) = sigint_hook {
-            signal_hook::low_level::unregister(id);
-        }
-        let was_interrupted = interrupted.load(std::sync::atomic::Ordering::Relaxed);
+        let (result, was_interrupted) = with_sigint_suppressed(|| {
+            Command::new("jj")
+                .args(&args)
+                .arg("-R")
+                .arg(repo_path)
+                .arg("--color=always")
+                .current_dir(repo_path)
+                .stdin(std::process::Stdio::inherit())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .output()
+        });
 
         match result {
             Ok(Output {
@@ -839,16 +813,16 @@ impl JJCommand {
 }
 
 /// Push CLI flag arguments for any active command-specific flags.
-fn push_flags(args: &mut Vec<String>, flags: CommandFlags, mapping: &[(CommandFlags, &str)]) {
+fn push_flags(args: &mut Vec<Str>, flags: CommandFlags, mapping: &[(CommandFlags, &str)]) {
     for (flag, arg) in mapping {
         if flags.contains(*flag) {
-            args.push(arg.to_string());
+            args.push(Str::from(*arg));
         }
     }
 }
 
 /// Push args for change selection (file paths or --tool for line-level).
-fn push_change_selection(args: &mut Vec<String>, selection: &ChangeSelection) {
+fn push_change_selection(args: &mut Vec<Str>, selection: &ChangeSelection) {
     match selection {
         ChangeSelection::All => {}
         ChangeSelection::Files(paths) => {
@@ -857,35 +831,53 @@ fn push_change_selection(args: &mut Vec<String>, selection: &ChangeSelection) {
         ChangeSelection::Lines(json_path) => {
             let exe = std::env::current_exe().unwrap_or_else(|_| "kojutsu".into());
             args.extend([
-                "--interactive".to_string(),
-                "--tool".to_string(),
-                "kojutsu-select".to_string(),
-                "--config".to_string(),
-                format!(
+                "--interactive".into(),
+                "--tool".into(),
+                "kojutsu-select".into(),
+                "--config".into(),
+                Str::from(format!(
                     "merge-tools.kojutsu-select.program={}",
-                    shell_escape(&exe.display().to_string())
-                ),
-                "--config".to_string(),
-                format!(
+                    toml_string_escape(&exe.display().to_string())
+                )),
+                "--config".into(),
+                Str::from(format!(
                     "merge-tools.kojutsu-select.edit-args=[\"--apply-diff\", \"{}\", \"$left\", \"$right\"]",
-                    json_path.display()
-                ),
+                    toml_string_escape(&json_path.display().to_string())
+                )),
             ]);
         }
     }
 }
 
-/// Escape a string for use in jj --config values.
-fn shell_escape(s: &str) -> String {
+/// Run `body` with SIGINT suppressed in the parent process.
+///
+/// Ignores SIGINT while the child runs so that Ctrl-C during an SSH password
+/// prompt (or editor) doesn't kill our process. The child still receives
+/// SIGINT normally since it has its own signal disposition after exec.
+///
+/// Returns `(result, was_interrupted)`.
+fn with_sigint_suppressed<T>(body: impl FnOnce() -> T) -> (T, bool) {
+    let interrupted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let hook =
+        signal_hook::flag::register(signal_hook::consts::SIGINT, interrupted.clone()).ok();
+    let result = body();
+    if let Some(id) = hook {
+        signal_hook::low_level::unregister(id);
+    }
+    (result, interrupted.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// Escape a string for use in jj --config TOML values.
+fn toml_string_escape(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// Push CLI flags for all active global toggles (ignore-immutable, etc.).
 /// Called once at the end of `args()` so individual variants don't need to.
-fn push_global_flags(args: &mut Vec<String>, flags: CommandFlags) {
+fn push_global_flags(args: &mut Vec<Str>, flags: CommandFlags) {
     for toggle in GLOBAL_TOGGLES {
         if flags.contains(toggle.flag) {
-            args.push(toggle.cli_flag.to_string());
+            args.push(Str::from(toggle.cli_flag));
         }
     }
 }

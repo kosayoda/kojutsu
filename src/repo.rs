@@ -696,7 +696,7 @@ impl JjRepo {
         // Author
         let sig = commit.author();
         let millis = sig.timestamp.timestamp.0;
-        let tz_offset_seconds = sig.timestamp.tz_offset as i64 * 60;
+        let tz_offset_seconds = sig.timestamp.tz_offset as i32 * 60;
         let timestamp =
             jiff::Timestamp::from_millisecond(millis).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
 

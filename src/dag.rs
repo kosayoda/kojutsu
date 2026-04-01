@@ -182,7 +182,7 @@ pub struct AuthorInfo {
     pub email: String,
     pub timestamp: Timestamp,
     /// Timezone offset from UTC in seconds (e.g. -18000 for UTC-5).
-    pub tz_offset_seconds: i64,
+    pub tz_offset_seconds: i32,
 }
 
 /// A single entry in the DAG: a commit plus its edges to parents.

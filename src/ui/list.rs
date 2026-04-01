@@ -214,7 +214,7 @@ fn render_commit_item<'a>(
         .into_iter()
     {
         let mut iter = group.into_iter();
-        let (start, c) = iter.next().unwrap();
+        let (start, c) = iter.next().expect("chunk_by groups are non-empty");
         let end = {
             let (end, c) = iter.last().unwrap_or((start, c));
             end + c.len_utf8()
@@ -305,7 +305,7 @@ fn render_commit_item<'a>(
     line1.push(Span::raw(" "));
 
     // Timestamp (apply author's timezone offset)
-    let tz = jiff::tz::Offset::from_seconds(c.author.tz_offset_seconds as i32)
+    let tz = jiff::tz::Offset::from_seconds(c.author.tz_offset_seconds)
         .unwrap_or(jiff::tz::Offset::UTC);
     let formatted = c
         .author

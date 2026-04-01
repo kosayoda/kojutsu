@@ -10,6 +10,14 @@ use crate::types::{
 use super::Loadable;
 
 impl App {
+    /// Resolve entry + file indices to (change_id, file_path).
+    /// Returns `None` if the file list isn't loaded yet.
+    fn resolve_file(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<(ChangeId, String)> {
+        let change_id = self.entries[entry_idx].commit.unique_change_id();
+        let files = self.files_for_entry(entry_idx)?;
+        Some((change_id, files[file_idx.raw()].path.clone()))
+    }
+
     pub fn selection_active(&self) -> bool {
         self.selection.is_active()
     }
@@ -26,11 +34,9 @@ impl App {
     /// existing selections, clears the old selections first (selections are
     /// scoped to one commit at a time).
     pub fn toggle_file_selection(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
-        let change_id: ChangeId = self.entries[entry_idx].commit.unique_change_id();
-        let Some(files) = self.files_for_entry(entry_idx) else {
+        let Some((change_id, path)) = self.resolve_file(entry_idx, file_idx) else {
             return;
         };
-        let path = files[file_idx.raw()].path.clone();
 
         self.clear_other_commits(&change_id);
         self.selection.ensure_kind(SelectionKind::File);
@@ -127,11 +133,9 @@ impl App {
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     ) {
-        let change_id = self.entries[entry_idx].commit.unique_change_id();
-        let Some(files) = self.files_for_entry(entry_idx) else {
+        let Some((change_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
             return;
         };
-        let file_path = files[file_idx.raw()].path.clone();
 
         // Extract what we need from the diff line before mutating self.
         let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
@@ -171,11 +175,9 @@ impl App {
         file_idx: FileIdx,
         header_line_idx: DiffLineIdx,
     ) {
-        let change_id = self.entries[entry_idx].commit.unique_change_id();
-        let Some(files) = self.files_for_entry(entry_idx) else {
+        let Some((change_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
             return;
         };
-        let file_path = files[file_idx.raw()].path.clone();
 
         // Collect hunk line data before mutating self.
         let mut hunk_lines = Vec::new();
@@ -229,11 +231,9 @@ impl App {
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     ) -> bool {
-        let change_id = &self.entries[entry_idx].commit.unique_change_id();
-        let Some(files) = self.files_for_entry(entry_idx) else {
+        let Some((change_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
             return false;
         };
-        let file_path = &files[file_idx.raw()].path;
         let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
             return false;
         };
@@ -250,8 +250,8 @@ impl App {
 
         self.selection.contains(&Selection::Line {
             file_ref: FileRef {
-                change_id: change_id.clone(),
-                path: file_path.clone(),
+                change_id,
+                path: file_path,
             },
             old_line: diff_line.old_line,
             new_line: diff_line.new_line,
@@ -264,11 +264,9 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
     ) -> FileSelectionState {
-        let change_id = &self.entries[entry_idx].commit.unique_change_id();
-        let Some(files) = self.files_for_entry(entry_idx) else {
+        let Some((change_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
             return FileSelectionState::None;
         };
-        let file_path = &files[file_idx.raw()].path;
 
         // Explicit file-level selection.
         if self.selection.contains(&Selection::File(FileRef {
@@ -284,7 +282,7 @@ impl App {
             .iter()
             .filter(|s| {
                 matches!(s, Selection::Line { file_ref, .. }
-                    if file_ref.change_id == *change_id && file_ref.path == *file_path)
+                    if file_ref.change_id == change_id && file_ref.path == file_path)
             })
             .count();
 
@@ -319,11 +317,11 @@ impl App {
     }
 
     /// Get the unique file paths from all selections.
-    pub fn selected_file_paths(&self) -> Vec<String> {
-        let mut paths: Vec<String> = self
+    pub fn selected_file_paths(&self) -> Vec<crate::types::Str> {
+        let mut paths: Vec<crate::types::Str> = self
             .selection
             .iter()
-            .map(|s| s.path().to_string())
+            .map(|s| crate::types::Str::from(s.path()))
             .collect();
         paths.sort();
         paths.dedup();
