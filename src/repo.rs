@@ -699,13 +699,12 @@ impl JjRepo {
         let tz_offset_seconds = sig.timestamp.tz_offset as i64 * 60;
         let timestamp =
             jiff::Timestamp::from_millisecond(millis).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
-        // We store the raw UTC timestamp; display code can apply tz offset later
-        let _ = tz_offset_seconds; // TODO: use for display formatting
 
         let author = AuthorInfo {
             name: sig.name.clone(),
             email: sig.email.clone(),
             timestamp,
+            tz_offset_seconds,
         };
 
         // Workspaces (O(1) lookup from pre-built map)

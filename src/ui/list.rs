@@ -304,8 +304,15 @@ fn render_commit_item<'a>(
     }
     line1.push(Span::raw(" "));
 
-    // Timestamp
-    let formatted = c.author.timestamp.strftime("%Y-%m-%d %H:%M:%S").to_string();
+    // Timestamp (apply author's timezone offset)
+    let tz = jiff::tz::Offset::from_seconds(c.author.tz_offset_seconds as i32)
+        .unwrap_or(jiff::tz::Offset::UTC);
+    let formatted = c
+        .author
+        .timestamp
+        .to_zoned(jiff::tz::TimeZone::fixed(tz))
+        .strftime("%Y-%m-%d %H:%M:%S")
+        .to_string();
     line1.push(Span::styled(
         formatted,
         Style::default().fg(Color::DarkGray),
