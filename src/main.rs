@@ -248,9 +248,13 @@ fn suspend_and_run(
     let display = cmd.display();
     let jump = cmd.jump_target();
 
-    // Leave the alternate screen so the editor can use the terminal.
+    // Leave the alternate screen so the child can use the terminal.
     let _ = kojutsu::terminal::restore();
-    let result = cmd.run_interactive(repo_path);
+    let result = if cmd.is_interactive() {
+        cmd.run_interactive(repo_path)
+    } else {
+        cmd.run_suspend_captured(repo_path)
+    };
 
     app.last_command = Some(display);
 

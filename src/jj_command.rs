@@ -730,6 +730,68 @@ impl JJCommand {
         }
     }
 
+    /// Execute a suspended command with inherited stdin but captured stdout/stderr.
+    ///
+    /// Used for commands that need terminal access for SSH prompts but don't
+    /// need an interactive editor. Output is captured and returned for display
+    /// in the TUI overlay.
+    pub fn run_suspend_captured(&self, repo_path: &Path) -> JJCommandResult {
+        let args = self.args();
+        let display = self.display();
+
+        let interrupted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sigint_hook =
+            signal_hook::flag::register(signal_hook::consts::SIGINT, interrupted.clone()).ok();
+
+        let result = Command::new("jj")
+            .args(&args)
+            .arg("-R")
+            .arg(repo_path)
+            .arg("--color=always")
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output();
+
+        if let Some(id) = sigint_hook {
+            signal_hook::low_level::unregister(id);
+        }
+        let was_interrupted = interrupted.load(std::sync::atomic::Ordering::Relaxed);
+
+        match result {
+            Ok(Output {
+                stdout,
+                stderr,
+                status,
+            }) => {
+                if was_interrupted || status.code().is_none() {
+                    return JJCommandResult {
+                        display,
+                        output: b"interrupted".to_vec(),
+                        success: false,
+                    };
+                }
+                let mut output = stdout;
+                if !stderr.is_empty() {
+                    if !output.is_empty() && !output.ends_with(b"\n") {
+                        output.push(b'\n');
+                    }
+                    output.extend_from_slice(&stderr);
+                }
+                JJCommandResult {
+                    display,
+                    output,
+                    success: status.success(),
+                }
+            }
+            Err(e) => JJCommandResult {
+                display,
+                output: format!("failed to run jj: {e}").into_bytes(),
+                success: false,
+            },
+        }
+    }
+
     /// Execute the command against a repository path (captured output).
     pub fn run(&self, repo_path: &Path) -> JJCommandResult {
         let args = self.args();
