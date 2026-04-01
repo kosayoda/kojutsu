@@ -698,6 +698,7 @@ impl JJCommand {
             .args(&args)
             .arg("-R")
             .arg(repo_path)
+            .current_dir(repo_path)
             .stdin(std::process::Stdio::inherit())
             .stdout(std::process::Stdio::inherit())
             .stderr(std::process::Stdio::inherit())
@@ -748,6 +749,7 @@ impl JJCommand {
             .arg("-R")
             .arg(repo_path)
             .arg("--color=always")
+            .current_dir(repo_path)
             .stdin(std::process::Stdio::inherit())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -802,6 +804,7 @@ impl JJCommand {
             .arg("-R")
             .arg(repo_path)
             .arg("--color=always")
+            .current_dir(repo_path)
             // Safety: use a no-op editor so that if jj unexpectedly opens
             // an editor in captured mode, it won't hang waiting for input.
             .env("JJ_EDITOR", ":")
