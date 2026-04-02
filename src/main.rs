@@ -87,6 +87,8 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    let config: &'static kojutsu::theme::Config =
+        Box::leak(Box::new(kojutsu::theme::load_config()));
     let keymap: &'static Keymap = Box::leak(Box::new(Keymap::default()));
     let (event_tx, event_rx) = mpsc::channel();
     let (repo_requests, repo_responses) = RepoService::spawn(repo_path.clone());
@@ -106,7 +108,7 @@ fn main() -> Result<()> {
     let _ = event_tx.send(AppEvent::Init);
 
     loop {
-        terminal.draw(|frame| ui::draw(frame, &mut app, keymap))?;
+        terminal.draw(|frame| ui::draw(frame, &mut app, keymap, &config.theme))?;
 
         let app_event = match event_rx.recv() {
             Ok(event) => event,

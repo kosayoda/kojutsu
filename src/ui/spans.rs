@@ -2,9 +2,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
 use crate::dag::ShortId;
+use crate::theme::Theme;
 
 /// Push a `ShortId` as two spans: bright prefix + dimmed suffix.
-pub(super) fn push_short_id(spans: &mut Vec<Span<'static>>, id: &ShortId, color: Color) {
+pub(super) fn push_short_id(spans: &mut Vec<Span<'static>>, id: &ShortId, color: Color, theme: &Theme) {
     let prefix = &id.display[..id.prefix_len.min(id.display.len())];
     let suffix = &id.display[id.prefix_len.min(id.display.len())..];
 
@@ -15,7 +16,7 @@ pub(super) fn push_short_id(spans: &mut Vec<Span<'static>>, id: &ShortId, color:
     if !suffix.is_empty() {
         spans.push(Span::styled(
             suffix.to_string(),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ));
     }
 }
@@ -27,6 +28,7 @@ pub(super) fn push_highlighted_short_id(
     color: Color,
     query: &str,
     case_sensitive: bool,
+    theme: &Theme,
 ) {
     let prefix = &id.display[..id.prefix_len.min(id.display.len())];
     let suffix = &id.display[id.prefix_len.min(id.display.len())..];
@@ -69,7 +71,7 @@ pub(super) fn push_highlighted_short_id(
     };
 
     let prefix_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
-    let suffix_style = Style::default().fg(Color::DarkGray);
+    let suffix_style = Style::default().fg(theme.muted);
     let extra_style = Style::default().fg(color);
 
     let mut pos = 0;

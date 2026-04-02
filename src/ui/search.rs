@@ -1,7 +1,8 @@
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 
 use crate::app::App;
+use crate::theme::Theme;
 use crate::types::SearchScopes;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -34,14 +35,14 @@ pub(super) fn search_row_state(app: &App, row_idx: usize) -> SearchRowState {
     SearchRowState::Match
 }
 
-pub(super) fn search_gutter<'a>(state: SearchRowState) -> Span<'a> {
+pub(super) fn search_gutter<'a>(state: SearchRowState, theme: &Theme) -> Span<'a> {
     match state {
         SearchRowState::None => Span::raw("  "),
-        SearchRowState::Match => Span::styled("│ ", Style::default().fg(Color::DarkGray)),
+        SearchRowState::Match => Span::styled("│ ", Style::default().fg(theme.muted)),
         SearchRowState::Current => Span::styled(
             "┃ ",
             Style::default()
-                .fg(Color::Magenta)
+                .fg(theme.change_id)
                 .add_modifier(Modifier::BOLD),
         ),
     }

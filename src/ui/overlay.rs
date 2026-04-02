@@ -1,12 +1,13 @@
 use std::collections::HashSet;
 
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::app::App;
+use crate::theme::Theme;
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, KeymapNode};
 use crate::types::{FollowUpOption, SearchFocus, SelectionContext, SEARCH_SCOPE_SPECS};
 
@@ -42,18 +43,19 @@ pub(super) fn draw_help(
     app: &App,
     left_groups: &[&(HelpGroup, Vec<HelpEntry>)],
     right_groups: &[&(HelpGroup, Vec<HelpEntry>)],
+    theme: &Theme,
 ) {
     use ratatui::widgets::Padding;
 
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(theme.muted))
         // Empty title as left padding for key
         .title("")
         .title(" ? Help ")
         .title_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )
         .padding(Padding::new(1, 1, 0, 0));
@@ -64,8 +66,8 @@ pub(super) fn draw_help(
     let [left_area, right_area] =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(inner);
 
-    render_help_column(frame, left_area, app, left_groups);
-    render_help_column(frame, right_area, app, right_groups);
+    render_help_column(frame, left_area, app, left_groups, theme);
+    render_help_column(frame, right_area, app, right_groups, theme);
 }
 
 fn render_help_column(
@@ -73,14 +75,15 @@ fn render_help_column(
     area: Rect,
     app: &App,
     groups: &[&(HelpGroup, Vec<HelpEntry>)],
+    theme: &Theme,
 ) {
     let header_style = Style::default()
-        .fg(Color::Cyan)
+        .fg(theme.accent)
         .add_modifier(Modifier::BOLD);
     let key_style = Style::default()
-        .fg(Color::Yellow)
+        .fg(theme.selection)
         .add_modifier(Modifier::BOLD);
-    let desc_style = Style::default().fg(Color::White);
+    let desc_style = Style::default().fg(theme.text);
 
     let mut rows: Vec<Row> = Vec::new();
 
@@ -103,14 +106,14 @@ fn render_help_column(
             let blocked = app.selection_active() && !entry.selection_support.contains(required);
             let key_style = if blocked {
                 key_style
-                    .fg(Color::DarkGray)
+                    .fg(theme.muted)
                     .add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
             } else {
                 key_style
             };
             let desc_style = if blocked {
                 desc_style
-                    .fg(Color::DarkGray)
+                    .fg(theme.muted)
                     .add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
             } else {
                 desc_style
@@ -141,6 +144,7 @@ pub(super) fn draw_submenu(
     selection_suffix: Option<String>,
     selection: &SelectionContext,
     error: Option<&str>,
+    theme: &Theme,
 ) {
     // Build toggle indicators for the title bar.
     let mut toggle_spans: Vec<Span> = Vec::new();
@@ -150,10 +154,10 @@ pub(super) fn draw_submenu(
             let key_str = keymap::display_key(key_node);
             let style = if active {
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme.selection)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(theme.muted)
             };
             toggle_spans.push(Span::styled(format!(" [{key_str}] {description} "), style));
         }
@@ -179,7 +183,7 @@ pub(super) fn draw_submenu(
     let error_spans: Vec<Span> = if let Some(err) = error {
         vec![Span::styled(
             format!(" {err} "),
-            Style::default().fg(Color::Red),
+            Style::default().fg(theme.error),
         )]
     } else {
         Vec::new()
@@ -188,12 +192,12 @@ pub(super) fn draw_submenu(
     // Block with title on the border.
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(theme.muted))
         .title("")
         .title(title)
         .title_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )
         .title(Line::from(toggle_spans))
@@ -226,19 +230,19 @@ pub(super) fn draw_submenu(
         let key_str = keymap::display_key(key_node);
         let key_style = if blocked {
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(theme.muted)
                 .add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
         } else {
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.selection)
                 .add_modifier(Modifier::BOLD)
         };
         let desc_style = if blocked {
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(theme.muted)
                 .add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme.text)
         };
         action_spans.push(Span::styled(format!("({key_str})"), key_style));
         action_spans.push(Span::styled(format!(" {desc}"), desc_style));
@@ -251,10 +255,11 @@ pub(super) fn draw_text_input(
     area: Rect,
     prompt: &str,
     input: &tui_input::Input,
+    theme: &Theme,
 ) {
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(theme.muted));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -267,10 +272,10 @@ pub(super) fn draw_text_input(
         Span::styled(
             prompt,
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(&input.value()[scroll..], Style::default().fg(Color::White)),
+        Span::styled(&input.value()[scroll..], Style::default().fg(theme.text)),
     ];
 
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
@@ -281,7 +286,7 @@ pub(super) fn draw_text_input(
     frame.set_cursor_position((cursor_x, cursor_y));
 }
 
-pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App) {
+pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let Some(search) = &app.search else {
         return;
     };
@@ -290,13 +295,13 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App) {
         let enabled = search.scopes.contains(spec.flag);
         let mut style = if enabled {
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.selection)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(theme.muted)
         };
         if matches!(search.focus, SearchFocus::Scopes) {
-            style = style.bg(Color::Rgb(50, 50, 60));
+            style = style.bg(theme.selection_bg);
         }
         scope_spans.push(Span::styled(
             format!(" [{}] {} ", spec.hint, spec.label),
@@ -306,12 +311,12 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App) {
 
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(theme.muted))
         .title("")
         .title(" Search ")
         .title_style(
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )
         .title(Line::from(scope_spans));
@@ -320,7 +325,7 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App) {
 
     let line = Line::from(Span::styled(
         search.query(),
-        Style::default().fg(Color::White),
+        Style::default().fg(theme.text),
     ));
     frame.render_widget(Paragraph::new(line), inner);
 
@@ -330,10 +335,10 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App) {
     }
 }
 
-pub(super) fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, source: &str) {
+pub(super) fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, source: &str, theme: &Theme) {
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(theme.muted));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -341,27 +346,27 @@ pub(super) fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, so
         Span::styled(
             format!("{prompt} "),
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             format!("from {source}"),
             Style::default()
-                .fg(Color::Magenta)
+                .fg(theme.change_id)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             " → select target (Enter = confirm, Esc = cancel)",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ),
     ];
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
-pub(super) fn draw_commit_select(frame: &mut Frame, area: Rect, prompt: &str) {
+pub(super) fn draw_commit_select(frame: &mut Frame, area: Rect, prompt: &str, theme: &Theme) {
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(theme.muted));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -369,28 +374,28 @@ pub(super) fn draw_commit_select(frame: &mut Frame, area: Rect, prompt: &str) {
         Span::styled(
             format!("{prompt} "),
             Style::default()
-                .fg(Color::Cyan)
+                .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
             "select commit (Enter = confirm, Esc = cancel)",
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ),
     ];
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
-pub(super) fn draw_follow_up(frame: &mut Frame, area: Rect, prompt: &str, options: &[FollowUpOption]) {
+pub(super) fn draw_follow_up(frame: &mut Frame, area: Rect, prompt: &str, options: &[FollowUpOption], theme: &Theme) {
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray));
+        .border_style(Style::default().fg(theme.muted));
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let mut spans = vec![Span::styled(
         format!("{prompt} "),
         Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.accent)
             .add_modifier(Modifier::BOLD),
     )];
 
@@ -401,12 +406,12 @@ pub(super) fn draw_follow_up(frame: &mut Frame, area: Rect, prompt: &str, option
         spans.push(Span::styled(
             format!("({})", opt.key),
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.selection)
                 .add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::styled(
             format!(" {}", opt.label),
-            Style::default().fg(Color::White),
+            Style::default().fg(theme.text),
         ));
     }
 
@@ -426,6 +431,7 @@ pub(super) fn draw_select_list(
     multi: bool,
     filter: &str,
     filtering: bool,
+    theme: &Theme,
 ) {
     use ratatui::widgets::Padding;
 
@@ -435,7 +441,7 @@ pub(super) fn draw_select_list(
     let mut title_spans: Vec<Span> = vec![Span::styled(
         title_prefix,
         Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.accent)
             .add_modifier(Modifier::BOLD),
     )];
 
@@ -443,29 +449,29 @@ pub(super) fn draw_select_list(
     let filter_label = format!("[filter: {filter} ] ");
     let filter_cursor_offset = title_prefix_len + "[filter: ".len();
     let filter_style = if filtering {
-        Style::default().fg(Color::White)
+        Style::default().fg(theme.text)
     } else if !filter.is_empty() {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme.muted)
     } else {
-        Style::default().fg(Color::DarkGray)
+        Style::default().fg(theme.muted)
     };
     title_spans.push(Span::styled(&filter_label, filter_style));
 
     if filtered_indices.len() != items.len() {
         title_spans.push(Span::styled(
             format!("({}/{}) ", filtered_indices.len(), items.len()),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ));
     } else if multi && !marked.is_empty() {
         title_spans.push(Span::styled(
             format!("({} selected) ", marked.len()),
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ));
     }
 
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(theme.muted))
         .title(Line::from(title_spans))
         .padding(Padding::new(1, 1, 0, 0));
 
@@ -507,12 +513,12 @@ pub(super) fn draw_select_list(
             };
             let style = if is_cursor {
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(theme.selection)
                     .add_modifier(Modifier::BOLD)
             } else if is_marked {
-                Style::default().fg(Color::Yellow)
+                Style::default().fg(theme.selection)
             } else {
-                Style::default().fg(Color::White)
+                Style::default().fg(theme.text)
             };
             Line::from(Span::styled(format!("{prefix}{item}"), style))
         })
@@ -535,6 +541,7 @@ pub(super) fn draw_command_output(
     command: &str,
     output: &[u8],
     success: bool,
+    theme: &Theme,
 ) {
     use ansi_to_tui::IntoText;
     use ratatui::widgets::Padding;
@@ -542,7 +549,7 @@ pub(super) fn draw_command_output(
     let mut lines = vec![Line::from(Span::styled(
         command,
         Style::default()
-            .fg(Color::Cyan)
+            .fg(theme.accent)
             .add_modifier(Modifier::BOLD),
     ))];
 
@@ -557,7 +564,7 @@ pub(super) fn draw_command_output(
         }
     }
 
-    let border_color = if success { Color::DarkGray } else { Color::Red };
+    let border_color = if success { theme.muted } else { theme.error };
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(border_color))

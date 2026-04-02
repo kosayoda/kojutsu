@@ -1,56 +1,57 @@
 use ratatui::layout::{Alignment, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, GLOBAL_TOGGLES};
+use crate::theme::Theme;
 
 /// Minimum separator between repo and revset when on a single line.
 pub(super) const HEADER_SEP: &str = "  ";
 
-pub(super) fn draw_header(frame: &mut Frame, area: Rect, app: &App) {
+pub(super) fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     let header = if area.height == 1 {
         // Single-line: "repository: <path>  revset: <revset>"
         vec![Line::from(vec![
-            Span::styled("repository: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(&app.repo_root, Style::default().fg(Color::White)),
+            Span::styled("repository: ", Style::default().fg(theme.muted)),
+            Span::styled(&app.repo_root, Style::default().fg(theme.text)),
             Span::raw(HEADER_SEP),
             Span::styled(
                 format!("revset ({}/5): ", app.active_preset + 1),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.muted),
             ),
-            Span::styled(&app.revset, Style::default().fg(Color::Cyan)),
+            Span::styled(&app.revset, Style::default().fg(theme.accent)),
         ])]
     } else {
         vec![
             Line::from(vec![
-                Span::styled("repository: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&app.repo_root, Style::default().fg(Color::White)),
+                Span::styled("repository: ", Style::default().fg(theme.muted)),
+                Span::styled(&app.repo_root, Style::default().fg(theme.text)),
             ]),
             Line::from(vec![
                 Span::styled(
                     format!("revset ({}/5): ", app.active_preset + 1),
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(theme.muted),
                 ),
-                Span::styled(&app.revset, Style::default().fg(Color::Cyan)),
+                Span::styled(&app.revset, Style::default().fg(theme.accent)),
             ]),
         ]
     };
     frame.render_widget(Paragraph::new(header), area);
 }
 
-pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
+pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
     // Build toggle indicators for the title bar.
     let mut toggle_spans: Vec<Span> = Vec::new();
     for toggle in GLOBAL_TOGGLES {
         let active = app.toggles.contains(toggle.flag);
         let style = if active {
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.selection)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(theme.muted)
         };
         toggle_spans.push(Span::styled(
             format!(" [{}] {} ", toggle.hint, toggle.label),
@@ -62,21 +63,21 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         toggle_spans.push(Span::styled(
             format!(" {text} "),
             Style::default()
-                .fg(Color::Yellow)
+                .fg(theme.selection)
                 .add_modifier(Modifier::BOLD),
         ));
     }
 
     let block = Block::default()
         .borders(Borders::TOP)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(theme.muted))
         .title("")
         .title(" Status ")
-        .title_style(Style::default().fg(Color::Cyan).bold())
+        .title_style(Style::default().fg(theme.accent).bold())
         .title_alignment(Alignment::Left)
         .title(Line::from(toggle_spans))
         .title(
-            Line::from(Span::styled(" ? Help ", Style::default().fg(Color::White))).right_aligned(),
+            Line::from(Span::styled(" ? Help ", Style::default().fg(theme.text))).right_aligned(),
         )
         .title(Line::from("").right_aligned());
 
@@ -96,6 +97,6 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         app.last_command.clone().unwrap_or_default()
     };
-    let line = Line::from(Span::styled(content, Style::default().fg(Color::DarkGray)));
+    let line = Line::from(Span::styled(content, Style::default().fg(theme.muted)));
     frame.render_widget(Paragraph::new(line), inner);
 }

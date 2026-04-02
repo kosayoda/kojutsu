@@ -61,6 +61,8 @@ tracing-subscriber = { version = "0.3.19", features = ["env-filter", "time"] }
 walkdir = "2"
 # Iterator utilities
 itertools = "0.14.0"
+# Config file parsing
+toml = "1.1.2"
 
 # Build `backtrace` with optimizations for `color-eyre` performance
 [profile.dev.package.backtrace]

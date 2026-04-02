@@ -9,9 +9,10 @@ use ratatui::Frame;
 
 use crate::app::{App, AppMode};
 use crate::keymap::{self, Keymap};
+use crate::theme::Theme;
 
 /// Render the full UI into the frame.
-pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
+pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap, theme: &Theme) {
     // Use a single-line header if both repo and revset fit on one line.
     let single_line_len = "repository: ".len()
         + app.repo_root.len()
@@ -32,9 +33,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
     .areas(frame.area());
 
     app.last_header_height = header_height;
-    layout::draw_header(frame, header_area, app);
-    list::draw_list(frame, main_area, app);
-    layout::draw_status_bar(frame, status_area, app);
+    layout::draw_header(frame, header_area, app, theme);
+    list::draw_list(frame, main_area, app, theme);
+    layout::draw_status_bar(frame, status_area, app, theme);
 
     // Overlays render on top of the main + status area (bottom-aligned).
     let overlay_base = Rect {
@@ -65,6 +66,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
                 app.selection.submenu_suffix(),
                 &app.selection,
                 error.as_deref(),
+                theme,
             );
         }
         AppMode::CommandOutput {
@@ -78,7 +80,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
                 .max(3);
             let area = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_command_output(frame, area, command, output, *success);
+            overlay::draw_command_output(frame, area, command, output, *success, theme);
         }
         AppMode::Help => {
             let groups = match &app.pre_overlay_mode {
@@ -100,32 +102,32 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
                 .max(4);
             let area = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_help(frame, area, app, &left, &right);
+            overlay::draw_help(frame, area, app, &left, &right, theme);
         }
         AppMode::TextInput { prompt, input, .. } => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_text_input(frame, area, prompt, input);
+            overlay::draw_text_input(frame, area, prompt, input, theme);
         }
         AppMode::SearchInput => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_search_input(frame, area, app);
+            overlay::draw_search_input(frame, area, app, theme);
         }
         AppMode::TargetSelect { prompt, source, .. } => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_target_select(frame, area, prompt, source.as_str());
+            overlay::draw_target_select(frame, area, prompt, source.as_str(), theme);
         }
         AppMode::CommitSelect { pending, .. } => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_commit_select(frame, area, pending.prompt());
+            overlay::draw_commit_select(frame, area, pending.prompt(), theme);
         }
         AppMode::FollowUp { prompt, options } => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_follow_up(frame, area, prompt, options);
+            overlay::draw_follow_up(frame, area, prompt, options, theme);
         }
         AppMode::SelectFromList {
             title,
@@ -156,6 +158,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap) {
                 *multi,
                 filter,
                 *filtering,
+                theme,
             );
         }
     }

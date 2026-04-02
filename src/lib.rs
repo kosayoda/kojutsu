@@ -10,6 +10,7 @@ pub mod repo;
 pub mod repo_service;
 pub mod selection;
 pub mod terminal;
+pub mod theme;
 pub mod types;
 pub mod ui;
 

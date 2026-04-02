@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem};
 use ratatui::Frame;
@@ -9,9 +9,10 @@ use super::search::*;
 use super::spans::*;
 use crate::app::{App, AppMode};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
+use crate::theme::Theme;
 use crate::types::{DisplayRow, FileSelectionState, SearchScopes};
 
-pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
+pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
     // If in target selection mode, get the source change_id for highlighting.
     let target_select_source: Option<&str> = match &app.mode {
         AppMode::TargetSelect { source, .. } => Some(source.as_str()),
@@ -72,6 +73,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                         is_selected,
                         in_visual,
                         row_search.as_ref(),
+                        theme,
                     )
                 }
                 DisplayRow::GraphLink {
@@ -88,23 +90,24 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                             .as_ref()
                             .map(|s| s.row_state)
                             .unwrap_or(SearchRowState::None),
+                        theme,
                     )];
                     // Continue visual + selection bars through graph links.
                     let is_selected = app.is_commit_selected(*entry_idx);
                     let in_visual = app.is_in_visual_commit_range(*entry_idx);
                     spans.push(if in_visual {
-                        Span::styled("│", Style::default().fg(Color::Cyan))
+                        Span::styled("│", Style::default().fg(theme.accent))
                     } else {
                         Span::raw(" ")
                     });
                     spans.push(if is_selected {
-                        Span::styled("▎", Style::default().fg(Color::Yellow))
+                        Span::styled("▎", Style::default().fg(theme.selection))
                     } else {
                         Span::raw(" ")
                     });
                     spans.push(Span::styled(
                         graph_str.to_string(),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(theme.muted),
                     ));
                     ListItem::new(Line::from(spans))
                 }
@@ -118,7 +121,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                     let file = &files[file_idx.raw()];
                     let is_unfolded = app.is_file_unfolded(*entry_idx, *file_idx);
                     let sel_state = app.file_selection_state(*entry_idx, *file_idx);
-                    render_file_line(file, is_unfolded, sel_state, row_search.as_ref())
+                    render_file_line(file, is_unfolded, sel_state, row_search.as_ref(), theme)
                 }
                 DisplayRow::DiffLine {
                     entry_idx,
@@ -137,6 +140,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
                         is_selected,
                         in_visual,
                         row_search.as_ref(),
+                        theme,
                     )
                 }
             }
@@ -148,7 +152,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App) {
         .scroll_padding(5)
         .highlight_style(
             Style::default()
-                .bg(Color::Rgb(50, 50, 60))
+                .bg(theme.selection_bg)
                 .add_modifier(Modifier::BOLD),
         );
 
@@ -171,17 +175,18 @@ fn render_commit_item<'a>(
     is_selected: bool,
     in_visual: bool,
     search: Option<&SearchRender<'_>>,
+    theme: &Theme,
 ) -> ListItem<'static> {
     let graph_color = if is_source {
-        Color::Yellow
+        theme.selection
     } else if c.has_conflict {
-        Color::Red
+        theme.error
     } else {
         match c.glyph() {
-            crate::dag::Glyph::WorkingCopy => Color::Green,
-            crate::dag::Glyph::Conflict => Color::Red,
-            crate::dag::Glyph::Immutable => Color::Cyan,
-            crate::dag::Glyph::Normal => Color::Cyan,
+            crate::dag::Glyph::WorkingCopy => theme.added,
+            crate::dag::Glyph::Conflict => theme.error,
+            crate::dag::Glyph::Immutable => theme.accent,
+            crate::dag::Glyph::Normal => theme.accent,
         }
     };
 
@@ -190,18 +195,18 @@ fn render_commit_item<'a>(
 
     // --- Line 1: graph  change_id author timestamp bookmarks commit_id ---
     let mut line1: Vec<Span<'static>> = Vec::new();
-    line1.push(search_gutter(search_state));
+    line1.push(search_gutter(search_state, theme));
 
     // Visual range column + selection column + spacer.
     line1.push(if in_visual {
-        Span::styled("│", Style::default().fg(Color::Cyan))
+        Span::styled("│", Style::default().fg(theme.accent))
     } else {
         Span::raw(" ")
     });
     if is_selected {
-        line1.push(Span::styled("▎", Style::default().fg(Color::Yellow)));
+        line1.push(Span::styled("▎", Style::default().fg(theme.selection)));
     } else if is_source {
-        line1.push(Span::styled("►", Style::default().fg(Color::Yellow)));
+        line1.push(Span::styled("►", Style::default().fg(theme.selection)));
     } else {
         line1.push(Span::raw(" "));
     }
@@ -225,18 +230,18 @@ fn render_commit_item<'a>(
         } else {
             line1.push(Span::styled(
                 span.to_string(),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.muted),
             ));
         }
     }
 
     // Change ID (prefix bright, rest dimmed; red if divergent)
     let change_color = if c.is_divergent {
-        Color::Red
+        theme.error
     } else if c.is_hidden {
-        Color::White
+        theme.text
     } else {
-        Color::Magenta
+        theme.change_id
     };
     let change_id_text = if let Some(suffix) = c.change_id_suffix {
         format!("{}/{}", c.change_id.display, suffix)
@@ -254,9 +259,10 @@ fn render_commit_item<'a>(
                 change_color,
                 search.query,
                 search.case_sensitive,
+                theme,
             );
         } else {
-            push_short_id(&mut line1, &c.change_id, change_color);
+            push_short_id(&mut line1, &c.change_id, change_color, theme);
             if let Some(suffix) = c.change_id_suffix {
                 line1.push(Span::styled(
                     format!("/{suffix}"),
@@ -265,7 +271,7 @@ fn render_commit_item<'a>(
             }
         }
     } else {
-        push_short_id(&mut line1, &c.change_id, change_color);
+        push_short_id(&mut line1, &c.change_id, change_color, theme);
         if let Some(suffix) = c.change_id_suffix {
             line1.push(Span::styled(
                 format!("/{suffix}"),
@@ -274,7 +280,10 @@ fn render_commit_item<'a>(
         }
     }
     if c.is_divergent {
-        line1.push(Span::styled(" (divergent)", Style::default().fg(Color::Red)));
+        line1.push(Span::styled(
+            " (divergent)",
+            Style::default().fg(theme.error),
+        ));
     }
     line1.push(Span::raw(" "));
 
@@ -287,19 +296,19 @@ fn render_commit_item<'a>(
                 &mut line1,
                 c.author.email.as_str(),
                 search.query,
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme.selection),
                 search.case_sensitive,
             );
         } else {
             line1.push(Span::styled(
                 c.author.email.clone(),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(theme.selection),
             ));
         }
     } else {
         line1.push(Span::styled(
             c.author.email.clone(),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme.selection),
         ));
     }
     line1.push(Span::raw(" "));
@@ -315,7 +324,7 @@ fn render_commit_item<'a>(
         .to_string();
     line1.push(Span::styled(
         formatted,
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.muted),
     ));
 
     // Commit ID (at end, like jj log -- prefix bright, rest dimmed)
@@ -332,15 +341,16 @@ fn render_commit_item<'a>(
                 &mut line1,
                 &c.commit_id,
                 None,
-                Color::Blue,
+                theme.commit_id,
                 search.query,
                 search.case_sensitive,
+                theme,
             );
         } else {
-            push_short_id(&mut line1, &c.commit_id, Color::Blue);
+            push_short_id(&mut line1, &c.commit_id, theme.commit_id, theme);
         }
     } else {
-        push_short_id(&mut line1, &c.commit_id, Color::Blue);
+        push_short_id(&mut line1, &c.commit_id, theme.commit_id, theme);
     }
 
     // Local bookmarks (with * suffix if dirty)
@@ -352,7 +362,7 @@ fn render_commit_item<'a>(
             bm.name.clone()
         };
         let style = Style::default()
-            .fg(Color::Magenta)
+            .fg(theme.change_id)
             .add_modifier(Modifier::BOLD);
         if let Some(search) = search {
             if search.scopes.contains(SearchScopes::BOOKMARK)
@@ -378,7 +388,7 @@ fn render_commit_item<'a>(
         line1.push(Span::raw(" "));
         let text = format!("{}@{}", rb.name, rb.remote);
         let style = Style::default()
-            .fg(Color::Magenta)
+            .fg(theme.change_id)
             .add_modifier(Modifier::BOLD);
         if let Some(search) = search {
             if search.scopes.contains(SearchScopes::BOOKMARK)
@@ -406,7 +416,7 @@ fn render_commit_item<'a>(
             line1.push(Span::styled(
                 format!("{}@", ws.name),
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(theme.added)
                     .add_modifier(Modifier::BOLD),
             ));
         }
@@ -416,31 +426,34 @@ fn render_commit_item<'a>(
         line1.push(Span::raw(" "));
         line1.push(Span::styled(
             format!("+{}", stats.added),
-            Style::default().fg(Color::Green),
+            Style::default().fg(theme.added),
         ));
         line1.push(Span::raw(" "));
         line1.push(Span::styled(
             format!("-{}", stats.removed),
-            Style::default().fg(Color::Red),
+            Style::default().fg(theme.error),
         ));
     }
 
     // Hidden indicator
     if c.is_hidden {
-        line1.push(Span::styled(" (hidden)", Style::default().fg(Color::White)));
+        line1.push(Span::styled(
+            " (hidden)",
+            Style::default().fg(theme.text),
+        ));
     }
 
     // --- Line 2: graph_cont  description ---
     let mut line2: Vec<Span<'static>> = Vec::new();
-    line2.push(search_gutter(search_state));
+    line2.push(search_gutter(search_state, theme));
     // Continue visual + selection bars on line 2.
     line2.push(if in_visual {
-        Span::styled("│", Style::default().fg(Color::Cyan))
+        Span::styled("│", Style::default().fg(theme.accent))
     } else {
         Span::raw(" ")
     });
     line2.push(if is_selected {
-        Span::styled("▎", Style::default().fg(Color::Yellow))
+        Span::styled("▎", Style::default().fg(theme.selection))
     } else {
         Span::raw(" ")
     });
@@ -448,23 +461,26 @@ fn render_commit_item<'a>(
     // Graph continuation prefix (properly padded by the renderer).
     line2.push(Span::styled(
         graph_cont.to_string(),
-        Style::default().fg(Color::DarkGray),
+        Style::default().fg(theme.muted),
     ));
 
     if let Some(desc) = &c.description {
         if c.has_conflict {
-            line2.push(Span::styled("(conflict) ", Style::default().fg(Color::Red)));
+            line2.push(Span::styled(
+                "(conflict) ",
+                Style::default().fg(theme.error),
+            ));
         }
         if c.is_empty {
             line2.push(Span::styled(
                 "(empty) ",
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(theme.muted),
             ));
         }
         let desc_style = if c.is_empty {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(theme.muted)
         } else {
-            Style::default().fg(Color::White)
+            Style::default().fg(theme.text)
         };
         if let Some(search) = search {
             if search.scopes.contains(SearchScopes::DESCRIPTION)
@@ -485,7 +501,10 @@ fn render_commit_item<'a>(
         }
     } else {
         if c.has_conflict {
-            line2.push(Span::styled("(conflict) ", Style::default().fg(Color::Red)));
+            line2.push(Span::styled(
+                "(conflict) ",
+                Style::default().fg(theme.error),
+            ));
         }
         let placeholder = if c.is_empty {
             "(empty)"
@@ -494,7 +513,7 @@ fn render_commit_item<'a>(
         };
         line2.push(Span::styled(
             placeholder,
-            Style::default().fg(Color::DarkGray),
+            Style::default().fg(theme.muted),
         ));
     }
 
@@ -506,14 +525,15 @@ fn render_file_line(
     is_unfolded: bool,
     sel_state: FileSelectionState,
     search: Option<&SearchRender<'_>>,
+    theme: &Theme,
 ) -> ListItem<'static> {
     let (marker, color) = if file.has_conflict {
-        ("C", Color::Red)
+        ("C", theme.error)
     } else {
         match file.status {
-            FileStatus::Added => ("A", Color::Green),
-            FileStatus::Modified => ("M", Color::Cyan),
-            FileStatus::Deleted => ("D", Color::Red),
+            FileStatus::Added => ("A", theme.added),
+            FileStatus::Modified => ("M", theme.accent),
+            FileStatus::Deleted => ("D", theme.error),
         }
     };
 
@@ -526,13 +546,14 @@ fn render_file_line(
 
     let mut spans = vec![search_gutter(
         search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
+        theme,
     )];
     spans.extend(vec![
         Span::styled(
             format!("  {select_char} "),
-            Style::default().fg(Color::Yellow),
+            Style::default().fg(theme.selection),
         ),
-        Span::styled(fold_char, Style::default().fg(Color::DarkGray)),
+        Span::styled(fold_char, Style::default().fg(theme.muted)),
         Span::raw(" "),
         Span::styled(
             marker,
@@ -540,7 +561,7 @@ fn render_file_line(
         ),
         Span::raw(" "),
     ]);
-    let base = Style::default().fg(Color::White);
+    let base = Style::default().fg(theme.text);
     if let Some(search) = search {
         if search.scopes.contains(SearchScopes::PATH)
             && contains_query(file.path.as_str(), search.query, search.case_sensitive)
@@ -567,18 +588,20 @@ fn render_diff_line(
     is_selected: bool,
     in_visual: bool,
     search: Option<&SearchRender<'_>>,
+    theme: &Theme,
 ) -> ListItem<'static> {
     let (marker, style) = match diff_line.kind {
-        DiffLineKind::Header => (" ", Style::default().fg(Color::Magenta)),
-        DiffLineKind::Context => (" ", Style::default().fg(Color::DarkGray)),
-        DiffLineKind::Added => ("+", Style::default().fg(Color::Green)),
-        DiffLineKind::Removed => ("-", Style::default().fg(Color::Red)),
+        DiffLineKind::Header => (" ", Style::default().fg(theme.change_id)),
+        DiffLineKind::Context => (" ", Style::default().fg(theme.muted)),
+        DiffLineKind::Added => ("+", Style::default().fg(theme.added)),
+        DiffLineKind::Removed => ("-", Style::default().fg(theme.error)),
     };
 
-    let line_num_style = Style::default().fg(Color::DarkGray);
+    let line_num_style = Style::default().fg(theme.muted);
 
     let mut spans = vec![search_gutter(
         search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
+        theme,
     )];
     // Left margin: visual range bar │ + selection indicator ▎.
     let is_selectable =
@@ -586,8 +609,8 @@ fn render_diff_line(
     if is_selectable {
         let bar = if in_visual { "│" } else { " " };
         let sel = if is_selected { "▎" } else { " " };
-        spans.push(Span::styled(bar, Style::default().fg(Color::Cyan)));
-        spans.push(Span::styled(sel, Style::default().fg(Color::Yellow)));
+        spans.push(Span::styled(bar, Style::default().fg(theme.accent)));
+        spans.push(Span::styled(sel, Style::default().fg(theme.selection)));
     } else {
         spans.push(Span::raw("  "));
     }
