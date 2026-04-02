@@ -566,6 +566,16 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             PendingSelection::BookmarkUntrack { flags },
         ),
 
+        AppAction::TagSet => {
+            let Some(change_id) = app.selected_change_id() else {
+                return Action::None;
+            };
+            app.mode = AppMode::text_input("set tag: ", "", PendingCommand::TagSet { change_id, flags });
+            Action::None
+        }
+        AppAction::TagDelete => enter_tag_delete(app, flags),
+        AppAction::TagList => Action::RunJj(JJCommand::TagList { flags }),
+
         AppAction::Undo => make_command(app, |_| JJCommand::Undo { flags }),
         AppAction::Redo => make_command(app, |_| JJCommand::Redo { flags }),
 
@@ -780,6 +790,7 @@ fn handle_search_input(app: &mut App, key: KeyEvent) -> Action {
                     }
                     KeyCode::Char('p') => app.toggle_search_scope(crate::types::SearchScopes::PATH),
                     KeyCode::Char('l') => app.toggle_search_scope(crate::types::SearchScopes::LINE),
+                    KeyCode::Char('t') => app.toggle_search_scope(crate::types::SearchScopes::TAG),
                     _ => {}
                 },
                 None => {}
@@ -1080,6 +1091,7 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
     };
     let bookmarks = app.selected_bookmarks().unwrap_or(&[]);
     if bookmarks.is_empty() {
+        app.status_message = Some("no bookmarks on this commit".to_string());
         return Action::None;
     }
 
@@ -1110,6 +1122,24 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
     );
 
     app.mode = AppMode::select_from_list(title, items, multi, on_select);
+    Action::None
+}
+
+fn enter_tag_delete(app: &mut App, flags: CommandFlags) -> Action {
+    let tags = app.selected_tags().unwrap_or(&[]);
+    if tags.is_empty() {
+        app.status_message = Some("no tags on this commit".to_string());
+        return Action::None;
+    }
+    let items: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
+    if items.len() == 1 {
+        return Action::RunJj(JJCommand::TagDelete {
+            names: items,
+            flags,
+        });
+    }
+    let on_select = PendingSelection::TagDelete { flags };
+    app.mode = AppMode::select_from_list("delete tag", items, true, on_select);
     Action::None
 }
 
@@ -1391,6 +1421,12 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
                 flags,
             })
         }
+        PendingSelection::TagDelete { flags } => {
+            Action::RunJj(JJCommand::TagDelete {
+                names: vec![name],
+                flags,
+            })
+        }
     }
 }
 
@@ -1436,6 +1472,9 @@ fn resolve_multi_selection(
                 bookmarks: names,
                 flags,
             })
+        }
+        PendingSelection::TagDelete { flags } => {
+            Action::RunJj(JJCommand::TagDelete { names, flags })
         }
         // Move/Rename should never reach here (multi: false), but handle gracefully.
         other => {

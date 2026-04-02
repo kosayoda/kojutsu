@@ -731,6 +731,14 @@ impl JjRepo {
             })
             .collect();
 
+        // Tags pointing at this commit.
+        let tags: Vec<crate::types::Str> = repo
+            .view()
+            .local_tags()
+            .filter(|(_, target)| target.added_ids().any(|id| id == commit.id()))
+            .map(|(name, _)| crate::types::Str::from(name.as_str()))
+            .collect();
+
         // Remote bookmarks pointing at this commit, excluding synced ones
         // (where the remote target matches the local target). Matches jj's
         // collect_distinct_refs behavior: show local + unsynced remote.
@@ -771,6 +779,7 @@ impl JjRepo {
             change_id_suffix,
             bookmarks,
             remote_bookmarks,
+            tags,
         })
     }
 

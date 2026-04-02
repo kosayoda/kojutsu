@@ -38,6 +38,8 @@ pub enum PendingSelection {
     BookmarkUntrack { flags: CommandFlags },
     /// Push bookmarks to remote.
     GitPushBookmark { flags: CommandFlags },
+    /// Delete a tag.
+    TagDelete { flags: CommandFlags },
 }
 
 /// What to do after selecting a single commit in CommitSelect mode.
@@ -114,6 +116,11 @@ pub enum PendingCommand {
         flags: CommandFlags,
         selection: ChangeSelection,
     },
+    /// Set (create or update) a tag.
+    TagSet {
+        change_id: ChangeId,
+        flags: CommandFlags,
+    },
     /// Workspace add step 1: collecting path. Text = path.
     WorkspaceAddPath { flags: CommandFlags },
     /// Workspace add step 2: path collected, collecting name. Text = name.
@@ -148,6 +155,11 @@ impl PendingCommand {
             PendingCommand::BookmarkRename { old_name, flags } => JJCommand::BookmarkRename {
                 old_name,
                 new_name: text,
+                flags,
+            },
+            PendingCommand::TagSet { change_id, flags } => JJCommand::TagSet {
+                name: text,
+                change_id,
                 flags,
             },
             PendingCommand::Commit { flags, selection } => JJCommand::Commit {

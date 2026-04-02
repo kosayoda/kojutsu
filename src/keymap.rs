@@ -119,6 +119,9 @@ pub enum AppAction {
     NextMatch,
     PrevMatch,
     GitPushBookmark,
+    TagSet,
+    TagDelete,
+    TagList,
     SwitchPreset(usize),
 }
 
@@ -268,6 +271,18 @@ impl Default for Keymap {
                     bind("a", AppAction::BookmarkAdvance, "advance", C),
                     bind("t", AppAction::BookmarkTrack, "track", C),
                     bind("u", AppAction::BookmarkUntrack, "untrack", C),
+                ],
+            ),
+            // Tag submenu
+            prefix(
+                "t",
+                "tag",
+                C,
+                vec![
+                    toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
+                    bind("s", AppAction::TagSet, "set", C),
+                    bind("d", AppAction::TagDelete, "delete", C),
+                    bind("l", AppAction::TagList, "list", C),
                 ],
             ),
             // Commit submenu
@@ -657,7 +672,10 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::GitExport
         | AppAction::GitImport
         | AppAction::Duplicate
-        | AppAction::DuplicateOnto => &[Commit],
+        | AppAction::DuplicateOnto
+        | AppAction::TagSet
+        | AppAction::TagDelete
+        | AppAction::TagList => &[Commit],
         _ => &[Commit, File, Line],
     }
 }
@@ -698,6 +716,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         | AppAction::GitPushBookmark
         | AppAction::GitExport
         | AppAction::GitImport => "git",
+        AppAction::TagSet | AppAction::TagDelete | AppAction::TagList => "tag",
         AppAction::Duplicate | AppAction::DuplicateOnto => "duplicate",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",

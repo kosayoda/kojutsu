@@ -10,6 +10,7 @@ bitflags::bitflags! {
         const AUTHOR      = 1 << 4;
         const PATH        = 1 << 5;
         const LINE        = 1 << 6;
+        const TAG         = 1 << 7;
     }
 }
 
@@ -58,6 +59,11 @@ pub const SEARCH_SCOPE_SPECS: &[SearchScopeSpec] = &[
         flag: SearchScopes::LINE,
         hint: "l",
         label: "line",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::TAG,
+        hint: "t",
+        label: "tag",
     },
 ];
 

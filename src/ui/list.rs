@@ -409,6 +409,31 @@ fn render_commit_item<'a>(
         }
     }
 
+    // Tags
+    for tag in &c.tags {
+        line1.push(Span::raw(" "));
+        let style = Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD);
+        if let Some(search) = search {
+            if search.scopes.contains(SearchScopes::TAG)
+                && contains_query(tag.as_str(), search.query, search.case_sensitive)
+            {
+                push_highlighted(
+                    &mut line1,
+                    tag.as_str(),
+                    search.query,
+                    style,
+                    search.case_sensitive,
+                );
+            } else {
+                line1.push(Span::styled(tag.to_string(), style));
+            }
+        } else {
+            line1.push(Span::styled(tag.to_string(), style));
+        }
+    }
+
     // Workspace annotations (non-current workspaces shown as "name@")
     for ws in &c.workspaces {
         if !ws.is_current {

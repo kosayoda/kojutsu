@@ -175,6 +175,18 @@ pub enum JJCommand {
     WorkspaceList {
         flags: CommandFlags,
     },
+    TagSet {
+        name: String,
+        change_id: ChangeId,
+        flags: CommandFlags,
+    },
+    TagDelete {
+        names: Vec<String>,
+        flags: CommandFlags,
+    },
+    TagList {
+        flags: CommandFlags,
+    },
 }
 
 /// The result of running a jj command.
@@ -222,7 +234,10 @@ impl JJCommand {
             | JJCommand::Squash { flags, .. }
             | JJCommand::WorkspaceAdd { flags, .. }
             | JJCommand::WorkspaceForget { flags, .. }
-            | JJCommand::WorkspaceList { flags, .. } => *flags,
+            | JJCommand::WorkspaceList { flags, .. }
+            | JJCommand::TagSet { flags, .. }
+            | JJCommand::TagDelete { flags, .. }
+            | JJCommand::TagList { flags, .. } => *flags,
         }
     }
 
@@ -617,6 +632,28 @@ impl JJCommand {
             }
             JJCommand::WorkspaceList { .. } => {
                 vec!["workspace".into(), "list".into()]
+            }
+            JJCommand::TagSet {
+                name, change_id, ..
+            } => {
+                let mut args: Vec<Str> = vec!["tag".into(), "set".into()];
+                push_flags(
+                    &mut args,
+                    flags,
+                    &[(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
+                );
+                args.push("-r".into());
+                args.push(format_compact!("{change_id}"));
+                args.push(Str::from(name.as_str()));
+                args
+            }
+            JJCommand::TagDelete { names, .. } => {
+                let mut args: Vec<Str> = vec!["tag".into(), "delete".into()];
+                args.extend(names.iter().map(|n| Str::from(n.as_str())));
+                args
+            }
+            JJCommand::TagList { .. } => {
+                vec!["tag".into(), "list".into()]
             }
         };
 

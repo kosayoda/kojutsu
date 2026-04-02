@@ -393,6 +393,12 @@ impl App {
         Some(&self.entries[entry_idx].commit.bookmarks)
     }
 
+    /// Get the tags of the commit the cursor is on.
+    pub fn selected_tags(&self) -> Option<&[crate::types::Str]> {
+        let entry_idx = self.selected_entry_idx()?;
+        Some(&self.entries[entry_idx].commit.tags)
+    }
+
     /// Get the description of the commit the cursor is on.
     pub fn selected_description(&self) -> Option<&str> {
         let entry_idx = self.selected_entry_idx()?;
