@@ -6,7 +6,6 @@ mod selection;
 mod visual;
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 use ratatui::widgets::ListState;
 use tui_input::Input;
@@ -24,38 +23,37 @@ use crate::types::{
 };
 
 // ---------------------------------------------------------------------------
-// Persisted state -- saved to .jj/kojutsu-state.json across app restarts.
+// Persisted state -- saved to ~/.local/state/kojutsu/state.json across app restarts.
 // ---------------------------------------------------------------------------
-
-const STATE_FILE: &str = "kojutsu-state.json";
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PersistedState {
-    pub revset: Option<String>,
     pub show_line_numbers: bool,
     pub ignore_immutable: bool,
     pub ignore_working_copy: bool,
     pub debug: bool,
     pub search_scopes: u8,
-    pub revset_presets: Vec<Option<String>>,
-    pub active_preset: usize,
+    pub active_preset: Option<usize>,
 }
 
-fn state_path(repo_path: &Path) -> std::path::PathBuf {
-    repo_path.join(".jj").join(STATE_FILE)
-}
-
-pub fn load_persisted_state(repo_path: &Path) -> PersistedState {
-    let path = state_path(repo_path);
+pub fn load_persisted_state() -> PersistedState {
+    let Some(path) = crate::theme::state_path() else {
+        return PersistedState::default();
+    };
     match std::fs::read_to_string(&path) {
         Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
         Err(_) => PersistedState::default(),
     }
 }
 
-pub fn save_persisted_state(repo_path: &Path, state: &PersistedState) {
-    let path = state_path(repo_path);
+pub fn save_persisted_state(state: &PersistedState) {
+    let Some(path) = crate::theme::state_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     if let Ok(json) = serde_json::to_string_pretty(state) {
         let _ = std::fs::write(&path, json);
     }
@@ -273,10 +271,10 @@ pub struct App {
     pub revset: String,
     /// Last failed revset attempt (pre-fills the input on retry).
     pub revset_draft: Option<String>,
-    /// 5 revset preset slots (auto-saved on change).
-    pub revset_presets: [Option<String>; 5],
-    /// Active preset slot (0-4).
-    pub active_preset: usize,
+    /// Named revset presets from config.
+    pub presets: &'static [crate::theme::Preset],
+    /// Active preset index (into `presets`), or `None` for jj default / manual revset.
+    pub active_preset: Option<usize>,
     pub repo_root: String,
     /// Current interaction mode.
     pub mode: AppMode,
@@ -328,7 +326,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(entries: Vec<DagEntry>, revset: String, repo_root: String) -> Self {
+    pub fn new(
+        entries: Vec<DagEntry>,
+        revset: String,
+        repo_root: String,
+        presets: &'static [crate::theme::Preset],
+    ) -> Self {
         let entries = IndexVec::from_vec(entries);
         let graph = IndexVec::from_vec(graph::render(entries.as_slice()));
         let mut app = Self {
@@ -340,8 +343,8 @@ impl App {
             last_header_height: 2,
             revset,
             revset_draft: None,
-            revset_presets: Default::default(),
-            active_preset: 0,
+            presets,
+            active_preset: None,
             repo_root,
             mode: AppMode::Normal,
             unfolded_commits: HashSet::new(),
@@ -477,13 +480,11 @@ impl App {
 
     pub fn to_persisted_state(&self) -> PersistedState {
         PersistedState {
-            revset: Some(self.revset.clone()).filter(|s| !s.is_empty()),
             show_line_numbers: self.show_line_numbers,
             ignore_immutable: self.toggles.contains(CommandFlags::IGNORE_IMMUTABLE),
             ignore_working_copy: self.toggles.contains(CommandFlags::IGNORE_WORKING_COPY),
             debug: self.toggles.contains(CommandFlags::DEBUG),
             search_scopes: self.search_scopes.bits(),
-            revset_presets: self.revset_presets.to_vec(),
             active_preset: self.active_preset,
         }
     }
@@ -498,10 +499,8 @@ impl App {
         if state.search_scopes != 0 {
             self.search_scopes = SearchScopes::from_bits_truncate(state.search_scopes);
         }
-        for (i, preset) in state.revset_presets.iter().enumerate().take(5) {
-            self.revset_presets[i] = preset.clone();
-        }
-        self.active_preset = state.active_preset.min(4);
+        self.active_preset = state.active_preset
+            .filter(|&i| i < self.presets.len());
     }
 
     /// Get the scroll offset from the list state.

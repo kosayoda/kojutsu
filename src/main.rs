@@ -41,6 +41,10 @@ struct Cli {
     #[arg(long)]
     debug_graph: bool,
 
+    /// Print the default config file to stdout and exit.
+    #[arg(long)]
+    print_default_config: bool,
+
     /// Internal: apply diff selection as a diff tool (invoked by jj).
     #[arg(long, hide = true)]
     apply_diff: Option<PathBuf>,
@@ -57,6 +61,11 @@ struct Cli {
 fn main() -> Result<()> {
     color_eyre::install()?;
     let cli = Cli::parse();
+
+    if cli.print_default_config {
+        print!("{}", kojutsu::theme::DEFAULT_CONFIG);
+        return Ok(());
+    }
 
     // Diff tool mode: apply selection and exit.
     if let Some(selection_path) = &cli.apply_diff {
@@ -93,14 +102,26 @@ fn main() -> Result<()> {
     let (event_tx, event_rx) = mpsc::channel();
     let (repo_requests, repo_responses) = RepoService::spawn(repo_path.clone());
     let _repo_forwarder = repo_responses.spawn_forwarder(event_tx.clone(), AppEvent::Repo);
-    let persisted = kojutsu::app::load_persisted_state(&repo_path);
-    let requested_revset = cli.revisions.clone().or_else(|| persisted.revset.clone());
+    let persisted = kojutsu::app::load_persisted_state();
+    // Resolve active preset: persisted → first preset → None (jj default).
+    let active_preset = persisted.active_preset
+        .filter(|&i| i < config.presets.len())
+        .or(if config.presets.is_empty() { None } else { Some(0) });
+    let requested_revset = cli.revisions
+        .clone()
+        .or_else(|| {
+            active_preset
+                .and_then(|i| config.presets.get(i))
+                .map(|p| p.revset.clone())
+        });
     let mut app = App::new(
         Vec::new(),
         requested_revset.clone().unwrap_or_default(),
         repo_path.display().to_string(),
+        &config.presets,
     );
     app.apply_persisted_state(&persisted);
+    app.active_preset = active_preset;
     app.request_revset_load(requested_revset);
     flush_repo_requests(&mut app, &repo_requests);
     let mut terminal = kojutsu::terminal::init()?;
@@ -149,6 +170,7 @@ fn main() -> Result<()> {
                 update_revset(&mut app, revset_str);
             }
             Action::EditRevsetInEditor => {
+                app.active_preset = None;
                 terminal_events.stop();
                 edit_revset_in_editor(&mut app, &mut terminal);
                 terminal_events = spawn_terminal_events(event_tx.clone());
@@ -158,7 +180,7 @@ fn main() -> Result<()> {
         flush_repo_requests(&mut app, &repo_requests);
     }
 
-    kojutsu::app::save_persisted_state(&repo_path, &app.to_persisted_state());
+    kojutsu::app::save_persisted_state(&app.to_persisted_state());
     terminal_events.stop();
     kojutsu::terminal::restore()?;
     Ok(())

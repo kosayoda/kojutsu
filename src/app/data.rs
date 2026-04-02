@@ -175,7 +175,6 @@ impl App {
                 self.untracked_bookmarks = untracked_bookmarks;
                 self.tracked_bookmarks = tracked_bookmarks;
                 self.revset_state = Loadable::Loaded(());
-                self.revset_presets[self.active_preset] = Some(self.revset.clone());
                 self.apply_entries(entries);
             }
             RepoResult::RevsetFailed { revset, error } => {

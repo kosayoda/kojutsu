@@ -63,6 +63,7 @@ walkdir = "2"
 itertools = "0.14.0"
 # Config file parsing
 toml = "1.1.2"
+dirs = "6.0.0"
 
 [build-dependencies]
 toml = "1.1.2"

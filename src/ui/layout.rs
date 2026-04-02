@@ -18,7 +18,11 @@ pub(super) fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: &Them
             Span::styled(&app.repo_root, Style::default().fg(theme.text)),
             Span::raw(HEADER_SEP),
             Span::styled(
-                format!("revset ({}/5): ", app.active_preset + 1),
+                if let Some(preset) = app.active_preset.and_then(|i| app.presets.get(i)) {
+                    format!("revset ({}): ", preset.name)
+                } else {
+                    "revset: ".to_string()
+                },
                 Style::default().fg(theme.muted),
             ),
             Span::styled(&app.revset, Style::default().fg(theme.accent)),
@@ -31,7 +35,11 @@ pub(super) fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: &Them
             ]),
             Line::from(vec![
                 Span::styled(
-                    format!("revset ({}/5): ", app.active_preset + 1),
+                    if let Some(preset) = app.active_preset.and_then(|i| app.presets.get(i)) {
+                    format!("revset ({}): ", preset.name)
+                } else {
+                    "revset: ".to_string()
+                },
                     Style::default().fg(theme.muted),
                 ),
                 Span::styled(&app.revset, Style::default().fg(theme.accent)),

@@ -177,7 +177,7 @@ impl JjRepo {
         config.add_layer(cli_defaults);
 
         // Try loading user config (~/.config/jj/config.toml or platform equivalent)
-        if let Some(config_dir) = dirs_next_config_dir() {
+        if let Some(config_dir) = dirs::config_dir() {
             let user_config = config_dir.join("jj").join("config.toml");
             if user_config.exists() {
                 let _ = config.load_file(ConfigSource::User, &user_config);
@@ -229,7 +229,8 @@ impl JjRepo {
             .config()
             .get::<String>("revsets.log")
             .unwrap_or_else(|_| {
-                "present(@) | ancestors(immutable_heads().., 2) | trunk()".to_string()
+                "present(@) | ancestors(immutable_heads()..@, 2) | ancestors(trunk(), 16)"
+                    .to_string()
             })
     }
 
@@ -748,12 +749,7 @@ impl JjRepo {
         // collect_distinct_refs behavior: show local + unsynced remote.
         let remote_bookmarks: Vec<RemoteBookmarkInfo> = remote_bookmark_map
             .get(commit.id())
-            .map(|rbs| {
-                rbs.iter()
-                    .filter(|rb| !rb.synced)
-                    .cloned()
-                    .collect()
-            })
+            .map(|rbs| rbs.iter().filter(|rb| !rb.synced).cloned().collect())
             .unwrap_or_default();
 
         // Divergence, hidden status, and change ID disambiguation are
@@ -795,7 +791,10 @@ impl JjRepo {
             .filter_map(|hex_id| {
                 let commit_id = BackendCommitId::try_from_hex(hex_id)?;
                 let commit = self.repo.store().get_commit(&commit_id).ok()?;
-                let empty = commit.is_empty(self.repo.as_ref()).block_on().unwrap_or(false);
+                let empty = commit
+                    .is_empty(self.repo.as_ref())
+                    .block_on()
+                    .unwrap_or(false);
                 Some((hex_id.clone(), empty))
             })
             .collect()
@@ -901,12 +900,4 @@ impl JjRepo {
             })
             .collect()
     }
-}
-
-/// Platform-appropriate user config directory.
-fn dirs_next_config_dir() -> Option<PathBuf> {
-    // XDG_CONFIG_HOME or ~/.config on Linux
-    std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
 }

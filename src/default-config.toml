@@ -1,0 +1,29 @@
+# Kojutsu configuration
+# Place this file at ~/.config/kojutsu/config.toml
+
+# Color theme: all fields are optional, shown values are the defaults.
+# Colors can be: named ("cyan"), hex ("#619eef"), RGB ({ r = 50, g = 50, b = 60 }),
+# or ANSI index (42).
+[theme]
+accent       = "cyan"                      # prompts, headers, visual range, immutable glyphs
+selection    = "yellow"                    # selected items, active toggles, keys, author
+muted        = "dark_gray"                 # borders, labels, disabled items, context lines
+text         = "white"                     # normal text, descriptions, file paths
+error        = "red"                       # errors, conflicts, removed/deleted lines
+added        = "green"                     # added lines, working copy, workspace names
+change_id    = "magenta"                   # change IDs, diff headers, bookmarks
+commit_id    = "blue"                      # commit IDs
+selection_bg = { r = 50, g = 50, b = 60 }  # background highlight for cursor row
+
+# Named revset presets: keys 1-5 switch between the first 5 presets.
+# [[presets]]
+# name = "default"
+# revset = "present(@) | ancestors(immutable_heads()..@, 2) | ancestors(trunk(), 16)"
+#
+# [[presets]]
+# name = "all mine"
+# revset = "author(exact:'me@example.com')"
+#
+# [[presets]]
+# name = "recent"
+# revset = "heads(all())"

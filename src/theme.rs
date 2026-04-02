@@ -3,11 +3,22 @@ use std::path::PathBuf;
 use ratatui::style::Color;
 use serde::Deserialize;
 
+pub const DEFAULT_CONFIG: &str = include_str!("default-config.toml");
+
+/// A named revset preset.
+#[derive(Deserialize, Clone)]
+pub struct Preset {
+    pub name: String,
+    pub revset: String,
+}
+
 /// Top-level config file structure (`~/.config/kojutsu/config.toml`).
 #[derive(Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
     pub theme: Theme,
+    #[serde(default)]
+    pub presets: Vec<Preset>,
 }
 
 /// Color theme for the TUI.
@@ -75,22 +86,33 @@ fn default_commit_id() -> Color { Color::Blue }
 fn default_selection_bg() -> Color { Color::Rgb(50, 50, 60) }
 
 /// Load config from `~/.config/kojutsu/config.toml` (or XDG equivalent).
-/// Returns defaults on any error.
+/// Returns defaults on any error (prints warnings to stderr on parse failures).
 pub fn load_config() -> Config {
     let Some(path) = config_path() else {
         return Config::default();
     };
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|s| toml::from_str(&s).ok())
-        .unwrap_or_default()
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return Config::default(),
+    };
+    match toml::from_str(&contents) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("warning: failed to parse {}: {e}", path.display());
+            Config::default()
+        }
+    }
 }
 
 fn config_path() -> Option<PathBuf> {
-    let dir = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
-    Some(dir.join("kojutsu/config.toml"))
+    Some(dirs::config_dir()?.join("kojutsu/config.toml"))
+}
+
+/// Path for user-wide persistent state (`~/.local/state/kojutsu/state.json`).
+pub fn state_path() -> Option<PathBuf> {
+    Some(dirs::state_dir()
+        .or_else(dirs::data_dir)?
+        .join("kojutsu/state.json"))
 }
 
 // ---------------------------------------------------------------------------

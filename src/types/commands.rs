@@ -40,6 +40,8 @@ pub enum PendingSelection {
     GitPushBookmark { flags: CommandFlags },
     /// Delete a tag.
     TagDelete { flags: CommandFlags },
+    /// Switch to a named revset preset.
+    PresetSelect,
 }
 
 /// What to do after selecting a single commit in CommitSelect mode.

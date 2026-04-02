@@ -122,6 +122,7 @@ pub enum AppAction {
     TagSet,
     TagDelete,
     TagList,
+    SelectPreset,
     SwitchPreset(usize),
 }
 
@@ -474,6 +475,7 @@ impl Default for Keymap {
                         G,
                     ),
                     bind("d", AppAction::ResetRevset, "default revset", G),
+                    bind("p", AppAction::SelectPreset, "switch preset", G),
                     bind("l", AppAction::ToggleLineNumbers, "toggle line numbers", G),
                 ],
             ),
@@ -718,6 +720,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         | AppAction::GitImport => "git",
         AppAction::TagSet | AppAction::TagDelete | AppAction::TagList => "tag",
         AppAction::Duplicate | AppAction::DuplicateOnto => "duplicate",
+        AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",
     }

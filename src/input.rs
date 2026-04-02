@@ -369,6 +369,15 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             Action::None
         }
         AppAction::Refresh => Action::Refresh,
+        AppAction::SelectPreset => {
+            if app.presets.is_empty() {
+                app.status_message = Some("no presets configured".to_string());
+                return Action::None;
+            }
+            let items: Vec<String> = app.presets.iter().map(|p| p.name.clone()).collect();
+            app.mode = AppMode::select_from_list("switch preset", items, false, PendingSelection::PresetSelect);
+            Action::None
+        }
         AppAction::EditRevset => {
             let prefill = app.revset_input_text().to_string();
             app.mode = AppMode::text_input("revset: ", prefill, PendingCommand::Revset);
@@ -376,16 +385,17 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::EditRevsetInEditor => Action::EditRevsetInEditor,
         AppAction::ResetRevset => {
+            app.active_preset = None;
             app.request_revset_load(None);
             Action::None
         }
         AppAction::SwitchPreset(slot) => {
-            // Save current revset to current slot before switching.
-            app.revset_presets[app.active_preset] = Some(app.revset.clone());
-            app.active_preset = slot;
-            if let Some(revset) = &app.revset_presets[slot] {
-                Action::UpdateRevset(revset.clone())
+            if let Some(preset) = app.presets.get(slot) {
+                app.active_preset = Some(slot);
+                Action::UpdateRevset(preset.revset.clone())
             } else {
+                // No preset at this slot — use jj's default revset.
+                app.active_preset = None;
                 app.request_revset_load(None);
                 Action::None
             }
@@ -692,7 +702,10 @@ fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
             {
                 let text = input.to_string();
                 match on_submit {
-                    PendingCommand::Revset => Action::UpdateRevset(text),
+                    PendingCommand::Revset => {
+                        app.active_preset = None;
+                        Action::UpdateRevset(text)
+                    }
                     PendingCommand::WorkspaceAddPath { flags } => {
                         app.mode = AppMode::text_input(
                             "workspace name (enter for default): ",
@@ -1426,6 +1439,15 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
                 names: vec![name],
                 flags,
             })
+        }
+        PendingSelection::PresetSelect => {
+            let idx = app.presets.iter().position(|p| p.name == name);
+            if let Some(i) = idx {
+                app.active_preset = Some(i);
+                Action::UpdateRevset(app.presets[i].revset.clone())
+            } else {
+                Action::None
+            }
         }
     }
 }
