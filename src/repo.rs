@@ -43,7 +43,7 @@ const DISPLAY_ID_LEN: usize = 8;
 /// Vendored jj-cli default revset configuration.
 /// Contains `[revsets]` (default log revset, etc.) and `[revset-aliases]`
 /// (trunk(), immutable_heads(), immutable(), mutable(), etc.).
-const DEFAULT_REVSETS_TOML: &str = include_str!("config/revsets.toml");
+const DEFAULT_REVSETS_TOML: &str = include_str!("../vendored/revsets.toml");
 
 /// Thin adapter around jj-lib. Owns the workspace and repo, converts
 /// jj-lib types into our domain types so nothing leaks out.
@@ -512,8 +512,10 @@ impl JjRepo {
                     .block_on()?;
 
             let before_part = git_diff_part(&entry.path, before_mat, &materialize_options)
+                .block_on()
                 .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
             let after_part = git_diff_part(&entry.path, after_mat, &materialize_options)
+                .block_on()
                 .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
 
             if before_part.content.is_binary || after_part.content.is_binary {
@@ -564,8 +566,8 @@ impl JjRepo {
             },
         };
 
-        let before_value = parent_tree.path_value(&repo_path)?;
-        let after_value = commit_tree.path_value(&repo_path)?;
+        let before_value = parent_tree.path_value(&repo_path).block_on()?;
+        let after_value = commit_tree.path_value(&repo_path).block_on()?;
 
         let before_mat =
             materialize_tree_value(repo.store(), &repo_path, before_value, &labels).block_on()?;
@@ -573,8 +575,10 @@ impl JjRepo {
             materialize_tree_value(repo.store(), &repo_path, after_value, &labels).block_on()?;
 
         let before_part = git_diff_part(&repo_path, before_mat, &materialize_options)
+            .block_on()
             .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
         let after_part = git_diff_part(&repo_path, after_mat, &materialize_options)
+            .block_on()
             .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
 
         if before_part.content.is_binary || after_part.content.is_binary {
@@ -791,7 +795,7 @@ impl JjRepo {
             .filter_map(|hex_id| {
                 let commit_id = BackendCommitId::try_from_hex(hex_id)?;
                 let commit = self.repo.store().get_commit(&commit_id).ok()?;
-                let empty = commit.is_empty(self.repo.as_ref()).unwrap_or(false);
+                let empty = commit.is_empty(self.repo.as_ref()).block_on().unwrap_or(false);
                 Some((hex_id.clone(), empty))
             })
             .collect()

@@ -25,7 +25,7 @@ fi
 echo "Fetching jj-cli config files for jj v${VERSION}..."
 
 BASE_URL="https://raw.githubusercontent.com/jj-vcs/jj/v${VERSION}/cli/src/config"
-DEST_DIR="$PROJECT_DIR/src/config"
+DEST_DIR="$PROJECT_DIR/vendored"
 
 mkdir -p "$DEST_DIR"
 

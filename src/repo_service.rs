@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::thread;
 
 use jj_lib::repo::Repo as _;
+use pollster::FutureExt as _;
 
 use crate::dag::{DagEntry, DiffLine, FileChange, LineStats};
 use crate::repo::JjRepo;
@@ -298,7 +299,7 @@ impl RepoServiceState {
                             let Ok(commit) = inner.store().get_commit(&backend_id) else {
                                 continue;
                             };
-                            if commit.is_empty(inner.as_ref()).unwrap_or(false) {
+                            if commit.is_empty(inner.as_ref()).block_on().unwrap_or(false) {
                                 let _ = empty_tx.send(RepoResult::CommitEmpty {
                                     commit_id: CommitId::new(hex_id.clone()),
                                 });
