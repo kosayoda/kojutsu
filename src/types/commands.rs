@@ -1,6 +1,6 @@
 use strum::IntoEnumIterator as _;
 
-use super::id::ChangeId;
+use super::id::{ChangeId, SmallVec};
 use super::operations::{
     MessageMode, RebaseKind, RebaseSource, RebaseTarget, SplitKind, SplitTarget, SquashKind,
     SquashTarget,
@@ -89,7 +89,7 @@ pub enum FollowUpAction {
 /// What to do when a TextInput is submitted.
 pub enum PendingCommand {
     Describe {
-        change_ids: Vec<ChangeId>,
+        change_ids: SmallVec<ChangeId>,
         flags: CommandFlags,
     },
     SquashWithMessage {
@@ -184,7 +184,7 @@ pub enum TargetOperation {
     Rebase {
         source_mode: RebaseSource,
         /// All source commit IDs (supports multi-commit rebase).
-        sources: Vec<ChangeId>,
+        sources: SmallVec<ChangeId>,
     },
     RestoreFrom,
     RestoreInto,
@@ -264,7 +264,7 @@ impl TargetOperation {
             }
             TargetOperation::DuplicateOnto => {
                 auto_follow_up("duplicate", JJCommand::Duplicate {
-                    change_ids: vec![source],
+                    change_ids: smallvec::smallvec![source],
                     onto: Some(target),
                     flags,
                 })
@@ -333,7 +333,7 @@ fn squash_follow_up(
 
 /// Build follow-up options for a rebase command (dest mode selection).
 fn rebase_follow_up(
-    sources: Vec<ChangeId>,
+    sources: SmallVec<ChangeId>,
     target: ChangeId,
     source_mode: RebaseSource,
     flags: CommandFlags,

@@ -2187,6 +2187,7 @@ dependencies = [
  "serde_json",
  "shlex",
  "signal-hook",
+ "smallvec",
  "strum 0.28.0",
  "tempfile",
  "thiserror 2.0.18",

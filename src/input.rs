@@ -11,10 +11,12 @@ use crate::keymap::{
     self, action_label, action_supported_selection_kinds, AppAction, CommandFlags, Keymap,
     LookupResult,
 };
+use smallvec::smallvec;
+
 use crate::types::{
     ChangeId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
-    PendingCommitSelect, PendingSelection, RebaseSource, SelectionKind, SplitKind, SquashKind,
-    TargetOperation,
+    PendingCommitSelect, PendingSelection, RebaseSource, SelectionKind, SmallVec, SplitKind,
+    SquashKind, TargetOperation,
 };
 
 /// Number of rows to jump for page-up/page-down style navigation.
@@ -425,7 +427,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 .unwrap_or_default();
             if workspaces.len() == 1 {
                 Action::RunJj(JJCommand::WorkspaceForget {
-                    names: workspaces,
+                    names: workspaces.into(),
                     flags,
                 })
             } else if workspaces.len() > 1 {
@@ -490,13 +492,13 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             flags,
         }),
         AppAction::NewInsertAfter => make_command(app, |id| JJCommand::New {
-            change_ids: vec![id],
+            change_ids: smallvec![id],
             insert_after: true,
             insert_before: false,
             flags,
         }),
         AppAction::NewInsertBefore => make_command(app, |id| JJCommand::New {
-            change_ids: vec![id],
+            change_ids: smallvec![id],
             insert_after: false,
             insert_before: true,
             flags,
@@ -642,7 +644,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             let items: Vec<String> = bookmarks.iter().map(|b| b.name.clone()).collect();
             if items.len() == 1 {
                 return Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
-                    bookmarks: items,
+                    bookmarks: items.into(),
                     flags,
                 });
             }
@@ -688,7 +690,7 @@ fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action {
 }
 
 /// Helper: build a command from multiple selected change IDs (or cursor fallback).
-fn make_multi_command(app: &App, build: impl FnOnce(Vec<ChangeId>) -> JJCommand) -> Action {
+fn make_multi_command(app: &App, build: impl FnOnce(SmallVec<ChangeId>) -> JJCommand) -> Action {
     let ids = app.selected_change_ids();
     if ids.is_empty() {
         return Action::None;
@@ -1170,7 +1172,7 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
     let items: Vec<String> = bookmarks.iter().map(|b| b.name.clone()).collect();
 
     if items.len() == 1 {
-        return resolve_selection(app, on_select, items);
+        return resolve_selection(app, on_select, items.into());
     }
 
     app.mode = AppMode::select_from_list(kind.title(), items, kind.is_multi(), on_select);
@@ -1186,7 +1188,7 @@ fn enter_tag_delete(app: &mut App, flags: CommandFlags) -> Action {
     let items: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
     if items.len() == 1 {
         return Action::RunJj(JJCommand::TagDelete {
-            names: items,
+            names: items.into(),
             flags,
         });
     }
@@ -1370,7 +1372,7 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
                     let orig_idx = filtered_indices.get(cursor).copied().unwrap_or(0);
                     vec![items.into_iter().nth(orig_idx).unwrap_or_default()]
                 };
-                resolve_selection(app, on_select, names)
+                resolve_selection(app, on_select, names.into())
             } else {
                 Action::None
             }
@@ -1391,7 +1393,7 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
 }
 
 /// After item(s) have been selected from a list, decide what to do next.
-fn resolve_selection(app: &mut App, on_select: PendingSelection, names: Vec<String>) -> Action {
+fn resolve_selection(app: &mut App, on_select: PendingSelection, names: SmallVec<String>) -> Action {
     match on_select {
         PendingSelection::BookmarkDelete { flags, .. } => {
             Action::RunJj(JJCommand::BookmarkDelete { names, flags })
@@ -1463,7 +1465,7 @@ fn resolve_selection(app: &mut App, on_select: PendingSelection, names: Vec<Stri
 }
 
 /// Parse `"name@remote"` display strings into `BookmarkRef` values.
-fn parse_remote_bookmarks(names: Vec<String>) -> Vec<BookmarkRef> {
+fn parse_remote_bookmarks(names: SmallVec<String>) -> SmallVec<BookmarkRef> {
     names
         .into_iter()
         .filter_map(|s| {

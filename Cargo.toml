@@ -20,6 +20,8 @@ color-eyre = "0.6.3"
 crossterm = "0.29"
 # Memory efficient string types
 compact_str = "0.9.0"
+# Stack-allocated small vectors (avoids heap for 1-2 element Vecs)
+smallvec = "1"
 # StreamExt for jj-lib's async diff streams (used with pollster::block_on)
 futures = "0.3"
 # Date/time

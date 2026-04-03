@@ -4,7 +4,7 @@ use super::App;
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::types::{
-    ChangeId, FileRef, FileSelectionState, Selection, SelectionKind,
+    ChangeId, FileRef, FileSelectionState, Selection, SelectionKind, SmallVec,
 };
 
 use super::Loadable;
@@ -70,7 +70,7 @@ impl App {
     }
 
     /// Get the change IDs of explicitly selected commits, or fall back to cursor.
-    pub fn selected_change_ids(&self) -> Vec<ChangeId> {
+    pub fn selected_change_ids(&self) -> SmallVec<ChangeId> {
         if self.selection_kind() == SelectionKind::Commit && self.selection_active() {
             self.selection
                 .iter()

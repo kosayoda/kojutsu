@@ -1,5 +1,8 @@
 pub type Str = compact_str::CompactString;
 
+/// A small vector optimized for the common 1-2 element case.
+pub type SmallVec<T> = smallvec::SmallVec<[T; 2]>;
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
 pub struct ChangeId(Str);

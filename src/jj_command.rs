@@ -6,7 +6,7 @@ use compact_str::format_compact;
 use crate::app::{JumpTarget, GLOBAL_TOGGLES};
 use crate::dag::BookmarkRef;
 use crate::keymap::CommandFlags;
-use crate::types::{ChangeId, MessageMode, RebaseSource, RebaseTarget, SplitTarget, SquashTarget, Str};
+use crate::types::{ChangeId, MessageMode, RebaseSource, RebaseTarget, SmallVec, SplitTarget, SquashTarget, Str};
 
 /// How to filter changes for squash/commit operations.
 #[derive(Debug, Clone)]
@@ -23,12 +23,12 @@ pub enum ChangeSelection {
 #[derive(Debug, Clone)]
 pub enum JJCommand {
     Abandon {
-        change_ids: Vec<ChangeId>,
+        change_ids: SmallVec<ChangeId>,
         flags: CommandFlags,
     },
     /// Describe with an inline message (non-interactive).
     Describe {
-        change_ids: Vec<ChangeId>,
+        change_ids: SmallVec<ChangeId>,
         message: String,
         flags: CommandFlags,
     },
@@ -42,7 +42,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     New {
-        change_ids: Vec<ChangeId>,
+        change_ids: SmallVec<ChangeId>,
         insert_after: bool,
         insert_before: bool,
         flags: CommandFlags,
@@ -56,7 +56,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     Rebase {
-        change_ids: Vec<ChangeId>,
+        change_ids: SmallVec<ChangeId>,
         source_mode: RebaseSource,
         dest: RebaseTarget,
         flags: CommandFlags,
@@ -85,11 +85,11 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     BookmarkDelete {
-        names: Vec<String>,
+        names: SmallVec<String>,
         flags: CommandFlags,
     },
     BookmarkForget {
-        names: Vec<String>,
+        names: SmallVec<String>,
         flags: CommandFlags,
     },
     BookmarkMove {
@@ -107,11 +107,11 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     BookmarkTrack {
-        bookmarks: Vec<BookmarkRef>,
+        bookmarks: SmallVec<BookmarkRef>,
         flags: CommandFlags,
     },
     BookmarkUntrack {
-        bookmarks: Vec<BookmarkRef>,
+        bookmarks: SmallVec<BookmarkRef>,
         flags: CommandFlags,
     },
     Undo {
@@ -133,7 +133,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     GitPushBookmark {
-        bookmarks: Vec<String>,
+        bookmarks: SmallVec<String>,
         flags: CommandFlags,
     },
     GitExport {
@@ -157,7 +157,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     Duplicate {
-        change_ids: Vec<ChangeId>,
+        change_ids: SmallVec<ChangeId>,
         /// Target revision for `--onto`. `None` = duplicate onto same parents.
         onto: Option<ChangeId>,
         flags: CommandFlags,
@@ -169,7 +169,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     WorkspaceForget {
-        names: Vec<String>,
+        names: SmallVec<String>,
         flags: CommandFlags,
     },
     WorkspaceList {
@@ -181,7 +181,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     TagDelete {
-        names: Vec<String>,
+        names: SmallVec<String>,
         flags: CommandFlags,
     },
     TagList {
