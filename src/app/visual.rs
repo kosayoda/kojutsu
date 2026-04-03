@@ -1,5 +1,5 @@
 use super::{App, PersistentVisualRange, VisualMode};
-use crate::dag::{DiffLineKind, EdgeKind};
+use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::types::{
     ChangeId, DisplayRow, FileRef, Selection, SelectionKind, VisualRange,
@@ -435,13 +435,13 @@ impl App {
             return;
         }
 
-        // Otherwise extend at the bottom: follow Direct parent edge of the last entry.
+        // Otherwise extend at the bottom: next entry in display order.
         let tail = match &self.visual {
             Some(VisualMode::Commits { path, .. }) => path.last().copied(),
             _ => None,
         };
         let Some(tail) = tail else { return };
-        if let Some(parent) = self.single_direct_parent(tail) {
+        if let Some(parent) = self.next_entry_down(tail) {
             let Some(VisualMode::Commits { path, .. }) = &mut self.visual else {
                 return;
             };
@@ -467,13 +467,13 @@ impl App {
             return;
         }
 
-        // Otherwise extend at the top: find the unique child of the first entry.
+        // Otherwise extend at the top: next entry in display order (upward).
         let head = match &self.visual {
             Some(VisualMode::Commits { path, .. }) => path.first().copied(),
             _ => None,
         };
         let Some(head) = head else { return };
-        if let Some(child) = self.single_direct_child(head) {
+        if let Some(child) = self.next_entry_up(head) {
             let Some(VisualMode::Commits { path, .. }) = &mut self.visual else {
                 return;
             };
@@ -510,43 +510,24 @@ impl App {
         }
     }
 
-    fn single_direct_parent(&self, entry_idx: EntryIdx) -> Option<EntryIdx> {
-        let entry = &self.entries[entry_idx];
-        let direct: Vec<_> = entry
-            .edges
-            .iter()
-            .filter(|e| matches!(e.kind, EdgeKind::Direct))
-            .collect();
-        if direct.len() != 1 {
-            return None;
-        }
-        self.find_entry_by_edge_target(&direct[0].target)
-    }
-
-    fn single_direct_child(&self, entry_idx: EntryIdx) -> Option<EntryIdx> {
-        let graph_id = self.entries[entry_idx].commit.graph_id.as_str();
-        let children: Vec<EntryIdx> = self
-            .entries
-            .iter_enumerated()
-            .filter(|(_, e)| {
-                e.edges.iter().any(|edge| {
-                    matches!(edge.kind, EdgeKind::Direct) && edge.target.as_str() == graph_id
-                })
-            })
-            .map(|(idx, _)| idx)
-            .collect();
-        if children.len() == 1 {
-            Some(children[0])
+    /// The next entry in display order (downward = toward parents).
+    fn next_entry_down(&self, entry_idx: EntryIdx) -> Option<EntryIdx> {
+        let next = entry_idx.raw() + 1;
+        if next < self.entries.len() {
+            Some(EntryIdx::new(next))
         } else {
             None
         }
     }
 
-    fn find_entry_by_edge_target(&self, target: &ChangeId) -> Option<EntryIdx> {
-        self.entries
-            .iter_enumerated()
-            .find(|(_, e)| e.commit.graph_id.as_str() == target.as_str())
-            .map(|(idx, _)| idx)
+    /// The next entry in display order (upward = toward children).
+    fn next_entry_up(&self, entry_idx: EntryIdx) -> Option<EntryIdx> {
+        let raw = entry_idx.raw();
+        if raw > 0 {
+            Some(EntryIdx::new(raw - 1))
+        } else {
+            None
+        }
     }
 
     fn jump_cursor_to_commit(&mut self, entry_idx: EntryIdx) {
