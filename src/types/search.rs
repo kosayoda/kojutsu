@@ -15,7 +15,7 @@ bitflags::bitflags! {
 }
 
 impl SearchScopes {
-    pub const DEFAULT: Self = Self::CHANGE_ID;
+    pub const DEFAULT: Self = Self::CHANGE_ID.union(Self::DESCRIPTION);
 }
 
 pub struct SearchScopeSpec {

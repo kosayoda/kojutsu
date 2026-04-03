@@ -11,6 +11,13 @@ use crate::theme::Theme;
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, KeymapNode};
 use crate::types::{FollowUpOption, SearchFocus, SelectionContext, SEARCH_SCOPE_SPECS};
 
+/// A plain block with only a top border (used by several simple overlay panels).
+fn top_border(theme: &Theme) -> Block<'static> {
+    Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(theme.muted))
+}
+
 pub(super) type HelpColumn<'a> = Vec<&'a (HelpGroup, Vec<HelpEntry>)>;
 
 /// Balance help groups into two columns, keeping groups intact.
@@ -250,6 +257,33 @@ pub(super) fn draw_submenu(
     frame.render_widget(Paragraph::new(Line::from(action_spans)), inner);
 }
 
+/// Render a single-line text input with horizontal scrolling and cursor placement.
+///
+/// `prefix_width` is the number of columns already consumed before the input
+/// (e.g. a prompt or label). The input text scrolls within the remaining space.
+fn render_scrollable_input(
+    frame: &mut Frame,
+    area: Rect,
+    prefix_width: u16,
+    input: &tui_input::Input,
+    theme: &Theme,
+) {
+    let input_width = area.width.saturating_sub(prefix_width);
+    let scroll = input.visual_scroll(input_width.saturating_sub(1) as usize);
+    let text = Span::styled(&input.value()[scroll..], Style::default().fg(theme.text));
+    frame.render_widget(
+        Paragraph::new(Line::from(text)),
+        Rect {
+            x: area.x + prefix_width,
+            y: area.y,
+            width: input_width,
+            height: area.height,
+        },
+    );
+    let cursor_x = area.x + prefix_width + (input.visual_cursor() - scroll) as u16;
+    frame.set_cursor_position((cursor_x, area.y));
+}
+
 pub(super) fn draw_text_input(
     frame: &mut Frame,
     area: Rect,
@@ -257,33 +291,20 @@ pub(super) fn draw_text_input(
     input: &tui_input::Input,
     theme: &Theme,
 ) {
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme.muted));
+    let block = top_border(theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    let prompt_span = Span::styled(
+        prompt,
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    );
     let prompt_width = prompt.len() as u16;
-    let input_width = inner.width.saturating_sub(prompt_width);
+    frame.render_widget(Paragraph::new(Line::from(prompt_span)), inner);
 
-    let scroll = input.visual_scroll(input_width.saturating_sub(1) as usize);
-
-    let spans = vec![
-        Span::styled(
-            prompt,
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(&input.value()[scroll..], Style::default().fg(theme.text)),
-    ];
-
-    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
-
-    // Place the cursor.
-    let cursor_x = inner.x + prompt_width + (input.visual_cursor() - scroll) as u16;
-    let cursor_y = inner.y;
-    frame.set_cursor_position((cursor_x, cursor_y));
+    render_scrollable_input(frame, inner, prompt_width, input, theme);
 }
 
 pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
@@ -323,22 +344,19 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App, theme:
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let line = Line::from(Span::styled(
-        search.query(),
-        Style::default().fg(theme.text),
-    ));
-    frame.render_widget(Paragraph::new(line), inner);
-
     if matches!(search.focus, SearchFocus::Query) {
-        let cursor_x = inner.x + search.input.visual_cursor() as u16;
-        frame.set_cursor_position((cursor_x, inner.y));
+        render_scrollable_input(frame, inner, 0, &search.input, theme);
+    } else {
+        let line = Line::from(Span::styled(
+            search.query(),
+            Style::default().fg(theme.text),
+        ));
+        frame.render_widget(Paragraph::new(line), inner);
     }
 }
 
 pub(super) fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, source: &str, theme: &Theme) {
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme.muted));
+    let block = top_border(theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -451,7 +469,7 @@ pub(super) fn draw_select_list(
     let filter_style = if filtering {
         Style::default().fg(theme.text)
     } else if !filter.is_empty() {
-        Style::default().fg(theme.muted)
+        Style::default().fg(theme.accent)
     } else {
         Style::default().fg(theme.muted)
     };

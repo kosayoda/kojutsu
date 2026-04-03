@@ -142,7 +142,7 @@ impl App {
             return;
         };
         let dl = &diff_lines[line_idx.raw()];
-        if dl.kind != DiffLineKind::Added && dl.kind != DiffLineKind::Removed {
+        if !dl.kind.is_selectable() {
             return;
         }
         let old_line = dl.old_line;
@@ -189,7 +189,7 @@ impl App {
                 if dl.kind == DiffLineKind::Header {
                     break;
                 }
-                if dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed {
+                if dl.kind.is_selectable() {
                     hunk_lines.push(Selection::Line {
                         file_ref: FileRef {
                             change_id: change_id.clone(),
@@ -244,8 +244,7 @@ impl App {
             change_id: change_id.clone(),
             path: file_path.clone(),
         })) {
-            return diff_line.kind == DiffLineKind::Added
-                || diff_line.kind == DiffLineKind::Removed;
+            return diff_line.kind.is_selectable();
         }
 
         self.selection.contains(&Selection::Line {
@@ -299,7 +298,7 @@ impl App {
             .map(|diff_lines| {
                 diff_lines
                     .iter()
-                    .filter(|dl| dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed)
+                    .filter(|dl| dl.kind.is_selectable())
                     .count()
             })
             .unwrap_or(0);

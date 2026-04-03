@@ -44,7 +44,7 @@ impl App {
                     return;
                 };
                 let dl = &diff_lines[line_idx.raw()];
-                if dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed {
+                if dl.kind.is_selectable() {
                     self.visual = Some(VisualMode::Lines {
                         anchor: self.cursor,
                     });
@@ -350,9 +350,7 @@ impl App {
                         let idx = DiffLineIdx::new(*i);
                         idx >= vr.start_line && idx <= vr.end_line
                     })
-                    .filter(|(_, dl)| {
-                        dl.kind == DiffLineKind::Added || dl.kind == DiffLineKind::Removed
-                    })
+                    .filter(|(_, dl)| dl.kind.is_selectable())
                     .map(|(_, dl)| LineSelection {
                         change_id: vr.change_id.clone(),
                         path: vr.path.clone(),

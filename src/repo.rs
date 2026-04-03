@@ -151,18 +151,18 @@ impl JjRepo {
 
     /// Remote bookmarks that are not yet tracked locally.
     pub fn untracked_remote_bookmarks(&self) -> Vec<String> {
-        self.remote_bookmarks()
-            .filter(|(_, remote_ref)| !remote_ref.is_tracked())
-            .map(|(symbol, _)| format!("{}@{}", symbol.name.as_str(), symbol.remote.as_str()))
-            .collect()
+        self.filtered_remote_bookmarks(false)
     }
 
     /// Remote bookmarks that are tracked locally.
-    /// Excludes the synthetic `git` remote (colocated repos).
     pub fn tracked_remote_bookmarks(&self) -> Vec<String> {
+        self.filtered_remote_bookmarks(true)
+    }
+
+    fn filtered_remote_bookmarks(&self, tracked: bool) -> Vec<String> {
         self.remote_bookmarks()
-            .filter(|(_, remote_ref)| remote_ref.is_tracked())
-            .map(|(symbol, _)| format!("{}@{}", symbol.name.as_str(), symbol.remote.as_str()))
+            .filter(move |(_, r)| r.is_tracked() == tracked)
+            .map(|(s, _)| format!("{}@{}", s.name.as_str(), s.remote.as_str()))
             .collect()
     }
 
@@ -471,14 +471,7 @@ impl JjRepo {
         let mut changes = Vec::new();
         let mut stats = LineStats::default();
         let labels = ConflictLabels::unlabeled();
-        let materialize_options = ConflictMaterializeOptions {
-            marker_style: jj_lib::conflicts::ConflictMarkerStyle::Git,
-            marker_len: None,
-            merge: jj_lib::tree_merge::MergeOptions {
-                hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
-                same_change: jj_lib::merge::SameChange::Accept,
-            },
-        };
+        let materialize_options = default_materialize_options();
         let mut diff_stream = parent_tree.diff_stream(&commit_tree, &EverythingMatcher);
 
         while let Some(entry) = diff_stream.next().block_on() {
@@ -558,14 +551,7 @@ impl JjRepo {
         let repo_path = RepoPathBuf::from_internal_string(path)
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
         let labels = ConflictLabels::unlabeled();
-        let materialize_options = ConflictMaterializeOptions {
-            marker_style: jj_lib::conflicts::ConflictMarkerStyle::Git,
-            marker_len: None,
-            merge: jj_lib::tree_merge::MergeOptions {
-                hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
-                same_change: jj_lib::merge::SameChange::Accept,
-            },
-        };
+        let materialize_options = default_materialize_options();
 
         let before_value = parent_tree.path_value(&repo_path).block_on()?;
         let after_value = commit_tree.path_value(&repo_path).block_on()?;
@@ -899,5 +885,16 @@ impl JjRepo {
                 Some((hex_id.clone(), is_divergent, is_hidden, suffix))
             })
             .collect()
+    }
+}
+
+fn default_materialize_options() -> ConflictMaterializeOptions {
+    ConflictMaterializeOptions {
+        marker_style: jj_lib::conflicts::ConflictMarkerStyle::Git,
+        marker_len: None,
+        merge: jj_lib::tree_merge::MergeOptions {
+            hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
+            same_change: jj_lib::merge::SameChange::Accept,
+        },
     }
 }

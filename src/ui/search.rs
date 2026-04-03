@@ -56,6 +56,23 @@ pub(super) fn contains_query(haystack: &str, query: &str, case_sensitive: bool) 
     }
 }
 
+/// Push a span that may be search-highlighted, depending on scope and query match.
+pub(super) fn push_searchable(
+    out: &mut Vec<Span<'static>>,
+    text: &str,
+    scope: SearchScopes,
+    style: Style,
+    search: Option<&SearchRender<'_>>,
+) {
+    if let Some(s) = search {
+        if s.scopes.contains(scope) && contains_query(text, s.query, s.case_sensitive) {
+            push_highlighted(out, text, s.query, style, s.case_sensitive);
+            return;
+        }
+    }
+    out.push(Span::styled(text.to_string(), style));
+}
+
 pub(super) fn push_highlighted<'a>(
     out: &mut Vec<Span<'a>>,
     text: &str,

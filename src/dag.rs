@@ -244,3 +244,10 @@ pub enum DiffLineKind {
     /// Hunk header (e.g. `@@ -1,5 +1,7 @@`).
     Header,
 }
+
+impl DiffLineKind {
+    /// Whether this line kind can be individually selected (added or removed).
+    pub fn is_selectable(self) -> bool {
+        matches!(self, Self::Added | Self::Removed)
+    }
+}

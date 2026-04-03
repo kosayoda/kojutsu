@@ -141,7 +141,7 @@ impl PendingCommand {
                 flags,
             },
             PendingCommand::SquashWithMessage { builder, flags } => {
-                builder.build_with_message(text, flags)
+                builder.build(text, flags)
             }
             PendingCommand::Revset => panic!("Revset pending command handled separately"),
             PendingCommand::BookmarkCreate { change_id, flags } => JJCommand::BookmarkCreate {
@@ -228,67 +228,54 @@ impl TargetOperation {
                 selection,
                 flags,
             ),
-            TargetOperation::Split(kind) => vec![FollowUpOption {
-                key: ' ',
-                label: "split",
-                action: FollowUpAction::Execute(JJCommand::Split {
-                    change_id: source,
-                    target: Some(SplitTarget { target, kind }),
-                    selection,
-                    flags,
-                }),
-            }],
+            TargetOperation::Split(kind) => auto_follow_up("split", JJCommand::Split {
+                change_id: source,
+                target: Some(SplitTarget { target, kind }),
+                selection,
+                flags,
+            }),
             TargetOperation::Rebase(source_mode) => {
                 rebase_follow_up(source, target, source_mode, flags)
             }
-            TargetOperation::RestoreFrom => vec![FollowUpOption {
-                key: ' ',
-                label: "restore",
-                action: FollowUpAction::Execute(JJCommand::Restore {
-                    from: Some(target),
-                    into: None,
-                    changes_in: None,
-                    selection,
-                    flags,
-                }),
-            }],
-            TargetOperation::RestoreInto => vec![FollowUpOption {
-                key: ' ',
-                label: "restore",
-                action: FollowUpAction::Execute(JJCommand::Restore {
-                    from: None,
-                    into: Some(target),
-                    changes_in: None,
-                    selection,
-                    flags,
-                }),
-            }],
+            TargetOperation::RestoreFrom => auto_follow_up("restore", JJCommand::Restore {
+                from: Some(target),
+                into: None,
+                changes_in: None,
+                selection,
+                flags,
+            }),
+            TargetOperation::RestoreInto => auto_follow_up("restore", JJCommand::Restore {
+                from: None,
+                into: Some(target),
+                changes_in: None,
+                selection,
+                flags,
+            }),
             TargetOperation::BookmarkMove { bookmark_name } => {
-                // Bookmark move executes immediately -- no follow-up choice.
-                vec![FollowUpOption {
-                    key: ' ', // won't be shown; auto-executed below
-                    label: "move",
-                    action: FollowUpAction::Execute(JJCommand::BookmarkMove {
-                        name: bookmark_name.clone(),
-                        target,
-                        flags,
-                    }),
-                }]
+                auto_follow_up("move", JJCommand::BookmarkMove {
+                    name: bookmark_name.clone(),
+                    target,
+                    flags,
+                })
             }
             TargetOperation::DuplicateOnto => {
-                // Duplicate onto executes immediately -- single option, auto-executed.
-                vec![FollowUpOption {
-                    key: ' ',
-                    label: "duplicate",
-                    action: FollowUpAction::Execute(JJCommand::Duplicate {
-                        change_id: source,
-                        onto: Some(target),
-                        flags,
-                    }),
-                }]
+                auto_follow_up("duplicate", JJCommand::Duplicate {
+                    change_id: source,
+                    onto: Some(target),
+                    flags,
+                })
             }
         }
     }
+}
+
+/// Single auto-executing follow-up (used when no user choice is needed).
+fn auto_follow_up(label: &'static str, cmd: JJCommand) -> Vec<FollowUpOption> {
+    vec![FollowUpOption {
+        key: ' ',
+        label,
+        action: FollowUpAction::Execute(cmd),
+    }]
 }
 
 /// Build follow-up options for a squash command.
@@ -374,25 +361,8 @@ pub enum ReadyCommand {
 }
 
 impl ReadyCommand {
-    /// Build with default message behavior (jj handles it).
-    pub fn build_default(self, flags: CommandFlags) -> JJCommand {
-        match self {
-            ReadyCommand::Squash {
-                source,
-                target,
-                selection,
-            } => JJCommand::Squash {
-                change_id: source,
-                target,
-                message: MessageMode::Default,
-                selection,
-                flags,
-            },
-        }
-    }
-
-    /// Build with an inline message.
-    pub fn build_with_message(self, message: String, flags: CommandFlags) -> JJCommand {
+    /// Build a command with an inline message.
+    pub fn build(self, message: String, flags: CommandFlags) -> JJCommand {
         match self {
             ReadyCommand::Squash {
                 source,
@@ -402,23 +372,6 @@ impl ReadyCommand {
                 change_id: source,
                 target,
                 message: MessageMode::Inline(message),
-                selection,
-                flags,
-            },
-        }
-    }
-
-    /// Build with --use-destination-message.
-    pub fn build_use_dest_message(self, flags: CommandFlags) -> JJCommand {
-        match self {
-            ReadyCommand::Squash {
-                source,
-                target,
-                selection,
-            } => JJCommand::Squash {
-                change_id: source,
-                target,
-                message: MessageMode::UseDestination,
                 selection,
                 flags,
             },

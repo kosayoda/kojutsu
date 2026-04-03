@@ -772,36 +772,23 @@ impl JJCommand {
         });
 
         match result {
+            Ok(Output { status, .. }) if was_interrupted || status.code().is_none() => {
+                JJCommandResult {
+                    display,
+                    output: b"interrupted".to_vec(),
+                    success: false,
+                }
+            }
             Ok(Output {
                 stdout,
                 stderr,
                 status,
-            }) => {
-                if was_interrupted || status.code().is_none() {
-                    return JJCommandResult {
-                        display,
-                        output: b"interrupted".to_vec(),
-                        success: false,
-                    };
-                }
-                let mut output = stdout;
-                if !stderr.is_empty() {
-                    if !output.is_empty() && !output.ends_with(b"\n") {
-                        output.push(b'\n');
-                    }
-                    output.extend_from_slice(&stderr);
-                }
-                JJCommandResult {
-                    display,
-                    output,
-                    success: status.success(),
-                }
-            }
-            Err(e) => JJCommandResult {
+            }) => JJCommandResult {
                 display,
-                output: format!("failed to run jj: {e}").into_bytes(),
-                success: false,
+                output: merge_captured_output(stdout, stderr),
+                success: status.success(),
             },
+            Err(e) => jj_error(display, e),
         }
     }
 
@@ -826,26 +813,33 @@ impl JJCommand {
                 stdout,
                 stderr,
                 status,
-            }) => {
-                let mut output = stdout;
-                if !stderr.is_empty() {
-                    if !output.is_empty() && !output.ends_with(b"\n") {
-                        output.push(b'\n');
-                    }
-                    output.extend_from_slice(&stderr);
-                }
-                JJCommandResult {
-                    display,
-                    output,
-                    success: status.success(),
-                }
-            }
-            Err(e) => JJCommandResult {
+            }) => JJCommandResult {
                 display,
-                output: format!("failed to run jj: {e}").into_bytes(),
-                success: false,
+                output: merge_captured_output(stdout, stderr),
+                success: status.success(),
             },
+            Err(e) => jj_error(display, e),
         }
+    }
+}
+
+/// Merge stdout and stderr into a single output buffer with a newline separator.
+fn merge_captured_output(mut stdout: Vec<u8>, stderr: Vec<u8>) -> Vec<u8> {
+    if !stderr.is_empty() {
+        if !stdout.is_empty() && !stdout.ends_with(b"\n") {
+            stdout.push(b'\n');
+        }
+        stdout.extend_from_slice(&stderr);
+    }
+    stdout
+}
+
+/// Build a `JJCommandResult` for a failed jj invocation.
+fn jj_error(display: String, err: std::io::Error) -> JJCommandResult {
+    JJCommandResult {
+        display,
+        output: format!("failed to run jj: {err}").into_bytes(),
+        success: false,
     }
 }
 

@@ -16,6 +16,9 @@ use crate::types::{
     PendingCommitSelect, PendingSelection, RebaseSource, SelectionKind, SplitKind, TargetOperation,
 };
 
+/// Number of rows to jump for page-up/page-down style navigation.
+const PAGE_SIZE: usize = 15;
+
 /// Build the appropriate `ChangeSelection` from the current app state.
 fn build_change_selection(app: &App) -> ChangeSelection {
     match app.selection_kind() {
@@ -87,7 +90,9 @@ pub fn handle_key(app: &mut App, keymap: &'static Keymap, key: KeyEvent) -> Acti
             } else {
                 match &app.mode {
                     AppMode::Normal => handle_normal_key(app, keymap, &node),
-                    _ => Action::None, // in select mode, swallow the dismissal key
+                    AppMode::TargetSelect { .. } => handle_target_select(app, key),
+                    AppMode::CommitSelect { .. } => handle_commit_select(app, key),
+                    _ => Action::None,
                 }
             }
         }
@@ -255,11 +260,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             Action::None
         }
         AppAction::PageDown => {
-            app.page_down(15);
+            app.page_down(PAGE_SIZE);
             Action::None
         }
         AppAction::PageUp => {
-            app.page_up(15);
+            app.page_up(PAGE_SIZE);
             Action::None
         }
         AppAction::JumpToWorkingCopy => {
@@ -586,8 +591,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::TagDelete => enter_tag_delete(app, flags),
         AppAction::TagList => Action::RunJj(JJCommand::TagList { flags }),
 
-        AppAction::Undo => make_command(app, |_| JJCommand::Undo { flags }),
-        AppAction::Redo => make_command(app, |_| JJCommand::Redo { flags }),
+        AppAction::Undo => Action::RunJj(JJCommand::Undo { flags }),
+        AppAction::Redo => Action::RunJj(JJCommand::Redo { flags }),
 
         // Git commands (network ops suspend TUI for SSH auth / progress)
         AppAction::GitFetch => Action::SuspendAndRunJj(JJCommand::GitFetch {
@@ -849,11 +854,11 @@ fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<Action> {
             Some(Action::None)
         }
         (Key::Char('d'), _, true) => {
-            app.page_down(15);
+            app.page_down(PAGE_SIZE);
             Some(Action::None)
         }
         (Key::Char('u'), _, true) => {
-            app.page_up(15);
+            app.page_up(PAGE_SIZE);
             Some(Action::None)
         }
         (Key::Char('n'), _, true) => {
@@ -873,11 +878,11 @@ fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<Action> {
             Some(Action::None)
         }
         (Key::PageDown, _, _) => {
-            app.page_down(15);
+            app.page_down(PAGE_SIZE);
             Some(Action::None)
         }
         (Key::PageUp, _, _) => {
-            app.page_up(15);
+            app.page_up(PAGE_SIZE);
             Some(Action::None)
         }
         (Key::Char('@'), _, _) => {
@@ -1021,11 +1026,36 @@ enum BookmarkTextAction {
     Set,
 }
 
+#[derive(Clone, Copy)]
 enum PendingSelectionKind {
     Delete,
     Forget,
     Move,
     Rename,
+}
+
+impl PendingSelectionKind {
+    fn title(self) -> &'static str {
+        match self {
+            Self::Delete => "delete bookmark",
+            Self::Forget => "forget bookmark",
+            Self::Move => "move bookmark",
+            Self::Rename => "rename bookmark",
+        }
+    }
+
+    fn to_pending(self, change_id: ChangeId, flags: CommandFlags) -> PendingSelection {
+        match self {
+            Self::Delete => PendingSelection::BookmarkDelete { change_id, flags },
+            Self::Forget => PendingSelection::BookmarkForget { change_id, flags },
+            Self::Move => PendingSelection::BookmarkMove { change_id, flags },
+            Self::Rename => PendingSelection::BookmarkRename { change_id, flags },
+        }
+    }
+
+    fn is_multi(self) -> bool {
+        matches!(self, Self::Delete | Self::Forget)
+    }
 }
 
 fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
@@ -1108,33 +1138,14 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
         return Action::None;
     }
 
-    let on_select = match kind {
-        PendingSelectionKind::Delete => PendingSelection::BookmarkDelete { change_id, flags },
-        PendingSelectionKind::Forget => PendingSelection::BookmarkForget { change_id, flags },
-        PendingSelectionKind::Move => PendingSelection::BookmarkMove { change_id, flags },
-        PendingSelectionKind::Rename => PendingSelection::BookmarkRename { change_id, flags },
-    };
-
-    let title = match kind {
-        PendingSelectionKind::Delete => "delete bookmark",
-        PendingSelectionKind::Forget => "forget bookmark",
-        PendingSelectionKind::Move => "move bookmark",
-        PendingSelectionKind::Rename => "rename bookmark",
-    };
-
+    let on_select = kind.to_pending(change_id, flags);
     let items: Vec<String> = bookmarks.iter().map(|b| b.name.clone()).collect();
 
-    // Skip selection if only one bookmark.
     if items.len() == 1 {
-        return resolve_bookmark_selection(app, on_select, items.into_iter().next().unwrap());
+        return resolve_selection(app, on_select, items);
     }
 
-    let multi = matches!(
-        kind,
-        PendingSelectionKind::Delete | PendingSelectionKind::Forget
-    );
-
-    app.mode = AppMode::select_from_list(title, items, multi, on_select);
+    app.mode = AppMode::select_from_list(kind.title(), items, kind.is_multi(), on_select);
     Action::None
 }
 
@@ -1168,6 +1179,35 @@ fn recompute_list_filter(items: &[String], filter: &str) -> Vec<usize> {
         .filter(|(_, item)| item.to_lowercase().contains(&lower))
         .map(|(i, _)| i)
         .collect()
+}
+
+/// Move the list cursor by `delta` rows (positive = down, negative = up).
+fn list_move(app: &mut App, delta: isize) {
+    if let AppMode::SelectFromList {
+        cursor,
+        filtered_indices,
+        ..
+    } = &mut app.mode
+    {
+        let max = filtered_indices.len().saturating_sub(1);
+        *cursor = (*cursor as isize + delta).clamp(0, max as isize) as usize;
+    }
+}
+
+/// Jump the list cursor to start (false) or end (true).
+fn list_jump(app: &mut App, to_end: bool) {
+    if let AppMode::SelectFromList {
+        cursor,
+        filtered_indices,
+        ..
+    } = &mut app.mode
+    {
+        *cursor = if to_end {
+            filtered_indices.len().saturating_sub(1)
+        } else {
+            0
+        };
+    }
 }
 
 fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
@@ -1223,84 +1263,35 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
                 }
                 return Action::None;
             }
-            // Tab, Esc, Enter fall through to the main match below.
-            _ if matches!(node_key, Some(Key::Tab) | Some(Key::Esc) | Some(Key::Enter)) => {}
-            // All other keys (arrows, etc.) are swallowed while filtering.
+            // Tab, Esc, Enter, arrows, page keys, and ctrl-n/p fall through to the
+            // main match below so list navigation works while filtering.
+            _ if matches!(
+                node_key,
+                Some(Key::Tab)
+                    | Some(Key::Esc)
+                    | Some(Key::Enter)
+                    | Some(Key::Up)
+                    | Some(Key::Down)
+                    | Some(Key::PageUp)
+                    | Some(Key::PageDown)
+            ) => {}
+            _ if matches!(node_key, Some(Key::Char('n') | Key::Char('p'))) && ctrl => {}
+            // All other keys are swallowed while filtering.
             _ => return Action::None,
         }
     }
 
     match node_key {
-        Some(Key::Char('j')) | Some(Key::Down) => {
-            if let AppMode::SelectFromList {
-                cursor,
-                filtered_indices,
-                ..
-            } = &mut app.mode
-            {
-                if *cursor + 1 < filtered_indices.len() {
-                    *cursor += 1;
-                }
-            }
-            Action::None
-        }
-        Some(Key::Char('k')) | Some(Key::Up) => {
-            if let AppMode::SelectFromList { cursor, .. } = &mut app.mode {
-                *cursor = cursor.saturating_sub(1);
-            }
-            Action::None
-        }
-        Some(Key::Char('d')) if ctrl => {
-            if let AppMode::SelectFromList {
-                cursor,
-                filtered_indices,
-                ..
-            } = &mut app.mode
-            {
-                *cursor = (*cursor + 10).min(filtered_indices.len().saturating_sub(1));
-            }
-            Action::None
-        }
-        Some(Key::Char('u')) if ctrl => {
-            if let AppMode::SelectFromList { cursor, .. } = &mut app.mode {
-                *cursor = cursor.saturating_sub(10);
-            }
-            Action::None
-        }
-        Some(Key::PageDown) => {
-            if let AppMode::SelectFromList {
-                cursor,
-                filtered_indices,
-                ..
-            } = &mut app.mode
-            {
-                *cursor = (*cursor + 10).min(filtered_indices.len().saturating_sub(1));
-            }
-            Action::None
-        }
-        Some(Key::PageUp) => {
-            if let AppMode::SelectFromList { cursor, .. } = &mut app.mode {
-                *cursor = cursor.saturating_sub(10);
-            }
-            Action::None
-        }
-        Some(Key::Char('0')) => {
-            if let AppMode::SelectFromList { cursor, .. } = &mut app.mode {
-                *cursor = 0;
-            }
-            Action::None
-        }
-        Some(Key::Char('$')) => {
-            if let AppMode::SelectFromList {
-                cursor,
-                filtered_indices,
-                ..
-            } = &mut app.mode
-            {
-                *cursor = filtered_indices.len().saturating_sub(1);
-            }
-            Action::None
-        }
+        Some(Key::Char('n')) if ctrl => { list_move(app, 1); Action::None }
+        Some(Key::Char('p')) if ctrl => { list_move(app, -1); Action::None }
+        Some(Key::Char('j')) | Some(Key::Down) => { list_move(app, 1); Action::None }
+        Some(Key::Char('k')) | Some(Key::Up) => { list_move(app, -1); Action::None }
+        Some(Key::Char('d')) if ctrl => { list_move(app, PAGE_SIZE as isize); Action::None }
+        Some(Key::Char('u')) if ctrl => { list_move(app, -(PAGE_SIZE as isize)); Action::None }
+        Some(Key::PageDown) => { list_move(app, PAGE_SIZE as isize); Action::None }
+        Some(Key::PageUp) => { list_move(app, -(PAGE_SIZE as isize)); Action::None }
+        Some(Key::Char('0')) => { list_jump(app, false); Action::None }
+        Some(Key::Char('$')) => { list_jump(app, true); Action::None }
         Some(Key::Tab) => {
             if let AppMode::SelectFromList { filtering, .. } = &mut app.mode {
                 *filtering = !*filtering;
@@ -1340,25 +1331,18 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
                 ..
             } = mode
             {
-                if multi {
-                    let names: Vec<String> = if marked.is_empty() {
-                        // Nothing marked — use cursor item (translated through filter).
-                        let orig_idx = filtered_indices.get(cursor).copied().unwrap_or(0);
-                        vec![items.into_iter().nth(orig_idx).unwrap_or_default()]
-                    } else {
-                        let mut indices: Vec<usize> = marked.into_iter().collect();
-                        indices.sort();
-                        indices
-                            .into_iter()
-                            .filter_map(|i| items.get(i).cloned())
-                            .collect()
-                    };
-                    resolve_multi_selection(app, on_select, names)
+                let names: Vec<String> = if multi && !marked.is_empty() {
+                    let mut indices: Vec<usize> = marked.into_iter().collect();
+                    indices.sort();
+                    indices
+                        .into_iter()
+                        .filter_map(|i| items.get(i).cloned())
+                        .collect()
                 } else {
                     let orig_idx = filtered_indices.get(cursor).copied().unwrap_or(0);
-                    let name = items.into_iter().nth(orig_idx).unwrap_or_default();
-                    resolve_bookmark_selection(app, on_select, name)
-                }
+                    vec![items.into_iter().nth(orig_idx).unwrap_or_default()]
+                };
+                resolve_selection(app, on_select, names)
             } else {
                 Action::None
             }
@@ -1378,25 +1362,42 @@ fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
     }
 }
 
-/// After a bookmark has been selected (from list or auto-selected), decide
-/// what to do next based on the `PendingSelection`.
-fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: String) -> Action {
+/// After item(s) have been selected from a list, decide what to do next.
+fn resolve_selection(app: &mut App, on_select: PendingSelection, names: Vec<String>) -> Action {
     match on_select {
         PendingSelection::BookmarkDelete { flags, .. } => {
-            Action::RunJj(JJCommand::BookmarkDelete {
-                names: vec![name],
-                flags,
-            })
+            Action::RunJj(JJCommand::BookmarkDelete { names, flags })
         }
         PendingSelection::BookmarkForget { flags, .. } => {
-            Action::RunJj(JJCommand::BookmarkForget {
-                names: vec![name],
+            Action::RunJj(JJCommand::BookmarkForget { names, flags })
+        }
+        PendingSelection::WorkspaceForget { flags } => {
+            Action::RunJj(JJCommand::WorkspaceForget { names, flags })
+        }
+        PendingSelection::BookmarkTrack { flags } => Action::RunJj(JJCommand::BookmarkTrack {
+            bookmarks: parse_remote_bookmarks(names),
+            flags,
+        }),
+        PendingSelection::BookmarkUntrack { flags } => {
+            Action::RunJj(JJCommand::BookmarkUntrack {
+                bookmarks: parse_remote_bookmarks(names),
                 flags,
             })
         }
+        PendingSelection::GitPushBookmark { flags } => {
+            Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
+                bookmarks: names,
+                flags,
+            })
+        }
+        PendingSelection::TagDelete { flags } => {
+            Action::RunJj(JJCommand::TagDelete { names, flags })
+        }
+        // Single-item operations: take the first name.
         PendingSelection::BookmarkMove {
             change_id, flags, ..
         } => {
+            let name = names.into_iter().next().unwrap_or_default();
             app.mode = AppMode::TargetSelect {
                 prompt: "move bookmark",
                 source: change_id,
@@ -1409,38 +1410,19 @@ fn resolve_bookmark_selection(app: &mut App, on_select: PendingSelection, name: 
             Action::None
         }
         PendingSelection::BookmarkRename { flags, .. } => {
+            let name = names.into_iter().next().unwrap_or_default();
             app.mode = AppMode::text_input(
                 "rename to: ",
                 name.clone(),
-                PendingCommand::BookmarkRename { old_name: name, flags },
+                PendingCommand::BookmarkRename {
+                    old_name: name,
+                    flags,
+                },
             );
             Action::None
         }
-        PendingSelection::WorkspaceForget { flags } => Action::RunJj(JJCommand::WorkspaceForget {
-            names: vec![name],
-            flags,
-        }),
-        PendingSelection::BookmarkTrack { flags } => Action::RunJj(JJCommand::BookmarkTrack {
-            bookmarks: parse_remote_bookmarks(vec![name]),
-            flags,
-        }),
-        PendingSelection::BookmarkUntrack { flags } => Action::RunJj(JJCommand::BookmarkUntrack {
-            bookmarks: parse_remote_bookmarks(vec![name]),
-            flags,
-        }),
-        PendingSelection::GitPushBookmark { flags } => {
-            Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
-                bookmarks: vec![name],
-                flags,
-            })
-        }
-        PendingSelection::TagDelete { flags } => {
-            Action::RunJj(JJCommand::TagDelete {
-                names: vec![name],
-                flags,
-            })
-        }
         PendingSelection::PresetSelect => {
+            let name = names.into_iter().next().unwrap_or_default();
             let idx = app.presets.iter().position(|p| p.name == name);
             if let Some(i) = idx {
                 app.active_preset = Some(i);
@@ -1466,74 +1448,80 @@ fn parse_remote_bookmarks(names: Vec<String>) -> Vec<BookmarkRef> {
         .collect()
 }
 
-fn resolve_multi_selection(
-    app: &mut App,
-    on_select: PendingSelection,
-    names: Vec<String>,
-) -> Action {
-    match on_select {
-        PendingSelection::BookmarkDelete { flags, .. } => {
-            Action::RunJj(JJCommand::BookmarkDelete { names, flags })
-        }
-        PendingSelection::BookmarkForget { flags, .. } => {
-            Action::RunJj(JJCommand::BookmarkForget { names, flags })
-        }
-        PendingSelection::WorkspaceForget { flags } => {
-            Action::RunJj(JJCommand::WorkspaceForget { names, flags })
-        }
-        PendingSelection::BookmarkTrack { flags } => Action::RunJj(JJCommand::BookmarkTrack {
-            bookmarks: parse_remote_bookmarks(names),
-            flags,
-        }),
-        PendingSelection::BookmarkUntrack { flags } => Action::RunJj(JJCommand::BookmarkUntrack {
-            bookmarks: parse_remote_bookmarks(names),
-            flags,
-        }),
-        PendingSelection::GitPushBookmark { flags } => {
-            Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
-                bookmarks: names,
-                flags,
-            })
-        }
-        PendingSelection::TagDelete { flags } => {
-            Action::RunJj(JJCommand::TagDelete { names, flags })
-        }
-        // Move/Rename should never reach here (multi: false), but handle gracefully.
-        other => {
-            let name = names.into_iter().next().unwrap_or_default();
-            resolve_bookmark_selection(app, other, name)
-        }
-    }
+/// Navigate to a screen position (shared by mouse handlers).
+fn mouse_select_row(app: &mut App, mouse: &MouseEvent, list_offset: u16) {
+    let screen_line = (mouse.row.saturating_sub(list_offset)) as usize;
+    let row = app.row_at_screen_line(screen_line);
+    app.select_row(row);
 }
 
 /// Handle a mouse event.
 pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Action {
-    match mouse.kind {
-        MouseEventKind::Down(MouseButton::Left) => {
+    match &app.mode {
+        // Modes where mouse interaction in the DAG list makes sense.
+        AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. } => {
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    mouse_select_row(app, &mouse, list_offset);
+                    Action::None
+                }
+                MouseEventKind::Down(MouseButton::Right) => {
+                    // Select and confirm.
+                    mouse_select_row(app, &mouse, list_offset);
+                    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+                    match &app.mode {
+                        AppMode::TargetSelect { .. } => handle_target_select(app, enter),
+                        AppMode::CommitSelect { .. } => handle_commit_select(app, enter),
+                        _ => Action::None,
+                    }
+                }
+                MouseEventKind::ScrollUp => {
+                    app.move_up();
+                    Action::None
+                }
+                MouseEventKind::ScrollDown => {
+                    app.move_down();
+                    Action::None
+                }
+                _ => Action::None,
+            }
+        }
+        // Dismiss overlays that are just informational.
+        AppMode::CommandOutput { .. } => {
             app.mode = AppMode::Normal;
-            let screen_line = (mouse.row.saturating_sub(list_offset)) as usize;
-            let row = app.row_at_screen_line(screen_line);
-            app.select_row(row);
             Action::None
         }
-        MouseEventKind::Down(MouseButton::Right) => {
-            app.mode = AppMode::Normal;
-            let screen_line = (mouse.row.saturating_sub(list_offset)) as usize;
-            let row = app.row_at_screen_line(screen_line);
-            app.select_row(row);
-            app.toggle_fold();
-            Action::None
+        // Ignore mouse in modal input modes (text input, search, follow-up, list).
+        AppMode::TextInput { .. }
+        | AppMode::SearchInput
+        | AppMode::FollowUp { .. }
+        | AppMode::SelectFromList { .. } => Action::None,
+        // Normal, Submenu, Help: standard DAG navigation.
+        _ => {
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) => {
+                    app.mode = AppMode::Normal;
+                    mouse_select_row(app, &mouse, list_offset);
+                    Action::None
+                }
+                MouseEventKind::Down(MouseButton::Right) => {
+                    app.mode = AppMode::Normal;
+                    mouse_select_row(app, &mouse, list_offset);
+                    app.toggle_fold();
+                    Action::None
+                }
+                MouseEventKind::ScrollUp => {
+                    app.mode = AppMode::Normal;
+                    app.move_up();
+                    Action::None
+                }
+                MouseEventKind::ScrollDown => {
+                    app.mode = AppMode::Normal;
+                    app.move_down();
+                    Action::None
+                }
+                _ => Action::None,
+            }
         }
-        MouseEventKind::ScrollUp => {
-            app.mode = AppMode::Normal;
-            app.move_up();
-            Action::None
-        }
-        MouseEventKind::ScrollDown => {
-            app.mode = AppMode::Normal;
-            app.move_down();
-            Action::None
-        }
-        _ => Action::None, // Mouse move, drag, etc. -- don't dismiss overlays.
     }
 }

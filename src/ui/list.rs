@@ -288,29 +288,13 @@ fn render_commit_item<'a>(
     line1.push(Span::raw(" "));
 
     // Author
-    if let Some(search) = search {
-        if search.scopes.contains(SearchScopes::AUTHOR)
-            && contains_query(c.author.email.as_str(), search.query, search.case_sensitive)
-        {
-            push_highlighted(
-                &mut line1,
-                c.author.email.as_str(),
-                search.query,
-                Style::default().fg(theme.selection),
-                search.case_sensitive,
-            );
-        } else {
-            line1.push(Span::styled(
-                c.author.email.clone(),
-                Style::default().fg(theme.selection),
-            ));
-        }
-    } else {
-        line1.push(Span::styled(
-            c.author.email.clone(),
-            Style::default().fg(theme.selection),
-        ));
-    }
+    push_searchable(
+        &mut line1,
+        &c.author.email,
+        SearchScopes::AUTHOR,
+        Style::default().fg(theme.selection),
+        search,
+    );
     line1.push(Span::raw(" "));
 
     // Timestamp (apply author's timezone offset)
@@ -354,6 +338,9 @@ fn render_commit_item<'a>(
     }
 
     // Local bookmarks (with * suffix if dirty)
+    let bm_style = Style::default()
+        .fg(theme.change_id)
+        .add_modifier(Modifier::BOLD);
     for bm in &c.bookmarks {
         line1.push(Span::raw(" "));
         let display = if bm.is_dirty {
@@ -361,77 +348,23 @@ fn render_commit_item<'a>(
         } else {
             bm.name.clone()
         };
-        let style = Style::default()
-            .fg(theme.change_id)
-            .add_modifier(Modifier::BOLD);
-        if let Some(search) = search {
-            if search.scopes.contains(SearchScopes::BOOKMARK)
-                && contains_query(&display, search.query, search.case_sensitive)
-            {
-                push_highlighted(
-                    &mut line1,
-                    &display,
-                    search.query,
-                    style,
-                    search.case_sensitive,
-                );
-            } else {
-                line1.push(Span::styled(display, style));
-            }
-        } else {
-            line1.push(Span::styled(display, style));
-        }
+        push_searchable(&mut line1, &display, SearchScopes::BOOKMARK, bm_style, search);
     }
 
     // Remote bookmarks (name@remote, shown when no local bookmark covers them)
     for rb in &c.remote_bookmarks {
         line1.push(Span::raw(" "));
         let text = format!("{}@{}", rb.name, rb.remote);
-        let style = Style::default()
-            .fg(theme.change_id)
-            .add_modifier(Modifier::BOLD);
-        if let Some(search) = search {
-            if search.scopes.contains(SearchScopes::BOOKMARK)
-                && contains_query(&text, search.query, search.case_sensitive)
-            {
-                push_highlighted(
-                    &mut line1,
-                    &text,
-                    search.query,
-                    style,
-                    search.case_sensitive,
-                );
-            } else {
-                line1.push(Span::styled(text, style));
-            }
-        } else {
-            line1.push(Span::styled(text, style));
-        }
+        push_searchable(&mut line1, &text, SearchScopes::BOOKMARK, bm_style, search);
     }
 
     // Tags
+    let tag_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
     for tag in &c.tags {
         line1.push(Span::raw(" "));
-        let style = Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD);
-        if let Some(search) = search {
-            if search.scopes.contains(SearchScopes::TAG)
-                && contains_query(tag.as_str(), search.query, search.case_sensitive)
-            {
-                push_highlighted(
-                    &mut line1,
-                    tag.as_str(),
-                    search.query,
-                    style,
-                    search.case_sensitive,
-                );
-            } else {
-                line1.push(Span::styled(tag.to_string(), style));
-            }
-        } else {
-            line1.push(Span::styled(tag.to_string(), style));
-        }
+        push_searchable(&mut line1, tag.as_str(), SearchScopes::TAG, tag_style, search);
     }
 
     // Workspace annotations (non-current workspaces shown as "name@")
@@ -507,23 +440,7 @@ fn render_commit_item<'a>(
         } else {
             Style::default().fg(theme.text)
         };
-        if let Some(search) = search {
-            if search.scopes.contains(SearchScopes::DESCRIPTION)
-                && contains_query(desc.as_str(), search.query, search.case_sensitive)
-            {
-                push_highlighted(
-                    &mut line2,
-                    desc.as_str(),
-                    search.query,
-                    desc_style,
-                    search.case_sensitive,
-                );
-            } else {
-                line2.push(Span::styled(desc.clone(), desc_style));
-            }
-        } else {
-            line2.push(Span::styled(desc.clone(), desc_style));
-        }
+        push_searchable(&mut line2, desc, SearchScopes::DESCRIPTION, desc_style, search);
     } else {
         if c.has_conflict {
             line2.push(Span::styled(
@@ -586,24 +503,13 @@ fn render_file_line(
         ),
         Span::raw(" "),
     ]);
-    let base = Style::default().fg(theme.text);
-    if let Some(search) = search {
-        if search.scopes.contains(SearchScopes::PATH)
-            && contains_query(file.path.as_str(), search.query, search.case_sensitive)
-        {
-            push_highlighted(
-                &mut spans,
-                file.path.as_str(),
-                search.query,
-                base,
-                search.case_sensitive,
-            );
-        } else {
-            spans.push(Span::styled(file.path.clone(), base));
-        }
-    } else {
-        spans.push(Span::styled(file.path.clone(), base));
-    }
+    push_searchable(
+        &mut spans,
+        &file.path,
+        SearchScopes::PATH,
+        Style::default().fg(theme.text),
+        search,
+    );
     ListItem::new(Line::from(spans))
 }
 
@@ -629,8 +535,7 @@ fn render_diff_line(
         theme,
     )];
     // Left margin: visual range bar │ + selection indicator ▎.
-    let is_selectable =
-        diff_line.kind == DiffLineKind::Added || diff_line.kind == DiffLineKind::Removed;
+    let is_selectable = diff_line.kind.is_selectable();
     if is_selectable {
         let bar = if in_visual { "│" } else { " " };
         let sel = if is_selected { "▎" } else { " " };
@@ -651,27 +556,7 @@ fn render_diff_line(
             .unwrap_or_else(|| "    ".to_string());
         spans.push(Span::styled(format!("  {old} {new} "), line_num_style));
         spans.push(Span::styled(marker, style));
-        if let Some(search) = search {
-            if search.scopes.contains(SearchScopes::LINE)
-                && contains_query(
-                    diff_line.content.as_str(),
-                    search.query,
-                    search.case_sensitive,
-                )
-            {
-                push_highlighted(
-                    &mut spans,
-                    diff_line.content.as_str(),
-                    search.query,
-                    style,
-                    search.case_sensitive,
-                );
-            } else {
-                spans.push(Span::styled(diff_line.content.clone(), style));
-            }
-        } else {
-            spans.push(Span::styled(diff_line.content.clone(), style));
-        }
+        push_searchable(&mut spans, &diff_line.content, SearchScopes::LINE, style, search);
     } else {
         // Original layout: fixed indent + marker + content
         let prefix = match diff_line.kind {
@@ -681,27 +566,7 @@ fn render_diff_line(
             DiffLineKind::Removed => "      -",
         };
         spans.push(Span::styled(prefix, style));
-        if let Some(search) = search {
-            if search.scopes.contains(SearchScopes::LINE)
-                && contains_query(
-                    diff_line.content.as_str(),
-                    search.query,
-                    search.case_sensitive,
-                )
-            {
-                push_highlighted(
-                    &mut spans,
-                    diff_line.content.as_str(),
-                    search.query,
-                    style,
-                    search.case_sensitive,
-                );
-            } else {
-                spans.push(Span::styled(diff_line.content.clone(), style));
-            }
-        } else {
-            spans.push(Span::styled(diff_line.content.clone(), style));
-        }
+        push_searchable(&mut spans, &diff_line.content, SearchScopes::LINE, style, search);
     }
 
     ListItem::new(Line::from(spans))

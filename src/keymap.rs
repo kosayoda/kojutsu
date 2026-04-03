@@ -635,16 +635,9 @@ pub struct HelpEntry {
 pub fn action_supported_selection_kinds(action: AppAction) -> &'static [SelectionKind] {
     use SelectionKind::{Commit, File, Line};
     match action {
-        AppAction::Squash | AppAction::SquashSelect(_) => &[Commit, File, Line],
-        AppAction::Restore | AppAction::RestoreFrom | AppAction::RestoreInto => {
-            &[Commit, File, Line]
-        }
-        AppAction::Split
-        | AppAction::SplitOnto
-        | AppAction::SplitAfter
-        | AppAction::SplitBefore => &[Commit, File, Line],
-        AppAction::Commit | AppAction::CommitWithMessage => &[Commit, File, Line],
+        // File+line selection support requires explicit opt-in.
         AppAction::Absorb => &[Commit, File],
+        // Operations that only make sense at commit level.
         AppAction::Abandon
         | AppAction::Describe
         | AppAction::DescribeInEditor
@@ -678,6 +671,7 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::TagSet
         | AppAction::TagDelete
         | AppAction::TagList => &[Commit],
+        // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }
 }
@@ -835,108 +829,36 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
 /// Help entries for TargetSelect / CommitSelect modes.
 pub fn select_mode_help_entries() -> Vec<(HelpGroup, Vec<HelpEntry>)> {
     use HelpGroup::{General as G, Navigation as N};
-    let s = SelectionKindSet::ALL;
+
+    fn h(keys: &str, desc: &str, group: HelpGroup) -> HelpEntry {
+        HelpEntry {
+            keys: keys.into(),
+            description: desc.into(),
+            group,
+            selection_support: SelectionKindSet::ALL,
+        }
+    }
 
     let nav = vec![
-        HelpEntry {
-            keys: "j / down".into(),
-            description: "move down".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "k / up".into(),
-            description: "move up".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "J".into(),
-            description: "next commit".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "K".into(),
-            description: "prev commit".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "ctrl-d / pagedown".into(),
-            description: "page down".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "ctrl-u / pageup".into(),
-            description: "page up".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "@".into(),
-            description: "jump to @".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "0".into(),
-            description: "go to top".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "$".into(),
-            description: "go to bottom".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "tab".into(),
-            description: "toggle fold".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "/".into(),
-            description: "search".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "ctrl-n".into(),
-            description: "next match".into(),
-            group: N,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "ctrl-p".into(),
-            description: "prev match".into(),
-            group: N,
-            selection_support: s,
-        },
+        h("j / down", "move down", N),
+        h("k / up", "move up", N),
+        h("J", "next commit", N),
+        h("K", "prev commit", N),
+        h("ctrl-d / pagedown", "page down", N),
+        h("ctrl-u / pageup", "page up", N),
+        h("@", "jump to @", N),
+        h("0", "go to top", N),
+        h("$", "go to bottom", N),
+        h("tab", "toggle fold", N),
+        h("/", "search", N),
+        h("ctrl-n", "next match", N),
+        h("ctrl-p", "prev match", N),
     ];
 
     let general = vec![
-        HelpEntry {
-            keys: "Enter".into(),
-            description: "confirm selection".into(),
-            group: G,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "Esc".into(),
-            description: "cancel".into(),
-            group: G,
-            selection_support: s,
-        },
-        HelpEntry {
-            keys: "?".into(),
-            description: "help".into(),
-            group: G,
-            selection_support: s,
-        },
+        h("Enter", "confirm selection", G),
+        h("Esc", "cancel", G),
+        h("?", "help", G),
     ];
 
     vec![(N, nav), (G, general)]
