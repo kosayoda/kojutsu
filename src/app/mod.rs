@@ -390,6 +390,12 @@ impl App {
         Some(self.entries[entry_idx].commit.unique_prefix())
     }
 
+    /// Whether the commit the cursor is on is a merge (multiple parents).
+    pub fn selected_is_merge(&self) -> bool {
+        self.selected_entry_idx()
+            .is_some_and(|idx| self.entries[idx].commit.is_merge)
+    }
+
     /// Get the bookmarks of the commit the cursor is on.
     pub fn selected_bookmarks(&self) -> Option<&[crate::dag::BookmarkInfo]> {
         let entry_idx = self.selected_entry_idx()?;

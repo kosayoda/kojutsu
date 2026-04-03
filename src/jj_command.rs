@@ -28,7 +28,7 @@ pub enum JJCommand {
     },
     /// Describe with an inline message (non-interactive).
     Describe {
-        change_id: ChangeId,
+        change_ids: Vec<ChangeId>,
         message: String,
         flags: CommandFlags,
     },
@@ -42,7 +42,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     New {
-        change_id: ChangeId,
+        change_ids: Vec<ChangeId>,
         insert_after: bool,
         insert_before: bool,
         flags: CommandFlags,
@@ -56,7 +56,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     Rebase {
-        change_id: ChangeId,
+        change_ids: Vec<ChangeId>,
         source_mode: RebaseSource,
         dest: RebaseTarget,
         flags: CommandFlags,
@@ -157,7 +157,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     Duplicate {
-        change_id: ChangeId,
+        change_ids: Vec<ChangeId>,
         /// Target revision for `--onto`. `None` = duplicate onto same parents.
         onto: Option<ChangeId>,
         flags: CommandFlags,
@@ -281,14 +281,17 @@ impl JJCommand {
                 args
             }
             JJCommand::Describe {
-                change_id, message, ..
+                change_ids, message, ..
             } => {
-                vec![
+                let mut args: Vec<Str> = vec![
                     "describe".into(),
                     "-m".into(),
                     Str::from(message.as_str()),
-                    format_compact!("{change_id}"),
-                ]
+                ];
+                for id in change_ids {
+                    args.push(format_compact!("{id}"));
+                }
+                args
             }
             JJCommand::DescribeInEditor { change_id, .. } => {
                 vec!["describe".into(), format_compact!("{change_id}")]
@@ -297,7 +300,7 @@ impl JJCommand {
                 vec!["edit".into(), format_compact!("{change_id}")]
             }
             JJCommand::New {
-                change_id,
+                change_ids,
                 insert_after,
                 insert_before,
                 ..
@@ -309,23 +312,28 @@ impl JJCommand {
                 if *insert_before {
                     args.push("--insert-before".into());
                 }
-                args.push(format_compact!("{change_id}"));
+                for id in change_ids {
+                    args.push(format_compact!("{id}"));
+                }
                 push_flags(&mut args, flags, &[(CommandFlags::NO_EDIT, "--no-edit")]);
                 args
             }
             JJCommand::Rebase {
-                change_id,
+                change_ids,
                 source_mode,
                 dest,
                 ..
             } => {
                 let mut args: Vec<Str> = vec!["rebase".into()];
-                match source_mode {
-                    RebaseSource::Revision => args.push("-r".into()),
-                    RebaseSource::Source => args.push("-s".into()),
-                    RebaseSource::Branch => args.push("-b".into()),
+                let flag = match source_mode {
+                    RebaseSource::Revision => "-r",
+                    RebaseSource::Source => "-s",
+                    RebaseSource::Branch => "-b",
+                };
+                for id in change_ids {
+                    args.push(flag.into());
+                    args.push(format_compact!("{id}"));
                 }
-                args.push(format_compact!("{change_id}"));
                 args.push(format_compact!("{}", dest.kind.flag()));
                 args.push(format_compact!("{}", dest.target));
                 args
@@ -559,9 +567,12 @@ impl JJCommand {
                 args
             }
             JJCommand::Duplicate {
-                change_id, onto, ..
+                change_ids, onto, ..
             } => {
-                let mut args: Vec<Str> = vec!["duplicate".into(), format_compact!("{change_id}")];
+                let mut args: Vec<Str> = vec!["duplicate".into()];
+                for id in change_ids {
+                    args.push(format_compact!("{id}"));
+                }
                 if let Some(target) = onto {
                     args.push("--onto".into());
                     args.push(format_compact!("{target}"));

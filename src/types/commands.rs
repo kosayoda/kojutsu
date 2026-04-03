@@ -89,7 +89,7 @@ pub enum FollowUpAction {
 /// What to do when a TextInput is submitted.
 pub enum PendingCommand {
     Describe {
-        change_id: ChangeId,
+        change_ids: Vec<ChangeId>,
         flags: CommandFlags,
     },
     SquashWithMessage {
@@ -135,8 +135,8 @@ impl PendingCommand {
     /// Panics if called on `Revset` -- that variant is handled separately.
     pub fn into_jj_command(self, text: String) -> JJCommand {
         match self {
-            PendingCommand::Describe { change_id, flags } => JJCommand::Describe {
-                change_id,
+            PendingCommand::Describe { change_ids, flags } => JJCommand::Describe {
+                change_ids,
                 message: text,
                 flags,
             },
@@ -181,7 +181,11 @@ impl PendingCommand {
 pub enum TargetOperation {
     Squash(SquashKind),
     Split(SplitKind),
-    Rebase(RebaseSource),
+    Rebase {
+        source_mode: RebaseSource,
+        /// All source commit IDs (supports multi-commit rebase).
+        sources: Vec<ChangeId>,
+    },
     RestoreFrom,
     RestoreInto,
     BookmarkMove { bookmark_name: String },
@@ -202,7 +206,7 @@ impl TargetOperation {
                 SplitKind::After => "split after",
                 SplitKind::Before => "split before",
             },
-            TargetOperation::Rebase(source) => match source {
+            TargetOperation::Rebase { source_mode, .. } => match source_mode {
                 RebaseSource::Revision => "rebase revision",
                 RebaseSource::Source => "rebase source",
                 RebaseSource::Branch => "rebase branch",
@@ -234,8 +238,8 @@ impl TargetOperation {
                 selection,
                 flags,
             }),
-            TargetOperation::Rebase(source_mode) => {
-                rebase_follow_up(source, target, source_mode, flags)
+            TargetOperation::Rebase { source_mode, sources } => {
+                rebase_follow_up(sources, target, source_mode, flags)
             }
             TargetOperation::RestoreFrom => auto_follow_up("restore", JJCommand::Restore {
                 from: Some(target),
@@ -260,7 +264,7 @@ impl TargetOperation {
             }
             TargetOperation::DuplicateOnto => {
                 auto_follow_up("duplicate", JJCommand::Duplicate {
-                    change_id: source,
+                    change_ids: vec![source],
                     onto: Some(target),
                     flags,
                 })
@@ -329,7 +333,7 @@ fn squash_follow_up(
 
 /// Build follow-up options for a rebase command (dest mode selection).
 fn rebase_follow_up(
-    source: ChangeId,
+    sources: Vec<ChangeId>,
     target: ChangeId,
     source_mode: RebaseSource,
     flags: CommandFlags,
@@ -339,7 +343,7 @@ fn rebase_follow_up(
             key: kind.key(),
             label: kind.label(),
             action: FollowUpAction::Execute(JJCommand::Rebase {
-                change_id: source.clone(),
+                change_ids: sources.clone(),
                 source_mode: source_mode.clone(),
                 dest: RebaseTarget {
                     target: target.clone(),

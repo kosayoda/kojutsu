@@ -13,7 +13,8 @@ use crate::keymap::{
 };
 use crate::types::{
     ChangeId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
-    PendingCommitSelect, PendingSelection, RebaseSource, SelectionKind, SplitKind, TargetOperation,
+    PendingCommitSelect, PendingSelection, RebaseSource, SelectionKind, SplitKind, SquashKind,
+    TargetOperation,
 };
 
 /// Number of rows to jump for page-up/page-down style navigation.
@@ -482,46 +483,67 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             change_id: id,
             flags,
         }),
-        AppAction::New => make_command(app, |id| JJCommand::New {
-            change_id: id,
+        AppAction::New => make_multi_command(app, |ids| JJCommand::New {
+            change_ids: ids,
             insert_after: false,
             insert_before: false,
             flags,
         }),
         AppAction::NewInsertAfter => make_command(app, |id| JJCommand::New {
-            change_id: id,
+            change_ids: vec![id],
             insert_after: true,
             insert_before: false,
             flags,
         }),
         AppAction::NewInsertBefore => make_command(app, |id| JJCommand::New {
-            change_id: id,
+            change_ids: vec![id],
             insert_after: false,
             insert_before: true,
             flags,
         }),
         AppAction::Squash => {
-            let selection = build_change_selection(app);
-            make_command(app, |id| JJCommand::Squash {
-                change_id: id,
-                target: None,
-                message: MessageMode::Default,
-                selection: selection.clone(),
-                flags,
-            })
+            if app.selected_is_merge() {
+                // Merge commits can't squash into parent without specifying which one.
+                // Redirect to target selection (squash into).
+                enter_target_select(app, TargetOperation::Squash(SquashKind::Into), flags)
+            } else {
+                let selection = build_change_selection(app);
+                make_command(app, |id| JJCommand::Squash {
+                    change_id: id,
+                    target: None,
+                    message: MessageMode::Default,
+                    selection: selection.clone(),
+                    flags,
+                })
+            }
         }
         AppAction::SquashSelect(kind) => {
             enter_target_select(app, TargetOperation::Squash(kind), flags)
         }
-        // Rebase -- target selection
+        // Rebase -- target selection (supports multi-commit via selection)
         AppAction::RebaseRevision => {
-            enter_target_select(app, TargetOperation::Rebase(RebaseSource::Revision), flags)
+            let sources = app.selected_change_ids();
+            if sources.is_empty() { return Action::None; }
+            enter_target_select(app, TargetOperation::Rebase {
+                source_mode: RebaseSource::Revision,
+                sources,
+            }, flags)
         }
         AppAction::RebaseSource => {
-            enter_target_select(app, TargetOperation::Rebase(RebaseSource::Source), flags)
+            let sources = app.selected_change_ids();
+            if sources.is_empty() { return Action::None; }
+            enter_target_select(app, TargetOperation::Rebase {
+                source_mode: RebaseSource::Source,
+                sources,
+            }, flags)
         }
         AppAction::RebaseBranch => {
-            enter_target_select(app, TargetOperation::Rebase(RebaseSource::Branch), flags)
+            let sources = app.selected_change_ids();
+            if sources.is_empty() { return Action::None; }
+            enter_target_select(app, TargetOperation::Rebase {
+                source_mode: RebaseSource::Branch,
+                sources,
+            }, flags)
         }
         AppAction::Restore => make_command(app, |id| JJCommand::Restore {
             from: None,
@@ -636,8 +658,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::GitImport => Action::RunJj(JJCommand::GitImport { flags }),
 
         // Duplicate
-        AppAction::Duplicate => make_command(app, |id| JJCommand::Duplicate {
-            change_id: id,
+        AppAction::Duplicate => make_multi_command(app, |ids| JJCommand::Duplicate {
+            change_ids: ids,
             onto: None,
             flags,
         }),
@@ -689,11 +711,17 @@ fn make_command(app: &App, build: impl FnOnce(ChangeId) -> JJCommand) -> Action 
 }
 
 fn enter_describe_input(app: &mut App, flags: CommandFlags) -> Action {
-    let Some(change_id) = app.selected_change_id() else {
+    let ids = app.selected_change_ids();
+    if ids.is_empty() {
         return Action::None;
+    }
+    // Prefill with existing description only for single-commit describe.
+    let prefill = if ids.len() == 1 {
+        app.selected_description().unwrap_or("").to_string()
+    } else {
+        String::new()
     };
-    let current_desc = app.selected_description().unwrap_or("").to_string();
-    app.mode = AppMode::text_input("describe: ", current_desc, PendingCommand::Describe { change_id, flags });
+    app.mode = AppMode::text_input("describe: ", prefill, PendingCommand::Describe { change_ids: ids, flags });
     Action::None
 }
 

@@ -422,13 +422,21 @@ fn render_commit_item<'a>(
         Style::default().fg(theme.muted),
     ));
 
+    // Status labels before the description.
+    if c.has_conflict {
+        line2.push(Span::styled(
+            "(conflict) ",
+            Style::default().fg(theme.error),
+        ));
+    }
+    if c.is_merge {
+        line2.push(Span::styled(
+            "(merge) ",
+            Style::default().fg(theme.muted),
+        ));
+    }
+
     if let Some(desc) = &c.description {
-        if c.has_conflict {
-            line2.push(Span::styled(
-                "(conflict) ",
-                Style::default().fg(theme.error),
-            ));
-        }
         if c.is_empty {
             line2.push(Span::styled(
                 "(empty) ",
@@ -442,12 +450,6 @@ fn render_commit_item<'a>(
         };
         push_searchable(&mut line2, desc, SearchScopes::DESCRIPTION, desc_style, search);
     } else {
-        if c.has_conflict {
-            line2.push(Span::styled(
-                "(conflict) ",
-                Style::default().fg(theme.error),
-            ));
-        }
         let placeholder = if c.is_empty {
             "(empty)"
         } else {
