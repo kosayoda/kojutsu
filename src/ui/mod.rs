@@ -34,6 +34,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap, config: &
     .areas(frame.area());
 
     app.last_header_height = header_height;
+    app.last_list_height = main_area.height;
     layout::draw_header(frame, header_area, app, theme);
     list::draw_list(frame, main_area, app, config);
     layout::draw_status_bar(frame, status_area, app, theme);

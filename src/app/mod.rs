@@ -268,6 +268,8 @@ pub struct App {
     pub list_state: ListState,
     /// Header height from the last render (for mouse click translation).
     pub last_header_height: u16,
+    /// Viewport height of the main list area (set during render).
+    pub last_list_height: u16,
     pub revset: String,
     /// Last failed revset attempt (pre-fills the input on retry).
     pub revset_draft: Option<String>,
@@ -346,6 +348,7 @@ impl App {
             cursor: 0,
             list_state: ListState::default(),
             last_header_height: 2,
+            last_list_height: 0,
             revset,
             revset_draft: None,
             presets,

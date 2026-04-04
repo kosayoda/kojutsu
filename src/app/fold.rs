@@ -73,6 +73,49 @@ impl App {
             .unwrap_or(0);
     }
 
+    /// After unfolding, adjust scroll so the cursor row is near the top of the
+    /// viewport, showing as many child rows as possible.
+    /// After unfolding, scroll just enough to make the last child row visible.
+    /// Does nothing if the content already fits in the viewport.
+    pub fn scroll_to_show_children(&mut self) {
+        let viewport = self.last_list_height as usize;
+        if viewport == 0 {
+            return;
+        }
+
+        // Find the last child row index below cursor.
+        let mut last_child = self.cursor;
+        for idx in (self.cursor + 1)..self.rows.len() {
+            match self.rows[idx] {
+                DisplayRow::CommitNode { .. } | DisplayRow::GraphLink { .. } => break,
+                _ => last_child = idx,
+            }
+        }
+        if last_child == self.cursor {
+            return; // Nothing unfolded (data not loaded yet)
+        }
+
+        // Count display lines from the current offset to the last child row.
+        let offset = self.list_state.offset();
+        let mut lines = 0;
+        for idx in offset..=last_child {
+            lines += match self.rows.get(idx) {
+                Some(DisplayRow::CommitNode { .. }) => 2,
+                Some(_) => 1,
+                None => break,
+            };
+        }
+
+        // Only scroll if the last child extends beyond the viewport.
+        if lines <= viewport {
+            return;
+        }
+
+        // Scroll by the minimum amount to bring the last child into view.
+        let overflow = lines - viewport;
+        *self.list_state.offset_mut() = offset + overflow;
+    }
+
     /// Toggle fold on the currently selected row.
     ///
     /// - On a commit row: toggle showing file changes.
@@ -121,6 +164,9 @@ impl App {
             self.unfolded_commits.insert(change_id);
         }
         self.rebuild_rows();
+        if self.is_commit_unfolded(entry_idx) {
+            self.scroll_to_show_children();
+        }
     }
 
     pub(crate) fn toggle_file_fold(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
@@ -161,5 +207,9 @@ impl App {
             self.unfolded_files.insert(fold_key);
         }
         self.rebuild_rows();
+        if !currently_unfolded {
+            // We just unfolded — scroll to show child rows.
+            self.scroll_to_show_children();
+        }
     }
 }

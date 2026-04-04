@@ -230,6 +230,7 @@ impl App {
                 self.commit_stats_states
                     .insert(commit_id, Loadable::Loaded(details.stats));
                 self.rebuild_rows();
+                self.scroll_to_show_children();
             }
             RepoResult::CommitDetailsFailed { commit_id, error } => {
                 self.file_states
@@ -250,6 +251,7 @@ impl App {
                     Loadable::Loaded(lines),
                 );
                 self.rebuild_rows();
+                self.scroll_to_show_children();
             }
             RepoResult::FileDiffFailed {
                 commit_id,

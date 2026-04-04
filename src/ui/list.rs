@@ -159,7 +159,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
 
     let list = List::new(items)
         .block(Block::default().borders(Borders::NONE))
-        .scroll_padding(5)
+        .scroll_padding(2)
         .highlight_style(
             Style::default()
                 .bg(theme.selection_bg)
