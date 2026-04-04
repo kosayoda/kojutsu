@@ -122,7 +122,10 @@ fn main() -> Result<()> {
         requested_revset.clone().unwrap_or_default(),
         repo_path.display().to_string(),
         &config.presets,
+        &config.glyphs,
     );
+    app.default_search_scopes = config.default_search_scopes.to_flags();
+    app.search_scopes = app.default_search_scopes;
     app.apply_persisted_state(&persisted);
     app.active_preset = active_preset;
     app.request_revset_load(requested_revset);
@@ -132,7 +135,7 @@ fn main() -> Result<()> {
     let _ = event_tx.send(AppEvent::Init);
 
     loop {
-        terminal.draw(|frame| ui::draw(frame, &mut app, keymap, &config.theme))?;
+        terminal.draw(|frame| ui::draw(frame, &mut app, keymap, config))?;
 
         let app_event = match event_rx.recv() {
             Ok(event) => event,

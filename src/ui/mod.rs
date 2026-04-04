@@ -9,10 +9,11 @@ use ratatui::Frame;
 
 use crate::app::{App, AppMode};
 use crate::keymap::{self, Keymap};
-use crate::theme::Theme;
+use crate::theme::Config;
 
 /// Render the full UI into the frame.
-pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap, theme: &Theme) {
+pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap, config: &Config) {
+    let theme = &config.theme;
     // Use a single-line header if both repo and revset fit on one line.
     let single_line_len = "repository: ".len()
         + app.repo_root.len()
@@ -34,7 +35,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap, theme: &T
 
     app.last_header_height = header_height;
     layout::draw_header(frame, header_area, app, theme);
-    list::draw_list(frame, main_area, app, theme);
+    list::draw_list(frame, main_area, app, config);
     layout::draw_status_bar(frame, status_area, app, theme);
 
     // Overlays render on top of the main + status area (bottom-aligned).

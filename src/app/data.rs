@@ -43,7 +43,7 @@ impl App {
             (change_id, file_path, diff_line_idx)
         });
         let entries = IndexVec::from_vec(entries);
-        self.graph = IndexVec::from_vec(graph::render(entries.as_slice()));
+        self.graph = IndexVec::from_vec(graph::render(entries.as_slice(), self.glyphs));
         self.visual = None;
         self.visual_persistent = None;
         self.entries = entries;

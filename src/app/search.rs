@@ -111,7 +111,7 @@ impl App {
 
     pub fn reset_search_scopes(&mut self) {
         if let Some(search) = &mut self.search {
-            search.scopes = SearchScopes::DEFAULT;
+            search.scopes = self.default_search_scopes;
             self.recompute_search_matches();
         }
     }

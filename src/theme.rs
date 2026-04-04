@@ -19,6 +19,130 @@ pub struct Config {
     pub theme: Theme,
     #[serde(default)]
     pub presets: Vec<Preset>,
+    /// strftime format for commit timestamps.
+    #[serde(default = "default_date_format")]
+    pub date_format: String,
+    /// Characters used for commit glyphs in the DAG graph.
+    #[serde(default)]
+    pub glyphs: GlyphChars,
+    /// Search scopes enabled by default when starting a new search.
+    #[serde(default)]
+    pub default_search_scopes: DefaultSearchScopes,
+}
+
+fn default_date_format() -> String {
+    "%Y-%m-%d %H:%M:%S".to_string()
+}
+
+/// Configurable characters for commit glyphs in the DAG graph.
+#[derive(Deserialize, Clone)]
+pub struct GlyphChars {
+    #[serde(default = "default_glyph_working_copy")]
+    pub working_copy: char,
+    #[serde(default = "default_glyph_conflict")]
+    pub conflict: char,
+    #[serde(default = "default_glyph_immutable")]
+    pub immutable: char,
+    #[serde(default = "default_glyph_merge")]
+    pub merge: char,
+    #[serde(default = "default_glyph_normal")]
+    pub normal: char,
+}
+
+impl Default for GlyphChars {
+    fn default() -> Self {
+        Self {
+            working_copy: default_glyph_working_copy(),
+            conflict: default_glyph_conflict(),
+            immutable: default_glyph_immutable(),
+            merge: default_glyph_merge(),
+            normal: default_glyph_normal(),
+        }
+    }
+}
+
+fn default_glyph_working_copy() -> char { '@' }
+fn default_glyph_conflict() -> char { '×' }
+fn default_glyph_immutable() -> char { '◆' }
+fn default_glyph_merge() -> char { '⊕' }
+fn default_glyph_normal() -> char { '○' }
+
+impl GlyphChars {
+    /// Get the character for a glyph variant.
+    pub fn char_for(&self, glyph: crate::dag::Glyph) -> char {
+        use crate::dag::Glyph;
+        match glyph {
+            Glyph::WorkingCopy => self.working_copy,
+            Glyph::Conflict => self.conflict,
+            Glyph::Immutable => self.immutable,
+            Glyph::Merge => self.merge,
+            Glyph::Normal => self.normal,
+        }
+    }
+
+    /// Check if a character is any glyph (for coloring in the graph column).
+    pub fn is_glyph(&self, c: char) -> bool {
+        c == self.working_copy
+            || c == self.conflict
+            || c == self.immutable
+            || c == self.merge
+            || c == self.normal
+    }
+}
+
+/// Which search scopes are enabled by default.
+#[derive(Deserialize)]
+pub struct DefaultSearchScopes {
+    #[serde(default = "yes")]
+    pub change_id: bool,
+    #[serde(default)]
+    pub commit_id: bool,
+    #[serde(default = "yes")]
+    pub description: bool,
+    #[serde(default)]
+    pub bookmark: bool,
+    #[serde(default)]
+    pub author: bool,
+    #[serde(default)]
+    pub path: bool,
+    #[serde(default)]
+    pub line: bool,
+    #[serde(default)]
+    pub tag: bool,
+}
+
+fn yes() -> bool { true }
+
+impl Default for DefaultSearchScopes {
+    fn default() -> Self {
+        Self {
+            change_id: true,
+            commit_id: false,
+            description: true,
+            bookmark: false,
+            author: false,
+            path: false,
+            line: false,
+            tag: false,
+        }
+    }
+}
+
+impl DefaultSearchScopes {
+    /// Convert to the bitflag representation used at runtime.
+    pub fn to_flags(&self) -> crate::types::SearchScopes {
+        use crate::types::SearchScopes;
+        let mut flags = SearchScopes::empty();
+        if self.change_id { flags |= SearchScopes::CHANGE_ID; }
+        if self.commit_id { flags |= SearchScopes::COMMIT_ID; }
+        if self.description { flags |= SearchScopes::DESCRIPTION; }
+        if self.bookmark { flags |= SearchScopes::BOOKMARK; }
+        if self.author { flags |= SearchScopes::AUTHOR; }
+        if self.path { flags |= SearchScopes::PATH; }
+        if self.line { flags |= SearchScopes::LINE; }
+        if self.tag { flags |= SearchScopes::TAG; }
+        flags
+    }
 }
 
 /// Color theme for the TUI.

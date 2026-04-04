@@ -1,6 +1,7 @@
 use renderdag::{Ancestor, GraphRowRenderer, Renderer};
 
 use crate::dag::{DagEntry, EdgeKind};
+use crate::theme::GlyphChars;
 
 /// Sentinel characters used to identify line roles in the renderer output.
 /// We pass these as a 2-line "message" to the renderer, then identify which
@@ -26,7 +27,7 @@ pub struct GraphLines {
 /// Returns one [`GraphLines`] per entry, in the same order as the input.
 /// Each `GraphLines` contains properly-padded graph prefixes that the UI
 /// can directly concatenate with styled content.
-pub fn render(entries: &[DagEntry]) -> Vec<GraphLines> {
+pub fn render(entries: &[DagEntry], glyphs: &GlyphChars) -> Vec<GraphLines> {
     let mut renderer = GraphRowRenderer::new()
         .output()
         .with_min_row_height(2)
@@ -60,7 +61,7 @@ pub fn render(entries: &[DagEntry]) -> Vec<GraphLines> {
                 vec![Ancestor::Anonymous]
             };
 
-            let glyph = entry.commit.glyph();
+            let glyph_char = glyphs.char_for(entry.commit.glyph());
 
             // Pass a 2-line message with different sentinel characters so we
             // can identify which output line is the node line vs continuation
@@ -71,7 +72,7 @@ pub fn render(entries: &[DagEntry]) -> Vec<GraphLines> {
             let row = renderer.next_row(
                 entry.commit.graph_id.to_string(),
                 parents,
-                glyph.to_string(),
+                glyph_char.to_string(),
                 message,
             );
 

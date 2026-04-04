@@ -273,6 +273,10 @@ pub struct App {
     pub revset_draft: Option<String>,
     /// Named revset presets from config.
     pub presets: &'static [crate::theme::Preset],
+    /// Glyph characters for DAG rendering.
+    pub glyphs: &'static crate::theme::GlyphChars,
+    /// Default search scopes from config.
+    pub default_search_scopes: SearchScopes,
     /// Active preset index (into `presets`), or `None` for jj default / manual revset.
     pub active_preset: Option<usize>,
     pub repo_root: String,
@@ -331,9 +335,10 @@ impl App {
         revset: String,
         repo_root: String,
         presets: &'static [crate::theme::Preset],
+        glyphs: &'static crate::theme::GlyphChars,
     ) -> Self {
         let entries = IndexVec::from_vec(entries);
-        let graph = IndexVec::from_vec(graph::render(entries.as_slice()));
+        let graph = IndexVec::from_vec(graph::render(entries.as_slice(), glyphs));
         let mut app = Self {
             entries,
             graph,
@@ -344,6 +349,8 @@ impl App {
             revset,
             revset_draft: None,
             presets,
+            glyphs,
+            default_search_scopes: SearchScopes::DEFAULT,
             active_preset: None,
             repo_root,
             mode: AppMode::Normal,
@@ -366,7 +373,7 @@ impl App {
             visual: None,
             visual_persistent: None,
             search: None,
-            search_scopes: SearchScopes::DEFAULT,
+            search_scopes: SearchScopes::DEFAULT, // overwritten by apply_persisted_state or config
             jump_after_refresh: None,
         };
         app.rebuild_rows();

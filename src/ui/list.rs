@@ -9,7 +9,7 @@ use super::search::*;
 use super::spans::*;
 use crate::app::{App, AppMode};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
-use crate::theme::Theme;
+use crate::theme::{Config, Theme};
 use crate::types::{DisplayRow, FileSelectionState, SearchScopes};
 
 /// Visual state flags for rendering a row.
@@ -19,7 +19,8 @@ struct RenderFlags {
     in_visual: bool,
 }
 
-pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
+pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &Config) {
+    let theme = &config.theme;
     // If in target selection mode, get the source change_id for highlighting.
     let target_select_source: Option<&str> = match &app.mode {
         AppMode::TargetSelect { source, .. } => Some(source.as_str()),
@@ -80,7 +81,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
                             .flatten(),
                         &flags,
                         row_search.as_ref(),
-                        theme,
+                        config,
                     )
                 }
                 DisplayRow::GraphLink {
@@ -182,8 +183,9 @@ fn render_commit_item<'a>(
     line_stats: Option<LineStats>,
     flags: &RenderFlags,
     search: Option<&SearchRender<'_>>,
-    theme: &Theme,
+    config: &Config,
 ) -> ListItem<'static> {
+    let theme = &config.theme;
     let graph_color = if flags.is_source {
         theme.selection
     } else if c.has_conflict {
@@ -222,7 +224,7 @@ fn render_commit_item<'a>(
     // Split into glyph characters vs connector characters for coloring.
     for (is_glyph, group) in graph_node
         .char_indices()
-        .chunk_by(|&(_, c)| crate::dag::Glyph::try_from(c).is_ok())
+        .chunk_by(|&(_, c)| config.glyphs.is_glyph(c))
         .into_iter()
     {
         let mut iter = group.into_iter();
@@ -311,7 +313,7 @@ fn render_commit_item<'a>(
         .author
         .timestamp
         .to_zoned(jiff::tz::TimeZone::fixed(tz))
-        .strftime("%Y-%m-%d %H:%M:%S")
+        .strftime(&config.date_format)
         .to_string();
     line1.push(Span::styled(formatted, Style::default().fg(theme.muted)));
 
