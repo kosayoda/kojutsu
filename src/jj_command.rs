@@ -162,6 +162,10 @@ pub enum JJCommand {
         onto: Option<ChangeId>,
         flags: CommandFlags,
     },
+    Parallelize {
+        change_ids: SmallVec<ChangeId>,
+        flags: CommandFlags,
+    },
     WorkspaceAdd {
         path: String,
         name: Option<String>,
@@ -231,6 +235,7 @@ impl JJCommand {
             | JJCommand::Absorb { flags, .. }
             | JJCommand::Commit { flags, .. }
             | JJCommand::Duplicate { flags, .. }
+            | JJCommand::Parallelize { flags, .. }
             | JJCommand::Squash { flags, .. }
             | JJCommand::WorkspaceAdd { flags, .. }
             | JJCommand::WorkspaceForget { flags, .. }
@@ -251,7 +256,8 @@ impl JJCommand {
             | JJCommand::Squash { .. }
             | JJCommand::Abandon { .. }
             | JJCommand::Absorb { .. }
-            | JJCommand::Split { .. } => Some(JumpTarget::WorkingCopy),
+            | JJCommand::Split { .. }
+            | JJCommand::Parallelize { .. } => Some(JumpTarget::WorkingCopy),
             // Track: jump to the first tracked bookmark's commit.
             JJCommand::BookmarkTrack { bookmarks, .. } => bookmarks
                 .first()
@@ -564,6 +570,13 @@ impl JJCommand {
                     args.push(Str::from(msg.as_str()));
                 }
                 push_change_selection(&mut args, selection);
+                args
+            }
+            JJCommand::Parallelize { change_ids, .. } => {
+                let mut args: Vec<Str> = vec!["parallelize".into()];
+                for id in change_ids {
+                    args.push(format_compact!("{id}"));
+                }
                 args
             }
             JJCommand::Duplicate {

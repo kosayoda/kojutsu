@@ -106,6 +106,7 @@ pub enum AppAction {
     GitImport,
     Duplicate,
     DuplicateOnto,
+    Parallelize,
     ToggleIgnoreImmutable,
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
@@ -450,6 +451,8 @@ impl Default for Keymap {
                     bind("t", AppAction::DuplicateOnto, "onto…", C),
                 ],
             ),
+            // Parallelize
+            bind("p", AppAction::Parallelize, "parallelize", C),
             // Workspace
             prefix(
                 "w",
@@ -668,6 +671,7 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::GitImport
         | AppAction::Duplicate
         | AppAction::DuplicateOnto
+        | AppAction::Parallelize
         | AppAction::TagSet
         | AppAction::TagDelete
         | AppAction::TagList => &[Commit],
@@ -714,6 +718,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         | AppAction::GitImport => "git",
         AppAction::TagSet | AppAction::TagDelete | AppAction::TagList => "tag",
         AppAction::Duplicate | AppAction::DuplicateOnto => "duplicate",
+        AppAction::Parallelize => "parallelize",
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",

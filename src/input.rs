@@ -666,6 +666,12 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             flags,
         }),
         AppAction::DuplicateOnto => enter_target_select(app, TargetOperation::DuplicateOnto, flags),
+
+        // Parallelize
+        AppAction::Parallelize => make_multi_command(app, |ids| JJCommand::Parallelize {
+            change_ids: ids,
+            flags,
+        }),
     }
 }
 
