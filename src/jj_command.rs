@@ -166,6 +166,10 @@ pub enum JJCommand {
         change_ids: SmallVec<ChangeId>,
         flags: CommandFlags,
     },
+    SimplifyParents {
+        change_ids: SmallVec<ChangeId>,
+        flags: CommandFlags,
+    },
     WorkspaceAdd {
         path: String,
         name: Option<String>,
@@ -236,6 +240,7 @@ impl JJCommand {
             | JJCommand::Commit { flags, .. }
             | JJCommand::Duplicate { flags, .. }
             | JJCommand::Parallelize { flags, .. }
+            | JJCommand::SimplifyParents { flags, .. }
             | JJCommand::Squash { flags, .. }
             | JJCommand::WorkspaceAdd { flags, .. }
             | JJCommand::WorkspaceForget { flags, .. }
@@ -257,7 +262,8 @@ impl JJCommand {
             | JJCommand::Abandon { .. }
             | JJCommand::Absorb { .. }
             | JJCommand::Split { .. }
-            | JJCommand::Parallelize { .. } => Some(JumpTarget::WorkingCopy),
+            | JJCommand::Parallelize { .. }
+            | JJCommand::SimplifyParents { .. } => Some(JumpTarget::WorkingCopy),
             // Track: jump to the first tracked bookmark's commit.
             JJCommand::BookmarkTrack { bookmarks, .. } => bookmarks
                 .first()
@@ -575,6 +581,14 @@ impl JJCommand {
             JJCommand::Parallelize { change_ids, .. } => {
                 let mut args: Vec<Str> = vec!["parallelize".into()];
                 for id in change_ids {
+                    args.push(format_compact!("{id}"));
+                }
+                args
+            }
+            JJCommand::SimplifyParents { change_ids, .. } => {
+                let mut args: Vec<Str> = vec!["simplify-parents".into()];
+                for id in change_ids {
+                    args.push("-r".into());
                     args.push(format_compact!("{id}"));
                 }
                 args

@@ -107,6 +107,7 @@ pub enum AppAction {
     Duplicate,
     DuplicateOnto,
     Parallelize,
+    SimplifyParents,
     ToggleIgnoreImmutable,
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
@@ -451,8 +452,9 @@ impl Default for Keymap {
                     bind("t", AppAction::DuplicateOnto, "onto…", C),
                 ],
             ),
-            // Parallelize
+            // Parallelize / Simplify parents
             bind("p", AppAction::Parallelize, "parallelize", C),
+            bind("shift-p", AppAction::SimplifyParents, "simplify parents", C),
             // Workspace
             prefix(
                 "w",
@@ -672,6 +674,7 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::Duplicate
         | AppAction::DuplicateOnto
         | AppAction::Parallelize
+        | AppAction::SimplifyParents
         | AppAction::TagSet
         | AppAction::TagDelete
         | AppAction::TagList => &[Commit],
@@ -719,6 +722,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::TagSet | AppAction::TagDelete | AppAction::TagList => "tag",
         AppAction::Duplicate | AppAction::DuplicateOnto => "duplicate",
         AppAction::Parallelize => "parallelize",
+        AppAction::SimplifyParents => "simplify-parents",
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",
