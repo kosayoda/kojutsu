@@ -170,6 +170,10 @@ pub enum JJCommand {
         change_ids: SmallVec<ChangeId>,
         flags: CommandFlags,
     },
+    Revert {
+        change_ids: SmallVec<ChangeId>,
+        flags: CommandFlags,
+    },
     WorkspaceAdd {
         path: String,
         name: Option<String>,
@@ -241,6 +245,7 @@ impl JJCommand {
             | JJCommand::Duplicate { flags, .. }
             | JJCommand::Parallelize { flags, .. }
             | JJCommand::SimplifyParents { flags, .. }
+            | JJCommand::Revert { flags, .. }
             | JJCommand::Squash { flags, .. }
             | JJCommand::WorkspaceAdd { flags, .. }
             | JJCommand::WorkspaceForget { flags, .. }
@@ -263,7 +268,8 @@ impl JJCommand {
             | JJCommand::Absorb { .. }
             | JJCommand::Split { .. }
             | JJCommand::Parallelize { .. }
-            | JJCommand::SimplifyParents { .. } => Some(JumpTarget::WorkingCopy),
+            | JJCommand::SimplifyParents { .. }
+            | JJCommand::Revert { .. } => Some(JumpTarget::WorkingCopy),
             // Track: jump to the first tracked bookmark's commit.
             JJCommand::BookmarkTrack { bookmarks, .. } => bookmarks
                 .first()
@@ -587,6 +593,14 @@ impl JJCommand {
             }
             JJCommand::SimplifyParents { change_ids, .. } => {
                 let mut args: Vec<Str> = vec!["simplify-parents".into()];
+                for id in change_ids {
+                    args.push("-r".into());
+                    args.push(format_compact!("{id}"));
+                }
+                args
+            }
+            JJCommand::Revert { change_ids, .. } => {
+                let mut args: Vec<Str> = vec!["revert".into()];
                 for id in change_ids {
                     args.push("-r".into());
                     args.push(format_compact!("{id}"));

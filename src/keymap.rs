@@ -108,6 +108,7 @@ pub enum AppAction {
     DuplicateOnto,
     Parallelize,
     SimplifyParents,
+    Revert,
     ToggleIgnoreImmutable,
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
@@ -455,6 +456,8 @@ impl Default for Keymap {
             // Parallelize / Simplify parents
             bind("p", AppAction::Parallelize, "parallelize", C),
             bind("shift-p", AppAction::SimplifyParents, "simplify parents", C),
+            // Revert
+            bind("z", AppAction::Revert, "revert", C),
             // Workspace
             prefix(
                 "w",
@@ -675,6 +678,7 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::DuplicateOnto
         | AppAction::Parallelize
         | AppAction::SimplifyParents
+        | AppAction::Revert
         | AppAction::TagSet
         | AppAction::TagDelete
         | AppAction::TagList => &[Commit],
@@ -723,6 +727,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::Duplicate | AppAction::DuplicateOnto => "duplicate",
         AppAction::Parallelize => "parallelize",
         AppAction::SimplifyParents => "simplify-parents",
+        AppAction::Revert => "revert",
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",

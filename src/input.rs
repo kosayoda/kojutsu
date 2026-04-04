@@ -676,6 +676,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             change_ids: ids,
             flags,
         }),
+        AppAction::Revert => make_multi_command(app, |ids| JJCommand::Revert {
+            change_ids: ids,
+            flags,
+        }),
     }
 }
 
