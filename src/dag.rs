@@ -128,6 +128,7 @@ pub enum Glyph {
     WorkingCopy,
     Conflict,
     Immutable,
+    Merge,
     Normal,
 }
 
@@ -143,6 +144,7 @@ impl From<Glyph> for char {
             Glyph::WorkingCopy => '@',
             Glyph::Conflict => '×',
             Glyph::Immutable => '◆',
+            Glyph::Merge => '⊕',
             Glyph::Normal => '○',
         }
     }
@@ -156,6 +158,7 @@ impl TryFrom<char> for Glyph {
             '@' => Ok(Self::WorkingCopy),
             '×' => Ok(Self::Conflict),
             '◆' => Ok(Self::Immutable),
+            '⊕' => Ok(Self::Merge),
             '○' => Ok(Self::Normal),
             _ => Err(()),
         }
@@ -174,6 +177,8 @@ impl CommitInfo {
             Glyph::Conflict
         } else if self.is_immutable {
             Glyph::Immutable
+        } else if self.is_merge {
+            Glyph::Merge
         } else {
             Glyph::Normal
         }

@@ -192,7 +192,7 @@ fn render_commit_item<'a>(
         match c.glyph() {
             crate::dag::Glyph::WorkingCopy => theme.added,
             crate::dag::Glyph::Conflict => theme.error,
-            crate::dag::Glyph::Immutable => theme.accent,
+            crate::dag::Glyph::Immutable | crate::dag::Glyph::Merge => theme.accent,
             crate::dag::Glyph::Normal => theme.accent,
         }
     };
@@ -362,10 +362,12 @@ fn render_commit_item<'a>(
     }
 
     // Remote bookmarks (name@remote, shown when no local bookmark covers them)
+    // Remote bookmarks (unsynced only — shown dimmer than local bookmarks).
+    let remote_bm_style = Style::default().fg(theme.change_id);
     for rb in &c.remote_bookmarks {
         line1.push(Span::raw(" "));
         let text = format!("{}@{}", rb.name, rb.remote);
-        push_searchable(&mut line1, &text, SearchScopes::BOOKMARK, bm_style, search);
+        push_searchable(&mut line1, &text, SearchScopes::BOOKMARK, remote_bm_style, search);
     }
 
     // Tags
@@ -442,10 +444,6 @@ fn render_commit_item<'a>(
             Style::default().fg(theme.error),
         ));
     }
-    if c.is_merge {
-        line2.push(Span::styled("(merge) ", Style::default().fg(theme.muted)));
-    }
-
     if let Some(desc) = &c.description {
         if c.is_empty {
             line2.push(Span::styled("(empty) ", Style::default().fg(theme.muted)));
@@ -468,7 +466,14 @@ fn render_commit_item<'a>(
         } else {
             "(no description set)"
         };
-        line2.push(Span::styled(placeholder, Style::default().fg(theme.muted)));
+        // Working copy without description is normal; committed without description
+        // is likely a mistake — highlight as a warning.
+        let placeholder_style = if !c.is_working_copy() && !c.is_empty {
+            Style::default().fg(theme.warning)
+        } else {
+            Style::default().fg(theme.muted)
+        };
+        line2.push(Span::styled(placeholder, placeholder_style));
     }
 
     ListItem::new(vec![Line::from(line1), Line::from(line2)])

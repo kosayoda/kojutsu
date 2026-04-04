@@ -10,6 +10,7 @@ selection    = "yellow"                    # selected items, active toggles, key
 muted        = "dark_gray"                 # borders, labels, disabled items, context lines
 text         = "white"                     # normal text, descriptions, file paths
 error        = "red"                       # errors, conflicts, removed/deleted lines
+warning      = "yellow"                    # committed without description, other warnings
 added        = "green"                     # added lines, working copy, workspace names
 change_id    = "magenta"                   # change IDs, diff headers, bookmarks
 commit_id    = "blue"                      # commit IDs

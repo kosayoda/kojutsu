@@ -45,6 +45,9 @@ pub struct Theme {
     /// Errors, conflicts, removed/deleted lines.
     #[serde(default = "default_error", deserialize_with = "de_color")]
     pub error: Color,
+    /// Warnings (e.g. committed without description).
+    #[serde(default = "default_warning", deserialize_with = "de_color")]
+    pub warning: Color,
     /// Added lines, working copy, workspace names.
     #[serde(default = "default_added", deserialize_with = "de_color")]
     pub added: Color,
@@ -67,6 +70,7 @@ impl Default for Theme {
             muted: default_muted(),
             text: default_text(),
             error: default_error(),
+            warning: default_warning(),
             added: default_added(),
             change_id: default_change_id(),
             commit_id: default_commit_id(),
@@ -89,6 +93,9 @@ fn default_text() -> Color {
 }
 fn default_error() -> Color {
     Color::Red
+}
+fn default_warning() -> Color {
+    Color::Yellow
 }
 fn default_added() -> Color {
     Color::Green
