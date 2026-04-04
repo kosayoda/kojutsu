@@ -7,8 +7,8 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
 use crate::app::App;
-use crate::theme::Theme;
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, KeymapNode};
+use crate::theme::Theme;
 use crate::types::{FollowUpOption, SearchFocus, SelectionContext, SEARCH_SCOPE_SPECS};
 
 /// A plain block with only a top border (used by several simple overlay panels).
@@ -355,7 +355,13 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App, theme:
     }
 }
 
-pub(super) fn draw_target_select(frame: &mut Frame, area: Rect, prompt: &str, source: &str, theme: &Theme) {
+pub(super) fn draw_target_select(
+    frame: &mut Frame,
+    area: Rect,
+    prompt: &str,
+    source: &str,
+    theme: &Theme,
+) {
     let block = top_border(theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -403,7 +409,13 @@ pub(super) fn draw_commit_select(frame: &mut Frame, area: Rect, prompt: &str, th
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
-pub(super) fn draw_follow_up(frame: &mut Frame, area: Rect, prompt: &str, options: &[FollowUpOption], theme: &Theme) {
+pub(super) fn draw_follow_up(
+    frame: &mut Frame,
+    area: Rect,
+    prompt: &str,
+    options: &[FollowUpOption],
+    theme: &Theme,
+) {
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.muted));

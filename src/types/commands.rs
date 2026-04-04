@@ -1,6 +1,6 @@
 use strum::IntoEnumIterator as _;
 
-use super::id::{ChangeId, SmallVec};
+use super::id::{BookmarkName, ChangeId, SmallVec};
 use super::operations::{
     MessageMode, RebaseKind, RebaseSource, RebaseTarget, SplitKind, SplitTarget, SquashKind,
     SquashTarget,
@@ -110,7 +110,7 @@ pub enum PendingCommand {
     },
     /// Rename a bookmark (old name already selected, text is new name).
     BookmarkRename {
-        old_name: String,
+        old_name: BookmarkName,
         flags: CommandFlags,
     },
     /// Commit with inline message (text is the message).
@@ -140,23 +140,21 @@ impl PendingCommand {
                 message: text,
                 flags,
             },
-            PendingCommand::SquashWithMessage { builder, flags } => {
-                builder.build(text, flags)
-            }
+            PendingCommand::SquashWithMessage { builder, flags } => builder.build(text, flags),
             PendingCommand::Revset => panic!("Revset pending command handled separately"),
             PendingCommand::BookmarkCreate { change_id, flags } => JJCommand::BookmarkCreate {
-                name: text,
+                name: BookmarkName::new(text),
                 change_id,
                 flags,
             },
             PendingCommand::BookmarkSet { change_id, flags } => JJCommand::BookmarkSet {
-                name: text,
+                name: BookmarkName::new(text),
                 change_id,
                 flags,
             },
             PendingCommand::BookmarkRename { old_name, flags } => JJCommand::BookmarkRename {
                 old_name,
-                new_name: text,
+                new_name: BookmarkName::new(text),
                 flags,
             },
             PendingCommand::TagSet { change_id, flags } => JJCommand::TagSet {
@@ -188,7 +186,9 @@ pub enum TargetOperation {
     },
     RestoreFrom,
     RestoreInto,
-    BookmarkMove { bookmark_name: String },
+    BookmarkMove {
+        bookmark_name: BookmarkName,
+    },
     DuplicateOnto,
 }
 
@@ -232,43 +232,55 @@ impl TargetOperation {
                 selection,
                 flags,
             ),
-            TargetOperation::Split(kind) => auto_follow_up("split", JJCommand::Split {
-                change_id: source,
-                target: Some(SplitTarget { target, kind }),
-                selection,
-                flags,
-            }),
-            TargetOperation::Rebase { source_mode, sources } => {
-                rebase_follow_up(sources, target, source_mode, flags)
-            }
-            TargetOperation::RestoreFrom => auto_follow_up("restore", JJCommand::Restore {
-                from: Some(target),
-                into: None,
-                changes_in: None,
-                selection,
-                flags,
-            }),
-            TargetOperation::RestoreInto => auto_follow_up("restore", JJCommand::Restore {
-                from: None,
-                into: Some(target),
-                changes_in: None,
-                selection,
-                flags,
-            }),
-            TargetOperation::BookmarkMove { bookmark_name } => {
-                auto_follow_up("move", JJCommand::BookmarkMove {
+            TargetOperation::Split(kind) => auto_follow_up(
+                "split",
+                JJCommand::Split {
+                    change_id: source,
+                    target: Some(SplitTarget { target, kind }),
+                    selection,
+                    flags,
+                },
+            ),
+            TargetOperation::Rebase {
+                source_mode,
+                sources,
+            } => rebase_follow_up(sources, target, source_mode, flags),
+            TargetOperation::RestoreFrom => auto_follow_up(
+                "restore",
+                JJCommand::Restore {
+                    from: Some(target),
+                    into: None,
+                    changes_in: None,
+                    selection,
+                    flags,
+                },
+            ),
+            TargetOperation::RestoreInto => auto_follow_up(
+                "restore",
+                JJCommand::Restore {
+                    from: None,
+                    into: Some(target),
+                    changes_in: None,
+                    selection,
+                    flags,
+                },
+            ),
+            TargetOperation::BookmarkMove { bookmark_name } => auto_follow_up(
+                "move",
+                JJCommand::BookmarkMove {
                     name: bookmark_name.clone(),
                     target,
                     flags,
-                })
-            }
-            TargetOperation::DuplicateOnto => {
-                auto_follow_up("duplicate", JJCommand::Duplicate {
+                },
+            ),
+            TargetOperation::DuplicateOnto => auto_follow_up(
+                "duplicate",
+                JJCommand::Duplicate {
                     change_ids: smallvec::smallvec![source],
                     onto: Some(target),
                     flags,
-                })
-            }
+                },
+            ),
         }
     }
 }

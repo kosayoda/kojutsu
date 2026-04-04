@@ -8,9 +8,9 @@ use std::thread;
 use jj_lib::repo::Repo as _;
 use pollster::FutureExt as _;
 
-use crate::dag::{DagEntry, DiffLine, FileChange, LineStats};
+use crate::dag::{CommitDetails, DagEntry, DiffLine, DivergenceUpdate, PrefixLengthUpdate};
 use crate::repo::JjRepo;
-use crate::types::CommitId;
+use crate::types::{CommitId, RepoPath};
 
 pub struct RepoService;
 
@@ -28,7 +28,7 @@ pub struct RepoResponseHandle {
 enum RepoRequestKind {
     Revset { revset: Option<String> },
     Commit { commit_id: CommitId },
-    FileDiff { commit_id: CommitId, path: String },
+    FileDiff { commit_id: CommitId, path: RepoPath },
 }
 
 #[derive(Clone)]
@@ -57,22 +57,15 @@ pub enum RepoResult {
     CommitEmpty {
         commit_id: CommitId,
     },
-    /// Background-computed divergence and hidden status for commits.
-    /// Only contains entries that are divergent or hidden.
     DivergenceInfo {
-        /// (commit_id, is_divergent, is_hidden, change_id_suffix)
-        updates: Vec<(CommitId, bool, bool, Option<usize>)>,
+        updates: Vec<(CommitId, DivergenceUpdate)>,
     },
-    /// Background-computed shortest unique prefix lengths for IDs.
     PrefixLengths {
-        /// (commit_id, change_display, change_prefix_len, commit_display, commit_prefix_len)
-        updates: Vec<(CommitId, String, usize, String, usize)>,
+        updates: Vec<(CommitId, PrefixLengthUpdate)>,
     },
     CommitDetailsLoaded {
         commit_id: CommitId,
-        files: Vec<FileChange>,
-        stats: LineStats,
-        is_empty: bool,
+        details: CommitDetails,
     },
     CommitDetailsFailed {
         commit_id: CommitId,
@@ -80,12 +73,12 @@ pub enum RepoResult {
     },
     FileDiffLoaded {
         commit_id: CommitId,
-        path: String,
+        path: RepoPath,
         lines: Vec<DiffLine>,
     },
     FileDiffFailed {
         commit_id: CommitId,
-        path: String,
+        path: RepoPath,
         error: String,
     },
 }
@@ -105,7 +98,7 @@ impl RepoRequest {
         }
     }
 
-    pub fn load_file_diff(commit_id: CommitId, path: String) -> Self {
+    pub fn load_file_diff(commit_id: CommitId, path: RepoPath) -> Self {
         Self {
             epoch: 0,
             kind: RepoRequestKind::FileDiff { commit_id, path },
@@ -171,7 +164,7 @@ struct RepoServiceState {
     result_tx: Sender<RepoResult>,
     current_epoch: Arc<AtomicU64>,
     in_flight_commit_details: HashSet<CommitId>,
-    in_flight_file_diffs: HashSet<(CommitId, String)>,
+    in_flight_file_diffs: HashSet<(CommitId, RepoPath)>,
 }
 
 impl RepoServiceState {
@@ -266,10 +259,8 @@ impl RepoServiceState {
                 // defer is_empty to keep the initial load fast.)
 
                 // Collect commit IDs before sending entries (which moves them).
-                let all_ids: Vec<String> = entries
-                    .iter()
-                    .map(|e| e.commit.graph_id.as_str().to_string())
-                    .collect();
+                let all_ids: Vec<CommitId> =
+                    entries.iter().map(|e| e.commit.graph_id.clone()).collect();
 
                 let untracked_bookmarks = repo.untracked_remote_bookmarks();
                 let tracked_bookmarks = repo.tracked_remote_bookmarks();
@@ -291,8 +282,9 @@ impl RepoServiceState {
                     let inner = repo.inner_repo();
                     let empty_tx = self.result_tx.clone();
                     thread::spawn(move || {
-                        for hex_id in &empty_ids {
-                            let Some(backend_id) = jj_lib::backend::CommitId::try_from_hex(hex_id)
+                        for id in &empty_ids {
+                            let Some(backend_id) =
+                                jj_lib::backend::CommitId::try_from_hex(id.as_str())
                             else {
                                 continue;
                             };
@@ -301,7 +293,7 @@ impl RepoServiceState {
                             };
                             if commit.is_empty(inner.as_ref()).block_on().unwrap_or(false) {
                                 let _ = empty_tx.send(RepoResult::CommitEmpty {
-                                    commit_id: CommitId::new(hex_id.clone()),
+                                    commit_id: id.clone(),
                                 });
                             }
                         }
@@ -316,14 +308,7 @@ impl RepoServiceState {
                     thread::spawn(move || {
                         let updates = JjRepo::compute_divergence_info(&inner, &div_ids);
                         if !updates.is_empty() {
-                            let _ = div_tx.send(RepoResult::DivergenceInfo {
-                                updates: updates
-                                    .into_iter()
-                                    .map(|(id, div, hid, suf)| {
-                                        (CommitId::new(id), div, hid, suf)
-                                    })
-                                    .collect(),
-                            });
+                            let _ = div_tx.send(RepoResult::DivergenceInfo { updates });
                         }
                     });
                 }
@@ -340,14 +325,7 @@ impl RepoServiceState {
                             return;
                         };
                         if !updates.is_empty() {
-                            let _ = prefix_tx.send(RepoResult::PrefixLengths {
-                                updates: updates
-                                    .into_iter()
-                                    .map(|(id, cd, cpl, cid, cipl)| {
-                                        (CommitId::new(id), cd, cpl, cid, cipl)
-                                    })
-                                    .collect(),
-                            });
+                            let _ = prefix_tx.send(RepoResult::PrefixLengths { updates });
                         }
                     });
                 }
@@ -383,14 +361,12 @@ impl RepoServiceState {
             return;
         };
 
-        match repo.commit_details(commit_id.as_str()) {
-            Ok((files, stats, is_empty)) => self.send_if_current(
+        match repo.commit_details(&commit_id) {
+            Ok(details) => self.send_if_current(
                 epoch,
                 RepoResult::CommitDetailsLoaded {
                     commit_id: commit_id.clone(),
-                    files,
-                    stats,
-                    is_empty,
+                    details,
                 },
             ),
             Err(err) => self.send_if_current(
@@ -404,7 +380,7 @@ impl RepoServiceState {
         self.in_flight_commit_details.remove(&commit_id);
     }
 
-    fn handle_file_diff(&mut self, epoch: u64, commit_id: CommitId, path: String) {
+    fn handle_file_diff(&mut self, epoch: u64, commit_id: CommitId, path: RepoPath) {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
@@ -425,7 +401,7 @@ impl RepoServiceState {
             return;
         };
 
-        match repo.file_diff(commit_id.as_str(), &path) {
+        match repo.file_diff(&commit_id, &path) {
             Ok(lines) => self.send_if_current(
                 epoch,
                 RepoResult::FileDiffLoaded {

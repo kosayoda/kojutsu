@@ -104,16 +104,19 @@ fn main() -> Result<()> {
     let _repo_forwarder = repo_responses.spawn_forwarder(event_tx.clone(), AppEvent::Repo);
     let persisted = kojutsu::app::load_persisted_state();
     // Resolve active preset: persisted → first preset → None (jj default).
-    let active_preset = persisted.active_preset
+    let active_preset = persisted
+        .active_preset
         .filter(|&i| i < config.presets.len())
-        .or(if config.presets.is_empty() { None } else { Some(0) });
-    let requested_revset = cli.revisions
-        .clone()
-        .or_else(|| {
-            active_preset
-                .and_then(|i| config.presets.get(i))
-                .map(|p| p.revset.clone())
+        .or(if config.presets.is_empty() {
+            None
+        } else {
+            Some(0)
         });
+    let requested_revset = cli.revisions.clone().or_else(|| {
+        active_preset
+            .and_then(|i| config.presets.get(i))
+            .map(|p| p.revset.clone())
+    });
     let mut app = App::new(
         Vec::new(),
         requested_revset.clone().unwrap_or_default(),

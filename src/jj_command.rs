@@ -6,7 +6,26 @@ use compact_str::format_compact;
 use crate::app::{JumpTarget, GLOBAL_TOGGLES};
 use crate::dag::BookmarkRef;
 use crate::keymap::CommandFlags;
-use crate::types::{ChangeId, MessageMode, RebaseSource, RebaseTarget, SmallVec, SplitTarget, SquashTarget, Str};
+use crate::types::{
+    BookmarkName, ChangeId, MessageMode, RebaseSource, RebaseTarget, SmallVec, SplitTarget,
+    SquashTarget, Str,
+};
+
+/// Where to insert a new commit relative to its parent.
+#[derive(Debug, Clone, Copy)]
+pub enum InsertPosition {
+    After,
+    Before,
+}
+
+impl InsertPosition {
+    fn flag(self) -> &'static str {
+        match self {
+            InsertPosition::After => "--insert-after",
+            InsertPosition::Before => "--insert-before",
+        }
+    }
+}
 
 /// How to filter changes for squash/commit operations.
 #[derive(Debug, Clone)]
@@ -43,8 +62,7 @@ pub enum JJCommand {
     },
     New {
         change_ids: SmallVec<ChangeId>,
-        insert_after: bool,
-        insert_before: bool,
+        insert: Option<InsertPosition>,
         flags: CommandFlags,
     },
     Squash {
@@ -75,31 +93,31 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     BookmarkCreate {
-        name: String,
+        name: BookmarkName,
         change_id: ChangeId,
         flags: CommandFlags,
     },
     BookmarkSet {
-        name: String,
+        name: BookmarkName,
         change_id: ChangeId,
         flags: CommandFlags,
     },
     BookmarkDelete {
-        names: SmallVec<String>,
+        names: SmallVec<BookmarkName>,
         flags: CommandFlags,
     },
     BookmarkForget {
-        names: SmallVec<String>,
+        names: SmallVec<BookmarkName>,
         flags: CommandFlags,
     },
     BookmarkMove {
-        name: String,
+        name: BookmarkName,
         target: ChangeId,
         flags: CommandFlags,
     },
     BookmarkRename {
-        old_name: String,
-        new_name: String,
+        old_name: BookmarkName,
+        new_name: BookmarkName,
         flags: CommandFlags,
     },
     BookmarkAdvance {
@@ -133,7 +151,7 @@ pub enum JJCommand {
         flags: CommandFlags,
     },
     GitPushBookmark {
-        bookmarks: SmallVec<String>,
+        bookmarks: SmallVec<BookmarkName>,
         flags: CommandFlags,
     },
     GitExport {
@@ -299,13 +317,12 @@ impl JJCommand {
                 args
             }
             JJCommand::Describe {
-                change_ids, message, ..
+                change_ids,
+                message,
+                ..
             } => {
-                let mut args: Vec<Str> = vec![
-                    "describe".into(),
-                    "-m".into(),
-                    Str::from(message.as_str()),
-                ];
+                let mut args: Vec<Str> =
+                    vec!["describe".into(), "-m".into(), Str::from(message.as_str())];
                 for id in change_ids {
                     args.push(format_compact!("{id}"));
                 }
@@ -318,17 +335,11 @@ impl JJCommand {
                 vec!["edit".into(), format_compact!("{change_id}")]
             }
             JJCommand::New {
-                change_ids,
-                insert_after,
-                insert_before,
-                ..
+                change_ids, insert, ..
             } => {
                 let mut args: Vec<Str> = vec!["new".into()];
-                if *insert_after {
-                    args.push("--insert-after".into());
-                }
-                if *insert_before {
-                    args.push("--insert-before".into());
+                if let Some(pos) = insert {
+                    args.push(pos.flag().into());
                 }
                 for id in change_ids {
                     args.push(format_compact!("{id}"));
@@ -941,13 +952,15 @@ fn push_change_selection(args: &mut Vec<Str>, selection: &ChangeSelection) {
 /// Returns `(result, was_interrupted)`.
 fn with_sigint_suppressed<T>(body: impl FnOnce() -> T) -> (T, bool) {
     let interrupted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let hook =
-        signal_hook::flag::register(signal_hook::consts::SIGINT, interrupted.clone()).ok();
+    let hook = signal_hook::flag::register(signal_hook::consts::SIGINT, interrupted.clone()).ok();
     let result = body();
     if let Some(id) = hook {
         signal_hook::low_level::unregister(id);
     }
-    (result, interrupted.load(std::sync::atomic::Ordering::Relaxed))
+    (
+        result,
+        interrupted.load(std::sync::atomic::Ordering::Relaxed),
+    )
 }
 
 /// Escape a string for use in jj --config TOML values.

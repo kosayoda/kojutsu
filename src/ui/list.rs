@@ -12,6 +12,13 @@ use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, Lin
 use crate::theme::Theme;
 use crate::types::{DisplayRow, FileSelectionState, SearchScopes};
 
+/// Visual state flags for rendering a row.
+struct RenderFlags {
+    is_source: bool,
+    is_selected: bool,
+    in_visual: bool,
+}
+
 pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
     // If in target selection mode, get the source change_id for highlighting.
     let target_select_source: Option<&str> = match &app.mode {
@@ -58,10 +65,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
                     let gl = &app.graph[*entry_idx];
                     let graph_node = gl.node.as_str();
                     let graph_cont = gl.cont.as_str();
-                    let is_source = target_select_source
-                        .is_some_and(|src| src == entry.commit.unique_prefix().as_str());
-                    let is_selected = app.is_commit_selected(*entry_idx);
-                    let in_visual = app.is_in_visual_commit_range(*entry_idx);
+                    let flags = RenderFlags {
+                        is_source: target_select_source
+                            .is_some_and(|src| src == entry.commit.unique_prefix().as_str()),
+                        is_selected: app.is_commit_selected(*entry_idx),
+                        in_visual: app.is_in_visual_commit_range(*entry_idx),
+                    };
                     render_commit_item(
                         graph_node,
                         graph_cont,
@@ -69,9 +78,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
                         app.is_commit_unfolded(*entry_idx)
                             .then(|| app.commit_stats(*entry_idx))
                             .flatten(),
-                        is_source,
-                        is_selected,
-                        in_visual,
+                        &flags,
                         row_search.as_ref(),
                         theme,
                     )
@@ -132,13 +139,15 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, theme: &Th
                         .diff_lines(*entry_idx, *file_idx)
                         .expect("visible diff row must be loaded");
                     let diff_line = &diff_lines[line_idx.raw()];
-                    let is_selected = app.is_line_selected(*entry_idx, *file_idx, *line_idx);
-                    let in_visual = app.is_in_visual_range(*entry_idx, *file_idx, *line_idx);
+                    let flags = RenderFlags {
+                        is_source: false,
+                        is_selected: app.is_line_selected(*entry_idx, *file_idx, *line_idx),
+                        in_visual: app.is_in_visual_range(*entry_idx, *file_idx, *line_idx),
+                    };
                     render_diff_line(
                         diff_line,
                         app.show_line_numbers,
-                        is_selected,
-                        in_visual,
+                        &flags,
                         row_search.as_ref(),
                         theme,
                     )
@@ -171,13 +180,11 @@ fn render_commit_item<'a>(
     graph_cont: &str,
     c: &'a CommitInfo,
     line_stats: Option<LineStats>,
-    is_source: bool,
-    is_selected: bool,
-    in_visual: bool,
+    flags: &RenderFlags,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> ListItem<'static> {
-    let graph_color = if is_source {
+    let graph_color = if flags.is_source {
         theme.selection
     } else if c.has_conflict {
         theme.error
@@ -198,14 +205,14 @@ fn render_commit_item<'a>(
     line1.push(search_gutter(search_state, theme));
 
     // Visual range column + selection column + spacer.
-    line1.push(if in_visual {
+    line1.push(if flags.in_visual {
         Span::styled("│", Style::default().fg(theme.accent))
     } else {
         Span::raw(" ")
     });
-    if is_selected {
+    if flags.is_selected {
         line1.push(Span::styled("▎", Style::default().fg(theme.selection)));
-    } else if is_source {
+    } else if flags.is_source {
         line1.push(Span::styled("►", Style::default().fg(theme.selection)));
     } else {
         line1.push(Span::raw(" "));
@@ -298,18 +305,15 @@ fn render_commit_item<'a>(
     line1.push(Span::raw(" "));
 
     // Timestamp (apply author's timezone offset)
-    let tz = jiff::tz::Offset::from_seconds(c.author.tz_offset_seconds)
-        .unwrap_or(jiff::tz::Offset::UTC);
+    let tz =
+        jiff::tz::Offset::from_seconds(c.author.tz_offset_seconds).unwrap_or(jiff::tz::Offset::UTC);
     let formatted = c
         .author
         .timestamp
         .to_zoned(jiff::tz::TimeZone::fixed(tz))
         .strftime("%Y-%m-%d %H:%M:%S")
         .to_string();
-    line1.push(Span::styled(
-        formatted,
-        Style::default().fg(theme.muted),
-    ));
+    line1.push(Span::styled(formatted, Style::default().fg(theme.muted)));
 
     // Commit ID (at end, like jj log -- prefix bright, rest dimmed)
     line1.push(Span::raw(" "));
@@ -346,9 +350,15 @@ fn render_commit_item<'a>(
         let display = if bm.is_dirty {
             format!("{}*", bm.name)
         } else {
-            bm.name.clone()
+            bm.name.to_string()
         };
-        push_searchable(&mut line1, &display, SearchScopes::BOOKMARK, bm_style, search);
+        push_searchable(
+            &mut line1,
+            &display,
+            SearchScopes::BOOKMARK,
+            bm_style,
+            search,
+        );
     }
 
     // Remote bookmarks (name@remote, shown when no local bookmark covers them)
@@ -364,7 +374,13 @@ fn render_commit_item<'a>(
         .add_modifier(Modifier::BOLD);
     for tag in &c.tags {
         line1.push(Span::raw(" "));
-        push_searchable(&mut line1, tag.as_str(), SearchScopes::TAG, tag_style, search);
+        push_searchable(
+            &mut line1,
+            tag.as_str(),
+            SearchScopes::TAG,
+            tag_style,
+            search,
+        );
     }
 
     // Workspace annotations (non-current workspaces shown as "name@")
@@ -395,22 +411,19 @@ fn render_commit_item<'a>(
 
     // Hidden indicator
     if c.is_hidden {
-        line1.push(Span::styled(
-            " (hidden)",
-            Style::default().fg(theme.text),
-        ));
+        line1.push(Span::styled(" (hidden)", Style::default().fg(theme.text)));
     }
 
     // --- Line 2: graph_cont  description ---
     let mut line2: Vec<Span<'static>> = Vec::new();
     line2.push(search_gutter(search_state, theme));
     // Continue visual + selection bars on line 2.
-    line2.push(if in_visual {
+    line2.push(if flags.in_visual {
         Span::styled("│", Style::default().fg(theme.accent))
     } else {
         Span::raw(" ")
     });
-    line2.push(if is_selected {
+    line2.push(if flags.is_selected {
         Span::styled("▎", Style::default().fg(theme.selection))
     } else {
         Span::raw(" ")
@@ -430,35 +443,32 @@ fn render_commit_item<'a>(
         ));
     }
     if c.is_merge {
-        line2.push(Span::styled(
-            "(merge) ",
-            Style::default().fg(theme.muted),
-        ));
+        line2.push(Span::styled("(merge) ", Style::default().fg(theme.muted)));
     }
 
     if let Some(desc) = &c.description {
         if c.is_empty {
-            line2.push(Span::styled(
-                "(empty) ",
-                Style::default().fg(theme.muted),
-            ));
+            line2.push(Span::styled("(empty) ", Style::default().fg(theme.muted)));
         }
         let desc_style = if c.is_empty {
             Style::default().fg(theme.muted)
         } else {
             Style::default().fg(theme.text)
         };
-        push_searchable(&mut line2, desc, SearchScopes::DESCRIPTION, desc_style, search);
+        push_searchable(
+            &mut line2,
+            desc,
+            SearchScopes::DESCRIPTION,
+            desc_style,
+            search,
+        );
     } else {
         let placeholder = if c.is_empty {
             "(empty)"
         } else {
             "(no description set)"
         };
-        line2.push(Span::styled(
-            placeholder,
-            Style::default().fg(theme.muted),
-        ));
+        line2.push(Span::styled(placeholder, Style::default().fg(theme.muted)));
     }
 
     ListItem::new(vec![Line::from(line1), Line::from(line2)])
@@ -507,7 +517,7 @@ fn render_file_line(
     ]);
     push_searchable(
         &mut spans,
-        &file.path,
+        file.path.as_str(),
         SearchScopes::PATH,
         Style::default().fg(theme.text),
         search,
@@ -518,8 +528,7 @@ fn render_file_line(
 fn render_diff_line(
     diff_line: &DiffLine,
     show_line_numbers: bool,
-    is_selected: bool,
-    in_visual: bool,
+    flags: &RenderFlags,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> ListItem<'static> {
@@ -539,8 +548,8 @@ fn render_diff_line(
     // Left margin: visual range bar │ + selection indicator ▎.
     let is_selectable = diff_line.kind.is_selectable();
     if is_selectable {
-        let bar = if in_visual { "│" } else { " " };
-        let sel = if is_selected { "▎" } else { " " };
+        let bar = if flags.in_visual { "│" } else { " " };
+        let sel = if flags.is_selected { "▎" } else { " " };
         spans.push(Span::styled(bar, Style::default().fg(theme.accent)));
         spans.push(Span::styled(sel, Style::default().fg(theme.selection)));
     } else {
@@ -558,7 +567,13 @@ fn render_diff_line(
             .unwrap_or_else(|| "    ".to_string());
         spans.push(Span::styled(format!("  {old} {new} "), line_num_style));
         spans.push(Span::styled(marker, style));
-        push_searchable(&mut spans, &diff_line.content, SearchScopes::LINE, style, search);
+        push_searchable(
+            &mut spans,
+            &diff_line.content,
+            SearchScopes::LINE,
+            style,
+            search,
+        );
     } else {
         // Original layout: fixed indent + marker + content
         let prefix = match diff_line.kind {
@@ -568,7 +583,13 @@ fn render_diff_line(
             DiffLineKind::Removed => "      -",
         };
         spans.push(Span::styled(prefix, style));
-        push_searchable(&mut spans, &diff_line.content, SearchScopes::LINE, style, search);
+        push_searchable(
+            &mut spans,
+            &diff_line.content,
+            SearchScopes::LINE,
+            style,
+            search,
+        );
     }
 
     ListItem::new(Line::from(spans))

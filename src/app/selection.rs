@@ -4,7 +4,7 @@ use super::App;
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::types::{
-    ChangeId, FileRef, FileSelectionState, Selection, SelectionKind, SmallVec,
+    ChangeId, FileRef, FileSelectionState, RepoPath, Selection, SelectionKind, SmallVec,
 };
 
 use super::Loadable;
@@ -12,7 +12,7 @@ use super::Loadable;
 impl App {
     /// Resolve entry + file indices to (change_id, file_path).
     /// Returns `None` if the file list isn't loaded yet.
-    fn resolve_file(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<(ChangeId, String)> {
+    fn resolve_file(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<(ChangeId, RepoPath)> {
         let change_id = self.entries[entry_idx].commit.unique_change_id();
         let files = self.files_for_entry(entry_idx)?;
         Some((change_id, files[file_idx.raw()].path.clone()))
@@ -95,7 +95,7 @@ impl App {
         self.selection.ensure_kind(SelectionKind::File);
 
         // Collect file paths upfront to avoid borrowing loaded file state across mutations.
-        let file_paths: Vec<String> = self
+        let file_paths: Vec<RepoPath> = self
             .files_for_entry(entry_idx)
             .into_iter()
             .flatten()

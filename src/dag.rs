@@ -1,7 +1,7 @@
 use compact_str::format_compact;
 use jiff::Timestamp;
 
-use crate::types::{ChangeId, CommitId, Str};
+use crate::types::{BookmarkName, ChangeId, CommitId, RemoteName, RepoPath, Str};
 
 /// A short display ID with a unique prefix highlighted.
 ///
@@ -66,10 +66,32 @@ pub struct LineStats {
     pub removed: u32,
 }
 
+/// Result of computing file-level changes for a commit.
+pub struct CommitDetails {
+    pub files: Vec<FileChange>,
+    pub stats: LineStats,
+    pub is_empty: bool,
+}
+
+/// Shortest unique prefix lengths for a commit's change and commit IDs.
+pub struct PrefixLengthUpdate {
+    pub change_display: String,
+    pub change_prefix_len: usize,
+    pub commit_display: String,
+    pub commit_prefix_len: usize,
+}
+
+/// Divergence and hidden status for a commit.
+pub struct DivergenceUpdate {
+    pub is_divergent: bool,
+    pub is_hidden: bool,
+    pub change_id_suffix: Option<usize>,
+}
+
 /// A local bookmark with its tracking status.
 pub struct BookmarkInfo {
     /// Bookmark name.
-    pub name: String,
+    pub name: BookmarkName,
     /// Whether the local bookmark differs from its tracked remote counterpart.
     pub is_dirty: bool,
 }
@@ -86,17 +108,17 @@ pub struct WorkspaceAnnotation {
 /// A bookmark name + remote pair (e.g., for track/untrack operations).
 #[derive(Debug, Clone)]
 pub struct BookmarkRef {
-    pub name: String,
-    pub remote: String,
+    pub name: BookmarkName,
+    pub remote: RemoteName,
 }
 
 /// A remote bookmark (e.g., `main@origin`).
 #[derive(Clone)]
 pub struct RemoteBookmarkInfo {
     /// Bookmark name (e.g., "main").
-    pub name: String,
+    pub name: BookmarkName,
     /// Remote name (e.g., "origin").
-    pub remote: String,
+    pub remote: RemoteName,
     /// Whether the remote target matches the local target.
     pub synced: bool,
 }
@@ -161,9 +183,7 @@ impl CommitInfo {
     /// Uses the full display string as the base.
     pub fn unique_change_id(&self) -> ChangeId {
         match self.change_id_suffix {
-            Some(suffix) => {
-                ChangeId::new(format_compact!("{}/{suffix}", self.change_id.display))
-            }
+            Some(suffix) => ChangeId::new(format_compact!("{}/{suffix}", self.change_id.display)),
             None => self.change_id.change_id(),
         }
     }
@@ -212,7 +232,7 @@ pub enum EdgeKind {
 
 /// A file changed in a commit.
 pub struct FileChange {
-    pub path: String,
+    pub path: RepoPath,
     pub status: FileStatus,
     pub has_conflict: bool,
 }

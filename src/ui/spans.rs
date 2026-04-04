@@ -5,7 +5,12 @@ use crate::dag::ShortId;
 use crate::theme::Theme;
 
 /// Push a `ShortId` as two spans: bright prefix + dimmed suffix.
-pub(super) fn push_short_id(spans: &mut Vec<Span<'static>>, id: &ShortId, color: Color, theme: &Theme) {
+pub(super) fn push_short_id(
+    spans: &mut Vec<Span<'static>>,
+    id: &ShortId,
+    color: Color,
+    theme: &Theme,
+) {
     let prefix = &id.display[..id.prefix_len.min(id.display.len())];
     let suffix = &id.display[id.prefix_len.min(id.display.len())..];
 

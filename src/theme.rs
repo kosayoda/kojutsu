@@ -75,15 +75,33 @@ impl Default for Theme {
     }
 }
 
-fn default_accent() -> Color { Color::Cyan }
-fn default_selection() -> Color { Color::Yellow }
-fn default_muted() -> Color { Color::DarkGray }
-fn default_text() -> Color { Color::White }
-fn default_error() -> Color { Color::Red }
-fn default_added() -> Color { Color::Green }
-fn default_change_id() -> Color { Color::Magenta }
-fn default_commit_id() -> Color { Color::Blue }
-fn default_selection_bg() -> Color { Color::Rgb(50, 50, 60) }
+fn default_accent() -> Color {
+    Color::Cyan
+}
+fn default_selection() -> Color {
+    Color::Yellow
+}
+fn default_muted() -> Color {
+    Color::DarkGray
+}
+fn default_text() -> Color {
+    Color::White
+}
+fn default_error() -> Color {
+    Color::Red
+}
+fn default_added() -> Color {
+    Color::Green
+}
+fn default_change_id() -> Color {
+    Color::Magenta
+}
+fn default_commit_id() -> Color {
+    Color::Blue
+}
+fn default_selection_bg() -> Color {
+    Color::Rgb(50, 50, 60)
+}
 
 /// Load config from `~/.config/kojutsu/config.toml` (or XDG equivalent).
 /// Returns defaults on any error (prints warnings to stderr on parse failures).
@@ -110,9 +128,11 @@ fn config_path() -> Option<PathBuf> {
 
 /// Path for user-wide persistent state (`~/.local/state/kojutsu/state.json`).
 pub fn state_path() -> Option<PathBuf> {
-    Some(dirs::state_dir()
-        .or_else(dirs::data_dir)?
-        .join("kojutsu/state.json"))
+    Some(
+        dirs::state_dir()
+            .or_else(dirs::data_dir)?
+            .join("kojutsu/state.json"),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -138,9 +158,8 @@ fn de_color<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Color, 
     match repr {
         ColorRepr::Indexed(i) => Ok(Color::Indexed(i)),
         ColorRepr::Rgb { r, g, b } => Ok(Color::Rgb(r, g, b)),
-        ColorRepr::Named(s) => parse_color_name(&s).ok_or_else(|| {
-            serde::de::Error::custom(format!("unknown color: {s}"))
-        }),
+        ColorRepr::Named(s) => parse_color_name(&s)
+            .ok_or_else(|| serde::de::Error::custom(format!("unknown color: {s}"))),
     }
 }
 

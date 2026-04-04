@@ -109,7 +109,7 @@ impl App {
 
                 let restored = diff_line_idx
                     .and_then(|li| {
-                        let fp = file_path.as_deref()?;
+                        let fp = file_path.as_ref()?;
                         find_row(&|r| match r {
                             DisplayRow::DiffLine {
                                 entry_idx: ei,
@@ -118,12 +118,12 @@ impl App {
                             } if *ei == entry_idx && *line_idx == li => self
                                 .files_for_entry(entry_idx)
                                 .and_then(|f| f.get(file_idx.raw()))
-                                .is_some_and(|f| f.path == fp),
+                                .is_some_and(|f| f.path == *fp),
                             _ => false,
                         })
                     })
                     .or_else(|| {
-                        let fp = file_path.as_deref()?;
+                        let fp = file_path.as_ref()?;
                         find_row(&|r| match r {
                             DisplayRow::FileChange {
                                 entry_idx: ei,
@@ -131,7 +131,7 @@ impl App {
                             } if *ei == entry_idx => self
                                 .files_for_entry(entry_idx)
                                 .and_then(|f| f.get(file_idx.raw()))
-                                .is_some_and(|f| f.path == fp),
+                                .is_some_and(|f| f.path == *fp),
                             _ => false,
                         })
                     })
@@ -151,7 +151,7 @@ impl App {
         if let Some(target) = self.jump_after_refresh.take() {
             match target {
                 JumpTarget::WorkingCopy => self.jump_to_working_copy(),
-                JumpTarget::Bookmark(name) => self.jump_to_bookmark(&name),
+                JumpTarget::Bookmark(ref name) => self.jump_to_bookmark(name),
             }
         }
 
@@ -188,25 +188,20 @@ impl App {
                     success: false,
                 };
             }
-            RepoResult::CommitDetailsLoaded {
-                commit_id,
-                files,
-                stats,
-                is_empty,
-            } => {
+            RepoResult::CommitDetailsLoaded { commit_id, details } => {
                 self.status_message = None;
                 // Update is_empty for this commit (may have been skipped
                 // during initial load for merge commits).
                 for entry in self.entries.iter_mut() {
                     if entry.commit.graph_id == commit_id {
-                        entry.commit.is_empty = is_empty;
+                        entry.commit.is_empty = details.is_empty;
                         break;
                     }
                 }
                 // Re-request diffs for files that were previously unfolded.
                 let change_id = self.change_id_for_commit_key(&commit_id);
                 if let Some(change_id) = &change_id {
-                    for file in &files {
+                    for file in &details.files {
                         let fold_key = super::FileFoldKey {
                             change_id: change_id.clone(),
                             path: file.path.clone(),
@@ -231,9 +226,9 @@ impl App {
                     }
                 }
                 self.file_states
-                    .insert(commit_id.clone(), Loadable::Loaded(files));
+                    .insert(commit_id.clone(), Loadable::Loaded(details.files));
                 self.commit_stats_states
-                    .insert(commit_id, Loadable::Loaded(stats));
+                    .insert(commit_id, Loadable::Loaded(details.stats));
                 self.rebuild_rows();
             }
             RepoResult::CommitDetailsFailed { commit_id, error } => {
@@ -283,25 +278,25 @@ impl App {
                 }
             }
             RepoResult::DivergenceInfo { updates } => {
-                for (commit_id, is_divergent, is_hidden, change_id_suffix) in updates {
+                for (commit_id, update) in updates {
                     for entry in self.entries.iter_mut() {
                         if entry.commit.graph_id == commit_id {
-                            entry.commit.is_divergent = is_divergent;
-                            entry.commit.is_hidden = is_hidden;
-                            entry.commit.change_id_suffix = change_id_suffix;
+                            entry.commit.is_divergent = update.is_divergent;
+                            entry.commit.is_hidden = update.is_hidden;
+                            entry.commit.change_id_suffix = update.change_id_suffix;
                             break;
                         }
                     }
                 }
             }
             RepoResult::PrefixLengths { updates } => {
-                for (commit_id, change_display, change_prefix_len, commit_display, commit_prefix_len) in updates {
+                for (commit_id, update) in updates {
                     for entry in self.entries.iter_mut() {
                         if entry.commit.graph_id == commit_id {
-                            entry.commit.change_id.display = change_display;
-                            entry.commit.change_id.prefix_len = change_prefix_len;
-                            entry.commit.commit_id.display = commit_display;
-                            entry.commit.commit_id.prefix_len = commit_prefix_len;
+                            entry.commit.change_id.display = update.change_display;
+                            entry.commit.change_id.prefix_len = update.change_prefix_len;
+                            entry.commit.commit_id.display = update.commit_display;
+                            entry.commit.commit_id.prefix_len = update.commit_prefix_len;
                             break;
                         }
                     }

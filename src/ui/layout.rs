@@ -36,10 +36,10 @@ pub(super) fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: &Them
             Line::from(vec![
                 Span::styled(
                     if let Some(preset) = app.active_preset.and_then(|i| app.presets.get(i)) {
-                    format!("revset ({}): ", preset.name)
-                } else {
-                    "revset: ".to_string()
-                },
+                        format!("revset ({}): ", preset.name)
+                    } else {
+                        "revset: ".to_string()
+                    },
                     Style::default().fg(theme.muted),
                 ),
                 Span::styled(&app.revset, Style::default().fg(theme.accent)),

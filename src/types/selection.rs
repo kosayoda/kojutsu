@@ -9,7 +9,7 @@ use crate::pluralize;
 #[derive(Clone)]
 pub struct VisualRange {
     pub change_id: ChangeId,
-    pub path: String,
+    pub path: super::id::RepoPath,
     pub start_line: DiffLineIdx,
     pub end_line: DiffLineIdx,
 }
@@ -270,7 +270,7 @@ impl Selection {
 
     /// Get the file path from any selection variant.
     pub fn path(&self) -> &str {
-        &self.file_ref().path
+        self.file_ref().path.as_str()
     }
 }
 

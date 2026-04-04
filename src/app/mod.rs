@@ -17,8 +17,8 @@ use crate::idx::{EntryIdx, FileIdx, IndexVec};
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo_service::RepoRequest;
 use crate::types::{
-    ChangeId, CommitId, DisplayRow, FollowUpOption, GlobalToggle, PendingCommand,
-    PendingCommitSelect, PendingSelection, SearchScopes, SearchState, SelectionContext,
+    BookmarkName, ChangeId, CommitId, DisplayRow, FollowUpOption, GlobalToggle, PendingCommand,
+    PendingCommitSelect, PendingSelection, RepoPath, SearchScopes, SearchState, SelectionContext,
     TargetOperation, VisualRange,
 };
 
@@ -69,13 +69,13 @@ pub enum Loadable<T> {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct FileDiffCacheKey {
     pub commit_id: CommitId,
-    pub path: String,
+    pub path: RepoPath,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct FileFoldKey {
     pub change_id: ChangeId,
-    pub path: String,
+    pub path: RepoPath,
 }
 
 impl<T> Loadable<T> {
@@ -141,7 +141,7 @@ pub enum JumpTarget {
     /// Jump to the working copy commit (@).
     WorkingCopy,
     /// Jump to the commit that has this local bookmark.
-    Bookmark(String),
+    Bookmark(BookmarkName),
 }
 
 /// The current interaction mode.
@@ -429,7 +429,11 @@ impl App {
             .map(|(idx, _)| self.change_id(idx))
     }
 
-    pub(crate) fn file_cache_key(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<FileDiffCacheKey> {
+    pub(crate) fn file_cache_key(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+    ) -> Option<FileDiffCacheKey> {
         let path = self
             .files_for_entry(entry_idx)?
             .get(file_idx.raw())?
@@ -441,7 +445,11 @@ impl App {
         })
     }
 
-    pub(crate) fn file_fold_key(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<FileFoldKey> {
+    pub(crate) fn file_fold_key(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+    ) -> Option<FileFoldKey> {
         let path = self
             .files_for_entry(entry_idx)?
             .get(file_idx.raw())?
@@ -505,8 +513,7 @@ impl App {
         if state.search_scopes != 0 {
             self.search_scopes = SearchScopes::from_bits_truncate(state.search_scopes);
         }
-        self.active_preset = state.active_preset
-            .filter(|&i| i < self.presets.len());
+        self.active_preset = state.active_preset.filter(|&i| i < self.presets.len());
     }
 
     /// Get the scroll offset from the list state.
@@ -520,4 +527,3 @@ impl App {
         self.revset_draft.as_deref().unwrap_or(&self.revset)
     }
 }
-

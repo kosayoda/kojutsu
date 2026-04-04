@@ -32,10 +32,11 @@ use jj_lib::merge::Diff;
 use jj_lib::repo_path::RepoPathBuf;
 
 use crate::dag::{
-    AuthorInfo, BookmarkInfo, CommitInfo, DagEntry, DiffLine, DiffLineKind, Edge, EdgeKind,
-    FileChange, FileStatus, LineStats, RemoteBookmarkInfo, ShortId,
+    AuthorInfo, BookmarkInfo, CommitDetails, CommitInfo, DagEntry, DiffLine, DiffLineKind,
+    DivergenceUpdate, Edge, EdgeKind, FileChange, FileStatus, LineStats, PrefixLengthUpdate,
+    RemoteBookmarkInfo, ShortId,
 };
-use crate::types::{ChangeId, CommitId as UiCommitId};
+use crate::types::{BookmarkName, ChangeId, CommitId as UiCommitId, RemoteName, RepoPath};
 
 /// Number of hex characters to show for change/commit IDs.
 const DISPLAY_ID_LEN: usize = 8;
@@ -344,8 +345,8 @@ impl JjRepo {
                     .entry(commit_id.clone())
                     .or_default()
                     .push(RemoteBookmarkInfo {
-                        name: symbol.name.as_str().to_string(),
-                        remote: symbol.remote.as_str().to_string(),
+                        name: BookmarkName::new(symbol.name.as_str()),
+                        remote: RemoteName::new(symbol.remote.as_str()),
                         synced,
                     });
             }
@@ -450,11 +451,9 @@ impl JjRepo {
     }
 
     /// Compute the file-level changes and line totals for a commit.
-    pub fn commit_details(
-        &self,
-        commit_hex_id: &str,
-    ) -> Result<(Vec<FileChange>, LineStats, bool)> {
+    pub fn commit_details(&self, commit_id: &UiCommitId) -> Result<CommitDetails> {
         let repo = self.repo.as_ref();
+        let commit_hex_id = commit_id.as_str();
         let commit_id = BackendCommitId::try_from_hex(commit_hex_id)
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
         let commit = repo
@@ -493,7 +492,7 @@ impl JjRepo {
 
             let has_conflict = !values.after.is_resolved();
             changes.push(FileChange {
-                path,
+                path: RepoPath::new(path),
                 status,
                 has_conflict,
             });
@@ -533,12 +532,17 @@ impl JjRepo {
         }
 
         let is_empty = changes.is_empty();
-        Ok((changes, stats, is_empty))
+        Ok(CommitDetails {
+            files: changes,
+            stats,
+            is_empty,
+        })
     }
 
     /// Compute the line-level diff for a single file in a commit.
-    pub fn file_diff(&self, commit_hex_id: &str, path: &str) -> Result<Vec<DiffLine>> {
+    pub fn file_diff(&self, commit_id: &UiCommitId, path: &RepoPath) -> Result<Vec<DiffLine>> {
         let repo = self.repo.as_ref();
+        let commit_hex_id = commit_id.as_str();
         let commit_id = BackendCommitId::try_from_hex(commit_hex_id)
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
         let commit = repo
@@ -548,7 +552,7 @@ impl JjRepo {
 
         let parent_tree = commit.parent_tree(repo).block_on()?;
         let commit_tree = commit.tree();
-        let repo_path = RepoPathBuf::from_internal_string(path)
+        let repo_path = RepoPathBuf::from_internal_string(path.as_str())
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
         let labels = ConflictLabels::unlabeled();
         let materialize_options = default_materialize_options();
@@ -717,7 +721,7 @@ impl JjRepo {
             .view()
             .local_bookmarks_for_commit(commit.id())
             .map(|(name, _)| BookmarkInfo {
-                name: name.as_str().to_string(),
+                name: BookmarkName::new(name.as_str()),
                 is_dirty: dirty_bookmarks.contains(name),
             })
             .collect();
@@ -771,17 +775,17 @@ impl JjRepo {
 
     /// Batch-compute `is_empty` for a set of commits (by hex ID).
     /// Used to compute emptiness for commits in the background.
-    pub fn compute_empty_statuses(&self, commit_hex_ids: &[String]) -> Vec<(String, bool)> {
-        commit_hex_ids
+    pub fn compute_empty_statuses(&self, commit_ids: &[UiCommitId]) -> Vec<(UiCommitId, bool)> {
+        commit_ids
             .iter()
-            .filter_map(|hex_id| {
-                let commit_id = BackendCommitId::try_from_hex(hex_id)?;
+            .filter_map(|id| {
+                let commit_id = BackendCommitId::try_from_hex(id.as_str())?;
                 let commit = self.repo.store().get_commit(&commit_id).ok()?;
                 let empty = commit
                     .is_empty(self.repo.as_ref())
                     .block_on()
                     .unwrap_or(false);
-                Some((hex_id.clone(), empty))
+                Some((id.clone(), empty))
             })
             .collect()
     }
@@ -791,8 +795,8 @@ impl JjRepo {
     /// Returns (commit_hex_id, change_display, change_prefix_len, commit_display, commit_prefix_len).
     pub fn compute_prefix_lengths(
         &self,
-        commit_hex_ids: &[String],
-    ) -> Result<Vec<(String, String, usize, String, usize)>> {
+        commit_ids: &[UiCommitId],
+    ) -> Result<Vec<(UiCommitId, PrefixLengthUpdate)>> {
         let repo = self.repo.as_ref();
         let extensions = RevsetExtensions::default();
         let fileset_aliases_map = FilesetAliasesMap::new();
@@ -821,10 +825,10 @@ impl JjRepo {
             .populate(repo)
             .wrap_err("failed to populate ID prefix index")?;
 
-        let results = commit_hex_ids
+        let results = commit_ids
             .iter()
-            .filter_map(|hex_id| {
-                let commit_id = BackendCommitId::try_from_hex(hex_id)?;
+            .filter_map(|id| {
+                let commit_id = BackendCommitId::try_from_hex(id.as_str())?;
                 let commit = repo.store().get_commit(&commit_id).ok()?;
 
                 let change_prefix_len = id_prefix_index
@@ -848,11 +852,13 @@ impl JjRepo {
                     .to_string();
 
                 Some((
-                    hex_id.clone(),
-                    change_display,
-                    change_prefix_len,
-                    commit_display,
-                    commit_prefix_len,
+                    id.clone(),
+                    PrefixLengthUpdate {
+                        change_display,
+                        change_prefix_len,
+                        commit_display,
+                        commit_prefix_len,
+                    },
                 ))
             })
             .collect();
@@ -864,12 +870,12 @@ impl JjRepo {
     /// Called in a background thread after the initial revset load.
     pub fn compute_divergence_info(
         repo: &Arc<ReadonlyRepo>,
-        commit_hex_ids: &[String],
-    ) -> Vec<(String, bool, bool, Option<usize>)> {
-        commit_hex_ids
+        commit_ids: &[UiCommitId],
+    ) -> Vec<(UiCommitId, DivergenceUpdate)> {
+        commit_ids
             .iter()
-            .filter_map(|hex_id| {
-                let commit_id = BackendCommitId::try_from_hex(hex_id)?;
+            .filter_map(|id| {
+                let commit_id = BackendCommitId::try_from_hex(id.as_str())?;
                 let commit = repo.store().get_commit(&commit_id).ok()?;
                 let resolved = repo.resolve_change_id(commit.change_id()).ok().flatten();
                 let is_divergent = resolved
@@ -879,10 +885,17 @@ impl JjRepo {
                 if !is_divergent && !is_hidden {
                     return None;
                 }
-                let suffix = resolved
+                let change_id_suffix = resolved
                     .as_ref()
                     .and_then(|targets| targets.find_offset(commit.id()));
-                Some((hex_id.clone(), is_divergent, is_hidden, suffix))
+                Some((
+                    id.clone(),
+                    DivergenceUpdate {
+                        is_divergent,
+                        is_hidden,
+                        change_id_suffix,
+                    },
+                ))
             })
             .collect()
     }

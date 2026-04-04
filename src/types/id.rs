@@ -3,67 +3,52 @@ pub type Str = compact_str::CompactString;
 /// A small vector optimized for the common 1-2 element case.
 pub type SmallVec<T> = smallvec::SmallVec<[T; 2]>;
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct ChangeId(Str);
+/// Define a newtype wrapper around `Str` (CompactString) with standard impls.
+macro_rules! define_str_newtype {
+    ($(#[$meta:meta])* $vis:vis $name:ident) => {
+        $(#[$meta])*
+        #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[repr(transparent)]
+        $vis struct $name(Str);
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[repr(transparent)]
-pub struct CommitId(Str);
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
 
-impl std::fmt::Display for ChangeId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
+        impl $name {
+            pub fn new(s: impl Into<Str>) -> Self { Self(s.into()) }
+            pub fn as_str(&self) -> &str { self.0.as_str() }
+        }
+    };
 }
 
-impl ChangeId {
-    pub fn new(s: impl Into<Str>) -> Self {
-        Self(s.into())
-    }
+define_str_newtype!(pub ChangeId);
+define_str_newtype!(pub CommitId);
+define_str_newtype!(pub BookmarkName);
+define_str_newtype!(pub RemoteName);
+define_str_newtype!(pub RepoPath);
 
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
-impl std::fmt::Display for CommitId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl CommitId {
-    pub fn new(s: impl Into<Str>) -> Self {
-        Self(s.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
-
+// Extra PartialEq impls for ID types used in comparisons with raw strings.
 impl PartialEq<String> for CommitId {
     fn eq(&self, other: &String) -> bool {
-        self.as_str().eq(other.as_str())
+        self.as_str() == other.as_str()
     }
 }
-
 impl PartialEq<str> for CommitId {
     fn eq(&self, other: &str) -> bool {
-        self.as_str().eq(other)
+        self.as_str() == other
     }
 }
-
 impl PartialEq<String> for ChangeId {
     fn eq(&self, other: &String) -> bool {
-        self.as_str().eq(other.as_str())
+        self.as_str() == other.as_str()
     }
 }
-
 impl PartialEq<str> for ChangeId {
     fn eq(&self, other: &str) -> bool {
-        self.as_str().eq(other)
+        self.as_str() == other
     }
 }
 
@@ -71,5 +56,5 @@ impl PartialEq<str> for ChangeId {
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct FileRef {
     pub change_id: ChangeId,
-    pub path: String,
+    pub path: RepoPath,
 }

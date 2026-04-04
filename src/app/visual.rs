@@ -2,13 +2,13 @@ use super::{App, PersistentVisualRange, VisualMode};
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::types::{
-    ChangeId, DisplayRow, FileRef, Selection, SelectionKind, VisualRange,
+    ChangeId, DisplayRow, FileRef, RepoPath, Selection, SelectionKind, VisualRange,
 };
 
 /// A single line within a visual selection range (used during toggle).
 struct LineSelection {
     change_id: ChangeId,
-    path: String,
+    path: RepoPath,
     old_line: Option<u32>,
     new_line: Option<u32>,
 }
@@ -113,12 +113,10 @@ impl App {
                 }
                 false
             }
-            Some(PersistentVisualRange::Commits(range)) => {
-                match self.rows.get(self.cursor) {
-                    Some(DisplayRow::CommitNode { entry_idx }) => range.contains(entry_idx),
-                    _ => false,
-                }
-            }
+            Some(PersistentVisualRange::Commits(range)) => match self.rows.get(self.cursor) {
+                Some(DisplayRow::CommitNode { entry_idx }) => range.contains(entry_idx),
+                _ => false,
+            },
             None => false,
         }
     }
@@ -244,7 +242,8 @@ impl App {
                     line_idx,
                 } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
                     // Skip context lines.
-                    if self.diff_lines(*entry_idx, *file_idx)
+                    if self
+                        .diff_lines(*entry_idx, *file_idx)
                         .and_then(|lines| lines.get(line_idx.raw()))
                         .is_some_and(|dl| dl.kind == DiffLineKind::Context)
                     {
@@ -271,7 +270,8 @@ impl App {
                     line_idx,
                 } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
                     // Skip context lines.
-                    if self.diff_lines(*entry_idx, *file_idx)
+                    if self
+                        .diff_lines(*entry_idx, *file_idx)
                         .and_then(|lines| lines.get(line_idx.raw()))
                         .is_some_and(|dl| dl.kind == DiffLineKind::Context)
                     {
@@ -531,9 +531,11 @@ impl App {
     }
 
     fn jump_cursor_to_commit(&mut self, entry_idx: EntryIdx) {
-        if let Some(pos) = self.rows.iter().position(|r| {
-            matches!(r, DisplayRow::CommitNode { entry_idx: e } if *e == entry_idx)
-        }) {
+        if let Some(pos) = self
+            .rows
+            .iter()
+            .position(|r| matches!(r, DisplayRow::CommitNode { entry_idx: e } if *e == entry_idx))
+        {
             self.cursor = pos;
         }
     }
