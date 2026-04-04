@@ -46,6 +46,7 @@ impl App {
         self.graph = IndexVec::from_vec(graph::render(entries.as_slice(), self.glyphs));
         self.visual = None;
         self.visual_persistent = None;
+        self.commit_index = super::build_commit_index(&entries);
         self.entries = entries;
 
         // Collect new CommitIds so we can prune stale caches.
@@ -192,11 +193,8 @@ impl App {
                 self.status_message = None;
                 // Update is_empty for this commit (may have been skipped
                 // during initial load for merge commits).
-                for entry in self.entries.iter_mut() {
-                    if entry.commit.graph_id == commit_id {
-                        entry.commit.is_empty = details.is_empty;
-                        break;
-                    }
+                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                    self.entries[idx].commit.is_empty = details.is_empty;
                 }
                 // Re-request diffs for files that were previously unfolded.
                 let change_id = self.change_id_for_commit_key(&commit_id);
@@ -280,35 +278,26 @@ impl App {
                 self.status_message = Some(message);
             }
             RepoResult::CommitEmpty { commit_id } => {
-                for entry in self.entries.iter_mut() {
-                    if entry.commit.graph_id == commit_id {
-                        entry.commit.is_empty = true;
-                        break;
-                    }
+                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                    self.entries[idx].commit.is_empty = true;
                 }
             }
             RepoResult::DivergenceInfo { updates } => {
                 for (commit_id, update) in updates {
-                    for entry in self.entries.iter_mut() {
-                        if entry.commit.graph_id == commit_id {
-                            entry.commit.is_divergent = update.is_divergent;
-                            entry.commit.is_hidden = update.is_hidden;
-                            entry.commit.change_id_suffix = update.change_id_suffix;
-                            break;
-                        }
+                    if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                        self.entries[idx].commit.is_divergent = update.is_divergent;
+                        self.entries[idx].commit.is_hidden = update.is_hidden;
+                        self.entries[idx].commit.change_id_suffix = update.change_id_suffix;
                     }
                 }
             }
             RepoResult::PrefixLengths { updates } => {
                 for (commit_id, update) in updates {
-                    for entry in self.entries.iter_mut() {
-                        if entry.commit.graph_id == commit_id {
-                            entry.commit.change_id.display = update.change_display;
-                            entry.commit.change_id.prefix_len = update.change_prefix_len;
-                            entry.commit.commit_id.display = update.commit_display;
-                            entry.commit.commit_id.prefix_len = update.commit_prefix_len;
-                            break;
-                        }
+                    if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                        self.entries[idx].commit.change_id.display = update.change_display;
+                        self.entries[idx].commit.change_id.prefix_len = update.change_prefix_len;
+                        self.entries[idx].commit.commit_id.display = update.commit_display;
+                        self.entries[idx].commit.commit_id.prefix_len = update.commit_prefix_len;
                     }
                 }
             }

@@ -259,6 +259,8 @@ impl AppMode {
 /// Application state. Pure data -- no I/O, no rendering.
 pub struct App {
     pub entries: IndexVec<EntryIdx, DagEntry>,
+    /// Lookup from commit graph_id → entry index (rebuilt when entries change).
+    pub commit_index: HashMap<CommitId, EntryIdx>,
     pub graph: IndexVec<EntryIdx, GraphLines>,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
@@ -340,9 +342,11 @@ impl App {
         glyphs: &'static crate::theme::GlyphChars,
     ) -> Self {
         let entries = IndexVec::from_vec(entries);
+        let commit_index = build_commit_index(&entries);
         let graph = IndexVec::from_vec(graph::render(entries.as_slice(), glyphs));
         let mut app = Self {
             entries,
+            commit_index,
             graph,
             rows: Vec::new(),
             cursor: 0,
@@ -536,4 +540,18 @@ impl App {
     pub fn revset_input_text(&self) -> &str {
         self.revset_draft.as_deref().unwrap_or(&self.revset)
     }
+
+    /// Look up the entry index for a commit by its graph_id.
+    pub fn entry_by_commit_id(&self, commit_id: &CommitId) -> Option<EntryIdx> {
+        self.commit_index.get(commit_id).copied()
+    }
+}
+
+fn build_commit_index(
+    entries: &IndexVec<EntryIdx, DagEntry>,
+) -> HashMap<CommitId, EntryIdx> {
+    entries
+        .iter_enumerated()
+        .map(|(idx, e)| (e.commit.graph_id.clone(), idx))
+        .collect()
 }
