@@ -200,6 +200,7 @@ fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
 
 const STDIN_TOKEN: mio::Token = mio::Token(0);
 const WAKE_TOKEN: mio::Token = mio::Token(1);
+const SIGNAL_TOKEN: mio::Token = mio::Token(2);
 
 fn spawn_terminal_events(event_tx: mpsc::Sender<AppEvent>) -> TerminalEvents {
     let poll = mio::Poll::new().expect("failed to create mio Poll");
@@ -215,7 +216,14 @@ fn spawn_terminal_events(event_tx: mpsc::Sender<AppEvent>) -> TerminalEvents {
             .register(&mut source, STDIN_TOKEN, mio::Interest::READABLE)
             .expect("failed to register stdin");
 
-        let mut events = mio::Events::with_capacity(2);
+        // Register SIGWINCH so terminal resize wakes the poll.
+        let mut signals = signal_hook_mio::v1_0::Signals::new([signal_hook::consts::SIGWINCH])
+            .expect("failed to register SIGWINCH");
+        poll.registry()
+            .register(&mut signals, SIGNAL_TOKEN, mio::Interest::READABLE)
+            .expect("failed to register signal source");
+
+        let mut events = mio::Events::with_capacity(4);
         loop {
             if poll.poll(&mut events, None).is_err() {
                 break;
@@ -223,6 +231,16 @@ fn spawn_terminal_events(event_tx: mpsc::Sender<AppEvent>) -> TerminalEvents {
             for ev in &events {
                 match ev.token() {
                     WAKE_TOKEN => return,
+                    SIGNAL_TOKEN => {
+                        // Drain pending signals and send a Resize event.
+                        for _sig in signals.pending() {}
+                        // Query the actual terminal size.
+                        if let Ok((cols, rows)) = crossterm::terminal::size() {
+                            let _ = event_tx.send(AppEvent::Terminal(
+                                Event::Resize(cols, rows),
+                            ));
+                        }
+                    }
                     STDIN_TOKEN => {
                         // Read the first event, then drain any events
                         // crossterm buffered internally since mio won't

@@ -38,6 +38,8 @@ pollster = "0.4"
 sapling-renderdag = "0.1"
 # Safe signal handling (ignore SIGINT while child processes run)
 signal-hook = "0.3"
+# mio adapter for signal-hook (SIGWINCH → mio event)
+signal-hook-mio = "0.2"
 # Serialization (required by keymap_parser, future config files)
 serde = { version = "1", features = ["derive"] }
 # Shell argument quoting for display strings
