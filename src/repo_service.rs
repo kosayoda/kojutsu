@@ -81,6 +81,10 @@ pub enum RepoResult {
         path: RepoPath,
         error: String,
     },
+    /// A background computation thread panicked or failed.
+    BackgroundError {
+        error: String,
+    },
 }
 
 impl RepoRequest {
@@ -280,8 +284,8 @@ impl RepoServiceState {
                 {
                     let empty_ids = all_ids.clone();
                     let inner = repo.inner_repo();
-                    let empty_tx = self.result_tx.clone();
-                    thread::spawn(move || {
+                    let tx = self.result_tx.clone();
+                    spawn_background(self.result_tx.clone(), move || {
                         for id in &empty_ids {
                             let Some(backend_id) =
                                 jj_lib::backend::CommitId::try_from_hex(id.as_str())
@@ -292,7 +296,7 @@ impl RepoServiceState {
                                 continue;
                             };
                             if commit.is_empty(inner.as_ref()).block_on().unwrap_or(false) {
-                                let _ = empty_tx.send(RepoResult::CommitEmpty {
+                                let _ = tx.send(RepoResult::CommitEmpty {
                                     commit_id: id.clone(),
                                 });
                             }
@@ -304,28 +308,39 @@ impl RepoServiceState {
                 {
                     let inner = repo.inner_repo();
                     let div_ids = all_ids.clone();
-                    let div_tx = self.result_tx.clone();
-                    thread::spawn(move || {
+                    let tx = self.result_tx.clone();
+                    spawn_background(self.result_tx.clone(), move || {
                         let updates = JjRepo::compute_divergence_info(&inner, &div_ids);
                         if !updates.is_empty() {
-                            let _ = div_tx.send(RepoResult::DivergenceInfo { updates });
+                            let _ = tx.send(RepoResult::DivergenceInfo { updates });
                         }
                     });
                 }
 
                 // Spawn background thread to compute shortest unique ID prefixes.
                 {
-                    let prefix_tx = self.result_tx.clone();
+                    let tx = self.result_tx.clone();
                     let repo_path = self.repo_path.clone();
-                    thread::spawn(move || {
-                        let Ok(bg_repo) = JjRepo::open(&repo_path) else {
-                            return;
+                    spawn_background(self.result_tx.clone(), move || {
+                        let bg_repo = match JjRepo::open(&repo_path) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                let _ = tx.send(RepoResult::BackgroundError {
+                                    error: format!("prefix lengths: {e:#}"),
+                                });
+                                return;
+                            }
                         };
-                        let Ok(updates) = bg_repo.compute_prefix_lengths(&all_ids) else {
-                            return;
-                        };
-                        if !updates.is_empty() {
-                            let _ = prefix_tx.send(RepoResult::PrefixLengths { updates });
+                        match bg_repo.compute_prefix_lengths(&all_ids) {
+                            Ok(updates) if !updates.is_empty() => {
+                                let _ = tx.send(RepoResult::PrefixLengths { updates });
+                            }
+                            Err(e) => {
+                                let _ = tx.send(RepoResult::BackgroundError {
+                                    error: format!("prefix lengths: {e:#}"),
+                                });
+                            }
+                            _ => {}
                         }
                     });
                 }
@@ -427,4 +442,20 @@ impl RepoServiceState {
             let _ = self.result_tx.send(result);
         }
     }
+}
+
+/// Spawn a background thread with a panic handler that reports errors
+/// instead of silently dying.
+fn spawn_background(err_tx: Sender<RepoResult>, f: impl FnOnce() + Send + 'static) {
+    thread::spawn(move || {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+        if let Err(e) = result {
+            let msg = e
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| e.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "unknown panic".to_string());
+            let _ = err_tx.send(RepoResult::BackgroundError { error: msg });
+        }
+    });
 }

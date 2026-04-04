@@ -784,31 +784,29 @@ impl JJCommand {
                 .args(&args)
                 .arg("-R")
                 .arg(repo_path)
+                .arg("--color=always")
                 .current_dir(repo_path)
                 .stdin(std::process::Stdio::inherit())
                 .stdout(std::process::Stdio::inherit())
-                .stderr(std::process::Stdio::inherit())
-                .status()
+                // Capture stderr so error messages are available for display.
+                .stderr(std::process::Stdio::piped())
+                .output()
         });
 
         match result {
-            Ok(status) => {
-                let output = if was_interrupted || status.code().is_none() {
-                    b"interrupted".to_vec()
-                } else {
-                    Vec::new()
-                };
+            Ok(Output { status, .. }) if was_interrupted || status.code().is_none() => {
                 JJCommandResult {
                     display,
-                    output,
-                    success: status.success() && !was_interrupted,
+                    output: b"interrupted".to_vec(),
+                    success: false,
                 }
             }
-            Err(e) => JJCommandResult {
+            Ok(Output { stderr, status, .. }) => JJCommandResult {
                 display,
-                output: format!("failed to run jj: {e}").into_bytes(),
-                success: false,
+                output: stderr,
+                success: status.success(),
             },
+            Err(e) => jj_error(display, e),
         }
     }
 

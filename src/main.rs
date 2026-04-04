@@ -316,8 +316,9 @@ fn suspend_and_run(
         refresh_app(app);
     }
 
-    // If there was output (e.g. error), show it. Otherwise stay in Normal mode.
-    if !result.output.is_empty() {
+    // Show output if there is any, or if the command failed (so failures are
+    // always visible even when interactive commands print to inherited stdio).
+    if !result.success || !result.output.is_empty() {
         app.mode = AppMode::CommandOutput {
             command: result.display,
             output: result.output,

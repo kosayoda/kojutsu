@@ -236,8 +236,12 @@ impl App {
                 self.file_states
                     .insert(commit_id.clone(), Loadable::Failed(error.clone()));
                 self.commit_stats_states
-                    .insert(commit_id.clone(), Loadable::Failed(error));
-                self.status_message = Some(format!("failed to load files for {commit_id}"));
+                    .insert(commit_id.clone(), Loadable::Failed(error.clone()));
+                self.mode = AppMode::CommandOutput {
+                    command: format!("load files for {commit_id}"),
+                    output: error.into_bytes(),
+                    success: false,
+                };
                 self.rebuild_rows();
             }
             RepoResult::FileDiffLoaded {
@@ -263,9 +267,13 @@ impl App {
                         commit_id,
                         path: path.clone(),
                     },
-                    Loadable::Failed(error),
+                    Loadable::Failed(error.clone()),
                 );
-                self.status_message = Some(format!("failed to load diff for {path}"));
+                self.mode = AppMode::CommandOutput {
+                    command: format!("load diff for {path}"),
+                    output: error.into_bytes(),
+                    success: false,
+                };
                 self.rebuild_rows();
             }
             RepoResult::WorkspaceUpdatedStale { message } => {
@@ -303,6 +311,9 @@ impl App {
                         }
                     }
                 }
+            }
+            RepoResult::BackgroundError { error } => {
+                self.status_message = Some(format!("background task failed: {error}"));
             }
         }
     }
