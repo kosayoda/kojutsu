@@ -87,7 +87,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap, config: &
                 Some(AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. }) => {
                     keymap::select_mode_help_entries()
                 }
-                _ => keymap::help_entries(keymap),
+                _ => keymap::help_entries(keymap, app.presets),
             };
             let (left, right) = overlay::balance_help_groups(&groups);
             let left_h: usize = left.iter().map(|(_, e)| e.len() + 1).sum();

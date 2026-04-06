@@ -757,12 +757,21 @@ fn toggle_hint(action: AppAction) -> Option<&'static str> {
         .map(|t| t.hint)
 }
 
+/// Sort key: case-insensitive, but lowercase before uppercase.
+fn sort_key(keys: &str) -> (String, bool) {
+    let upper = keys.starts_with(|c: char| c.is_uppercase());
+    (keys.to_lowercase(), upper)
+}
+
 /// Generate grouped help entries from the keymap trie.
 ///
 /// Returns groups in order, each with its entries. Duplicate actions
 /// (multiple keys for the same action) are merged into one entry
 /// with keys joined by ` / `.
-pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
+pub fn help_entries(
+    keymap: &Keymap,
+    presets: &[crate::theme::Preset],
+) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
     // Collect raw entries, merging duplicate actions.
     let mut action_keys: Vec<(AppAction, Vec<String>, &'static str, HelpGroup)> = Vec::new();
     let mut prefix_entries: Vec<HelpEntry> = Vec::new();
@@ -812,17 +821,29 @@ pub fn help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
     // Convert action_keys into HelpEntries.
     let mut entries: Vec<HelpEntry> = action_keys
         .into_iter()
-        .map(|(_action, keys, desc, group)| HelpEntry {
-            keys: keys.join(" / "),
-            description: desc.to_string(),
-            group,
-            selection_support: selection_kind_set_for_action(_action),
+        .map(|(action, keys, desc, group)| {
+            let description = if let AppAction::SwitchPreset(idx) = action {
+                if let Some(preset) = presets.get(idx) {
+                    format!("{desc} ({name})", name = preset.name)
+                } else {
+                    desc.to_string()
+                }
+            } else {
+                desc.to_string()
+            };
+            HelpEntry {
+                keys: keys.join(" / "),
+                description,
+                group,
+                selection_support: selection_kind_set_for_action(action),
+            }
         })
         .collect();
     entries.extend(prefix_entries);
 
-    // Sort by group
-    entries.sort_by(|a, b| a.group.cmp(&b.group));
+    // Sort by group, then alphabetically by key within each group
+    // (lowercase before uppercase).
+    entries.sort_by(|a, b| a.group.cmp(&b.group).then(sort_key(&a.keys).cmp(&sort_key(&b.keys))));
 
     // Group into (HelpGroup, Vec<HelpEntry>).
     let mut groups: Vec<(HelpGroup, Vec<HelpEntry>)> = Vec::new();
@@ -853,7 +874,7 @@ pub fn select_mode_help_entries() -> Vec<(HelpGroup, Vec<HelpEntry>)> {
         }
     }
 
-    let nav = vec![
+    let mut nav = vec![
         h("j / down", "move down", N),
         h("k / up", "move up", N),
         h("J", "next commit", N),
@@ -868,12 +889,14 @@ pub fn select_mode_help_entries() -> Vec<(HelpGroup, Vec<HelpEntry>)> {
         h("ctrl-n", "next match", N),
         h("ctrl-p", "prev match", N),
     ];
+    nav.sort_by(|a, b| sort_key(&a.keys).cmp(&sort_key(&b.keys)));
 
-    let general = vec![
+    let mut general = vec![
         h("Enter", "confirm selection", G),
         h("Esc", "cancel", G),
         h("?", "help", G),
     ];
+    general.sort_by(|a, b| sort_key(&a.keys).cmp(&sort_key(&b.keys)));
 
     vec![(N, nav), (G, general)]
 }
