@@ -150,7 +150,6 @@ pub(super) fn draw_submenu(
     flags: CommandFlags,
     selection_suffix: Option<String>,
     selection: &SelectionContext,
-    error: Option<&str>,
     theme: &Theme,
 ) {
     // Build toggle indicators for the title bar.
@@ -186,16 +185,6 @@ pub(super) fn draw_submenu(
         format!(" {key} {display_label} ")
     };
 
-    // Error span for the title bar.
-    let error_spans: Vec<Span> = if let Some(err) = error {
-        vec![Span::styled(
-            format!(" {err} "),
-            Style::default().fg(theme.error),
-        )]
-    } else {
-        Vec::new()
-    };
-
     // Block with title on the border.
     let block = Block::default()
         .borders(Borders::TOP)
@@ -208,7 +197,6 @@ pub(super) fn draw_submenu(
                 .add_modifier(Modifier::BOLD),
         )
         .title(Line::from(toggle_spans))
-        .title(Line::from(error_spans))
         .title_alignment(Alignment::Left);
 
     let inner = block.inner(area);

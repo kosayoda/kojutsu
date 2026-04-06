@@ -59,6 +59,11 @@ pub fn save_persisted_state(state: &PersistedState) {
     }
 }
 
+pub enum StatusLevel {
+    Info,
+    Error,
+}
+
 pub enum Loadable<T> {
     NotRequested,
     Loading,
@@ -156,8 +161,6 @@ pub enum AppMode {
         label: &'static str,
         children: &'static [(keymap_parser::Node, KeymapNode)],
         flags: CommandFlags,
-        /// Error message shown in the title bar (e.g., unbound key).
-        error: Option<String>,
     },
     /// Showing the result of a shell command. Dismissed on next keypress.
     CommandOutput {
@@ -311,7 +314,7 @@ pub struct App {
     /// Display string of the last command executed (shown in status bar).
     pub last_command: Option<String>,
     /// Transient status notice shown in the status bar.
-    pub status_message: Option<String>,
+    pub status_message: Option<(String, StatusLevel)>,
     /// Mode to restore after an overlay (search/help) is dismissed.
     /// Used when search or help is entered from TargetSelect/CommitSelect.
     pub pre_overlay_mode: Option<AppMode>,
@@ -385,6 +388,14 @@ impl App {
         };
         app.rebuild_rows();
         app
+    }
+
+    pub fn set_status(&mut self, msg: impl Into<String>) {
+        self.status_message = Some((msg.into(), StatusLevel::Info));
+    }
+
+    pub fn set_error(&mut self, msg: impl Into<String>) {
+        self.status_message = Some((msg.into(), StatusLevel::Error));
     }
 
     /// Get the entry idx the cursor is on.

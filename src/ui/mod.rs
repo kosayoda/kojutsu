@@ -54,7 +54,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap, config: &
             label,
             children,
             flags,
-            error,
         } => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
@@ -67,7 +66,6 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap, config: &
                 *flags,
                 app.selection.submenu_suffix(),
                 &app.selection,
-                error.as_deref(),
                 theme,
             );
         }

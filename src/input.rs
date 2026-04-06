@@ -138,13 +138,12 @@ fn handle_normal_key(app: &mut App, keymap: &'static Keymap, node: &keymap_parse
                 label,
                 children,
                 flags: CommandFlags::empty(),
-                error: None,
             };
             Action::None
         }
         LookupResult::Toggle(_) => Action::None, // toggles only work inside submenus
         LookupResult::Unbound => {
-            app.status_message = Some(format!("unknown key: {}", keymap::display_key(node)));
+            app.set_error(format!("unknown key: {}", keymap::display_key(node)));
             Action::None
         }
     }
@@ -169,9 +168,9 @@ fn handle_submenu_key(
             dispatch_action(app, action, flags)
         }
         LookupResult::Toggle(flag) => {
-            if let AppMode::Submenu { flags, error, .. } = &mut app.mode {
+            if let AppMode::Submenu { flags, .. } = &mut app.mode {
                 flags.toggle(flag);
-                *error = None;
+                app.status_message = None;
             }
             Action::None
         }
@@ -181,14 +180,11 @@ fn handle_submenu_key(
                 label,
                 children,
                 flags,
-                error: None,
             };
             Action::None
         }
         LookupResult::Unbound => {
-            if let AppMode::Submenu { error, .. } = &mut app.mode {
-                *error = Some(format!("unknown key: {}", keymap::display_key(node)));
-            }
+            app.set_error(format!("unknown key: {}", keymap::display_key(node)));
             Action::None
         }
     }
@@ -379,7 +375,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::Refresh => Action::Refresh,
         AppAction::SelectPreset => {
             if app.presets.is_empty() {
-                app.status_message = Some("no presets configured".to_string());
+                app.set_status("no presets configured");
                 return Action::None;
             }
             let items: Vec<String> = app.presets.iter().map(|p| p.name.clone()).collect();
@@ -448,7 +444,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 );
                 Action::None
             } else {
-                app.status_message = Some("no other workspace on this commit".to_string());
+                app.set_status("no other workspace on this commit");
                 Action::None
             }
         }
@@ -663,7 +659,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::GitPushBookmark => {
             let bookmarks = app.selected_bookmarks().unwrap_or(&[]);
             if bookmarks.is_empty() {
-                app.status_message = Some("no bookmarks on this commit".to_string());
+                app.set_status("no bookmarks on this commit");
                 return Action::None;
             }
             let items: Vec<String> = bookmarks.iter().map(|b| b.name.to_string()).collect();
@@ -1090,7 +1086,7 @@ fn enter_remote_bookmark_select(
     on_select: PendingSelection,
 ) -> Action {
     if bookmarks.is_empty() {
-        app.status_message = Some(empty_msg.to_string());
+        app.set_status(empty_msg);
         return Action::None;
     }
     let items = bookmarks.to_vec();
@@ -1211,7 +1207,7 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
     };
     let bookmarks = app.selected_bookmarks().unwrap_or(&[]);
     if bookmarks.is_empty() {
-        app.status_message = Some("no bookmarks on this commit".to_string());
+        app.set_status("no bookmarks on this commit");
         return Action::None;
     }
 
@@ -1229,7 +1225,7 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
 fn enter_tag_delete(app: &mut App, flags: CommandFlags) -> Action {
     let tags = app.selected_tags().unwrap_or(&[]);
     if tags.is_empty() {
-        app.status_message = Some("no tags on this commit".to_string());
+        app.set_status("no tags on this commit");
         return Action::None;
     }
     let items: Vec<String> = tags.iter().map(|t| t.to_string()).collect();

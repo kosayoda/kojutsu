@@ -182,7 +182,7 @@ impl App {
                 self.pending_revset = None;
                 self.revset_draft = Some(revset);
                 self.revset_state = Loadable::Failed(error.clone());
-                self.status_message = Some("failed to load revset".to_string());
+                self.set_error("failed to load revset");
                 self.mode = AppMode::CommandOutput {
                     command: "revset error".to_string(),
                     output: error.into_bytes(),
@@ -275,7 +275,7 @@ impl App {
                 self.rebuild_rows();
             }
             RepoResult::WorkspaceUpdatedStale { message } => {
-                self.status_message = Some(message);
+                self.set_status(message);
             }
             RepoResult::CommitEmpty { commit_id } => {
                 if let Some(idx) = self.entry_by_commit_id(&commit_id) {
@@ -302,7 +302,7 @@ impl App {
                 }
             }
             RepoResult::BackgroundError { error } => {
-                self.status_message = Some(format!("background task failed: {error}"));
+                self.set_error(format!("background task failed: {error}"));
             }
         }
     }

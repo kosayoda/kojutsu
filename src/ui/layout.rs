@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::app::{App, GLOBAL_TOGGLES};
+use crate::app::{App, StatusLevel, GLOBAL_TOGGLES};
 use crate::theme::Theme;
 
 /// Minimum separator between repo and revset when on a single line.
@@ -92,19 +92,26 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let content = if let Some(search) = &app.search {
+    let (content, color) = if let Some(search) = &app.search {
         let pos = search.current_match.map(|i| i + 1).unwrap_or(0);
-        format!(
-            "search: {} ({}/{})",
-            search.query(),
-            pos,
-            search.matches.len()
+        (
+            format!(
+                "search: {} ({}/{})",
+                search.query(),
+                pos,
+                search.matches.len()
+            ),
+            theme.muted,
         )
-    } else if let Some(status) = &app.status_message {
-        status.clone()
+    } else if let Some((status, level)) = &app.status_message {
+        let c = match level {
+            StatusLevel::Info => theme.muted,
+            StatusLevel::Error => theme.error,
+        };
+        (status.clone(), c)
     } else {
-        app.last_command.clone().unwrap_or_default()
+        (app.last_command.clone().unwrap_or_default(), theme.muted)
     };
-    let line = Line::from(Span::styled(content, Style::default().fg(theme.muted)));
+    let line = Line::from(Span::styled(content, Style::default().fg(color)));
     frame.render_widget(Paragraph::new(line), inner);
 }
