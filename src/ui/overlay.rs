@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
@@ -196,8 +196,7 @@ pub(super) fn draw_submenu(
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         )
-        .title(Line::from(toggle_spans))
-        .title_alignment(Alignment::Left);
+        .title(Line::from(toggle_spans));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -376,9 +375,7 @@ pub(super) fn draw_target_select(
 }
 
 pub(super) fn draw_commit_select(frame: &mut Frame, area: Rect, prompt: &str, theme: &Theme) {
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme.muted));
+    let block = top_border(theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -404,9 +401,7 @@ pub(super) fn draw_follow_up(
     options: &[FollowUpOption],
     theme: &Theme,
 ) {
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme.muted));
+    let block = top_border(theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 

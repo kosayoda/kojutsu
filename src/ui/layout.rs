@@ -1,4 +1,4 @@
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
@@ -81,8 +81,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         .border_style(Style::default().fg(theme.muted))
         .title("")
         .title(" Status ")
-        .title_style(Style::default().fg(theme.accent).bold())
-        .title_alignment(Alignment::Left)
+        .title_style(Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))
         .title(Line::from(toggle_spans))
         .title(
             Line::from(Span::styled(" ? Help ", Style::default().fg(theme.text))).right_aligned(),
