@@ -27,10 +27,21 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         _ => None,
     };
 
+    let search_case_sensitive = app
+        .search
+        .as_ref()
+        .is_some_and(|s| s.query().chars().any(|c| c.is_ascii_uppercase()));
+    let query_lowered = app.search.as_ref().map(|s| {
+        if search_case_sensitive {
+            s.query().to_string()
+        } else {
+            s.query().to_lowercase()
+        }
+    });
     let search_ctx = app.search.as_ref().map(|s| SearchRender {
-        query: s.query(),
+        query_lower: query_lowered.as_deref().unwrap_or(""),
         scopes: s.scopes,
-        case_sensitive: s.query().chars().any(|c| c.is_ascii_uppercase()),
+        case_sensitive: search_case_sensitive,
         row_state: SearchRowState::None,
     });
 
@@ -259,14 +270,14 @@ fn render_commit_item<'a>(
     };
     if let Some(search) = search {
         if search.scopes.contains(SearchScopes::CHANGE_ID)
-            && contains_query(&change_id_text, search.query, search.case_sensitive)
+            && contains_query(&change_id_text, search.query_lower, search.case_sensitive)
         {
             push_highlighted_short_id(
                 &mut line1,
                 &c.change_id,
                 c.change_id_suffix.map(|s| format!("/{s}")),
                 change_color,
-                search.query,
+                search.query_lower,
                 search.case_sensitive,
                 theme,
             );
@@ -323,7 +334,7 @@ fn render_commit_item<'a>(
         if search.scopes.contains(SearchScopes::COMMIT_ID)
             && contains_query(
                 c.commit_id.display.as_str(),
-                search.query,
+                search.query_lower,
                 search.case_sensitive,
             )
         {
@@ -332,7 +343,7 @@ fn render_commit_item<'a>(
                 &c.commit_id,
                 None,
                 theme.commit_id,
-                search.query,
+                search.query_lower,
                 search.case_sensitive,
                 theme,
             );
@@ -563,16 +574,20 @@ fn render_diff_line(
         spans.push(Span::raw("  "));
     }
     if show_line_numbers && diff_line.kind != DiffLineKind::Header {
-        // "  {old:>4} {new:>4} {marker}{content}"
-        let old = diff_line
-            .old_line
-            .map(|n| format!("{n:>4}"))
-            .unwrap_or_else(|| "    ".to_string());
-        let new = diff_line
-            .new_line
-            .map(|n| format!("{n:>4}"))
-            .unwrap_or_else(|| "    ".to_string());
-        spans.push(Span::styled(format!("  {old} {new} "), line_num_style));
+        use std::fmt::Write;
+        let mut nums = String::with_capacity(14);
+        write!(nums, "  ").unwrap();
+        match diff_line.old_line {
+            Some(n) => write!(nums, "{n:>4}").unwrap(),
+            None => write!(nums, "    ").unwrap(),
+        }
+        write!(nums, " ").unwrap();
+        match diff_line.new_line {
+            Some(n) => write!(nums, "{n:>4}").unwrap(),
+            None => write!(nums, "    ").unwrap(),
+        }
+        write!(nums, " ").unwrap();
+        spans.push(Span::styled(nums, line_num_style));
         spans.push(Span::styled(marker, style));
         push_searchable(
             &mut spans,

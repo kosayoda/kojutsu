@@ -14,7 +14,8 @@ pub(super) enum SearchRowState {
 
 #[derive(Clone, Copy)]
 pub(super) struct SearchRender<'a> {
-    pub query: &'a str,
+    /// Pre-lowered query (equals the original query when case-sensitive).
+    pub query_lower: &'a str,
     pub scopes: SearchScopes,
     pub case_sensitive: bool,
     pub row_state: SearchRowState,
@@ -48,11 +49,11 @@ pub(super) fn search_gutter<'a>(state: SearchRowState, theme: &Theme) -> Span<'a
     }
 }
 
-pub(super) fn contains_query(haystack: &str, query: &str, case_sensitive: bool) -> bool {
+pub(super) fn contains_query(haystack: &str, needle: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
-        haystack.contains(query)
+        haystack.contains(needle)
     } else {
-        haystack.to_lowercase().contains(&query.to_lowercase())
+        haystack.to_lowercase().contains(needle)
     }
 }
 
@@ -65,32 +66,35 @@ pub(super) fn push_searchable(
     search: Option<&SearchRender<'_>>,
 ) {
     if let Some(s) = search {
-        if s.scopes.contains(scope) && contains_query(text, s.query, s.case_sensitive) {
-            push_highlighted(out, text, s.query, style, s.case_sensitive);
+        if s.scopes.contains(scope) && contains_query(text, s.query_lower, s.case_sensitive) {
+            push_highlighted(out, text, s.query_lower, style, s.case_sensitive);
             return;
         }
     }
     out.push(Span::styled(text.to_string(), style));
 }
 
+/// `needle` must already be lowercased when `case_sensitive` is false.
 pub(super) fn push_highlighted<'a>(
     out: &mut Vec<Span<'a>>,
     text: &str,
-    query: &str,
+    needle: &str,
     base: Style,
     case_sensitive: bool,
 ) {
-    if query.is_empty() {
+    if needle.is_empty() {
         out.push(Span::styled(text.to_string(), base));
         return;
     }
 
-    let (hay, needle) = if case_sensitive {
-        (text.to_string(), query.to_string())
+    let hay_lower;
+    let hay = if case_sensitive {
+        text
     } else {
-        (text.to_lowercase(), query.to_lowercase())
+        hay_lower = text.to_lowercase();
+        &hay_lower
     };
-    if let Some(start) = hay.find(&needle) {
+    if let Some(start) = hay.find(needle) {
         let end = start + needle.len();
         if start > 0 {
             out.push(Span::styled(text[..start].to_string(), base));

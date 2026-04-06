@@ -26,12 +26,13 @@ pub(super) fn push_short_id(
     }
 }
 
+/// `needle` must already be lowercased when `case_sensitive` is false.
 pub(super) fn push_highlighted_short_id(
     spans: &mut Vec<Span<'static>>,
     id: &ShortId,
     extra_suffix: Option<String>,
     color: Color,
-    query: &str,
+    needle: &str,
     case_sensitive: bool,
     theme: &Theme,
 ) {
@@ -40,12 +41,14 @@ pub(super) fn push_highlighted_short_id(
     let extra = extra_suffix.unwrap_or_default();
     let text = format!("{prefix}{suffix}{extra}");
 
-    let (hay, needle) = if case_sensitive {
-        (text.clone(), query.to_string())
+    let hay_lower;
+    let hay = if case_sensitive {
+        text.as_str()
     } else {
-        (text.to_lowercase(), query.to_lowercase())
+        hay_lower = text.to_lowercase();
+        hay_lower.as_str()
     };
-    let match_range = hay.find(&needle).map(|start| start..start + needle.len());
+    let match_range = hay.find(needle).map(|start| start..start + needle.len());
 
     let mut push_part = |part: &str, style: Style, global_start: usize| {
         if part.is_empty() {

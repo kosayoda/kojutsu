@@ -194,11 +194,18 @@ impl App {
 
     fn row_matches(&self, row_idx: usize, query: &str, scopes: SearchScopes) -> bool {
         let case_sensitive = query.chars().any(|c| c.is_ascii_uppercase());
+        let query_lower;
+        let needle = if case_sensitive {
+            query
+        } else {
+            query_lower = query.to_lowercase();
+            &query_lower
+        };
         let contains = |haystack: &str| {
             if case_sensitive {
-                haystack.contains(query)
+                haystack.contains(needle)
             } else {
-                haystack.to_lowercase().contains(&query.to_lowercase())
+                haystack.to_lowercase().contains(needle)
             }
         };
 
