@@ -384,6 +384,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 items,
                 false,
                 PendingSelection::PresetSelect,
+                false,
             );
             Action::None
         }
@@ -441,6 +442,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     workspaces,
                     true,
                     PendingSelection::WorkspaceForget { flags },
+                    false,
                 );
                 Action::None
             } else {
@@ -675,6 +677,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 items,
                 true,
                 PendingSelection::GitPushBookmark { flags },
+                false,
             );
             Action::None
         }
@@ -1090,7 +1093,7 @@ fn enter_remote_bookmark_select(
         return Action::None;
     }
     let items = bookmarks.to_vec();
-    app.mode = AppMode::select_from_list(title, items, true, on_select);
+    app.mode = AppMode::select_from_list(title, items, true, on_select, true);
     Action::None
 }
 
@@ -1218,7 +1221,7 @@ fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelect
         return resolve_selection(app, on_select, items.into());
     }
 
-    app.mode = AppMode::select_from_list(kind.title(), items, kind.is_multi(), on_select);
+    app.mode = AppMode::select_from_list(kind.title(), items, kind.is_multi(), on_select, false);
     Action::None
 }
 
@@ -1236,7 +1239,7 @@ fn enter_tag_delete(app: &mut App, flags: CommandFlags) -> Action {
         });
     }
     let on_select = PendingSelection::TagDelete { flags };
-    app.mode = AppMode::select_from_list("delete tag", items, true, on_select);
+    app.mode = AppMode::select_from_list("delete tag", items, true, on_select, false);
     Action::None
 }
 

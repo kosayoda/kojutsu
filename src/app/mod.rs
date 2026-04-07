@@ -242,6 +242,7 @@ impl AppMode {
         items: Vec<String>,
         multi: bool,
         on_select: PendingSelection,
+        focus_filter: bool,
     ) -> Self {
         let filtered_indices = (0..items.len()).collect();
         AppMode::SelectFromList {
@@ -253,7 +254,7 @@ impl AppMode {
             marked: HashSet::new(),
             multi,
             filter: String::new(),
-            filtering: false,
+            filtering: focus_filter,
             on_select,
         }
     }
