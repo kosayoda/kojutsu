@@ -399,6 +399,11 @@ impl App {
         self.status_message = Some((msg.into(), StatusLevel::Error));
     }
 
+    /// Whether the working copy (`@`) is visible in the current entries.
+    pub fn has_working_copy(&self) -> bool {
+        self.entries.iter().any(|e| e.commit.is_working_copy())
+    }
+
     /// Get the entry idx the cursor is on.
     pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
         let entry_idx = match self.rows.get(self.cursor)? {

@@ -133,6 +133,8 @@ impl App {
                 if self.entries[*entry_idx].commit.is_working_copy())
         }) {
             self.cursor = pos;
+        } else {
+            self.set_error("working copy not in current revset");
         }
     }
 

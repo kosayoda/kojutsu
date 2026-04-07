@@ -76,6 +76,14 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         ));
     }
 
+    let mut wc_spans: Vec<Span> = Vec::new();
+    if !app.has_working_copy() {
+        wc_spans.push(Span::styled(
+            " @ not visible ",
+            Style::default().fg(theme.warning),
+        ));
+    }
+
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.muted))
@@ -83,6 +91,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         .title(" Status ")
         .title_style(Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))
         .title(Line::from(toggle_spans))
+        .title(Line::from(wc_spans))
         .title(
             Line::from(Span::styled(" ? Help ", Style::default().fg(theme.text))).right_aligned(),
         )
