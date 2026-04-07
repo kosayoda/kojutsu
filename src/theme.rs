@@ -61,11 +61,21 @@ impl Default for GlyphChars {
     }
 }
 
-fn default_glyph_working_copy() -> char { '@' }
-fn default_glyph_conflict() -> char { '×' }
-fn default_glyph_immutable() -> char { '◆' }
-fn default_glyph_merge() -> char { '⊕' }
-fn default_glyph_normal() -> char { '○' }
+fn default_glyph_working_copy() -> char {
+    '@'
+}
+fn default_glyph_conflict() -> char {
+    '×'
+}
+fn default_glyph_immutable() -> char {
+    '◆'
+}
+fn default_glyph_merge() -> char {
+    '⊕'
+}
+fn default_glyph_normal() -> char {
+    '○'
+}
 
 impl GlyphChars {
     /// Get the character for a glyph variant.
@@ -111,7 +121,9 @@ pub struct DefaultSearchScopes {
     pub tag: bool,
 }
 
-fn yes() -> bool { true }
+fn yes() -> bool {
+    true
+}
 
 impl Default for DefaultSearchScopes {
     fn default() -> Self {
@@ -133,14 +145,30 @@ impl DefaultSearchScopes {
     pub fn to_flags(&self) -> crate::types::SearchScopes {
         use crate::types::SearchScopes;
         let mut flags = SearchScopes::empty();
-        if self.change_id { flags |= SearchScopes::CHANGE_ID; }
-        if self.commit_id { flags |= SearchScopes::COMMIT_ID; }
-        if self.description { flags |= SearchScopes::DESCRIPTION; }
-        if self.bookmark { flags |= SearchScopes::BOOKMARK; }
-        if self.author { flags |= SearchScopes::AUTHOR; }
-        if self.path { flags |= SearchScopes::PATH; }
-        if self.line { flags |= SearchScopes::LINE; }
-        if self.tag { flags |= SearchScopes::TAG; }
+        if self.change_id {
+            flags |= SearchScopes::CHANGE_ID;
+        }
+        if self.commit_id {
+            flags |= SearchScopes::COMMIT_ID;
+        }
+        if self.description {
+            flags |= SearchScopes::DESCRIPTION;
+        }
+        if self.bookmark {
+            flags |= SearchScopes::BOOKMARK;
+        }
+        if self.author {
+            flags |= SearchScopes::AUTHOR;
+        }
+        if self.path {
+            flags |= SearchScopes::PATH;
+        }
+        if self.line {
+            flags |= SearchScopes::LINE;
+        }
+        if self.tag {
+            flags |= SearchScopes::TAG;
+        }
         flags
     }
 }

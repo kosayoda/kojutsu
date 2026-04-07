@@ -843,7 +843,11 @@ pub fn help_entries(
 
     // Sort by group, then alphabetically by key within each group
     // (lowercase before uppercase).
-    entries.sort_by(|a, b| a.group.cmp(&b.group).then(sort_key(&a.keys).cmp(&sort_key(&b.keys))));
+    entries.sort_by(|a, b| {
+        a.group
+            .cmp(&b.group)
+            .then(sort_key(&a.keys).cmp(&sort_key(&b.keys)))
+    });
 
     // Group into (HelpGroup, Vec<HelpEntry>).
     let mut groups: Vec<(HelpGroup, Vec<HelpEntry>)> = Vec::new();

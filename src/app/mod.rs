@@ -564,9 +564,7 @@ impl App {
     }
 }
 
-fn build_commit_index(
-    entries: &IndexVec<EntryIdx, DagEntry>,
-) -> HashMap<CommitId, EntryIdx> {
+fn build_commit_index(entries: &IndexVec<EntryIdx, DagEntry>) -> HashMap<CommitId, EntryIdx> {
     entries
         .iter_enumerated()
         .map(|(idx, e)| (e.commit.graph_id.clone(), idx))

@@ -89,7 +89,11 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         .border_style(Style::default().fg(theme.muted))
         .title("")
         .title(" Status ")
-        .title_style(Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))
+        .title_style(
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )
         .title(Line::from(toggle_spans))
         .title(Line::from(wc_spans))
         .title(

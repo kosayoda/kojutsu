@@ -380,7 +380,13 @@ fn render_commit_item<'a>(
     for rb in &c.remote_bookmarks {
         line1.push(Span::raw(" "));
         let text = format!("{}@{}", rb.name, rb.remote);
-        push_searchable(&mut line1, &text, SearchScopes::BOOKMARK, remote_bm_style, search);
+        push_searchable(
+            &mut line1,
+            &text,
+            SearchScopes::BOOKMARK,
+            remote_bm_style,
+            search,
+        );
     }
 
     // Tags

@@ -236,9 +236,7 @@ fn spawn_terminal_events(event_tx: mpsc::Sender<AppEvent>) -> TerminalEvents {
                         for _sig in signals.pending() {}
                         // Query the actual terminal size.
                         if let Ok((cols, rows)) = crossterm::terminal::size() {
-                            let _ = event_tx.send(AppEvent::Terminal(
-                                Event::Resize(cols, rows),
-                            ));
+                            let _ = event_tx.send(AppEvent::Terminal(Event::Resize(cols, rows)));
                         }
                     }
                     STDIN_TOKEN => {
