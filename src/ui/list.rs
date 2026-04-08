@@ -49,8 +49,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     // Off-screen rows get a cheap placeholder — ratatui's List still sees
     // the correct total item count for scroll math.
     let offset = app.list_state.offset();
-    let vis_start = offset.saturating_sub(20);
-    let vis_end = (offset + area.height as usize + 20).min(app.rows.len());
+    let vis_start = offset.min(app.cursor).saturating_sub(20);
+    let vis_end = (offset.max(app.cursor) + area.height as usize + 20).min(app.rows.len());
 
     let items: Vec<ListItem> = app
         .rows
