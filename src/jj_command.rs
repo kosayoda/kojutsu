@@ -933,7 +933,7 @@ fn push_change_selection(args: &mut Vec<Str>, selection: &ChangeSelection) {
                 )),
                 "--config".into(),
                 Str::from(format!(
-                    "merge-tools.kojutsu-select.edit-args=[\"--apply-diff\", \"{}\", \"$left\", \"$right\"]",
+                    "merge-tools.kojutsu-select.edit-args=[\"--apply-diff\", {}, \"$left\", \"$right\"]",
                     toml_string_escape(&json_path.display().to_string())
                 )),
             ]);
