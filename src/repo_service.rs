@@ -28,7 +28,11 @@ pub struct RepoResponseHandle {
 enum RepoRequestKind {
     Revset { revset: Option<String> },
     Commit { commit_id: CommitId },
-    FileDiff { commit_id: CommitId, path: RepoPath },
+    FileDiff {
+        commit_id: CommitId,
+        path: RepoPath,
+        old_path: Option<RepoPath>,
+    },
 }
 
 #[derive(Clone)]
@@ -102,10 +106,18 @@ impl RepoRequest {
         }
     }
 
-    pub fn load_file_diff(commit_id: CommitId, path: RepoPath) -> Self {
+    pub fn load_file_diff(
+        commit_id: CommitId,
+        path: RepoPath,
+        old_path: Option<RepoPath>,
+    ) -> Self {
         Self {
             epoch: 0,
-            kind: RepoRequestKind::FileDiff { commit_id, path },
+            kind: RepoRequestKind::FileDiff {
+                commit_id,
+                path,
+                old_path,
+            },
         }
     }
 }
@@ -204,8 +216,12 @@ impl RepoServiceState {
             RepoRequestKind::Commit { commit_id } => {
                 self.handle_commit_details(epoch, commit_id);
             }
-            RepoRequestKind::FileDiff { commit_id, path } => {
-                self.handle_file_diff(epoch, commit_id, path);
+            RepoRequestKind::FileDiff {
+                commit_id,
+                path,
+                old_path,
+            } => {
+                self.handle_file_diff(epoch, commit_id, path, old_path);
             }
         }
     }
@@ -395,7 +411,13 @@ impl RepoServiceState {
         self.in_flight_commit_details.remove(&commit_id);
     }
 
-    fn handle_file_diff(&mut self, epoch: u64, commit_id: CommitId, path: RepoPath) {
+    fn handle_file_diff(
+        &mut self,
+        epoch: u64,
+        commit_id: CommitId,
+        path: RepoPath,
+        old_path: Option<RepoPath>,
+    ) {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
@@ -416,7 +438,7 @@ impl RepoServiceState {
             return;
         };
 
-        match repo.file_diff(&commit_id, &path) {
+        match repo.file_diff(&commit_id, &path, old_path.as_ref()) {
             Ok(lines) => self.send_if_current(
                 epoch,
                 RepoResult::FileDiffLoaded {

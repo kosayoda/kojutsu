@@ -513,6 +513,8 @@ fn render_file_line(
             FileStatus::Added => ("A", theme.added),
             FileStatus::Modified => ("M", theme.accent),
             FileStatus::Deleted => ("D", theme.error),
+            FileStatus::Renamed => ("R", theme.accent),
+            FileStatus::Copied => ("C", theme.added),
         }
     };
 
@@ -540,13 +542,31 @@ fn render_file_line(
         ),
         Span::raw(" "),
     ]);
-    push_searchable(
-        &mut spans,
-        file.path.as_str(),
-        SearchScopes::PATH,
-        Style::default().fg(theme.text),
-        search,
-    );
+    if let Some(old_path) = &file.old_path {
+        let (prefix, old_mid, new_mid, suffix) =
+            diff_path_parts(old_path.as_str(), file.path.as_str());
+        let muted = Style::default().fg(theme.muted);
+        let text = Style::default().fg(theme.text);
+        if !prefix.is_empty() {
+            spans.push(Span::styled(prefix.to_string(), text));
+        }
+        spans.push(Span::styled("{", muted));
+        spans.push(Span::styled(old_mid.to_string(), muted));
+        spans.push(Span::styled(" → ", muted));
+        push_searchable(&mut spans, new_mid, SearchScopes::PATH, text, search);
+        spans.push(Span::styled("}", muted));
+        if !suffix.is_empty() {
+            spans.push(Span::styled(suffix.to_string(), text));
+        }
+    } else {
+        push_searchable(
+            &mut spans,
+            file.path.as_str(),
+            SearchScopes::PATH,
+            Style::default().fg(theme.text),
+            search,
+        );
+    }
     ListItem::new(Line::from(spans))
 }
 
@@ -622,4 +642,40 @@ fn render_diff_line(
     }
 
     ListItem::new(Line::from(spans))
+}
+
+/// Factor out common directory prefix and suffix from a rename pair.
+/// Returns `(prefix, old_mid, new_mid, suffix)`.
+///
+/// `"src/old.rs"` → `"src/new.rs"` gives `("src/", "old.rs", "new.rs", "")`.
+/// `"a/foo/b/c.rs"` → `"a/bar/b/c.rs"` gives `("a/", "foo", "bar", "/b/c.rs")`.
+fn diff_path_parts<'a>(old: &'a str, new: &'a str) -> (&'a str, &'a str, &'a str, &'a str) {
+    // Common prefix, snapped to '/' boundary.
+    let shared_pre = old
+        .bytes()
+        .zip(new.bytes())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let pre = old[..shared_pre].rfind('/').map(|i| i + 1).unwrap_or(0);
+
+    // Common suffix from the remaining parts, snapped to '/' boundary.
+    let old_rest = &old[pre..];
+    let new_rest = &new[pre..];
+    let shared_suf = old_rest
+        .bytes()
+        .rev()
+        .zip(new_rest.bytes().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suf = old_rest[old_rest.len() - shared_suf..]
+        .find('/')
+        .map(|i| old_rest.len() - shared_suf + i)
+        .unwrap_or(old_rest.len());
+
+    (
+        &old[..pre],
+        &old[pre..pre + suf],
+        &new[pre..pre + (new_rest.len() - (old_rest.len() - suf))],
+        &old[pre + suf..],
+    )
 }

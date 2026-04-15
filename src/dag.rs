@@ -239,15 +239,19 @@ pub enum EdgeKind {
 #[derive(Clone)]
 pub struct FileChange {
     pub path: RepoPath,
+    /// Source path for renames/copies (the old location).
+    pub old_path: Option<RepoPath>,
     pub status: FileStatus,
     pub has_conflict: bool,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FileStatus {
     Added,
     Modified,
     Deleted,
+    Renamed,
+    Copied,
 }
 
 /// A single line of a unified diff.

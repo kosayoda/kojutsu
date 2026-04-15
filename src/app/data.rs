@@ -243,6 +243,7 @@ impl App {
                             self.pending_repo_requests.push(RepoRequest::load_file_diff(
                                 commit_id.clone(),
                                 file.path.clone(),
+                                file.old_path.clone(),
                             ));
                         }
                     }

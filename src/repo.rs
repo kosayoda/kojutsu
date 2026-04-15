@@ -471,10 +471,22 @@ impl JjRepo {
         let mut stats = LineStats::default();
         let labels = ConflictLabels::unlabeled();
         let materialize_options = default_materialize_options();
-        let mut diff_stream = parent_tree.diff_stream(&commit_tree, &EverythingMatcher);
+
+        // Build copy records for rename/copy detection.
+        let mut copy_records = jj_lib::copies::CopyRecords::default();
+        for parent_id in commit.parent_ids() {
+            if let Ok(stream) = repo.store().get_copy_records(None, parent_id, commit.id()) {
+                use futures::TryStreamExt as _;
+                let records: Vec<_> = stream.try_collect().block_on().unwrap_or_default();
+                copy_records.add_records(records);
+            }
+        }
+
+        let mut diff_stream =
+            parent_tree.diff_stream_with_copies(&commit_tree, &EverythingMatcher, &copy_records);
 
         while let Some(entry) = diff_stream.next().block_on() {
-            let path = entry.path.as_internal_file_string().to_string();
+            let target_path = entry.path.target().as_internal_file_string().to_string();
             let values = match entry.values {
                 Ok(v) => v,
                 Err(_) => continue,
@@ -483,31 +495,65 @@ impl JjRepo {
             let before_present = values.before.is_present();
             let after_present = values.after.is_present();
 
-            let status = match (before_present, after_present) {
-                (false, true) => FileStatus::Added,
-                (true, false) => FileStatus::Deleted,
-                (true, true) => FileStatus::Modified,
-                (false, false) => continue, // shouldn't happen
-            };
+            let (status, old_path) =
+                if let Some(copy_op) = entry.path.copy_operation() {
+                    match copy_op {
+                        jj_lib::copies::CopyOperation::Rename => (
+                            FileStatus::Renamed,
+                            entry
+                                .path
+                                .source
+                                .as_ref()
+                                .map(|(p, _)| RepoPath::new(p.as_internal_file_string())),
+                        ),
+                        jj_lib::copies::CopyOperation::Copy => (
+                            FileStatus::Copied,
+                            entry
+                                .path
+                                .source
+                                .as_ref()
+                                .map(|(p, _)| RepoPath::new(p.as_internal_file_string())),
+                        ),
+                    }
+                } else {
+                    match (before_present, after_present) {
+                        (false, true) => (FileStatus::Added, None),
+                        (true, false) => (FileStatus::Deleted, None),
+                        (true, true) => (FileStatus::Modified, None),
+                        (false, false) => continue,
+                    }
+                };
 
             let has_conflict = !values.after.is_resolved();
             changes.push(FileChange {
-                path: RepoPath::new(path),
+                path: RepoPath::new(&target_path),
+                old_path: old_path.clone(),
                 status,
                 has_conflict,
             });
 
+            // For stats: materialize before content from old path if renamed/copied.
+            let before_repo_path = old_path
+                .as_ref()
+                .and_then(|p| RepoPathBuf::from_internal_string(p.as_str()).ok())
+                .unwrap_or_else(|| {
+                    RepoPathBuf::from_internal_string(&target_path)
+                        .expect("target path is valid")
+                });
+            let after_repo_path =
+                RepoPathBuf::from_internal_string(&target_path).expect("target path is valid");
+
             let before_mat =
-                materialize_tree_value(repo.store(), &entry.path, values.before, &labels)
+                materialize_tree_value(repo.store(), &before_repo_path, values.before, &labels)
                     .block_on()?;
             let after_mat =
-                materialize_tree_value(repo.store(), &entry.path, values.after, &labels)
+                materialize_tree_value(repo.store(), &after_repo_path, values.after, &labels)
                     .block_on()?;
 
-            let before_part = git_diff_part(&entry.path, before_mat, &materialize_options)
+            let before_part = git_diff_part(&before_repo_path, before_mat, &materialize_options)
                 .block_on()
                 .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-            let after_part = git_diff_part(&entry.path, after_mat, &materialize_options)
+            let after_part = git_diff_part(&after_repo_path, after_mat, &materialize_options)
                 .block_on()
                 .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
 
@@ -540,7 +586,13 @@ impl JjRepo {
     }
 
     /// Compute the line-level diff for a single file in a commit.
-    pub fn file_diff(&self, commit_id: &UiCommitId, path: &RepoPath) -> Result<Vec<DiffLine>> {
+    /// For renamed/copied files, `old_path` provides the source path to diff against.
+    pub fn file_diff(
+        &self,
+        commit_id: &UiCommitId,
+        path: &RepoPath,
+        old_path: Option<&RepoPath>,
+    ) -> Result<Vec<DiffLine>> {
         let repo = self.repo.as_ref();
         let commit_hex_id = commit_id.as_str();
         let commit_id = BackendCommitId::try_from_hex(commit_hex_id)
@@ -554,10 +606,13 @@ impl JjRepo {
         let commit_tree = commit.tree();
         let repo_path = RepoPathBuf::from_internal_string(path.as_str())
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
+        let before_repo_path = old_path
+            .and_then(|p| RepoPathBuf::from_internal_string(p.as_str()).ok())
+            .unwrap_or_else(|| repo_path.clone());
         let labels = ConflictLabels::unlabeled();
         let materialize_options = default_materialize_options();
 
-        let before_value = parent_tree.path_value(&repo_path).block_on()?;
+        let before_value = parent_tree.path_value(&before_repo_path).block_on()?;
         let after_value = commit_tree.path_value(&repo_path).block_on()?;
 
         let before_mat =

@@ -192,9 +192,13 @@ impl App {
                 .get(fi)
                 .is_none_or(Loadable::should_request);
             if should_request {
-                if let Some(file) = self.files_for_entry(entry_idx).and_then(|f| f.get(fi)) {
+                // Clone file data before mutating nodes.
+                let file_info = self
+                    .files_for_entry(entry_idx)
+                    .and_then(|f| f.get(fi))
+                    .map(|f| (f.path.clone(), f.old_path.clone()));
+                if let Some((path, old_path)) = file_info {
                     let commit_id = self.commit_id(entry_idx).clone();
-                    let path = file.path.clone();
                     // Ensure diffs vec is large enough.
                     if fi >= self.nodes[entry_idx].diffs.len() {
                         self.nodes[entry_idx]
@@ -203,7 +207,7 @@ impl App {
                     }
                     self.nodes[entry_idx].diffs[fi] = Loadable::Loading;
                     self.pending_repo_requests
-                        .push(RepoRequest::load_file_diff(commit_id, path));
+                        .push(RepoRequest::load_file_diff(commit_id, path, old_path));
                 }
             }
             self.unfolded_files.insert(fold_key);
