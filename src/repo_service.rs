@@ -10,7 +10,7 @@ use pollster::FutureExt as _;
 
 use crate::dag::{CommitDetails, DagEntry, DiffLine, DivergenceUpdate, PrefixLengthUpdate};
 use crate::repo::JjRepo;
-use crate::types::{CommitId, RepoPath};
+use crate::types::{CommitId, RepoPath, Str};
 
 pub struct RepoService;
 
@@ -48,6 +48,7 @@ pub enum RepoResult {
         entries: Vec<DagEntry>,
         untracked_bookmarks: Vec<String>,
         tracked_bookmarks: Vec<String>,
+        remotes: Vec<Str>,
     },
     RevsetFailed {
         revset: String,
@@ -284,6 +285,7 @@ impl RepoServiceState {
 
                 let untracked_bookmarks = repo.untracked_remote_bookmarks();
                 let tracked_bookmarks = repo.tracked_remote_bookmarks();
+                let remotes = repo.git_remotes();
 
                 self.send_if_current(
                     epoch,
@@ -293,6 +295,7 @@ impl RepoServiceState {
                         entries,
                         untracked_bookmarks,
                         tracked_bookmarks,
+                        remotes,
                     },
                 );
 

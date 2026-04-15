@@ -193,6 +193,7 @@ impl App {
                 entries,
                 untracked_bookmarks,
                 tracked_bookmarks,
+                remotes,
             } => {
                 self.status_message = None;
                 self.revset = revset;
@@ -201,6 +202,7 @@ impl App {
                 self.repo_root = repo_root;
                 self.untracked_bookmarks = untracked_bookmarks;
                 self.tracked_bookmarks = tracked_bookmarks;
+                self.remotes = remotes;
                 self.revset_state = Loadable::Loaded(());
                 self.apply_entries(entries);
             }

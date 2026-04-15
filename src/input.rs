@@ -16,7 +16,7 @@ use smallvec::smallvec;
 use crate::types::{
     BookmarkName, ChangeId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode,
     PendingCommand, PendingCommitSelect, PendingSelection, RebaseSource, SelectionKind, SmallVec,
-    SplitKind, SquashKind, TargetOperation,
+    SplitKind, SquashKind, Str, TargetOperation,
 };
 
 /// Number of rows to jump for page-up/page-down style navigation.
@@ -642,21 +642,80 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::Redo => Action::RunJj(JJCommand::Redo { flags }),
 
         // Git commands (network ops suspend TUI for SSH auth / progress)
-        AppAction::GitFetch => Action::SuspendAndRunJj(JJCommand::GitFetch {
-            all_remotes: false,
-            flags,
-        }),
+        AppAction::GitFetch => {
+            if app.remotes.len() > 1 {
+                let items = app.remotes.iter().map(|r| r.to_string()).collect();
+                app.mode = AppMode::select_from_list(
+                    "fetch from remote",
+                    items,
+                    false,
+                    PendingSelection::GitRemoteForFetch {
+                        all_remotes: false,
+                        flags,
+                    },
+                    false,
+                );
+                Action::None
+            } else {
+                Action::SuspendAndRunJj(JJCommand::GitFetch {
+                    all_remotes: false,
+                    remote: None,
+                    flags,
+                })
+            }
+        }
         AppAction::GitFetchAllRemotes => Action::SuspendAndRunJj(JJCommand::GitFetch {
             all_remotes: true,
+            remote: None,
             flags,
         }),
-        AppAction::GitPush => Action::SuspendAndRunJj(JJCommand::GitPush { all: false, flags }),
-        AppAction::GitPushAll => Action::SuspendAndRunJj(JJCommand::GitPush { all: true, flags }),
+        AppAction::GitPush => {
+            if app.remotes.len() > 1 {
+                let items = app.remotes.iter().map(|r| r.to_string()).collect();
+                app.mode = AppMode::select_from_list(
+                    "push to remote",
+                    items,
+                    false,
+                    PendingSelection::GitRemoteForPush { all: false, flags },
+                    false,
+                );
+                Action::None
+            } else {
+                Action::SuspendAndRunJj(JJCommand::GitPush {
+                    all: false,
+                    remote: None,
+                    flags,
+                })
+            }
+        }
+        AppAction::GitPushAll => {
+            if app.remotes.len() > 1 {
+                let items = app.remotes.iter().map(|r| r.to_string()).collect();
+                app.mode = AppMode::select_from_list(
+                    "push all to remote",
+                    items,
+                    false,
+                    PendingSelection::GitRemoteForPush { all: true, flags },
+                    false,
+                );
+                Action::None
+            } else {
+                Action::SuspendAndRunJj(JJCommand::GitPush {
+                    all: true,
+                    remote: None,
+                    flags,
+                })
+            }
+        }
         AppAction::GitPushChange => {
             let Some(change_id) = app.selected_change_id() else {
                 return Action::None;
             };
-            Action::SuspendAndRunJj(JJCommand::GitPushChange { change_id, flags })
+            Action::SuspendAndRunJj(JJCommand::GitPushChange {
+                change_id,
+                remote: None,
+                flags,
+            })
         }
         AppAction::GitPushBookmark => {
             let bookmarks = app.selected_bookmarks().unwrap_or(&[]);
@@ -666,9 +725,25 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             }
             let items: Vec<String> = bookmarks.iter().map(|b| b.name.to_string()).collect();
             if items.len() == 1 {
-                let bookmark_names = bookmarks.iter().map(|b| b.name.clone()).collect();
+                let bookmark_names: SmallVec<BookmarkName> =
+                    bookmarks.iter().map(|b| b.name.clone()).collect();
+                if app.remotes.len() > 1 {
+                    let remote_items = app.remotes.iter().map(|r| r.to_string()).collect();
+                    app.mode = AppMode::select_from_list(
+                        "push bookmark to remote",
+                        remote_items,
+                        true,
+                        PendingSelection::GitRemoteForPushBookmark {
+                            bookmarks: bookmark_names,
+                            flags,
+                        },
+                        false,
+                    );
+                    return Action::None;
+                }
                 return Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
                     bookmarks: bookmark_names,
+                    remote: None,
                     flags,
                 });
             }
@@ -1495,8 +1570,48 @@ fn resolve_selection(
             flags,
         }),
         PendingSelection::GitPushBookmark { flags } => {
-            let bookmarks = names.into_iter().map(BookmarkName::new).collect();
-            Action::SuspendAndRunJj(JJCommand::GitPushBookmark { bookmarks, flags })
+            let bookmarks: SmallVec<BookmarkName> =
+                names.into_iter().map(BookmarkName::new).collect();
+            if app.remotes.len() > 1 {
+                let items = app.remotes.iter().map(|r| r.to_string()).collect();
+                app.mode = AppMode::select_from_list(
+                    "push bookmark to remote",
+                    items,
+                    false,
+                    PendingSelection::GitRemoteForPushBookmark { bookmarks, flags },
+                    false,
+                );
+                Action::None
+            } else {
+                Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
+                    bookmarks,
+                    remote: None,
+                    flags,
+                })
+            }
+        }
+        PendingSelection::GitRemoteForFetch {
+            all_remotes,
+            flags,
+        } => {
+            let remote = names.into_iter().next().map(Str::from);
+            Action::SuspendAndRunJj(JJCommand::GitFetch {
+                all_remotes,
+                remote,
+                flags,
+            })
+        }
+        PendingSelection::GitRemoteForPush { all, flags } => {
+            let remote = names.into_iter().next().map(Str::from);
+            Action::SuspendAndRunJj(JJCommand::GitPush { all, remote, flags })
+        }
+        PendingSelection::GitRemoteForPushBookmark { bookmarks, flags } => {
+            let remote = names.into_iter().next().map(Str::from);
+            Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
+                bookmarks,
+                remote,
+                flags,
+            })
         }
         PendingSelection::TagDelete { flags } => {
             Action::RunJj(JJCommand::TagDelete { names, flags })

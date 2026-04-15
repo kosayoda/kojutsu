@@ -140,18 +140,22 @@ pub enum JJCommand {
     },
     GitFetch {
         all_remotes: bool,
+        remote: Option<Str>,
         flags: CommandFlags,
     },
     GitPush {
         all: bool,
+        remote: Option<Str>,
         flags: CommandFlags,
     },
     GitPushChange {
         change_id: ChangeId,
+        remote: Option<Str>,
         flags: CommandFlags,
     },
     GitPushBookmark {
         bookmarks: SmallVec<BookmarkName>,
+        remote: Option<Str>,
         flags: CommandFlags,
     },
     GitExport {
@@ -506,17 +510,29 @@ impl JJCommand {
             }
             JJCommand::Undo { .. } => vec!["undo".into()],
             JJCommand::Redo { .. } => vec!["redo".into()],
-            JJCommand::GitFetch { all_remotes, .. } => {
+            JJCommand::GitFetch {
+                all_remotes,
+                remote,
+                ..
+            } => {
                 let mut args: Vec<Str> = vec!["git".into(), "fetch".into()];
                 if *all_remotes {
                     args.push("--all-remotes".into());
                 }
+                if let Some(r) = remote {
+                    args.push("--remote".into());
+                    args.push(r.clone());
+                }
                 args
             }
-            JJCommand::GitPush { all, .. } => {
+            JJCommand::GitPush { all, remote, .. } => {
                 let mut args: Vec<Str> = vec!["git".into(), "push".into()];
                 if *all {
                     args.push("--all".into());
+                }
+                if let Some(r) = remote {
+                    args.push("--remote".into());
+                    args.push(r.clone());
                 }
                 push_flags(
                     &mut args,
@@ -528,10 +544,18 @@ impl JJCommand {
                 );
                 args
             }
-            JJCommand::GitPushChange { change_id, .. } => {
+            JJCommand::GitPushChange {
+                change_id,
+                remote,
+                ..
+            } => {
                 let mut args: Vec<Str> = vec!["git".into(), "push".into()];
                 args.push("-c".into());
                 args.push(format_compact!("{change_id}"));
+                if let Some(r) = remote {
+                    args.push("--remote".into());
+                    args.push(r.clone());
+                }
                 push_flags(
                     &mut args,
                     flags,
@@ -542,11 +566,19 @@ impl JJCommand {
                 );
                 args
             }
-            JJCommand::GitPushBookmark { bookmarks, .. } => {
+            JJCommand::GitPushBookmark {
+                bookmarks,
+                remote,
+                ..
+            } => {
                 let mut args: Vec<Str> = vec!["git".into(), "push".into()];
                 for name in bookmarks {
                     args.push("--bookmark".into());
                     args.push(Str::from(name.as_str()));
+                }
+                if let Some(r) = remote {
+                    args.push("--remote".into());
+                    args.push(r.clone());
                 }
                 push_flags(
                     &mut args,

@@ -167,6 +167,16 @@ impl JjRepo {
             .collect()
     }
 
+    /// Unique git remote names, sorted alphabetically.
+    pub fn git_remotes(&self) -> Vec<crate::types::Str> {
+        use std::collections::BTreeSet;
+        self.remote_bookmarks()
+            .map(|(s, _)| crate::types::Str::from(s.remote.as_str()))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
     /// Build config stack: jj-lib defaults + vendored CLI defaults + user + repo.
     fn load_config(workspace_path: &Path) -> Result<StackedConfig> {
         let mut config = StackedConfig::with_defaults();

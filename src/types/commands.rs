@@ -42,6 +42,18 @@ pub enum PendingSelection {
     TagDelete { flags: CommandFlags },
     /// Switch to a named revset preset.
     PresetSelect,
+    /// Select a remote for git fetch.
+    GitRemoteForFetch {
+        all_remotes: bool,
+        flags: CommandFlags,
+    },
+    /// Select a remote for git push.
+    GitRemoteForPush { all: bool, flags: CommandFlags },
+    /// Select a remote for git push bookmark (bookmarks already chosen).
+    GitRemoteForPushBookmark {
+        bookmarks: SmallVec<BookmarkName>,
+        flags: CommandFlags,
+    },
 }
 
 /// What to do after selecting a single commit in CommitSelect mode.

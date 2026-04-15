@@ -312,6 +312,8 @@ pub struct App {
     pub untracked_bookmarks: Vec<String>,
     /// Remote bookmarks that are tracked (for bookmark untrack selection).
     pub tracked_bookmarks: Vec<String>,
+    /// Available git remote names.
+    pub remotes: Vec<crate::types::Str>,
     /// Current revset load status.
     pub revset_state: Loadable<()>,
     /// Revset currently being requested, if any.
@@ -376,6 +378,7 @@ impl App {
             unfolded_files: HashSet::new(),
             untracked_bookmarks: Vec::new(),
             tracked_bookmarks: Vec::new(),
+            remotes: Vec::new(),
             revset_state: Loadable::NotRequested,
             pending_revset: None,
             pending_repo_requests: Vec::new(),
