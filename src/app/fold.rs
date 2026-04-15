@@ -1,5 +1,5 @@
 use super::{App, Loadable};
-use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
+use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, IndexVec};
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
 
@@ -10,7 +10,9 @@ impl App {
         let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
 
         self.rows.clear();
+        let mut commit_row_index = IndexVec::new();
         for (entry_idx, gl) in self.graph.iter_enumerated() {
+            let _ = commit_row_index.push(self.rows.len());
             self.rows.push(DisplayRow::CommitNode { entry_idx });
 
             if self.is_commit_unfolded(entry_idx) {
@@ -47,6 +49,7 @@ impl App {
                 });
             }
         }
+        self.commit_row_index = commit_row_index;
 
         // Restore cursor: try exact match, then fall back to parent file,
         // then parent commit. This handles fold scenarios where the cursor

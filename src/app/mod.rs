@@ -265,9 +265,13 @@ pub struct App {
     pub entries: IndexVec<EntryIdx, DagEntry>,
     /// Lookup from commit graph_id → entry index (rebuilt when entries change).
     pub commit_index: HashMap<CommitId, EntryIdx>,
+    /// Reverse edge index: parent commit_id → child entry indices.
+    pub children_index: HashMap<CommitId, Vec<EntryIdx>>,
     pub graph: IndexVec<EntryIdx, GraphLines>,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
+    /// Lookup from entry index → row index of its CommitNode (rebuilt with rows).
+    pub commit_row_index: IndexVec<EntryIdx, usize>,
     /// Index into `rows` of the currently selected row.
     pub cursor: usize,
     /// Persisted list widget state (preserves scroll offset across frames).
@@ -347,12 +351,15 @@ impl App {
     ) -> Self {
         let entries = IndexVec::from_vec(entries);
         let commit_index = build_commit_index(&entries);
+        let children_index = build_children_index(&entries);
         let graph = IndexVec::from_vec(graph::render(entries.as_slice(), glyphs));
         let mut app = Self {
             entries,
             commit_index,
+            children_index,
             graph,
             rows: Vec::new(),
+            commit_row_index: IndexVec::new(),
             cursor: 0,
             list_state: ListState::default(),
             last_header_height: 2,
@@ -402,6 +409,11 @@ impl App {
     /// Whether the working copy (`@`) is visible in the current entries.
     pub fn has_working_copy(&self) -> bool {
         self.entries.iter().any(|e| e.commit.is_working_copy())
+    }
+
+    /// Row index of a commit's `CommitNode` in the display rows.
+    pub fn row_of_commit(&self, entry_idx: EntryIdx) -> Option<usize> {
+        self.commit_row_index.get(entry_idx).copied()
     }
 
     /// Get the entry idx the cursor is on.
@@ -569,4 +581,19 @@ fn build_commit_index(entries: &IndexVec<EntryIdx, DagEntry>) -> HashMap<CommitI
         .iter_enumerated()
         .map(|(idx, e)| (e.commit.graph_id.clone(), idx))
         .collect()
+}
+
+fn build_children_index(entries: &IndexVec<EntryIdx, DagEntry>) -> HashMap<CommitId, Vec<EntryIdx>> {
+    let mut index: HashMap<CommitId, Vec<EntryIdx>> = HashMap::new();
+    for (idx, entry) in entries.iter_enumerated() {
+        for edge in &entry.edges {
+            if matches!(edge.kind, crate::dag::EdgeKind::Direct) {
+                index
+                    .entry(CommitId::new(edge.target.as_str()))
+                    .or_default()
+                    .push(idx);
+            }
+        }
+    }
+    index
 }

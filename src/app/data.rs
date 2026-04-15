@@ -47,6 +47,7 @@ impl App {
         self.visual = None;
         self.visual_persistent = None;
         self.commit_index = super::build_commit_index(&entries);
+        self.children_index = super::build_children_index(&entries);
         self.entries = entries;
 
         // Collect new CommitIds so we can prune stale caches.
