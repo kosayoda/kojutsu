@@ -12,6 +12,33 @@ use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, Lin
 use crate::theme::{Config, Theme};
 use crate::types::{DisplayRow, FileSelectionState, SearchScopes};
 
+/// Push `+N -M` spans for line stats, skipping zeros.
+/// Push `+N -M` spans for line stats, skipping zeros.
+/// When `muted` is true, both counts use `theme.muted` instead of green/red.
+fn push_line_stats(out: &mut Vec<Span<'static>>, stats: LineStats, muted: bool, theme: &Theme) {
+    if stats.added == 0 && stats.removed == 0 {
+        return;
+    }
+    let added_color = if muted { theme.muted } else { theme.added };
+    let removed_color = if muted { theme.muted } else { theme.error };
+    out.push(Span::raw(" "));
+    if stats.added > 0 {
+        out.push(Span::styled(
+            format!("+{}", stats.added),
+            Style::default().fg(added_color),
+        ));
+        if stats.removed > 0 {
+            out.push(Span::raw(" "));
+        }
+    }
+    if stats.removed > 0 {
+        out.push(Span::styled(
+            format!("-{}", stats.removed),
+            Style::default().fg(removed_color),
+        ));
+    }
+}
+
 /// Visual state flags for rendering a row.
 struct RenderFlags {
     is_source: bool,
@@ -419,16 +446,7 @@ fn render_commit_item<'a>(
     }
 
     if let Some(stats) = line_stats {
-        line1.push(Span::raw(" "));
-        line1.push(Span::styled(
-            format!("+{}", stats.added),
-            Style::default().fg(theme.added),
-        ));
-        line1.push(Span::raw(" "));
-        line1.push(Span::styled(
-            format!("-{}", stats.removed),
-            Style::default().fg(theme.error),
-        ));
+        push_line_stats(&mut line1, stats, false, theme);
     }
 
     // Hidden indicator
@@ -567,6 +585,7 @@ fn render_file_line(
             search,
         );
     }
+    push_line_stats(&mut spans, file.stats, true, theme);
     ListItem::new(Line::from(spans))
 }
 

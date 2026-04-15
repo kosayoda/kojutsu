@@ -243,6 +243,8 @@ pub struct FileChange {
     pub old_path: Option<RepoPath>,
     pub status: FileStatus,
     pub has_conflict: bool,
+    /// Per-file line stats (added/removed counts).
+    pub stats: LineStats,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

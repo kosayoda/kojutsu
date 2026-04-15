@@ -540,6 +540,7 @@ impl JjRepo {
                 old_path: old_path.clone(),
                 status,
                 has_conflict,
+                stats: LineStats::default(),
             });
 
             // For stats: materialize before content from old path if renamed/copied.
@@ -576,14 +577,24 @@ impl JjRepo {
                 after_part.content.contents.as_ref(),
             );
             let hunks = unified::unified_diff_hunks(contents, 3, Default::default());
+            let mut file_stats = LineStats::default();
             for hunk in &hunks {
                 for (line_type, _) in &hunk.lines {
                     match line_type {
-                        DiffLineType::Added => stats.added = stats.added.saturating_add(1),
-                        DiffLineType::Removed => stats.removed = stats.removed.saturating_add(1),
+                        DiffLineType::Added => {
+                            stats.added = stats.added.saturating_add(1);
+                            file_stats.added = file_stats.added.saturating_add(1);
+                        }
+                        DiffLineType::Removed => {
+                            stats.removed = stats.removed.saturating_add(1);
+                            file_stats.removed = file_stats.removed.saturating_add(1);
+                        }
                         DiffLineType::Context => {}
                     }
                 }
+            }
+            if let Some(fc) = changes.last_mut() {
+                fc.stats = file_stats;
             }
         }
 
