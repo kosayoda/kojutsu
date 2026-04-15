@@ -73,8 +73,9 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
             });
             match row {
                 DisplayRow::CommitNode { entry_idx } => {
-                    let entry = &app.entries[*entry_idx];
-                    let gl = &app.graph[*entry_idx];
+                    let node = &app.nodes[*entry_idx];
+                    let entry = node;
+                    let gl = &node.graph;
                     let graph_node = gl.node.as_str();
                     let graph_cont = gl.cont.as_str();
                     let flags = RenderFlags {
@@ -99,7 +100,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     entry_idx,
                     line_idx,
                 } => {
-                    let graph_str = app.graph[*entry_idx]
+                    let graph_str = app.nodes[*entry_idx].graph
                         .extra
                         .get(line_idx.raw())
                         .map(|s| s.as_str())

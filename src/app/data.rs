@@ -1,9 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::{App, AppMode, JumpTarget, Loadable};
 use crate::dag::DagEntry;
-use crate::graph;
-use crate::idx::IndexVec;
+use crate::idx::{EntryIdx, IndexVec};
 use crate::repo_service::{RepoRequest, RepoResult};
 use crate::types::{ChangeId, CommitId, DisplayRow};
 
@@ -42,53 +41,79 @@ impl App {
             });
             (change_id, file_path, diff_line_idx)
         });
-        let entries = IndexVec::from_vec(entries);
-        self.graph = IndexVec::from_vec(graph::render(entries.as_slice(), self.glyphs));
-        self.visual = None;
-        self.visual_persistent = None;
-        self.commit_index = super::build_commit_index(&entries);
-        self.children_index = super::build_children_index(&entries);
-        self.entries = entries;
 
-        // Collect new CommitIds so we can prune stale caches.
-        let live_commit_ids: HashSet<CommitId> = self
-            .entries
-            .iter()
-            .map(|e| e.commit.graph_id.clone())
+        // Build new nodes from entries, preserving cached data from old nodes.
+        let entries = IndexVec::from_vec(entries);
+        let new_commit_index = super::build_commit_index(&entries);
+
+        // Collect old caches keyed by CommitId before replacing nodes.
+        let old_caches: HashMap<
+            CommitId,
+            (
+                Loadable<Vec<crate::dag::FileChange>>,
+                Loadable<crate::dag::LineStats>,
+                Vec<Loadable<Vec<crate::dag::DiffLine>>>,
+            ),
+        > = std::mem::take(&mut self.nodes)
+            .into_vec()
+            .into_iter()
+            .map(|n| {
+                (
+                    n.commit.graph_id.clone(),
+                    (n.files, n.stats, n.diffs),
+                )
+            })
             .collect();
 
-        self.file_states.retain(|k, _| live_commit_ids.contains(k));
-        self.diff_states
-            .retain(|k, _| live_commit_ids.contains(&k.commit_id));
-        self.commit_stats_states
-            .retain(|k, _| live_commit_ids.contains(k));
+        let mut nodes = super::build_nodes(entries, &new_commit_index, self.glyphs);
+
+        // Restore cached data for commits that survived the refresh.
+        for node in nodes.iter_mut() {
+            if let Some((files, stats, diffs)) = old_caches.get(&node.commit.graph_id) {
+                if !files.should_request() {
+                    node.files = files.clone();
+                }
+                if !stats.should_request() {
+                    node.stats = stats.clone();
+                }
+                if !diffs.is_empty() {
+                    node.diffs = diffs.clone();
+                }
+            }
+        }
+
+        self.visual = None;
+        self.visual_persistent = None;
+        self.commit_index = new_commit_index;
+        self.nodes = nodes;
 
         // Re-request data for commits that are still unfolded but whose
         // new CommitId has no cached file data (happens after mutation).
-        for entry in self.entries.iter() {
-            let change_id = entry.commit.unique_change_id();
+        for node in self.nodes.iter() {
+            let change_id = node.commit.unique_change_id();
             if self.unfolded_commits.contains(&change_id) {
-                let commit_id = &entry.commit.graph_id;
-                if self
-                    .file_states
-                    .get(commit_id)
-                    .is_none_or(Loadable::should_request)
-                {
-                    self.file_states
-                        .insert(commit_id.clone(), Loadable::Loading);
-                    self.commit_stats_states
-                        .insert(commit_id.clone(), Loadable::Loading);
+                if node.files.should_request() {
+                    let commit_id = node.commit.graph_id.clone();
                     self.pending_repo_requests
-                        .push(RepoRequest::load_commit_details(commit_id.clone()));
+                        .push(RepoRequest::load_commit_details(commit_id));
                 }
+            }
+        }
+        // Mark files/stats as Loading for re-requested commits.
+        for idx_raw in 0..self.nodes.len() {
+            let idx = EntryIdx::new(idx_raw);
+            let change_id = self.nodes[idx].commit.unique_change_id();
+            if self.unfolded_commits.contains(&change_id) && self.nodes[idx].files.should_request() {
+                self.nodes[idx].files = Loadable::Loading;
+                self.nodes[idx].stats = Loadable::Loading;
             }
         }
 
         // Prune fold state for changes no longer in the DAG.
         let live_change_ids: HashSet<ChangeId> = self
-            .entries
+            .nodes
             .iter()
-            .map(|e| e.commit.unique_change_id())
+            .map(|n| n.commit.unique_change_id())
             .collect();
         self.unfolded_commits
             .retain(|k| live_change_ids.contains(k));
@@ -103,9 +128,9 @@ impl App {
         // DiffLine → FileChange → CommitNode.
         if let Some((change_id, file_path, diff_line_idx)) = cursor_context {
             if let Some((entry_idx, _)) = self
-                .entries
+                .nodes
                 .iter_enumerated()
-                .find(|(_, entry)| entry.commit.unique_change_id() == change_id)
+                .find(|(_, node)| node.commit.unique_change_id() == change_id)
             {
                 let find_row = |pred: &dyn Fn(&DisplayRow) -> bool| self.rows.iter().position(pred);
 
@@ -192,50 +217,55 @@ impl App {
             }
             RepoResult::CommitDetailsLoaded { commit_id, details } => {
                 self.status_message = None;
-                // Update is_empty for this commit (may have been skipped
-                // during initial load for merge commits).
-                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                    self.entries[idx].commit.is_empty = details.is_empty;
-                }
+                let Some(idx) = self.entry_by_commit_id(&commit_id) else {
+                    return;
+                };
+                // Update is_empty for this commit.
+                self.nodes[idx].commit.is_empty = details.is_empty;
+
                 // Re-request diffs for files that were previously unfolded.
-                let change_id = self.change_id_for_commit_key(&commit_id);
-                if let Some(change_id) = &change_id {
-                    for file in &details.files {
-                        let fold_key = super::FileFoldKey {
-                            change_id: change_id.clone(),
-                            path: file.path.clone(),
-                        };
-                        if self.unfolded_files.contains(&fold_key) {
-                            let cache_key = super::FileDiffCacheKey {
-                                commit_id: commit_id.clone(),
-                                path: file.path.clone(),
-                            };
-                            if self
-                                .diff_states
-                                .get(&cache_key)
-                                .is_none_or(Loadable::should_request)
-                            {
-                                self.diff_states.insert(cache_key, Loadable::Loading);
-                                self.pending_repo_requests.push(RepoRequest::load_file_diff(
-                                    commit_id.clone(),
-                                    file.path.clone(),
-                                ));
-                            }
+                let change_id = self.change_id(idx);
+                for (fi, file) in details.files.iter().enumerate() {
+                    let fold_key = super::FileFoldKey {
+                        change_id: change_id.clone(),
+                        path: file.path.clone(),
+                    };
+                    if self.unfolded_files.contains(&fold_key) {
+                        // Ensure diffs vec is large enough.
+                        let file_idx = fi;
+                        if file_idx >= self.nodes[idx].diffs.len() {
+                            self.nodes[idx]
+                                .diffs
+                                .resize_with(file_idx + 1, || Loadable::NotRequested);
+                        }
+                        if self.nodes[idx].diffs[file_idx].should_request() {
+                            self.nodes[idx].diffs[file_idx] = Loadable::Loading;
+                            self.pending_repo_requests.push(RepoRequest::load_file_diff(
+                                commit_id.clone(),
+                                file.path.clone(),
+                            ));
                         }
                     }
                 }
-                self.file_states
-                    .insert(commit_id.clone(), Loadable::Loaded(details.files));
-                self.commit_stats_states
-                    .insert(commit_id, Loadable::Loaded(details.stats));
+
+                // Store loaded files and stats.
+                self.nodes[idx].files = Loadable::Loaded(details.files);
+                self.nodes[idx].stats = Loadable::Loaded(details.stats);
+                // Ensure diffs vec is sized to match files.
+                let nfiles = self.nodes[idx].files.loaded().map_or(0, |f| f.len());
+                if self.nodes[idx].diffs.len() < nfiles {
+                    self.nodes[idx]
+                        .diffs
+                        .resize_with(nfiles, || Loadable::NotRequested);
+                }
                 self.rebuild_rows();
                 self.scroll_to_show_children();
             }
             RepoResult::CommitDetailsFailed { commit_id, error } => {
-                self.file_states
-                    .insert(commit_id.clone(), Loadable::Failed(error.clone()));
-                self.commit_stats_states
-                    .insert(commit_id.clone(), Loadable::Failed(error.clone()));
+                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                    self.nodes[idx].files = Loadable::Failed(error.clone());
+                    self.nodes[idx].stats = Loadable::Failed(error.clone());
+                }
                 self.mode = AppMode::CommandOutput {
                     command: format!("load files for {commit_id}"),
                     output: error.into_bytes(),
@@ -249,10 +279,17 @@ impl App {
                 lines,
             } => {
                 self.status_message = None;
-                self.diff_states.insert(
-                    super::FileDiffCacheKey { commit_id, path },
-                    Loadable::Loaded(lines),
-                );
+                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                    if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
+                        let fi = file_idx.raw();
+                        if fi >= self.nodes[idx].diffs.len() {
+                            self.nodes[idx]
+                                .diffs
+                                .resize_with(fi + 1, || Loadable::NotRequested);
+                        }
+                        self.nodes[idx].diffs[fi] = Loadable::Loaded(lines);
+                    }
+                }
                 self.rebuild_rows();
                 self.scroll_to_show_children();
             }
@@ -261,13 +298,17 @@ impl App {
                 path,
                 error,
             } => {
-                self.diff_states.insert(
-                    super::FileDiffCacheKey {
-                        commit_id,
-                        path: path.clone(),
-                    },
-                    Loadable::Failed(error.clone()),
-                );
+                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                    if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
+                        let fi = file_idx.raw();
+                        if fi >= self.nodes[idx].diffs.len() {
+                            self.nodes[idx]
+                                .diffs
+                                .resize_with(fi + 1, || Loadable::NotRequested);
+                        }
+                        self.nodes[idx].diffs[fi] = Loadable::Failed(error.clone());
+                    }
+                }
                 self.mode = AppMode::CommandOutput {
                     command: format!("load diff for {path}"),
                     output: error.into_bytes(),
@@ -280,25 +321,25 @@ impl App {
             }
             RepoResult::CommitEmpty { commit_id } => {
                 if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                    self.entries[idx].commit.is_empty = true;
+                    self.nodes[idx].commit.is_empty = true;
                 }
             }
             RepoResult::DivergenceInfo { updates } => {
                 for (commit_id, update) in updates {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                        self.entries[idx].commit.is_divergent = update.is_divergent;
-                        self.entries[idx].commit.is_hidden = update.is_hidden;
-                        self.entries[idx].commit.change_id_suffix = update.change_id_suffix;
+                        self.nodes[idx].commit.is_divergent = update.is_divergent;
+                        self.nodes[idx].commit.is_hidden = update.is_hidden;
+                        self.nodes[idx].commit.change_id_suffix = update.change_id_suffix;
                     }
                 }
             }
             RepoResult::PrefixLengths { updates } => {
                 for (commit_id, update) in updates {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                        self.entries[idx].commit.change_id.display = update.change_display;
-                        self.entries[idx].commit.change_id.prefix_len = update.change_prefix_len;
-                        self.entries[idx].commit.commit_id.display = update.commit_display;
-                        self.entries[idx].commit.commit_id.prefix_len = update.commit_prefix_len;
+                        self.nodes[idx].commit.change_id.display = update.change_display;
+                        self.nodes[idx].commit.change_id.prefix_len = update.change_prefix_len;
+                        self.nodes[idx].commit.commit_id.display = update.commit_display;
+                        self.nodes[idx].commit.commit_id.prefix_len = update.commit_prefix_len;
                     }
                 }
             }

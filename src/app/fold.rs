@@ -1,5 +1,5 @@
 use super::{App, Loadable};
-use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, IndexVec};
+use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
 
@@ -10,9 +10,9 @@ impl App {
         let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
 
         self.rows.clear();
-        let mut commit_row_index = IndexVec::new();
-        for (entry_idx, gl) in self.graph.iter_enumerated() {
-            let _ = commit_row_index.push(self.rows.len());
+        for idx_raw in 0..self.nodes.len() {
+            let entry_idx = EntryIdx::new(idx_raw);
+            self.nodes[entry_idx].row = self.rows.len();
             self.rows.push(DisplayRow::CommitNode { entry_idx });
 
             if self.is_commit_unfolded(entry_idx) {
@@ -42,14 +42,13 @@ impl App {
 
             // Extra graph lines (link/pad/term) are rendered as separate
             // GraphLink rows between commits.
-            for line_idx_raw in 0..gl.extra.len() {
+            for line_idx_raw in 0..self.nodes[entry_idx].graph.extra.len() {
                 self.rows.push(DisplayRow::GraphLink {
                     entry_idx,
                     line_idx: GraphLineIdx::new(line_idx_raw),
                 });
             }
         }
-        self.commit_row_index = commit_row_index;
 
         // Restore cursor: try exact match, then fall back to parent file,
         // then parent commit. This handles fold scenarios where the cursor
@@ -76,8 +75,6 @@ impl App {
             .unwrap_or(0);
     }
 
-    /// After unfolding, adjust scroll so the cursor row is near the top of the
-    /// viewport, showing as many child rows as possible.
     /// After unfolding, scroll just enough to make the last child row visible.
     /// Does nothing if the content already fits in the viewport.
     pub fn scroll_to_show_children(&mut self) {
@@ -148,19 +145,13 @@ impl App {
 
     pub(crate) fn toggle_commit_fold(&mut self, entry_idx: EntryIdx) {
         let change_id = self.change_id(entry_idx);
-        let commit_id = self.commit_id(entry_idx).clone();
         if self.is_commit_unfolded(entry_idx) {
             self.unfolded_commits.remove(&change_id);
         } else {
-            if self
-                .file_states
-                .get(&commit_id)
-                .is_none_or(Loadable::should_request)
-            {
-                self.file_states
-                    .insert(commit_id.clone(), Loadable::Loading);
-                self.commit_stats_states
-                    .insert(commit_id.clone(), Loadable::Loading);
+            if self.nodes[entry_idx].files.should_request() {
+                let commit_id = self.commit_id(entry_idx).clone();
+                self.nodes[entry_idx].files = Loadable::Loading;
+                self.nodes[entry_idx].stats = Loadable::Loading;
                 self.pending_repo_requests
                     .push(RepoRequest::load_commit_details(commit_id));
             }
@@ -194,15 +185,23 @@ impl App {
             }
             self.visual = None;
         } else {
-            let cache_key = self.file_cache_key(entry_idx, file_idx);
-            let should_request = cache_key
-                .as_ref()
-                .is_none_or(|k| self.diff_states.get(k).is_none_or(Loadable::should_request));
+            let fi = file_idx.raw();
+            let should_request = self
+                .nodes[entry_idx]
+                .diffs
+                .get(fi)
+                .is_none_or(Loadable::should_request);
             if should_request {
-                if let Some(cache_key) = cache_key {
-                    let commit_id = cache_key.commit_id.clone();
-                    let path = cache_key.path.clone();
-                    self.diff_states.insert(cache_key, Loadable::Loading);
+                if let Some(file) = self.files_for_entry(entry_idx).and_then(|f| f.get(fi)) {
+                    let commit_id = self.commit_id(entry_idx).clone();
+                    let path = file.path.clone();
+                    // Ensure diffs vec is large enough.
+                    if fi >= self.nodes[entry_idx].diffs.len() {
+                        self.nodes[entry_idx]
+                            .diffs
+                            .resize_with(fi + 1, || Loadable::NotRequested);
+                    }
+                    self.nodes[entry_idx].diffs[fi] = Loadable::Loading;
                     self.pending_repo_requests
                         .push(RepoRequest::load_file_diff(commit_id, path));
                 }

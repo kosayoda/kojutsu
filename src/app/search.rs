@@ -211,7 +211,7 @@ impl App {
 
         match &self.rows[row_idx] {
             DisplayRow::CommitNode { entry_idx } => {
-                let commit = &self.entries[*entry_idx].commit;
+                let commit = &self.nodes[*entry_idx].commit;
                 (scopes.contains(SearchScopes::CHANGE_ID)
                     && (contains(commit.change_id.display.as_str())
                         || commit.change_id_suffix.is_some_and(|n| {

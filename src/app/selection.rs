@@ -7,13 +7,11 @@ use crate::types::{
     ChangeId, FileRef, FileSelectionState, RepoPath, Selection, SelectionKind, SmallVec,
 };
 
-use super::Loadable;
-
 impl App {
     /// Resolve entry + file indices to (change_id, file_path).
     /// Returns `None` if the file list isn't loaded yet.
     fn resolve_file(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<(ChangeId, RepoPath)> {
-        let change_id = self.entries[entry_idx].commit.unique_change_id();
+        let change_id = self.nodes[entry_idx].commit.unique_change_id();
         let files = self.files_for_entry(entry_idx)?;
         Some((change_id, files[file_idx.raw()].path.clone()))
     }
@@ -56,7 +54,7 @@ impl App {
         if self.is_commit_unfolded(entry_idx) {
             self.toggle_commit_file_selection(entry_idx);
         } else {
-            let change_id = self.entries[entry_idx].commit.unique_change_id();
+            let change_id = self.nodes[entry_idx].commit.unique_change_id();
             self.selection.ensure_kind(SelectionKind::Commit);
             self.selection
                 .toggle(SelectionKind::Commit, Selection::Commit(change_id));
@@ -65,7 +63,7 @@ impl App {
 
     /// Check if a commit is in the explicit commit selection set.
     pub fn is_commit_selected(&self, entry_idx: EntryIdx) -> bool {
-        let change_id = self.entries[entry_idx].commit.unique_change_id();
+        let change_id = self.nodes[entry_idx].commit.unique_change_id();
         self.selection.contains(&Selection::Commit(change_id))
     }
 
@@ -90,7 +88,7 @@ impl App {
             return;
         }
 
-        let change_id = self.entries[entry_idx].commit.unique_change_id();
+        let change_id = self.nodes[entry_idx].commit.unique_change_id();
         self.clear_other_commits(&change_id);
         self.selection.ensure_kind(SelectionKind::File);
 
@@ -292,10 +290,8 @@ impl App {
         // Count selectable lines (added/removed) in the diff.
         // If all are selected, promote to Full.
         let selectable_count = self
-            .file_cache_key(entry_idx, file_idx)
-            .and_then(|key| self.diff_states.get(&key))
-            .and_then(Loadable::loaded)
-            .map(|diff_lines| {
+            .diff_lines(entry_idx, file_idx)
+            .map(|diff_lines: &Vec<crate::dag::DiffLine>| {
                 diff_lines
                     .iter()
                     .filter(|dl| dl.kind.is_selectable())

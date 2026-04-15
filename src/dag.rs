@@ -236,12 +236,14 @@ pub enum EdgeKind {
 }
 
 /// A file changed in a commit.
+#[derive(Clone)]
 pub struct FileChange {
     pub path: RepoPath,
     pub status: FileStatus,
     pub has_conflict: bool,
 }
 
+#[derive(Clone, Copy)]
 pub enum FileStatus {
     Added,
     Modified,
@@ -249,6 +251,7 @@ pub enum FileStatus {
 }
 
 /// A single line of a unified diff.
+#[derive(Clone)]
 pub struct DiffLine {
     pub kind: DiffLineKind,
     pub content: String,

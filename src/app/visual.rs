@@ -100,7 +100,7 @@ impl App {
                     line_idx,
                 }) = self.rows.get(self.cursor)
                 {
-                    let cid = self.entries[*entry_idx].commit.unique_change_id();
+                    let cid = self.nodes[*entry_idx].commit.unique_change_id();
                     if let Some(file) = self
                         .files_for_entry(*entry_idx)
                         .and_then(|f| f.get(file_idx.raw()))
@@ -179,7 +179,7 @@ impl App {
 
         // Check persistent line range.
         if let Some(PersistentVisualRange::Lines(vr)) = &self.visual_persistent {
-            let cid = self.entries[entry_idx].commit.unique_change_id();
+            let cid = self.nodes[entry_idx].commit.unique_change_id();
             if let Some(files) = self.files_for_entry(entry_idx) {
                 if let Some(file) = files.get(file_idx.raw()) {
                     if cid == vr.change_id
@@ -304,7 +304,7 @@ impl App {
             {
                 if start_line.is_none() {
                     start_line = Some(*line_idx);
-                    change_id = Some(self.entries[*entry_idx].commit.unique_change_id());
+                    change_id = Some(self.nodes[*entry_idx].commit.unique_change_id());
                     path = self
                         .files_for_entry(*entry_idx)
                         .and_then(|files| files.get(file_idx.raw()))
@@ -335,14 +335,16 @@ impl App {
         let vr = vr.clone();
 
         let line_data: Vec<LineSelection> = self
-            .diff_states
+            .nodes
             .iter()
-            .filter_map(|(cache_key, diff_lines)| {
-                let diff_lines = diff_lines.loaded()?;
-                let cid = self.change_id_for_commit_key(&cache_key.commit_id)?;
-                if cid != vr.change_id || cache_key.path != vr.path {
+            .filter_map(|node| {
+                let cid = node.commit.unique_change_id();
+                if cid != vr.change_id {
                     return None;
                 }
+                let files = node.files.loaded()?;
+                let fi = files.iter().position(|f| f.path == vr.path)?;
+                let diff_lines = node.diffs.get(fi)?.loaded()?;
                 let lines: Vec<_> = diff_lines
                     .iter()
                     .enumerate()
@@ -490,7 +492,7 @@ impl App {
 
         self.selection.ensure_kind(SelectionKind::Commit);
         let all_selected = range.iter().all(|idx| {
-            let cid = self.entries[*idx].commit.unique_change_id();
+            let cid = self.nodes[*idx].commit.unique_change_id();
             self.selection.contains(&Selection::Commit(cid))
         });
 
@@ -498,12 +500,12 @@ impl App {
         let range: Vec<EntryIdx> = range.clone();
         if all_selected {
             for idx in &range {
-                let cid = self.entries[*idx].commit.unique_change_id();
+                let cid = self.nodes[*idx].commit.unique_change_id();
                 self.selection.remove(&Selection::Commit(cid));
             }
         } else {
             for idx in &range {
-                let cid = self.entries[*idx].commit.unique_change_id();
+                let cid = self.nodes[*idx].commit.unique_change_id();
                 self.selection
                     .insert(SelectionKind::Commit, Selection::Commit(cid));
             }
@@ -513,7 +515,7 @@ impl App {
     /// The next entry in display order (downward = toward parents).
     fn next_entry_down(&self, entry_idx: EntryIdx) -> Option<EntryIdx> {
         let next = entry_idx.raw() + 1;
-        if next < self.entries.len() {
+        if next < self.nodes.len() {
             Some(EntryIdx::new(next))
         } else {
             None

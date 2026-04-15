@@ -10,9 +10,10 @@ use std::collections::{HashMap, HashSet};
 use ratatui::widgets::ListState;
 use tui_input::Input;
 
-use crate::dag::{DagEntry, DiffLine, FileChange, LineStats};
+use crate::dag::{DagEntry, DiffLine, EdgeKind, FileChange, LineStats};
 use crate::graph::{self, GraphLines};
 use crate::idx::{EntryIdx, FileIdx, IndexVec};
+use crate::types::SmallVec;
 
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo_service::RepoRequest;
@@ -64,6 +65,7 @@ pub enum StatusLevel {
     Error,
 }
 
+#[derive(Clone)]
 pub enum Loadable<T> {
     NotRequested,
     Loading,
@@ -71,10 +73,23 @@ pub enum Loadable<T> {
     Failed(String),
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
-pub struct FileDiffCacheKey {
-    pub commit_id: CommitId,
-    pub path: RepoPath,
+/// Consolidated per-commit node in the DAG. Holds commit metadata, resolved
+/// graph edges, rendering data, and lazily loaded file/diff caches.
+pub struct DagNode {
+    pub commit: crate::dag::CommitInfo,
+    pub graph: GraphLines,
+    /// Resolved direct parent entry indices (from DAG edges).
+    pub parents: SmallVec<EntryIdx>,
+    /// Resolved child entry indices (reverse edges, filled in second pass).
+    pub children: SmallVec<EntryIdx>,
+    /// Row index of this commit's `CommitNode` in the display rows.
+    pub row: usize,
+    /// Lazily loaded file changes for this commit.
+    pub files: Loadable<Vec<FileChange>>,
+    /// Lazily loaded per-commit line stats.
+    pub stats: Loadable<LineStats>,
+    /// Lazily loaded diff lines, parallel to `files` (indexed by FileIdx).
+    pub diffs: Vec<Loadable<Vec<DiffLine>>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -262,16 +277,11 @@ impl AppMode {
 
 /// Application state. Pure data -- no I/O, no rendering.
 pub struct App {
-    pub entries: IndexVec<EntryIdx, DagEntry>,
-    /// Lookup from commit graph_id → entry index (rebuilt when entries change).
+    pub nodes: IndexVec<EntryIdx, DagNode>,
+    /// Lookup from commit graph_id → entry index (needed at event boundary).
     pub commit_index: HashMap<CommitId, EntryIdx>,
-    /// Reverse edge index: parent commit_id → child entry indices.
-    pub children_index: HashMap<CommitId, Vec<EntryIdx>>,
-    pub graph: IndexVec<EntryIdx, GraphLines>,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
-    /// Lookup from entry index → row index of its CommitNode (rebuilt with rows).
-    pub commit_row_index: IndexVec<EntryIdx, usize>,
     /// Index into `rows` of the currently selected row.
     pub cursor: usize,
     /// Persisted list widget state (preserves scroll offset across frames).
@@ -298,12 +308,6 @@ pub struct App {
     pub unfolded_commits: HashSet<ChangeId>,
     /// Per-file fold state, keyed by (change id, path) (stable across mutations).
     pub unfolded_files: HashSet<FileFoldKey>,
-    /// Lazily loaded file changes, keyed by commit graph id.
-    pub file_states: HashMap<CommitId, Loadable<Vec<FileChange>>>,
-    /// Lazily loaded diff lines, keyed by (commit graph id, path).
-    pub diff_states: HashMap<FileDiffCacheKey, Loadable<Vec<DiffLine>>>,
-    /// Lazily loaded per-commit line stats, keyed by commit graph id.
-    pub commit_stats_states: HashMap<CommitId, Loadable<LineStats>>,
     /// Remote bookmarks not yet tracked (for bookmark track selection).
     pub untracked_bookmarks: Vec<String>,
     /// Remote bookmarks that are tracked (for bookmark untrack selection).
@@ -351,15 +355,11 @@ impl App {
     ) -> Self {
         let entries = IndexVec::from_vec(entries);
         let commit_index = build_commit_index(&entries);
-        let children_index = build_children_index(&entries);
-        let graph = IndexVec::from_vec(graph::render(entries.as_slice(), glyphs));
+        let nodes = build_nodes(entries, &commit_index, glyphs);
         let mut app = Self {
-            entries,
+            nodes,
             commit_index,
-            children_index,
-            graph,
             rows: Vec::new(),
-            commit_row_index: IndexVec::new(),
             cursor: 0,
             list_state: ListState::default(),
             last_header_height: 2,
@@ -374,9 +374,6 @@ impl App {
             mode: AppMode::Normal,
             unfolded_commits: HashSet::new(),
             unfolded_files: HashSet::new(),
-            file_states: HashMap::new(),
-            diff_states: HashMap::new(),
-            commit_stats_states: HashMap::new(),
             untracked_bookmarks: Vec::new(),
             tracked_bookmarks: Vec::new(),
             revset_state: Loadable::NotRequested,
@@ -408,12 +405,12 @@ impl App {
 
     /// Whether the working copy (`@`) is visible in the current entries.
     pub fn has_working_copy(&self) -> bool {
-        self.entries.iter().any(|e| e.commit.is_working_copy())
+        self.nodes.iter().any(|n| n.commit.is_working_copy())
     }
 
     /// Row index of a commit's `CommitNode` in the display rows.
     pub fn row_of_commit(&self, entry_idx: EntryIdx) -> Option<usize> {
-        self.commit_row_index.get(entry_idx).copied()
+        Some(self.nodes.get(entry_idx)?.row)
     }
 
     /// Get the entry idx the cursor is on.
@@ -430,62 +427,39 @@ impl App {
     /// Get the change ID (unique prefix) of the commit the cursor is on.
     pub fn selected_change_id(&self) -> Option<ChangeId> {
         let entry_idx = self.selected_entry_idx()?;
-        Some(self.entries[entry_idx].commit.unique_prefix())
+        Some(self.nodes[entry_idx].commit.unique_prefix())
     }
 
     /// Whether the commit the cursor is on is a merge (multiple parents).
     pub fn selected_is_merge(&self) -> bool {
         self.selected_entry_idx()
-            .is_some_and(|idx| self.entries[idx].commit.is_merge)
+            .is_some_and(|idx| self.nodes[idx].commit.is_merge)
     }
 
     /// Get the bookmarks of the commit the cursor is on.
     pub fn selected_bookmarks(&self) -> Option<&[crate::dag::BookmarkInfo]> {
         let entry_idx = self.selected_entry_idx()?;
-        Some(&self.entries[entry_idx].commit.bookmarks)
+        Some(&self.nodes[entry_idx].commit.bookmarks)
     }
 
     /// Get the tags of the commit the cursor is on.
     pub fn selected_tags(&self) -> Option<&[crate::types::Str]> {
         let entry_idx = self.selected_entry_idx()?;
-        Some(&self.entries[entry_idx].commit.tags)
+        Some(&self.nodes[entry_idx].commit.tags)
     }
 
     /// Get the description of the commit the cursor is on.
     pub fn selected_description(&self) -> Option<&str> {
         let entry_idx = self.selected_entry_idx()?;
-        self.entries[entry_idx].commit.description.as_deref()
+        self.nodes[entry_idx].commit.description.as_deref()
     }
 
     pub(crate) fn commit_id(&self, entry_idx: EntryIdx) -> &CommitId {
-        &self.entries[entry_idx].commit.graph_id
+        &self.nodes[entry_idx].commit.graph_id
     }
 
     pub(crate) fn change_id(&self, entry_idx: EntryIdx) -> ChangeId {
-        self.entries[entry_idx].commit.unique_change_id()
-    }
-
-    pub(crate) fn change_id_for_commit_key(&self, commit_id: &CommitId) -> Option<ChangeId> {
-        self.entries
-            .iter_enumerated()
-            .find(|(_, entry)| entry.commit.graph_id == *commit_id)
-            .map(|(idx, _)| self.change_id(idx))
-    }
-
-    pub(crate) fn file_cache_key(
-        &self,
-        entry_idx: EntryIdx,
-        file_idx: FileIdx,
-    ) -> Option<FileDiffCacheKey> {
-        let path = self
-            .files_for_entry(entry_idx)?
-            .get(file_idx.raw())?
-            .path
-            .clone();
-        Some(FileDiffCacheKey {
-            commit_id: self.commit_id(entry_idx).clone(),
-            path,
-        })
+        self.nodes[entry_idx].commit.unique_change_id()
     }
 
     pub(crate) fn file_fold_key(
@@ -514,21 +488,31 @@ impl App {
     }
 
     pub fn files_for_entry(&self, entry_idx: EntryIdx) -> Option<&Vec<FileChange>> {
-        self.file_states
-            .get(self.commit_id(entry_idx))
-            .and_then(Loadable::loaded)
+        self.nodes[entry_idx].files.loaded()
     }
 
     pub fn diff_lines(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<&Vec<DiffLine>> {
-        let key = self.file_cache_key(entry_idx, file_idx)?;
-        self.diff_states.get(&key).and_then(Loadable::loaded)
+        self.nodes[entry_idx]
+            .diffs
+            .get(file_idx.raw())?
+            .loaded()
     }
 
     pub fn commit_stats(&self, entry_idx: EntryIdx) -> Option<LineStats> {
-        self.commit_stats_states
-            .get(self.commit_id(entry_idx))
-            .and_then(Loadable::loaded)
-            .copied()
+        self.nodes[entry_idx].stats.loaded().copied()
+    }
+
+    /// Find the file index for a given path within a commit's loaded files.
+    pub fn file_idx_by_path(
+        &self,
+        entry_idx: EntryIdx,
+        path: &RepoPath,
+    ) -> Option<FileIdx> {
+        let files = self.files_for_entry(entry_idx)?;
+        files
+            .iter()
+            .position(|f| f.path == *path)
+            .map(FileIdx::new)
     }
 
     pub fn take_repo_requests(&mut self) -> Vec<RepoRequest> {
@@ -583,17 +567,48 @@ fn build_commit_index(entries: &IndexVec<EntryIdx, DagEntry>) -> HashMap<CommitI
         .collect()
 }
 
-fn build_children_index(entries: &IndexVec<EntryIdx, DagEntry>) -> HashMap<CommitId, Vec<EntryIdx>> {
-    let mut index: HashMap<CommitId, Vec<EntryIdx>> = HashMap::new();
-    for (idx, entry) in entries.iter_enumerated() {
-        for edge in &entry.edges {
-            if matches!(edge.kind, crate::dag::EdgeKind::Direct) {
-                index
-                    .entry(CommitId::new(edge.target.as_str()))
-                    .or_default()
-                    .push(idx);
+/// Build consolidated `DagNode` vec from transport `DagEntry` vec, resolving
+/// edges to `EntryIdx` and computing graph lines.
+fn build_nodes(
+    entries: IndexVec<EntryIdx, DagEntry>,
+    commit_index: &HashMap<CommitId, EntryIdx>,
+    glyphs: &crate::theme::GlyphChars,
+) -> IndexVec<EntryIdx, DagNode> {
+    let graph_lines = graph::render(entries.as_slice(), glyphs);
+
+    let node_vec: Vec<DagNode> = entries
+        .into_vec()
+        .into_iter()
+        .zip(graph_lines)
+        .map(|(entry, gl)| {
+            let parents: SmallVec<EntryIdx> = entry
+                .edges
+                .iter()
+                .filter(|e| matches!(e.kind, EdgeKind::Direct))
+                .filter_map(|e| commit_index.get(&CommitId::new(e.target.as_str())).copied())
+                .collect();
+            DagNode {
+                commit: entry.commit,
+                graph: gl,
+                parents,
+                children: SmallVec::new(),
+                row: 0,
+                files: Loadable::NotRequested,
+                stats: Loadable::NotRequested,
+                diffs: Vec::new(),
             }
+        })
+        .collect();
+    let mut nodes: IndexVec<EntryIdx, DagNode> = IndexVec::from_vec(node_vec);
+
+    // Second pass: fill children from resolved parents.
+    for idx_raw in 0..nodes.len() {
+        let idx = EntryIdx::new(idx_raw);
+        let parents: SmallVec<EntryIdx> = nodes[idx].parents.clone();
+        for parent_idx in parents {
+            nodes[parent_idx].children.push(idx);
         }
     }
-    index
+
+    nodes
 }

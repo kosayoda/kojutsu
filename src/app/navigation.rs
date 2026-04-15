@@ -1,7 +1,7 @@
 use super::App;
-use crate::dag::{DiffLineKind, EdgeKind};
+use crate::dag::DiffLineKind;
 use crate::idx::EntryIdx;
-use crate::types::{CommitId, DisplayRow};
+use crate::types::DisplayRow;
 
 impl App {
     /// Whether a row should be skipped during navigation.
@@ -63,19 +63,14 @@ impl App {
 
     /// Row index of the first parent commit in the DAG (for J on commit rows).
     fn parent_commit_row(&self, entry_idx: EntryIdx) -> Option<usize> {
-        let entry = &self.entries[entry_idx];
-        let parent_edge = entry.edges.iter().find(|e| matches!(e.kind, EdgeKind::Direct))?;
-        let parent_entry_idx = self
-            .commit_index
-            .get(&CommitId::new(parent_edge.target.as_str()))?;
-        self.row_of_commit(*parent_entry_idx)
+        let parent_idx = *self.nodes[entry_idx].parents.first()?;
+        self.row_of_commit(parent_idx)
     }
 
     /// Row index of the first child commit in the DAG (for K on commit rows).
     /// When multiple children exist, picks the one closest above the current row.
     fn child_commit_row(&self, entry_idx: EntryIdx) -> Option<usize> {
-        let graph_id = &self.entries[entry_idx].commit.graph_id;
-        let children = self.children_index.get(graph_id)?;
+        let children = &self.nodes[entry_idx].children;
         match children.len() {
             0 => None,
             1 => self.row_of_commit(children[0]),
@@ -175,7 +170,7 @@ impl App {
     pub fn jump_to_working_copy(&mut self) {
         if let Some(pos) = self.rows.iter().position(|r| {
             matches!(r, DisplayRow::CommitNode { entry_idx }
-                if self.entries[*entry_idx].commit.is_working_copy())
+                if self.nodes[*entry_idx].commit.is_working_copy())
         }) {
             self.cursor = pos;
         } else {
@@ -184,11 +179,9 @@ impl App {
     }
 
     pub fn jump_to_bookmark(&mut self, name: &crate::types::BookmarkName) {
-        for (idx, entry) in self.entries.iter_enumerated() {
-            if entry.commit.bookmarks.iter().any(|b| b.name == *name) {
-                if let Some(pos) = self.rows.iter().position(
-                    |r| matches!(r, DisplayRow::CommitNode { entry_idx } if *entry_idx == idx),
-                ) {
+        for (idx, node) in self.nodes.iter_enumerated() {
+            if node.commit.bookmarks.iter().any(|b| b.name == *name) {
+                if let Some(pos) = self.row_of_commit(idx) {
                     self.cursor = pos;
                     return;
                 }

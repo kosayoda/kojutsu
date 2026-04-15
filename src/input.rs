@@ -422,7 +422,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             let entry_idx = app.selected_entry_idx();
             let workspaces: Vec<String> = entry_idx
                 .map(|idx| {
-                    app.entries[idx]
+                    app.nodes[idx]
                         .commit
                         .workspaces
                         .iter()
@@ -1149,7 +1149,7 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             Some(DisplayRow::DiffLine { entry_idx, .. }) => Some(*entry_idx),
             None => None,
         };
-        entry_idx.is_some_and(|idx| app.entries[idx].commit.is_working_copy())
+        entry_idx.is_some_and(|idx| app.nodes[idx].commit.is_working_copy())
     });
 
     if is_wc {

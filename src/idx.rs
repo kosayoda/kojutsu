@@ -127,6 +127,11 @@ where
     pub fn as_slice(&self) -> &[T] {
         &self.vec
     }
+
+    /// Consume the IndexVec and return the inner Vec.
+    pub fn into_vec(self) -> Vec<T> {
+        self.vec
+    }
 }
 
 impl<I, T> Default for IndexVec<I, T>
