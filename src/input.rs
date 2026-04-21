@@ -807,30 +807,9 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             })
         }
         AppAction::BmViewTrack => {
-            // On a remote target row: track that specific remote.
-            if let Some((entry, target)) = app.selected_remote_target() {
-                let br = BookmarkRef {
-                    name: entry.name.clone(),
-                    remote: target.remote.clone(),
-                };
-                return Action::RunJj(JJCommand::BookmarkTrack {
-                    bookmarks: smallvec![br],
-                    flags,
-                });
-            }
-            let Some(entry) = app.selected_bookmark_entry() else {
-                return Action::None;
-            };
-            if entry.remote.is_none() {
+            let Some(br) = app.selected_bookmark_ref() else {
                 app.set_status("bookmark is already local");
                 return Action::None;
-            }
-            let br = BookmarkRef {
-                name: entry.name.clone(),
-                remote: entry
-                    .remote
-                    .clone()
-                    .unwrap_or_else(|| crate::types::RemoteName::new("")),
             };
             Action::RunJj(JJCommand::BookmarkTrack {
                 bookmarks: smallvec![br],
@@ -838,30 +817,9 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             })
         }
         AppAction::BmViewUntrack => {
-            // On a remote target row: untrack that specific remote.
-            if let Some((entry, target)) = app.selected_remote_target() {
-                let br = BookmarkRef {
-                    name: entry.name.clone(),
-                    remote: target.remote.clone(),
-                };
-                return Action::RunJj(JJCommand::BookmarkUntrack {
-                    bookmarks: smallvec![br],
-                    flags,
-                });
-            }
-            let Some(entry) = app.selected_bookmark_entry() else {
-                return Action::None;
-            };
-            if entry.remote.is_none() {
+            let Some(br) = app.selected_bookmark_ref() else {
                 app.set_status("bookmark has no remote to untrack");
                 return Action::None;
-            }
-            let br = BookmarkRef {
-                name: entry.name.clone(),
-                remote: entry
-                    .remote
-                    .clone()
-                    .unwrap_or_else(|| crate::types::RemoteName::new("")),
             };
             Action::RunJj(JJCommand::BookmarkUntrack {
                 bookmarks: smallvec![br],
@@ -893,8 +851,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             // On a conflict target row: resolve conflict by picking this side.
             if let Some((entry, target)) = app.selected_conflict_target() {
                 let name = entry.name.clone();
-                let prefix = &target.change_id.display
-                    [..target.change_id.prefix_len.min(target.change_id.display.len())];
+                let prefix = &target.change_id.display[..target
+                    .change_id
+                    .prefix_len
+                    .min(target.change_id.display.len())];
                 let change_id = match target.change_id_suffix {
                     Some(suffix) => ChangeId::new(format!("{prefix}/{suffix}")),
                     None => ChangeId::new(prefix),
@@ -987,7 +947,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::BmViewFetch => {
             // On a remote target row: fetch that specific bookmark+remote.
             if let Some((entry, target)) = app.selected_remote_target() {
-                return Action::RunJj(JJCommand::GitFetchBookmark {
+                return Action::SuspendAndRunJj(JJCommand::GitFetchBookmark {
                     bookmark: entry.name.clone(),
                     remote: Str::from(target.remote.as_str()),
                     flags,
@@ -999,14 +959,14 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             };
             if entry.remote.is_some() {
                 // Remote bookmark row — fetch from that remote.
-                return Action::RunJj(JJCommand::GitFetchBookmark {
+                return Action::SuspendAndRunJj(JJCommand::GitFetchBookmark {
                     bookmark: entry.name.clone(),
                     remote: Str::from(entry.remote.as_ref().unwrap().as_str()),
                     flags,
                 });
             }
             // Local bookmark — fetch from all remotes for this bookmark.
-            Action::RunJj(JJCommand::GitFetch {
+            Action::SuspendAndRunJj(JJCommand::GitFetch {
                 all_remotes: false,
                 remote: None,
                 flags,

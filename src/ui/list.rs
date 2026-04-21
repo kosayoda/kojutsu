@@ -762,6 +762,20 @@ fn render_bookmark_item(
     ListItem::new(Line::from(spans))
 }
 
+/// Push a ShortId with an optional divergence suffix (e.g., `/2`).
+fn push_short_id_with_suffix(
+    spans: &mut Vec<Span<'static>>,
+    id: &crate::dag::ShortId,
+    color: Color,
+    suffix: Option<usize>,
+    theme: &Theme,
+) {
+    push_short_id(spans, id, color, theme);
+    if let Some(n) = suffix {
+        spans.push(Span::styled(format!("/{n}"), Style::default().fg(color)));
+    }
+}
+
 /// Render a conflict target child row, indented under the bookmark name.
 fn render_bookmark_conflict_target(
     target: Option<&crate::dag::BookmarkConflictTarget>,
@@ -779,20 +793,16 @@ fn render_bookmark_conflict_target(
     };
     spans.push(Span::styled(indicator, Style::default().fg(color)));
 
-    // Change ID with prefix highlighting + divergence suffix.
-    push_short_id(&mut spans, &target.change_id, theme.change_id, theme);
-    if let Some(suffix) = target.change_id_suffix {
-        spans.push(Span::styled(
-            format!("/{suffix}"),
-            Style::default().fg(theme.change_id),
-        ));
-    }
-
-    // Short commit ID.
+    push_short_id_with_suffix(
+        &mut spans,
+        &target.change_id,
+        theme.change_id,
+        target.change_id_suffix,
+        theme,
+    );
     spans.push(Span::raw(" "));
     push_short_id(&mut spans, &target.short_commit_id, theme.commit_id, theme);
 
-    // Hidden marker.
     if target.is_hidden {
         spans.push(Span::styled(" (hidden)", Style::default().fg(theme.muted)));
     }
@@ -854,20 +864,16 @@ fn render_bookmark_remote_target(
 
     spans.push(Span::styled(": ", Style::default().fg(theme.muted)));
 
-    // Change ID with prefix highlighting + divergence suffix.
-    push_short_id(&mut spans, &target.change_id, theme.change_id, theme);
-    if let Some(suffix) = target.change_id_suffix {
-        spans.push(Span::styled(
-            format!("/{suffix}"),
-            Style::default().fg(theme.change_id),
-        ));
-    }
-
-    // Short commit ID.
+    push_short_id_with_suffix(
+        &mut spans,
+        &target.change_id,
+        theme.change_id,
+        target.change_id_suffix,
+        theme,
+    );
     spans.push(Span::raw(" "));
     push_short_id(&mut spans, &target.short_commit_id, theme.commit_id, theme);
 
-    // Description.
     if let Some(ref desc) = target.description {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));

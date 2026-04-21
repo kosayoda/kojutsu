@@ -273,8 +273,9 @@ impl App {
                             .as_ref()
                             .is_some_and(|c| contains(&c.display)))
             }
-            DisplayRow::BookmarkConflictTarget { .. }
-            | DisplayRow::BookmarkRemoteTarget { .. } => false,
+            DisplayRow::BookmarkConflictTarget { .. } | DisplayRow::BookmarkRemoteTarget { .. } => {
+                false
+            }
         }
     }
 }

@@ -402,9 +402,8 @@ impl RepoServiceState {
                         };
                         match bg_repo.compute_prefix_lengths(&detail_commit_ids) {
                             Ok(updates) if !updates.is_empty() => {
-                                let _ = tx.send(RepoResult::BookmarkDetailPrefixLengths {
-                                    updates,
-                                });
+                                let _ =
+                                    tx.send(RepoResult::BookmarkDetailPrefixLengths { updates });
                             }
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {

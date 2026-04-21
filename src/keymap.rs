@@ -730,9 +730,7 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::Revert
         | AppAction::TagSet
         | AppAction::TagDelete
-        | AppAction::TagList
-        | AppAction::SwitchToDagView
-        | AppAction::SwitchToBookmarkView => &[Commit],
+        | AppAction::TagList => &[Commit],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }

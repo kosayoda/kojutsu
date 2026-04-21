@@ -530,6 +530,23 @@ impl App {
         Some((entry, target))
     }
 
+    /// Resolve a `BookmarkRef` from cursor context: prefer the remote target
+    /// row's remote, fall back to the bookmark entry's remote field.
+    pub fn selected_bookmark_ref(&self) -> Option<crate::dag::BookmarkRef> {
+        if let Some((entry, target)) = self.selected_remote_target() {
+            return Some(crate::dag::BookmarkRef {
+                name: entry.name.clone(),
+                remote: target.remote.clone(),
+            });
+        }
+        let entry = self.selected_bookmark_entry()?;
+        let remote = entry.remote.clone()?;
+        Some(crate::dag::BookmarkRef {
+            name: entry.name.clone(),
+            remote,
+        })
+    }
+
     /// Get the entry idx the cursor is on.
     pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
         let entry_idx = match self.rows.get(self.cursor)? {

@@ -322,8 +322,7 @@ impl App {
                 self.rebuild_bookmark_entries();
             }
             RepoResult::BookmarkDetailPrefixLengths { updates } => {
-                let update_map: std::collections::HashMap<_, _> =
-                    updates.into_iter().collect();
+                let update_map: std::collections::HashMap<_, _> = updates.into_iter().collect();
                 for details in self.bookmark_details.values_mut() {
                     for ct in &mut details.conflict_targets {
                         if let Some(u) = update_map.get(&ct.commit_id) {
@@ -358,7 +357,7 @@ impl App {
         let mut entries: Vec<BookmarkViewEntry> = Vec::new();
         let mut seen: HS<BookmarkName> = HS::new();
 
-        // Local bookmarks from DAG nodes.
+        // Local + remote bookmarks from DAG nodes in a single pass.
         for node in self.nodes.iter() {
             for bm in &node.commit.bookmarks {
                 if seen.insert(bm.name.clone()) {
@@ -375,10 +374,6 @@ impl App {
                     });
                 }
             }
-        }
-
-        // Remote bookmarks from DAG nodes.
-        for node in self.nodes.iter() {
             for rb in &node.commit.remote_bookmarks {
                 let key = BookmarkName::new(format!("{}@{}", rb.name, rb.remote));
                 if seen.insert(key) {
