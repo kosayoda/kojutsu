@@ -110,6 +110,7 @@ impl App {
         self.selection
             .retain(|s| live_change_ids.contains(s.change_id()));
 
+        self.rebuild_bookmark_entries();
         self.rebuild_rows();
 
         // Restore cursor using stable ChangeId, with fallback chain:
@@ -315,10 +316,88 @@ impl App {
                         self.nodes[idx].commit.commit_id.prefix_len = update.commit_prefix_len;
                     }
                 }
+                // Refresh bookmark entries so ShortId prefix_len is up to date.
+                self.rebuild_bookmark_entries();
             }
             RepoResult::BackgroundError { error } => {
                 self.set_error(format!("background task failed: {error}"));
             }
         }
+    }
+
+    /// Aggregate bookmark data from DAG nodes into a flat list for the bookmark view.
+    pub fn rebuild_bookmark_entries(&mut self) {
+        use super::BookmarkViewEntry;
+        use crate::types::{BookmarkName, RemoteName};
+        use std::collections::HashSet as HS;
+
+        let mut entries: Vec<BookmarkViewEntry> = Vec::new();
+        let mut seen: HS<BookmarkName> = HS::new();
+
+        // Local bookmarks from DAG nodes.
+        for node in self.nodes.iter() {
+            for bm in &node.commit.bookmarks {
+                if seen.insert(bm.name.clone()) {
+                    entries.push(BookmarkViewEntry {
+                        name: bm.name.clone(),
+                        commit_id: Some(node.commit.graph_id.clone()),
+                        change_id: Some(node.commit.change_id.clone()),
+                        description: node.commit.description.clone(),
+                        is_tracked: true,
+                        is_synced: !bm.is_dirty,
+                        is_dirty: bm.is_dirty,
+                        remote: None,
+                    });
+                }
+            }
+        }
+
+        // Remote bookmarks from DAG nodes.
+        for node in self.nodes.iter() {
+            for rb in &node.commit.remote_bookmarks {
+                let key = BookmarkName::new(format!("{}@{}", rb.name, rb.remote));
+                if seen.insert(key) {
+                    entries.push(BookmarkViewEntry {
+                        name: rb.name.clone(),
+                        commit_id: Some(node.commit.graph_id.clone()),
+                        change_id: Some(node.commit.change_id.clone()),
+                        description: node.commit.description.clone(),
+                        is_tracked: false,
+                        is_synced: rb.synced,
+                        is_dirty: false,
+                        remote: Some(rb.remote.clone()),
+                    });
+                }
+            }
+        }
+
+        // Untracked remote bookmarks not attached to any visible node.
+        for raw in &self.untracked_bookmarks {
+            if let Some((name, remote)) = raw.rsplit_once('@') {
+                let key = BookmarkName::new(raw.as_str());
+                if seen.insert(key) {
+                    entries.push(BookmarkViewEntry {
+                        name: BookmarkName::new(name),
+                        commit_id: None,
+                        change_id: None,
+                        description: None,
+                        is_tracked: false,
+                        is_synced: false,
+                        is_dirty: false,
+                        remote: Some(RemoteName::new(remote)),
+                    });
+                }
+            }
+        }
+
+        // Sort: local first, then by name.
+        entries.sort_by(|a, b| {
+            a.remote
+                .is_some()
+                .cmp(&b.remote.is_some())
+                .then(a.name.cmp(&b.name))
+        });
+
+        self.bookmark_entries = entries;
     }
 }

@@ -258,6 +258,21 @@ impl App {
                             .is_some_and(|file| contains(file.path.as_str())))
             }
             DisplayRow::GraphLink { .. } => false,
+            DisplayRow::BookmarkItem { bookmark_idx } => {
+                let Some(entry) = self.bookmark_entries.get(bookmark_idx.raw()) else {
+                    return false;
+                };
+                (scopes.contains(SearchScopes::BOOKMARK)
+                    && (contains(entry.name.as_str())
+                        || entry.remote.as_ref().is_some_and(|r| contains(r.as_str()))))
+                    || (scopes.contains(SearchScopes::DESCRIPTION)
+                        && entry.description.as_deref().is_some_and(contains))
+                    || (scopes.contains(SearchScopes::CHANGE_ID)
+                        && entry
+                            .change_id
+                            .as_ref()
+                            .is_some_and(|c| contains(&c.display)))
+            }
         }
     }
 }

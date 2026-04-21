@@ -9,6 +9,7 @@ use crate::types::{BookmarkName, ChangeId, CommitId, RemoteName, RepoPath, Str};
 /// if the shortest unique prefix is 4 chars: `display = "xvzwolmw"` (8 chars),
 /// `prefix_len = 4`. If the prefix is 10 chars: `display = "xvzwolmwrq"` (10 chars),
 /// `prefix_len = 10`. The UI renders the prefix bright and the rest dimmed.
+#[derive(Clone)]
 pub struct ShortId {
     /// Display string (at least 8 chars, longer if needed for uniqueness).
     pub display: String,

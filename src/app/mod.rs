@@ -19,8 +19,8 @@ use crate::keymap::{CommandFlags, KeymapNode};
 use crate::repo_service::RepoRequest;
 use crate::types::{
     BookmarkName, ChangeId, CommitId, DisplayRow, FollowUpOption, GlobalToggle, PendingCommand,
-    PendingCommitSelect, PendingSelection, RepoPath, SearchScopes, SearchState, SelectionContext,
-    TargetOperation, VisualRange,
+    PendingCommitSelect, PendingSelection, RemoteName, RepoPath, SearchScopes, SearchState,
+    SelectionContext, TargetOperation, VisualRange,
 };
 
 // ---------------------------------------------------------------------------
@@ -36,6 +36,7 @@ pub struct PersistedState {
     pub debug: bool,
     pub search_scopes: u8,
     pub active_preset: Option<usize>,
+    pub active_view: ActiveView,
 }
 
 pub fn load_persisted_state() -> PersistedState {
@@ -63,6 +64,24 @@ pub fn save_persisted_state(state: &PersistedState) {
 pub enum StatusLevel {
     Info,
     Error,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub enum ActiveView {
+    #[default]
+    Dag,
+    Bookmarks,
+}
+
+pub struct BookmarkViewEntry {
+    pub name: BookmarkName,
+    pub commit_id: Option<CommitId>,
+    pub change_id: Option<crate::dag::ShortId>,
+    pub description: Option<String>,
+    pub is_tracked: bool,
+    pub is_synced: bool,
+    pub is_dirty: bool,
+    pub remote: Option<RemoteName>,
 }
 
 #[derive(Clone)]
@@ -286,13 +305,19 @@ impl AppMode {
 
 /// Application state. Pure data -- no I/O, no rendering.
 pub struct App {
+    pub active_view: ActiveView,
     pub nodes: IndexVec<EntryIdx, DagNode>,
     /// Lookup from commit graph_id → entry index (needed at event boundary).
     pub commit_index: HashMap<CommitId, EntryIdx>,
+    /// Aggregated bookmark data for the bookmark view.
+    pub bookmark_entries: Vec<BookmarkViewEntry>,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
     pub cursor: usize,
+    /// Saved (cursor, scroll_offset) per view for restoration on switch.
+    dag_view_state: (usize, usize),
+    bookmark_view_state: (usize, usize),
     /// Persisted list widget state (preserves scroll offset across frames).
     pub list_state: ListState,
     /// Header height from the last render (for mouse click translation).
@@ -368,10 +393,14 @@ impl App {
         let commit_index = build_commit_index(&entries);
         let nodes = build_nodes(entries, &commit_index, glyphs);
         let mut app = Self {
+            active_view: ActiveView::Dag,
             nodes,
             commit_index,
+            bookmark_entries: Vec::new(),
             rows: Vec::new(),
             cursor: 0,
+            dag_view_state: (0, 0),
+            bookmark_view_state: (0, 0),
             list_state: ListState::default(),
             last_header_height: 2,
             last_list_height: 0,
@@ -425,6 +454,36 @@ impl App {
         Some(self.nodes.get(entry_idx)?.row)
     }
 
+    pub fn switch_view(&mut self, view: ActiveView) {
+        if self.active_view == view {
+            return;
+        }
+        // Save current view state.
+        let state = (self.cursor, self.scroll_offset());
+        match self.active_view {
+            ActiveView::Dag => self.dag_view_state = state,
+            ActiveView::Bookmarks => self.bookmark_view_state = state,
+        }
+        self.active_view = view;
+        self.rebuild_rows();
+        // Restore saved state for new view.
+        let (cursor, offset) = match self.active_view {
+            ActiveView::Dag => self.dag_view_state,
+            ActiveView::Bookmarks => self.bookmark_view_state,
+        };
+        self.cursor = cursor.min(self.rows.len().saturating_sub(1));
+        *self.list_state.offset_mut() = offset;
+    }
+
+    pub fn selected_bookmark_entry(&self) -> Option<&BookmarkViewEntry> {
+        match self.rows.get(self.cursor)? {
+            DisplayRow::BookmarkItem { bookmark_idx } => {
+                self.bookmark_entries.get(bookmark_idx.raw())
+            }
+            _ => None,
+        }
+    }
+
     /// Get the entry idx the cursor is on.
     pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
         let entry_idx = match self.rows.get(self.cursor)? {
@@ -432,6 +491,7 @@ impl App {
             | DisplayRow::GraphLink { entry_idx, .. }
             | DisplayRow::FileChange { entry_idx, .. }
             | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,
+            DisplayRow::BookmarkItem { .. } => return None,
         };
         Some(entry_idx)
     }
@@ -529,6 +589,7 @@ impl App {
             debug: self.toggles.contains(CommandFlags::DEBUG),
             search_scopes: self.search_scopes.bits(),
             active_preset: self.active_preset,
+            active_view: self.active_view,
         }
     }
 
@@ -543,6 +604,7 @@ impl App {
             self.search_scopes = SearchScopes::from_bits_truncate(state.search_scopes);
         }
         self.active_preset = state.active_preset.filter(|&i| i < self.presets.len());
+        self.active_view = state.active_view;
     }
 
     /// Get the scroll offset from the list state.

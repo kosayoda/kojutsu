@@ -7,7 +7,7 @@ use ratatui::Frame;
 
 use super::search::*;
 use super::spans::*;
-use crate::app::{App, AppMode};
+use crate::app::{App, AppMode, BookmarkViewEntry};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
 use crate::theme::{Config, Theme};
 use crate::types::{DisplayRow, FileSelectionState, SearchScopes};
@@ -188,6 +188,13 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         diff_line,
                         app.show_line_numbers,
                         &flags,
+                        row_search.as_ref(),
+                        theme,
+                    )
+                }
+                DisplayRow::BookmarkItem { bookmark_idx } => {
+                    render_bookmark_item(
+                        &app.bookmark_entries[bookmark_idx.raw()],
                         row_search.as_ref(),
                         theme,
                     )
@@ -664,6 +671,53 @@ fn render_diff_line(
 }
 
 /// Factor out common directory prefix and suffix from a rename pair.
+fn render_bookmark_item(
+    entry: &BookmarkViewEntry,
+    search: Option<&SearchRender<'_>>,
+    theme: &Theme,
+) -> ListItem<'static> {
+    let mut spans = vec![search_gutter(
+        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
+        theme,
+    )];
+
+    // Bookmark name: dirty = warning+bold, local = change_id+bold, remote name = text + @remote muted.
+    spans.push(Span::raw("  "));
+    if let Some(remote) = &entry.remote {
+        let name_style = Style::default().fg(theme.text);
+        push_searchable(&mut spans, entry.name.as_str(), SearchScopes::BOOKMARK, name_style, search);
+        spans.push(Span::styled(
+            format!("@{remote}"),
+            Style::default().fg(theme.muted),
+        ));
+    } else if entry.is_dirty {
+        let name_display = format!("{}*", entry.name);
+        let style = Style::default()
+            .fg(theme.warning)
+            .add_modifier(Modifier::BOLD);
+        push_searchable(&mut spans, &name_display, SearchScopes::BOOKMARK, style, search);
+    } else {
+        let style = Style::default()
+            .fg(theme.change_id)
+            .add_modifier(Modifier::BOLD);
+        push_searchable(&mut spans, entry.name.as_str(), SearchScopes::BOOKMARK, style, search);
+    }
+
+    // Change ID (if available), with prefix highlighting.
+    if let Some(ref cid) = entry.change_id {
+        spans.push(Span::raw("  "));
+        push_short_id(&mut spans, cid, theme.change_id, theme);
+    }
+
+    // Description.
+    if let Some(ref desc) = entry.description {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
+    }
+
+    ListItem::new(Line::from(spans))
+}
+
 /// Returns `(prefix, old_mid, new_mid, suffix)`.
 ///
 /// `"src/old.rs"` → `"src/new.rs"` gives `("src/", "old.rs", "new.rs", "")`.

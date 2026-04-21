@@ -1,4 +1,4 @@
-use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
+use crate::idx::{BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
 
 /// Identifies a display row for cursor restore after rebuild.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -7,6 +7,7 @@ pub enum RowKey {
     GraphLink(EntryIdx, GraphLineIdx),
     FileChange(EntryIdx, FileIdx),
     DiffLine(EntryIdx, FileIdx, DiffLineIdx),
+    BookmarkItem(BookmarkIdx),
 }
 
 /// One visual row in the list.
@@ -29,6 +30,8 @@ pub enum DisplayRow {
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     },
+    /// A bookmark row in the bookmark view.
+    BookmarkItem { bookmark_idx: BookmarkIdx },
 }
 
 impl DisplayRow {
@@ -48,6 +51,7 @@ impl DisplayRow {
                 file_idx,
                 line_idx,
             } => RowKey::DiffLine(entry_idx, file_idx, line_idx),
+            DisplayRow::BookmarkItem { bookmark_idx } => RowKey::BookmarkItem(bookmark_idx),
         }
     }
 }

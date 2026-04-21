@@ -9,7 +9,7 @@ use ratatui::Frame;
 use crate::app::App;
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, KeymapNode};
 use crate::theme::Theme;
-use crate::types::{FollowUpOption, SearchFocus, SelectionContext, SEARCH_SCOPE_SPECS};
+use crate::types::{scope_specs_for_view, FollowUpOption, SearchFocus, SelectionContext};
 
 /// A plain block with only a top border (used by several simple overlay panels).
 fn top_border(theme: &Theme) -> Block<'static> {
@@ -299,7 +299,7 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App, theme:
         return;
     };
     let mut scope_spans: Vec<Span> = Vec::new();
-    for spec in SEARCH_SCOPE_SPECS.iter() {
+    for spec in scope_specs_for_view(app.active_view).iter() {
         let enabled = search.scopes.contains(spec.flag);
         let mut style = if enabled {
             Style::default()

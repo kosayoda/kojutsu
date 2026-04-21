@@ -127,6 +127,14 @@ pub enum AppAction {
     TagList,
     SelectPreset,
     SwitchPreset(usize),
+    SwitchToDagView,
+    SwitchToBookmarkView,
+    // Bookmark view actions (operate on selected BookmarkViewEntry)
+    BmViewDelete,
+    BmViewTrack,
+    BmViewUntrack,
+    BmViewPush,
+    BmViewJumpToCommit,
 }
 
 // ---------------------------------------------------------------------------
@@ -197,298 +205,226 @@ impl Keymap {
     }
 }
 
+/// Holds per-view keymaps.
+pub struct Keymaps {
+    pub dag: Keymap,
+    pub bookmarks: Keymap,
+}
+
+impl Keymaps {
+    pub fn for_view(&self, view: crate::app::ActiveView) -> &Keymap {
+        match view {
+            crate::app::ActiveView::Dag => &self.dag,
+            crate::app::ActiveView::Bookmarks => &self.bookmarks,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Default keymap construction
 // ---------------------------------------------------------------------------
 
-impl Default for Keymap {
-    fn default() -> Self {
-        use HelpGroup::{Commands as C, General as G, Navigation as N};
+/// Bindings shared across all views (navigation, search, quit, help, etc.).
+fn shared_bindings() -> Vec<(Node, KeymapNode)> {
+    use HelpGroup::{General as G, Navigation as N};
+    vec![
+        // Help
+        bind("?", AppAction::ShowHelp, "help", G),
+        // Quit
+        bind("q", AppAction::Quit, "quit", G),
+        bind("ctrl-c", AppAction::Quit, "quit", G),
+        // Line-by-line navigation
+        bind("j", AppAction::MoveDown, "move down", N),
+        bind("down", AppAction::MoveDown, "move down", N),
+        bind("k", AppAction::MoveUp, "move up", N),
+        bind("up", AppAction::MoveUp, "move up", N),
+        // Section navigation
+        bind("shift-j", AppAction::MoveDownSection, "next commit", N),
+        bind("shift-k", AppAction::MoveUpSection, "prev commit", N),
+        // Paging
+        bind("ctrl-d", AppAction::PageDown, "page down", N),
+        bind("pagedown", AppAction::PageDown, "page down", N),
+        bind("ctrl-u", AppAction::PageUp, "page up", N),
+        bind("pageup", AppAction::PageUp, "page up", N),
+        // Jump
+        bind("@", AppAction::JumpToWorkingCopy, "jump to @", N),
+        bind("0", AppAction::MoveToTop, "go to top", N),
+        bind("$", AppAction::MoveToBottom, "go to bottom", N),
+        // View switching
+        bind("1", AppAction::SwitchToDagView, "DAG view", G),
+        bind("2", AppAction::SwitchToBookmarkView, "bookmarks view", G),
+        // Fold / Select
+        bind("tab", AppAction::ToggleFold, "toggle fold", N),
+        bind("space", AppAction::ToggleSelect, "toggle select", N),
+        bind("v", AppAction::EnterVisualMode, "visual select", N),
+        bind("/", AppAction::StartSearch, "search", N),
+        bind("ctrl-n", AppAction::NextMatch, "next match", N),
+        bind("ctrl-p", AppAction::PrevMatch, "prev match", N),
+        // Global toggles
+        bind(
+            "shift-i",
+            AppAction::ToggleIgnoreImmutable,
+            "toggle ignore-immutable",
+            G,
+        ),
+        bind(
+            "shift-w",
+            AppAction::ToggleIgnoreWorkingCopy,
+            "toggle ignore-working-copy",
+            G,
+        ),
+        bind("shift-d", AppAction::ToggleDebug, "toggle debug", G),
+        // Refresh
+        bind("ctrl-r", AppAction::Refresh, "refresh", N),
+        // Command palette
+        prefix(
+            ";",
+            "command",
+            G,
+            vec![
+                bind("r", AppAction::EditRevset, "edit revset", G),
+                bind(
+                    "shift-r",
+                    AppAction::EditRevsetInEditor,
+                    "edit revset in $EDITOR",
+                    G,
+                ),
+                bind("d", AppAction::ResetRevset, "default revset", G),
+                bind("p", AppAction::SelectPreset, "switch preset", G),
+                bind("l", AppAction::ToggleLineNumbers, "toggle line numbers", G),
+                bind("1", AppAction::SwitchPreset(0), "preset 1", G),
+                bind("2", AppAction::SwitchPreset(1), "preset 2", G),
+                bind("3", AppAction::SwitchPreset(2), "preset 3", G),
+                bind("4", AppAction::SwitchPreset(3), "preset 4", G),
+                bind("5", AppAction::SwitchPreset(4), "preset 5", G),
+            ],
+        ),
+    ]
+}
 
-        let root = vec![
-            // Help
-            bind("?", AppAction::ShowHelp, "help", G),
-            // Quit
-            bind("q", AppAction::Quit, "quit", G),
-            bind("ctrl-c", AppAction::Quit, "quit", G),
-            // Line-by-line navigation
-            bind("j", AppAction::MoveDown, "move down", N),
-            bind("down", AppAction::MoveDown, "move down", N),
-            bind("k", AppAction::MoveUp, "move up", N),
-            bind("up", AppAction::MoveUp, "move up", N),
-            // Section navigation (jump between commits)
-            bind("shift-j", AppAction::MoveDownSection, "next commit", N),
-            bind("shift-k", AppAction::MoveUpSection, "prev commit", N),
-            // Paging
-            bind("ctrl-d", AppAction::PageDown, "page down", N),
-            bind("pagedown", AppAction::PageDown, "page down", N),
-            bind("ctrl-u", AppAction::PageUp, "page up", N),
-            bind("pageup", AppAction::PageUp, "page up", N),
-            // Jump
-            bind("@", AppAction::JumpToWorkingCopy, "jump to @", N),
-            bind("0", AppAction::MoveToTop, "go to top", N),
-            bind("$", AppAction::MoveToBottom, "go to bottom", N),
-            // Revset presets
-            bind("1", AppAction::SwitchPreset(0), "preset 1", G),
-            bind("2", AppAction::SwitchPreset(1), "preset 2", G),
-            bind("3", AppAction::SwitchPreset(2), "preset 3", G),
-            bind("4", AppAction::SwitchPreset(3), "preset 4", G),
-            bind("5", AppAction::SwitchPreset(4), "preset 5", G),
-            // Fold / Select
-            bind("tab", AppAction::ToggleFold, "toggle fold", N),
-            bind("space", AppAction::ToggleSelect, "toggle select", N),
-            bind("v", AppAction::EnterVisualMode, "visual select", N),
-            bind("/", AppAction::StartSearch, "search", N),
-            bind("ctrl-n", AppAction::NextMatch, "next match", N),
-            bind("ctrl-p", AppAction::PrevMatch, "prev match", N),
-            // Global toggles
-            bind(
-                "shift-i",
-                AppAction::ToggleIgnoreImmutable,
-                "toggle ignore-immutable",
-                G,
-            ),
-            bind(
-                "shift-w",
-                AppAction::ToggleIgnoreWorkingCopy,
-                "toggle ignore-working-copy",
-                G,
-            ),
-            bind("shift-d", AppAction::ToggleDebug, "toggle debug", G),
-            // Refresh
-            bind("ctrl-r", AppAction::Refresh, "refresh", N),
-            // Absorb
+impl Default for Keymaps {
+    fn default() -> Self {
+        use HelpGroup::Commands as C;
+
+        // DAG view: shared bindings + all commit/graph operations.
+        let mut dag_root = shared_bindings();
+        dag_root.extend(vec![
             bind("a", AppAction::Absorb, "absorb", C),
-            // Bookmark submenu
-            prefix(
-                "b",
-                "bookmark",
-                C,
-                vec![
-                    toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
-                    bind("c", AppAction::BookmarkCreate, "create", C),
-                    bind("s", AppAction::BookmarkSet, "set", C),
-                    bind("d", AppAction::BookmarkDelete, "delete", C),
-                    bind("f", AppAction::BookmarkForget, "forget", C),
-                    bind("m", AppAction::BookmarkMove, "move…", C),
-                    bind("r", AppAction::BookmarkRename, "rename", C),
-                    bind("a", AppAction::BookmarkAdvance, "advance", C),
-                    bind("t", AppAction::BookmarkTrack, "track", C),
-                    bind("u", AppAction::BookmarkUntrack, "untrack", C),
-                ],
-            ),
-            // Tag submenu
-            prefix(
-                "t",
-                "tag",
-                C,
-                vec![
-                    toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
-                    bind("s", AppAction::TagSet, "set", C),
-                    bind("d", AppAction::TagDelete, "delete", C),
-                    bind("l", AppAction::TagList, "list", C),
-                ],
-            ),
-            // Commit submenu
-            prefix(
-                "c",
-                "commit",
-                C,
-                vec![
-                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
-                    bind("c", AppAction::Commit, "commit (in $EDITOR)", C),
-                    bind("m", AppAction::CommitWithMessage, "with message", C),
-                ],
-            ),
-            // Describe submenu
-            prefix(
-                "d",
-                "describe",
-                C,
-                vec![
-                    bind("d", AppAction::Describe, "describe", C),
-                    bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR", C),
-                ],
-            ),
-            // Edit
+            prefix("b", "bookmark", C, vec![
+                toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
+                bind("c", AppAction::BookmarkCreate, "create", C),
+                bind("s", AppAction::BookmarkSet, "set", C),
+                bind("d", AppAction::BookmarkDelete, "delete", C),
+                bind("f", AppAction::BookmarkForget, "forget", C),
+                bind("m", AppAction::BookmarkMove, "move…", C),
+                bind("r", AppAction::BookmarkRename, "rename", C),
+                bind("a", AppAction::BookmarkAdvance, "advance", C),
+                bind("t", AppAction::BookmarkTrack, "track", C),
+                bind("u", AppAction::BookmarkUntrack, "untrack", C),
+            ]),
+            prefix("t", "tag", C, vec![
+                toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
+                bind("s", AppAction::TagSet, "set", C),
+                bind("d", AppAction::TagDelete, "delete", C),
+                bind("l", AppAction::TagList, "list", C),
+            ]),
+            prefix("c", "commit", C, vec![
+                toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                bind("c", AppAction::Commit, "commit (in $EDITOR)", C),
+                bind("m", AppAction::CommitWithMessage, "with message", C),
+            ]),
+            prefix("d", "describe", C, vec![
+                bind("d", AppAction::Describe, "describe", C),
+                bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR", C),
+            ]),
             bind("e", AppAction::Edit, "edit", C),
-            // Git submenu
-            prefix(
-                "g",
-                "git",
-                C,
-                vec![
-                    toggle("d", CommandFlags::DRY_RUN, "dry run (push only)"),
-                    prefix(
-                        "f",
-                        "fetch",
-                        C,
-                        vec![
-                            bind("f", AppAction::GitFetch, "fetch", C),
-                            bind("a", AppAction::GitFetchAllRemotes, "all remotes", C),
-                        ],
-                    ),
-                    prefix(
-                        "p",
-                        "push",
-                        C,
-                        vec![
-                            bind("p", AppAction::GitPush, "push", C),
-                            bind("a", AppAction::GitPushAll, "all bookmarks", C),
-                            bind("c", AppAction::GitPushChange, "change", C),
-                            bind("b", AppAction::GitPushBookmark, "bookmark", C),
-                        ],
-                    ),
-                    bind("e", AppAction::GitExport, "export (jj -> git)", C),
-                    bind("i", AppAction::GitImport, "import (git -> jj)", C),
-                ],
-            ),
-            // New submenu
-            prefix(
-                "n",
-                "new",
-                C,
-                vec![
-                    toggle("e", CommandFlags::NO_EDIT, "no-edit"),
-                    bind("n", AppAction::New, "new", C),
-                    bind("a", AppAction::NewInsertAfter, "insert after", C),
-                    bind("b", AppAction::NewInsertBefore, "insert before", C),
-                ],
-            ),
-            // Rebase submenu
-            prefix(
-                "r",
-                "rebase",
-                C,
-                vec![
-                    bind("r", AppAction::RebaseRevision, "revision…", C),
-                    bind("s", AppAction::RebaseSource, "source…", C),
-                    bind("b", AppAction::RebaseBranch, "branch…", C),
-                ],
-            ),
-            // Restore submenu
-            prefix(
-                "shift-r",
-                "restore",
-                C,
-                vec![
-                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
-                    toggle(
-                        "d",
-                        CommandFlags::RESTORE_DESCENDANTS,
-                        "restore descendants",
-                    ),
-                    bind("shift-r", AppAction::Restore, "changes-in", C),
-                    bind("f", AppAction::RestoreFrom, "from…", C),
-                    bind("t", AppAction::RestoreInto, "into…", C),
-                ],
-            ),
-            // Split submenu
-            prefix(
-                "shift-s",
-                "split",
-                C,
-                vec![
-                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
-                    toggle("p", CommandFlags::PARALLEL, "parallel"),
-                    bind("shift-s", AppAction::Split, "split", C),
-                    bind("o", AppAction::SplitOnto, "onto…", C),
-                    bind("a", AppAction::SplitAfter, "after…", C),
-                    bind("b", AppAction::SplitBefore, "before…", C),
-                ],
-            ),
-            // Squash submenu
-            prefix(
-                "s",
-                "squash",
-                C,
-                vec![
-                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
-                    toggle("k", CommandFlags::KEEP_EMPTIED, "keep emptied"),
-                    bind("s", AppAction::Squash, "into parent", C),
-                    bind("t", AppAction::SquashSelect(SquashKind::Into), "into…", C),
-                    bind("o", AppAction::SquashSelect(SquashKind::Onto), "onto…", C),
-                    bind("a", AppAction::SquashSelect(SquashKind::After), "after…", C),
-                    bind(
-                        "b",
-                        AppAction::SquashSelect(SquashKind::Before),
-                        "before…",
-                        C,
-                    ),
-                ],
-            ),
-            // Undo submenu
-            prefix(
-                "u",
-                "undo/redo",
-                C,
-                vec![
-                    bind("u", AppAction::Undo, "undo", C),
-                    bind("r", AppAction::Redo, "redo", C),
-                ],
-            ),
-            // Abandon submenu
-            prefix(
-                "x",
-                "abandon",
-                C,
-                vec![
-                    toggle("b", CommandFlags::RETAIN_BOOKMARKS, "keep bookmarks"),
-                    toggle(
-                        "d",
-                        CommandFlags::RESTORE_DESCENDANTS,
-                        "restore descendants",
-                    ),
-                    bind("x", AppAction::Abandon, "abandon", C),
-                ],
-            ),
-            // Duplicate submenu
-            prefix(
-                "y",
-                "duplicate",
-                C,
-                vec![
-                    bind("y", AppAction::Duplicate, "duplicate", C),
-                    bind("t", AppAction::DuplicateOnto, "onto…", C),
-                ],
-            ),
-            // Parallelize / Simplify parents
+            prefix("g", "git", C, vec![
+                toggle("d", CommandFlags::DRY_RUN, "dry run (push only)"),
+                prefix("f", "fetch", C, vec![
+                    bind("f", AppAction::GitFetch, "fetch", C),
+                    bind("a", AppAction::GitFetchAllRemotes, "all remotes", C),
+                ]),
+                prefix("p", "push", C, vec![
+                    bind("p", AppAction::GitPush, "push", C),
+                    bind("a", AppAction::GitPushAll, "all bookmarks", C),
+                    bind("c", AppAction::GitPushChange, "change", C),
+                    bind("b", AppAction::GitPushBookmark, "bookmark", C),
+                ]),
+                bind("e", AppAction::GitExport, "export (jj -> git)", C),
+                bind("i", AppAction::GitImport, "import (git -> jj)", C),
+            ]),
+            prefix("n", "new", C, vec![
+                toggle("e", CommandFlags::NO_EDIT, "no-edit"),
+                bind("n", AppAction::New, "new", C),
+                bind("a", AppAction::NewInsertAfter, "insert after", C),
+                bind("b", AppAction::NewInsertBefore, "insert before", C),
+            ]),
+            prefix("r", "rebase", C, vec![
+                bind("r", AppAction::RebaseRevision, "revision…", C),
+                bind("s", AppAction::RebaseSource, "source…", C),
+                bind("b", AppAction::RebaseBranch, "branch…", C),
+            ]),
+            prefix("shift-r", "restore", C, vec![
+                toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                toggle("d", CommandFlags::RESTORE_DESCENDANTS, "restore descendants"),
+                bind("shift-r", AppAction::Restore, "changes-in", C),
+                bind("f", AppAction::RestoreFrom, "from…", C),
+                bind("t", AppAction::RestoreInto, "into…", C),
+            ]),
+            prefix("shift-s", "split", C, vec![
+                toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                toggle("p", CommandFlags::PARALLEL, "parallel"),
+                bind("shift-s", AppAction::Split, "split", C),
+                bind("o", AppAction::SplitOnto, "onto…", C),
+                bind("a", AppAction::SplitAfter, "after…", C),
+                bind("b", AppAction::SplitBefore, "before…", C),
+            ]),
+            prefix("s", "squash", C, vec![
+                toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                toggle("k", CommandFlags::KEEP_EMPTIED, "keep emptied"),
+                bind("s", AppAction::Squash, "into parent", C),
+                bind("t", AppAction::SquashSelect(SquashKind::Into), "into…", C),
+                bind("o", AppAction::SquashSelect(SquashKind::Onto), "onto…", C),
+                bind("a", AppAction::SquashSelect(SquashKind::After), "after…", C),
+                bind("b", AppAction::SquashSelect(SquashKind::Before), "before…", C),
+            ]),
+            prefix("u", "undo/redo", C, vec![
+                bind("u", AppAction::Undo, "undo", C),
+                bind("r", AppAction::Redo, "redo", C),
+            ]),
+            prefix("x", "abandon", C, vec![
+                toggle("b", CommandFlags::RETAIN_BOOKMARKS, "keep bookmarks"),
+                toggle("d", CommandFlags::RESTORE_DESCENDANTS, "restore descendants"),
+                bind("x", AppAction::Abandon, "abandon", C),
+            ]),
+            prefix("y", "duplicate", C, vec![
+                bind("y", AppAction::Duplicate, "duplicate", C),
+                bind("t", AppAction::DuplicateOnto, "onto…", C),
+            ]),
             bind("p", AppAction::Parallelize, "parallelize", C),
             bind("shift-p", AppAction::SimplifyParents, "simplify parents", C),
-            // Revert
             bind("z", AppAction::Revert, "revert", C),
-            // Workspace
-            prefix(
-                "w",
-                "workspace",
-                C,
-                vec![
-                    bind("a", AppAction::WorkspaceAdd, "add", C),
-                    bind("f", AppAction::WorkspaceForget, "forget", C),
-                    bind("l", AppAction::WorkspaceList, "list", C),
-                ],
-            ),
-            // Command palette
-            prefix(
-                ";",
-                "command",
-                G,
-                vec![
-                    bind("r", AppAction::EditRevset, "edit revset", G),
-                    bind(
-                        "shift-r",
-                        AppAction::EditRevsetInEditor,
-                        "edit revset in $EDITOR",
-                        G,
-                    ),
-                    bind("d", AppAction::ResetRevset, "default revset", G),
-                    bind("p", AppAction::SelectPreset, "switch preset", G),
-                    bind("l", AppAction::ToggleLineNumbers, "toggle line numbers", G),
-                ],
-            ),
-        ];
+            prefix("w", "workspace", C, vec![
+                bind("a", AppAction::WorkspaceAdd, "add", C),
+                bind("f", AppAction::WorkspaceForget, "forget", C),
+                bind("l", AppAction::WorkspaceList, "list", C),
+            ]),
+        ]);
 
-        Keymap { root }
+        // Bookmark view: shared bindings + bookmark-specific actions.
+        let mut bm_root = shared_bindings();
+        bm_root.extend(vec![
+            bind("d", AppAction::BmViewDelete, "delete", C),
+            bind("t", AppAction::BmViewTrack, "track", C),
+            bind("u", AppAction::BmViewUntrack, "untrack", C),
+            bind("p", AppAction::BmViewPush, "push", C),
+            bind("enter", AppAction::BmViewJumpToCommit, "jump to commit", C),
+        ]);
+
+        Keymaps {
+            dag: Keymap { root: dag_root },
+            bookmarks: Keymap { root: bm_root },
+        }
     }
 }
 
@@ -680,7 +616,9 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::Revert
         | AppAction::TagSet
         | AppAction::TagDelete
-        | AppAction::TagList => &[Commit],
+        | AppAction::TagList
+        | AppAction::SwitchToDagView
+        | AppAction::SwitchToBookmarkView => &[Commit],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }

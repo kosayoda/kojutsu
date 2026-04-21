@@ -1,11 +1,31 @@
-use super::{App, Loadable};
-use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
+use super::{ActiveView, App, Loadable};
+use crate::idx::{BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
 
 impl App {
     /// Rebuild the flattened row list from current fold state.
     pub fn rebuild_rows(&mut self) {
+        match self.active_view {
+            ActiveView::Dag => self.rebuild_dag_rows(),
+            ActiveView::Bookmarks => self.rebuild_bookmark_rows(),
+        }
+    }
+
+    fn rebuild_bookmark_rows(&mut self) {
+        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        self.rows.clear();
+        for idx in 0..self.bookmark_entries.len() {
+            self.rows.push(DisplayRow::BookmarkItem {
+                bookmark_idx: BookmarkIdx::new(idx),
+            });
+        }
+        self.cursor = prev_cursor
+            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
+            .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
+    }
+
+    fn rebuild_dag_rows(&mut self) {
         // Remember what the cursor was pointing at so we can restore it.
         let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
 

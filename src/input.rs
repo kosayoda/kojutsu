@@ -8,7 +8,7 @@ use crate::dag::{BookmarkRef, DiffLineKind};
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{ChangeSelection, InsertPosition, JJCommand};
 use crate::keymap::{
-    self, action_label, action_supported_selection_kinds, AppAction, CommandFlags, Keymap,
+    self, action_label, action_supported_selection_kinds, AppAction, CommandFlags, Keymap, Keymaps,
     LookupResult,
 };
 use smallvec::smallvec;
@@ -64,10 +64,11 @@ pub enum Action {
 }
 
 /// Handle a key press, dispatching through the keymap trie and app mode.
-pub fn handle_key(app: &mut App, keymap: &'static Keymap, key: KeyEvent) -> Action {
+pub fn handle_key(app: &mut App, keymaps: &'static Keymaps, key: KeyEvent) -> Action {
     let Some(node) = keymap::key_event_to_node(&key) else {
         return Action::None;
     };
+    let keymap = keymaps.for_view(app.active_view);
 
     match &app.mode {
         AppMode::Normal => handle_normal_key(app, keymap, &node),
@@ -786,6 +787,85 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             let sources = app.selected_change_ids();
             enter_target_select(app, TargetOperation::Revert { sources }, flags)
         }
+        AppAction::SwitchToDagView => {
+            app.switch_view(crate::app::ActiveView::Dag);
+            Action::None
+        }
+        AppAction::SwitchToBookmarkView => {
+            app.switch_view(crate::app::ActiveView::Bookmarks);
+            Action::None
+        }
+        // Bookmark view actions
+        AppAction::BmViewDelete => {
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            let name = entry.name.clone();
+            Action::RunJj(JJCommand::BookmarkDelete {
+                names: smallvec![name],
+                flags,
+            })
+        }
+        AppAction::BmViewTrack => {
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            if entry.remote.is_none() {
+                app.set_status("bookmark is already local");
+                return Action::None;
+            }
+            let br = BookmarkRef {
+                name: entry.name.clone(),
+                remote: entry.remote.clone().unwrap_or_else(|| crate::types::RemoteName::new("")),
+            };
+            Action::RunJj(JJCommand::BookmarkTrack {
+                bookmarks: smallvec![br],
+                flags,
+            })
+        }
+        AppAction::BmViewUntrack => {
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            if entry.remote.is_none() {
+                app.set_status("bookmark has no remote to untrack");
+                return Action::None;
+            }
+            let br = BookmarkRef {
+                name: entry.name.clone(),
+                remote: entry.remote.clone().unwrap_or_else(|| crate::types::RemoteName::new("")),
+            };
+            Action::RunJj(JJCommand::BookmarkUntrack {
+                bookmarks: smallvec![br],
+                flags,
+            })
+        }
+        AppAction::BmViewPush => {
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            let name = entry.name.clone();
+            Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
+                bookmarks: smallvec![name],
+                remote: None,
+                flags,
+            })
+        }
+        AppAction::BmViewJumpToCommit => {
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            let commit_id = entry.commit_id.clone();
+            app.switch_view(crate::app::ActiveView::Dag);
+            if let Some(cid) = commit_id {
+                if let Some(idx) = app.entry_by_commit_id(&cid) {
+                    if let Some(row) = app.row_of_commit(idx) {
+                        app.cursor = row;
+                    }
+                }
+            }
+            Action::None
+        }
     }
 }
 
@@ -948,24 +1028,12 @@ fn handle_search_input(app: &mut App, key: KeyEvent) -> Action {
                     }
                     KeyCode::Char('0') => app.reset_search_scopes(),
                     KeyCode::Char('*') => app.enable_all_search_scopes(),
-                    KeyCode::Char('c') => {
-                        app.toggle_search_scope(crate::types::SearchScopes::CHANGE_ID)
+                    KeyCode::Char(ch) => {
+                        let specs = crate::types::scope_specs_for_view(app.active_view);
+                        if let Some(spec) = specs.iter().find(|s| s.hint.starts_with(ch)) {
+                            app.toggle_search_scope(spec.flag);
+                        }
                     }
-                    KeyCode::Char('i') => {
-                        app.toggle_search_scope(crate::types::SearchScopes::COMMIT_ID)
-                    }
-                    KeyCode::Char('d') => {
-                        app.toggle_search_scope(crate::types::SearchScopes::DESCRIPTION)
-                    }
-                    KeyCode::Char('b') => {
-                        app.toggle_search_scope(crate::types::SearchScopes::BOOKMARK)
-                    }
-                    KeyCode::Char('a') => {
-                        app.toggle_search_scope(crate::types::SearchScopes::AUTHOR)
-                    }
-                    KeyCode::Char('p') => app.toggle_search_scope(crate::types::SearchScopes::PATH),
-                    KeyCode::Char('l') => app.toggle_search_scope(crate::types::SearchScopes::LINE),
-                    KeyCode::Char('t') => app.toggle_search_scope(crate::types::SearchScopes::TAG),
                     _ => {}
                 },
                 None => {}
@@ -1227,7 +1295,7 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             Some(DisplayRow::GraphLink { entry_idx, .. }) => Some(*entry_idx),
             Some(DisplayRow::FileChange { entry_idx, .. }) => Some(*entry_idx),
             Some(DisplayRow::DiffLine { entry_idx, .. }) => Some(*entry_idx),
-            None => None,
+            Some(DisplayRow::BookmarkItem { .. }) | None => None,
         };
         entry_idx.is_some_and(|idx| app.nodes[idx].commit.is_working_copy())
     });

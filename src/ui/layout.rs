@@ -76,6 +76,11 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         ));
     }
 
+    let view_title = match app.active_view {
+        crate::app::ActiveView::Dag => " Log ",
+        crate::app::ActiveView::Bookmarks => " Bookmarks ",
+    };
+
     let mut wc_spans: Vec<Span> = Vec::new();
     if !app.has_working_copy() {
         wc_spans.push(Span::styled(
@@ -88,7 +93,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.muted))
         .title("")
-        .title(" Status ")
+        .title(view_title)
         .title_style(
             Style::default()
                 .fg(theme.accent)
@@ -113,16 +118,16 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
                 pos,
                 search.matches.len()
             ),
-            theme.muted,
+            theme.text,
         )
     } else if let Some((status, level)) = &app.status_message {
         let c = match level {
-            StatusLevel::Info => theme.muted,
+            StatusLevel::Info => theme.text,
             StatusLevel::Error => theme.error,
         };
         (status.clone(), c)
     } else {
-        (app.last_command.clone().unwrap_or_default(), theme.muted)
+        (app.last_command.clone().unwrap_or_default(), theme.text)
     };
     let line = Line::from(Span::styled(content, Style::default().fg(color)));
     frame.render_widget(Paragraph::new(line), inner);

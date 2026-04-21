@@ -51,6 +51,10 @@ define_idx!(
     /// Index into `GraphLines::extra` (link/pad/term lines between commits).
     pub GraphLineIdx
 );
+define_idx!(
+    /// Index into `App::bookmark_entries`.
+    pub BookmarkIdx
+);
 
 // ---------------------------------------------------------------------------
 // IndexVec<I, T> -- a Vec<T> indexed by a typed index I.
@@ -161,6 +165,11 @@ impl From<usize> for DiffLineIdx {
     }
 }
 impl From<usize> for GraphLineIdx {
+    fn from(v: usize) -> Self {
+        Self(v)
+    }
+}
+impl From<usize> for BookmarkIdx {
     fn from(v: usize) -> Self {
         Self(v)
     }

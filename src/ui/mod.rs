@@ -8,11 +8,11 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
 
 use crate::app::{App, AppMode};
-use crate::keymap::{self, Keymap};
+use crate::keymap::{self, Keymaps};
 use crate::theme::Config;
 
 /// Render the full UI into the frame.
-pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap, config: &Config) {
+pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config: &Config) {
     let theme = &config.theme;
     // Use a single-line header if both repo and revset fit on one line.
     let single_line_len = "repository: ".len()
@@ -87,7 +87,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymap: &'static Keymap, config: &
                 Some(AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. }) => {
                     keymap::select_mode_help_entries()
                 }
-                _ => keymap::help_entries(keymap, app.presets),
+                _ => keymap::help_entries(keymaps.for_view(app.active_view), app.presets),
             };
             let (left, right) = overlay::balance_help_groups(&groups);
             let left_h: usize = left.iter().map(|(_, e)| e.len() + 1).sum();

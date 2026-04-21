@@ -10,7 +10,7 @@ use crossterm::event::{self, Event, KeyEventKind};
 use kojutsu::app::{App, AppMode, Loadable};
 use kojutsu::input::{self, Action};
 use kojutsu::jj_command::JJCommand;
-use kojutsu::keymap::Keymap;
+use kojutsu::keymap::Keymaps;
 use kojutsu::repo::JjRepo;
 use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService};
 use kojutsu::ui;
@@ -98,7 +98,7 @@ fn main() -> Result<()> {
 
     let config: &'static kojutsu::theme::Config =
         Box::leak(Box::new(kojutsu::theme::load_config()));
-    let keymap: &'static Keymap = Box::leak(Box::new(Keymap::default()));
+    let keymaps: &'static Keymaps = Box::leak(Box::new(Keymaps::default()));
     let (event_tx, event_rx) = mpsc::channel();
     let (repo_requests, repo_responses) = RepoService::spawn(repo_path.clone());
     let _repo_forwarder = repo_responses.spawn_forwarder(event_tx.clone(), AppEvent::Repo);
@@ -135,7 +135,7 @@ fn main() -> Result<()> {
     let _ = event_tx.send(AppEvent::Init);
 
     loop {
-        terminal.draw(|frame| ui::draw(frame, &mut app, keymap, config))?;
+        terminal.draw(|frame| ui::draw(frame, &mut app, keymaps, config))?;
 
         let app_event = match event_rx.recv() {
             Ok(event) => event,
@@ -150,7 +150,7 @@ fn main() -> Result<()> {
             }
             AppEvent::Terminal(ev) => match ev {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    input::handle_key(&mut app, keymap, key)
+                    input::handle_key(&mut app, keymaps, key)
                 }
                 Event::Mouse(mouse) => {
                     let hdr = app.last_header_height;
