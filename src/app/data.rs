@@ -347,6 +347,7 @@ impl App {
                         is_synced: !bm.is_dirty,
                         is_dirty: bm.is_dirty,
                         remote: None,
+                        is_conflicted: bm.is_conflicted,
                     });
                 }
             }
@@ -366,6 +367,7 @@ impl App {
                         is_synced: rb.synced,
                         is_dirty: false,
                         remote: Some(rb.remote.clone()),
+                        is_conflicted: false,
                     });
                 }
             }
@@ -385,6 +387,7 @@ impl App {
                         is_synced: false,
                         is_dirty: false,
                         remote: Some(RemoteName::new(remote)),
+                        is_conflicted: false,
                     });
                 }
             }

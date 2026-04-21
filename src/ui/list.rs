@@ -679,8 +679,12 @@ fn render_bookmark_item(
         theme,
     )];
 
-    // Bookmark name: dirty = warning+bold, local = change_id+bold, remote name = text + @remote muted.
-    spans.push(Span::raw("  "));
+    // Conflict indicator for bookmark conflicts (divergent operations).
+    if entry.is_conflicted {
+        spans.push(Span::styled("! ", Style::default().fg(theme.error)));
+    } else {
+        spans.push(Span::raw("  "));
+    }
     if let Some(remote) = &entry.remote {
         let name_style = Style::default().fg(theme.text);
         push_searchable(

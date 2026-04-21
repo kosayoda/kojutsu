@@ -794,9 +794,10 @@ impl JjRepo {
         let bookmarks: Vec<BookmarkInfo> = repo
             .view()
             .local_bookmarks_for_commit(commit.id())
-            .map(|(name, _)| BookmarkInfo {
+            .map(|(name, target)| BookmarkInfo {
                 name: BookmarkName::new(name.as_str()),
                 is_dirty: dirty_bookmarks.contains(name),
+                is_conflicted: target.has_conflict(),
             })
             .collect();
 

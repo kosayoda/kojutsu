@@ -82,6 +82,8 @@ pub struct BookmarkViewEntry {
     pub is_synced: bool,
     pub is_dirty: bool,
     pub remote: Option<RemoteName>,
+    /// Whether the bookmark has conflicting targets.
+    pub is_conflicted: bool,
 }
 
 #[derive(Clone)]

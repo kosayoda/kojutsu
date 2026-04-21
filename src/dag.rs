@@ -95,6 +95,8 @@ pub struct BookmarkInfo {
     pub name: BookmarkName,
     /// Whether the local bookmark differs from its tracked remote counterpart.
     pub is_dirty: bool,
+    /// Whether the bookmark has conflicting targets (divergent operations).
+    pub is_conflicted: bool,
 }
 
 /// A workspace that has a commit as its working copy.
