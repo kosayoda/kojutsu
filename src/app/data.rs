@@ -183,6 +183,7 @@ impl App {
                 untracked_bookmarks,
                 tracked_bookmarks,
                 remotes,
+                bookmark_details,
             } => {
                 self.status_message = None;
                 self.revset = revset;
@@ -192,6 +193,7 @@ impl App {
                 self.untracked_bookmarks = untracked_bookmarks;
                 self.tracked_bookmarks = tracked_bookmarks;
                 self.remotes = remotes;
+                self.bookmark_details = bookmark_details;
                 self.revset_state = Loadable::Loaded(());
                 self.apply_entries(entries);
             }
@@ -318,6 +320,28 @@ impl App {
                 }
                 // Refresh bookmark entries so ShortId prefix_len is up to date.
                 self.rebuild_bookmark_entries();
+            }
+            RepoResult::BookmarkDetailPrefixLengths { updates } => {
+                let update_map: std::collections::HashMap<_, _> =
+                    updates.into_iter().collect();
+                for details in self.bookmark_details.values_mut() {
+                    for ct in &mut details.conflict_targets {
+                        if let Some(u) = update_map.get(&ct.commit_id) {
+                            ct.change_id.display.clone_from(&u.change_display);
+                            ct.change_id.prefix_len = u.change_prefix_len;
+                            ct.short_commit_id.display.clone_from(&u.commit_display);
+                            ct.short_commit_id.prefix_len = u.commit_prefix_len;
+                        }
+                    }
+                    for rt in &mut details.remote_targets {
+                        if let Some(u) = update_map.get(&rt.commit_id) {
+                            rt.change_id.display.clone_from(&u.change_display);
+                            rt.change_id.prefix_len = u.change_prefix_len;
+                            rt.short_commit_id.display.clone_from(&u.commit_display);
+                            rt.short_commit_id.prefix_len = u.commit_prefix_len;
+                        }
+                    }
+                }
             }
             RepoResult::BackgroundError { error } => {
                 self.set_error(format!("background task failed: {error}"));

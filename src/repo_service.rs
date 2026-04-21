@@ -10,7 +10,7 @@ use pollster::FutureExt as _;
 
 use crate::dag::{CommitDetails, DagEntry, DiffLine, DivergenceUpdate, PrefixLengthUpdate};
 use crate::repo::JjRepo;
-use crate::types::{CommitId, RepoPath, Str};
+use crate::types::{BookmarkName, CommitId, RepoPath, Str};
 
 pub struct RepoService;
 
@@ -53,6 +53,7 @@ pub enum RepoResult {
         untracked_bookmarks: Vec<String>,
         tracked_bookmarks: Vec<String>,
         remotes: Vec<Str>,
+        bookmark_details: std::collections::HashMap<BookmarkName, crate::dag::BookmarkDetails>,
     },
     RevsetFailed {
         revset: String,
@@ -89,6 +90,11 @@ pub enum RepoResult {
         commit_id: CommitId,
         path: RepoPath,
         error: String,
+    },
+    /// Background-computed prefix lengths for bookmark detail commits
+    /// (conflict targets, remote tracking targets not in the DAG).
+    BookmarkDetailPrefixLengths {
+        updates: Vec<(CommitId, PrefixLengthUpdate)>,
     },
     /// A background computation thread panicked or failed.
     BackgroundError {
@@ -286,6 +292,21 @@ impl RepoServiceState {
                 let untracked_bookmarks = repo.untracked_remote_bookmarks();
                 let tracked_bookmarks = repo.tracked_remote_bookmarks();
                 let remotes = repo.git_remotes();
+                let bookmark_details = repo.extract_bookmark_details();
+
+                // Collect unique commit IDs from bookmark details for prefix computation.
+                let detail_commit_ids: Vec<CommitId> = {
+                    let mut ids = std::collections::HashSet::new();
+                    for details in bookmark_details.values() {
+                        for ct in &details.conflict_targets {
+                            ids.insert(ct.commit_id.clone());
+                        }
+                        for rt in &details.remote_targets {
+                            ids.insert(rt.commit_id.clone());
+                        }
+                    }
+                    ids.into_iter().collect()
+                };
 
                 self.send_if_current(
                     epoch,
@@ -296,6 +317,7 @@ impl RepoServiceState {
                         untracked_bookmarks,
                         tracked_bookmarks,
                         remotes,
+                        bookmark_details,
                     },
                 );
 
@@ -357,6 +379,36 @@ impl RepoServiceState {
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
                                     error: format!("prefix lengths: {e:#}"),
+                                });
+                            }
+                            _ => {}
+                        }
+                    });
+                }
+
+                // Spawn background thread for bookmark detail prefix lengths.
+                if !detail_commit_ids.is_empty() {
+                    let tx = self.result_tx.clone();
+                    let repo_path = self.repo_path.clone();
+                    spawn_background(self.result_tx.clone(), move || {
+                        let bg_repo = match JjRepo::open(&repo_path) {
+                            Ok(r) => r,
+                            Err(e) => {
+                                let _ = tx.send(RepoResult::BackgroundError {
+                                    error: format!("detail prefix lengths: {e:#}"),
+                                });
+                                return;
+                            }
+                        };
+                        match bg_repo.compute_prefix_lengths(&detail_commit_ids) {
+                            Ok(updates) if !updates.is_empty() => {
+                                let _ = tx.send(RepoResult::BookmarkDetailPrefixLengths {
+                                    updates,
+                                });
+                            }
+                            Err(e) => {
+                                let _ = tx.send(RepoResult::BackgroundError {
+                                    error: format!("detail prefix lengths: {e:#}"),
                                 });
                             }
                             _ => {}

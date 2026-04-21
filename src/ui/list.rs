@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem};
 use ratatui::Frame;
@@ -197,6 +197,28 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     row_search.as_ref(),
                     theme,
                 ),
+                DisplayRow::BookmarkConflictTarget {
+                    bookmark_idx,
+                    target_idx,
+                } => {
+                    let entry = &app.bookmark_entries[bookmark_idx.raw()];
+                    let target = app
+                        .bookmark_details
+                        .get(&entry.name)
+                        .and_then(|d| d.conflict_targets.get(target_idx.raw()));
+                    render_bookmark_conflict_target(target, theme)
+                }
+                DisplayRow::BookmarkRemoteTarget {
+                    bookmark_idx,
+                    target_idx,
+                } => {
+                    let entry = &app.bookmark_entries[bookmark_idx.raw()];
+                    let target = app
+                        .bookmark_details
+                        .get(&entry.name)
+                        .and_then(|d| d.remote_targets.get(target_idx.raw()));
+                    render_bookmark_remote_target(target, theme)
+                }
             }
         })
         .collect();
@@ -734,6 +756,120 @@ fn render_bookmark_item(
     // Description.
     if let Some(ref desc) = entry.description {
         spans.push(dot());
+        spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
+    }
+
+    ListItem::new(Line::from(spans))
+}
+
+/// Render a conflict target child row, indented under the bookmark name.
+fn render_bookmark_conflict_target(
+    target: Option<&crate::dag::BookmarkConflictTarget>,
+    theme: &Theme,
+) -> ListItem<'static> {
+    let Some(target) = target else {
+        return ListItem::new(Line::raw(""));
+    };
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    // Gutter-width blank + conflict-indicator-width blank + indent + kind.
+    let (indicator, color) = match target.kind {
+        crate::dag::ConflictTargetKind::Added => ("      + ", theme.added),
+        crate::dag::ConflictTargetKind::Removed => ("      - ", theme.error),
+    };
+    spans.push(Span::styled(indicator, Style::default().fg(color)));
+
+    // Change ID with prefix highlighting + divergence suffix.
+    push_short_id(&mut spans, &target.change_id, theme.change_id, theme);
+    if let Some(suffix) = target.change_id_suffix {
+        spans.push(Span::styled(
+            format!("/{suffix}"),
+            Style::default().fg(theme.change_id),
+        ));
+    }
+
+    // Short commit ID.
+    spans.push(Span::raw(" "));
+    push_short_id(&mut spans, &target.short_commit_id, theme.commit_id, theme);
+
+    // Hidden marker.
+    if target.is_hidden {
+        spans.push(Span::styled(" (hidden)", Style::default().fg(theme.muted)));
+    }
+
+    // Description.
+    if let Some(ref desc) = target.description {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
+    }
+
+    ListItem::new(Line::from(spans))
+}
+
+/// Render a remote tracking child row, indented under the bookmark name.
+fn render_bookmark_remote_target(
+    target: Option<&crate::dag::BookmarkRemoteTarget>,
+    theme: &Theme,
+) -> ListItem<'static> {
+    let Some(target) = target else {
+        return ListItem::new(Line::raw(""));
+    };
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    // Gutter-width blank + conflict-indicator-width blank + indent + @remote.
+    spans.push(Span::styled(
+        format!("      @{}", target.remote),
+        Style::default().fg(Color::Cyan),
+    ));
+
+    // Status annotations: ahead/behind counts, untracked marker.
+    let mut parts: Vec<String> = Vec::new();
+    if !target.is_tracked {
+        parts.push("untracked".to_string());
+    }
+    if let Some(n) = target.ahead_count {
+        if n > 0 {
+            parts.push(format!(
+                "ahead by {} commit{}",
+                n,
+                if n == 1 { "" } else { "s" }
+            ));
+        }
+    }
+    if let Some(n) = target.behind_count {
+        if n > 0 {
+            parts.push(format!(
+                "behind by {} commit{}",
+                n,
+                if n == 1 { "" } else { "s" }
+            ));
+        }
+    }
+    if !parts.is_empty() {
+        spans.push(Span::styled(
+            format!(" ({})", parts.join(", ")),
+            Style::default().fg(theme.text),
+        ));
+    }
+
+    spans.push(Span::styled(": ", Style::default().fg(theme.muted)));
+
+    // Change ID with prefix highlighting + divergence suffix.
+    push_short_id(&mut spans, &target.change_id, theme.change_id, theme);
+    if let Some(suffix) = target.change_id_suffix {
+        spans.push(Span::styled(
+            format!("/{suffix}"),
+            Style::default().fg(theme.change_id),
+        ));
+    }
+
+    // Short commit ID.
+    spans.push(Span::raw(" "));
+    push_short_id(&mut spans, &target.short_commit_id, theme.commit_id, theme);
+
+    // Description.
+    if let Some(ref desc) = target.description {
+        spans.push(Span::raw(" "));
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }
 

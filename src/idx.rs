@@ -55,6 +55,10 @@ define_idx!(
     /// Index into `App::bookmark_entries`.
     pub BookmarkIdx
 );
+define_idx!(
+    /// Index into `BookmarkDetails::conflict_targets` or `remote_targets`.
+    pub BookmarkDetailIdx
+);
 
 // ---------------------------------------------------------------------------
 // IndexVec<I, T> -- a Vec<T> indexed by a typed index I.
@@ -170,6 +174,11 @@ impl From<usize> for GraphLineIdx {
     }
 }
 impl From<usize> for BookmarkIdx {
+    fn from(v: usize) -> Self {
+        Self(v)
+    }
+}
+impl From<usize> for BookmarkDetailIdx {
     fn from(v: usize) -> Self {
         Self(v)
     }

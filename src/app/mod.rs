@@ -313,6 +313,8 @@ pub struct App {
     pub commit_index: HashMap<CommitId, EntryIdx>,
     /// Aggregated bookmark data for the bookmark view.
     pub bookmark_entries: Vec<BookmarkViewEntry>,
+    /// Rich detail data per bookmark (conflict targets, remote tracking).
+    pub bookmark_details: HashMap<BookmarkName, crate::dag::BookmarkDetails>,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
@@ -399,6 +401,7 @@ impl App {
             nodes,
             commit_index,
             bookmark_entries: Vec::new(),
+            bookmark_details: HashMap::new(),
             rows: Vec::new(),
             cursor: 0,
             dag_view_state: (0, 0),
@@ -478,12 +481,13 @@ impl App {
     }
 
     pub fn selected_bookmark_entry(&self) -> Option<&BookmarkViewEntry> {
-        match self.rows.get(self.cursor)? {
-            DisplayRow::BookmarkItem { bookmark_idx } => {
-                self.bookmark_entries.get(bookmark_idx.raw())
-            }
-            _ => None,
-        }
+        let bookmark_idx = match self.rows.get(self.cursor)? {
+            DisplayRow::BookmarkItem { bookmark_idx }
+            | DisplayRow::BookmarkConflictTarget { bookmark_idx, .. }
+            | DisplayRow::BookmarkRemoteTarget { bookmark_idx, .. } => *bookmark_idx,
+            _ => return None,
+        };
+        self.bookmark_entries.get(bookmark_idx.raw())
     }
 
     /// Get the entry idx the cursor is on.
@@ -493,7 +497,9 @@ impl App {
             | DisplayRow::GraphLink { entry_idx, .. }
             | DisplayRow::FileChange { entry_idx, .. }
             | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,
-            DisplayRow::BookmarkItem { .. } => return None,
+            DisplayRow::BookmarkItem { .. }
+            | DisplayRow::BookmarkConflictTarget { .. }
+            | DisplayRow::BookmarkRemoteTarget { .. } => return None,
         };
         Some(entry_idx)
     }

@@ -1354,7 +1354,10 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             Some(DisplayRow::GraphLink { entry_idx, .. }) => Some(*entry_idx),
             Some(DisplayRow::FileChange { entry_idx, .. }) => Some(*entry_idx),
             Some(DisplayRow::DiffLine { entry_idx, .. }) => Some(*entry_idx),
-            Some(DisplayRow::BookmarkItem { .. }) | None => None,
+            Some(DisplayRow::BookmarkItem { .. })
+            | Some(DisplayRow::BookmarkConflictTarget { .. })
+            | Some(DisplayRow::BookmarkRemoteTarget { .. })
+            | None => None,
         };
         entry_idx.is_some_and(|idx| app.nodes[idx].commit.is_working_copy())
     });

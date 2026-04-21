@@ -1,5 +1,5 @@
 use super::{ActiveView, App, Loadable};
-use crate::idx::{BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
+use crate::idx::{BookmarkDetailIdx, BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
 
@@ -16,12 +16,39 @@ impl App {
         let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
         self.rows.clear();
         for idx in 0..self.bookmark_entries.len() {
-            self.rows.push(DisplayRow::BookmarkItem {
-                bookmark_idx: BookmarkIdx::new(idx),
-            });
+            let bi = BookmarkIdx::new(idx);
+            self.rows.push(DisplayRow::BookmarkItem { bookmark_idx: bi });
+
+            // Always emit detail rows (conflict targets + remote tracking).
+            if let Some(details) = self.bookmark_details.get(&self.bookmark_entries[idx].name) {
+                for ti in 0..details.conflict_targets.len() {
+                    self.rows.push(DisplayRow::BookmarkConflictTarget {
+                        bookmark_idx: bi,
+                        target_idx: BookmarkDetailIdx::new(ti),
+                    });
+                }
+                for ti in 0..details.remote_targets.len() {
+                    self.rows.push(DisplayRow::BookmarkRemoteTarget {
+                        bookmark_idx: bi,
+                        target_idx: BookmarkDetailIdx::new(ti),
+                    });
+                }
+            }
         }
+
+        // Cursor restore: try exact match, then fall back to parent bookmark.
+        let fallback: Option<RowKey> = match prev_cursor {
+            Some(
+                RowKey::BookmarkConflictTarget(bi, _) | RowKey::BookmarkRemoteTarget(bi, _),
+            ) => Some(RowKey::BookmarkItem(bi)),
+            _ => None,
+        };
+
         self.cursor = prev_cursor
             .and_then(|key| self.rows.iter().position(|r| r.key() == key))
+            .or_else(|| {
+                fallback.and_then(|key| self.rows.iter().position(|r| r.key() == key))
+            })
             .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
     }
 

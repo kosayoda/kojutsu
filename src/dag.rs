@@ -126,6 +126,62 @@ pub struct RemoteBookmarkInfo {
     pub synced: bool,
 }
 
+// ---------------------------------------------------------------------------
+// Rich bookmark detail types (for bookmark view child rows)
+// ---------------------------------------------------------------------------
+
+/// Whether a conflict target was added or removed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ConflictTargetKind {
+    Added,
+    Removed,
+}
+
+/// A single conflict target for a conflicted bookmark.
+pub struct BookmarkConflictTarget {
+    pub kind: ConflictTargetKind,
+    /// Full commit ID hex.
+    pub commit_id: CommitId,
+    /// Short change ID with unique prefix length.
+    pub change_id: ShortId,
+    /// Short commit ID with unique prefix length.
+    pub short_commit_id: ShortId,
+    /// First line of description.
+    pub description: Option<String>,
+    /// Whether the commit is hidden (superseded).
+    pub is_hidden: bool,
+    /// Divergence suffix (e.g., `Some(2)` → `/2`).
+    pub change_id_suffix: Option<usize>,
+}
+
+/// Remote tracking info for a bookmark at a specific remote.
+pub struct BookmarkRemoteTarget {
+    /// Remote name (e.g., "origin", "git").
+    pub remote: RemoteName,
+    /// Full commit ID hex of the remote's target.
+    pub commit_id: CommitId,
+    /// Short change ID of the remote's target commit.
+    pub change_id: ShortId,
+    /// Short commit ID of the remote's target commit.
+    pub short_commit_id: ShortId,
+    /// First line of description.
+    pub description: Option<String>,
+    /// Whether the remote ref is tracked locally.
+    pub is_tracked: bool,
+    /// Commits the local is behind the remote (None = unknown/conflicted).
+    pub behind_count: Option<usize>,
+    /// Commits the local is ahead of the remote (None = unknown/conflicted).
+    pub ahead_count: Option<usize>,
+    /// Divergence suffix (e.g., `Some(2)` → `/2`).
+    pub change_id_suffix: Option<usize>,
+}
+
+/// Expanded detail data for a bookmark (conflict targets + remote tracking).
+pub struct BookmarkDetails {
+    pub conflict_targets: Vec<BookmarkConflictTarget>,
+    pub remote_targets: Vec<BookmarkRemoteTarget>,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum Glyph {
     WorkingCopy,

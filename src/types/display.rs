@@ -1,4 +1,4 @@
-use crate::idx::{BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
+use crate::idx::{BookmarkDetailIdx, BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
 
 /// Identifies a display row for cursor restore after rebuild.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -8,6 +8,8 @@ pub enum RowKey {
     FileChange(EntryIdx, FileIdx),
     DiffLine(EntryIdx, FileIdx, DiffLineIdx),
     BookmarkItem(BookmarkIdx),
+    BookmarkConflictTarget(BookmarkIdx, BookmarkDetailIdx),
+    BookmarkRemoteTarget(BookmarkIdx, BookmarkDetailIdx),
 }
 
 /// One visual row in the list.
@@ -32,6 +34,16 @@ pub enum DisplayRow {
     },
     /// A bookmark row in the bookmark view.
     BookmarkItem { bookmark_idx: BookmarkIdx },
+    /// A conflict target line under a bookmark.
+    BookmarkConflictTarget {
+        bookmark_idx: BookmarkIdx,
+        target_idx: BookmarkDetailIdx,
+    },
+    /// A remote tracking line under a bookmark.
+    BookmarkRemoteTarget {
+        bookmark_idx: BookmarkIdx,
+        target_idx: BookmarkDetailIdx,
+    },
 }
 
 impl DisplayRow {
@@ -52,6 +64,14 @@ impl DisplayRow {
                 line_idx,
             } => RowKey::DiffLine(entry_idx, file_idx, line_idx),
             DisplayRow::BookmarkItem { bookmark_idx } => RowKey::BookmarkItem(bookmark_idx),
+            DisplayRow::BookmarkConflictTarget {
+                bookmark_idx,
+                target_idx,
+            } => RowKey::BookmarkConflictTarget(bookmark_idx, target_idx),
+            DisplayRow::BookmarkRemoteTarget {
+                bookmark_idx,
+                target_idx,
+            } => RowKey::BookmarkRemoteTarget(bookmark_idx, target_idx),
         }
     }
 }

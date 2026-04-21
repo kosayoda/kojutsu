@@ -41,6 +41,10 @@ use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, RepoPath};
 /// Number of hex characters to show for change/commit IDs.
 const DISPLAY_ID_LEN: usize = 8;
 
+/// Default unique-prefix length for bookmark detail IDs (not in DAG, so
+/// no background disambiguation). Matches jj's typical shortest prefix.
+const DETAIL_PREFIX_LEN: usize = 4;
+
 /// Vendored jj-cli default revset configuration.
 /// Contains `[revsets]` (default log revset, etc.) and `[revset-aliases]`
 /// (trunk(), immutable_heads(), immutable(), mutable(), etc.).
@@ -973,6 +977,223 @@ impl JjRepo {
                 ))
             })
             .collect()
+    }
+
+    /// Extract rich bookmark details: conflict targets and remote tracking info.
+    /// Called during revset load in the background service thread.
+    pub fn extract_bookmark_details(
+        &self,
+    ) -> HashMap<BookmarkName, crate::dag::BookmarkDetails> {
+        use crate::dag::{BookmarkDetails, ConflictTargetKind};
+
+        let repo = self.repo.as_ref();
+        let view = repo.view();
+        let mut result: HashMap<BookmarkName, BookmarkDetails> = HashMap::new();
+
+        for (name, target) in view.local_bookmarks() {
+            let bm_name = BookmarkName::new(name.as_str());
+            let mut details = BookmarkDetails {
+                conflict_targets: Vec::new(),
+                remote_targets: Vec::new(),
+            };
+
+            // Conflict targets: removed (-) then added (+).
+            if target.has_conflict() {
+                for removed_id in target.removed_ids() {
+                    if let Some(ct) = self.make_conflict_target(removed_id, ConflictTargetKind::Removed) {
+                        details.conflict_targets.push(ct);
+                    }
+                }
+                for added_id in target.added_ids() {
+                    if let Some(ct) = self.make_conflict_target(added_id, ConflictTargetKind::Added) {
+                        details.conflict_targets.push(ct);
+                    }
+                }
+            }
+
+            // Remote tracking info for this bookmark (including @git).
+            let local_normal = target.as_normal();
+            for (symbol, remote_ref) in view.all_remote_bookmarks() {
+                if symbol.name != name {
+                    continue;
+                }
+                let Some(remote_commit_id) = remote_ref.target.as_normal() else {
+                    continue;
+                };
+
+                // Behind/ahead: only for non-conflicted bookmarks with resolvable targets.
+                let (behind_count, ahead_count) = if let Some(local_id) = local_normal {
+                    if local_id == remote_commit_id {
+                        (Some(0), Some(0))
+                    } else {
+                        (
+                            self.count_revs_between(local_id, remote_commit_id),
+                            self.count_revs_between(remote_commit_id, local_id),
+                        )
+                    }
+                } else {
+                    (None, None) // conflicted — skip behind/ahead
+                };
+
+                // Skip fully-synced tracked remotes — no useful info to show.
+                let is_synced = behind_count == Some(0) && ahead_count == Some(0);
+                if is_synced && remote_ref.is_tracked() {
+                    continue;
+                }
+
+                if let Some(rt) = self.make_remote_target(
+                    remote_commit_id,
+                    RemoteName::new(symbol.remote.as_str()),
+                    remote_ref.is_tracked(),
+                    behind_count,
+                    ahead_count,
+                ) {
+                    details.remote_targets.push(rt);
+                }
+            }
+
+            // Only store if there's something to show.
+            if !details.conflict_targets.is_empty() || !details.remote_targets.is_empty() {
+                result.insert(bm_name, details);
+            }
+        }
+
+        result
+    }
+
+    /// Build a `BookmarkConflictTarget` from a commit ID.
+    fn make_conflict_target(
+        &self,
+        commit_id: &BackendCommitId,
+        kind: crate::dag::ConflictTargetKind,
+    ) -> Option<crate::dag::BookmarkConflictTarget> {
+        let repo = self.repo.as_ref();
+        let commit = repo.store().get_commit(commit_id).ok()?;
+        let is_hidden = commit.is_hidden(repo).unwrap_or(false);
+
+        let resolved = repo.resolve_change_id(commit.change_id()).ok().flatten();
+        let is_divergent = resolved
+            .as_ref()
+            .is_some_and(|targets| targets.is_divergent());
+        let change_id_suffix = if is_divergent {
+            resolved
+                .as_ref()
+                .and_then(|targets| targets.find_offset(commit.id()))
+        } else {
+            None
+        };
+
+        let change_id_full = commit.change_id().reverse_hex();
+        let change_id = ShortId {
+            display: change_id_full
+                .get(..DISPLAY_ID_LEN)
+                .unwrap_or(&change_id_full)
+                .to_string(),
+            prefix_len: DETAIL_PREFIX_LEN,
+        };
+
+        let commit_id_hex = commit_id.hex();
+        let short_commit_id = ShortId {
+            display: commit_id_hex
+                .get(..DISPLAY_ID_LEN)
+                .unwrap_or(&commit_id_hex)
+                .to_string(),
+            prefix_len: DETAIL_PREFIX_LEN,
+        };
+
+        let raw_desc = commit.description().trim();
+        let description = if raw_desc.is_empty() || raw_desc == "(no description set)" {
+            None
+        } else {
+            raw_desc.lines().next().map(String::from)
+        };
+
+        Some(crate::dag::BookmarkConflictTarget {
+            kind,
+            commit_id: UiCommitId::new(commit_id.hex()),
+            change_id,
+            short_commit_id,
+            description,
+            is_hidden,
+            change_id_suffix,
+        })
+    }
+
+    /// Build a `BookmarkRemoteTarget` from a remote commit ID.
+    fn make_remote_target(
+        &self,
+        commit_id: &BackendCommitId,
+        remote: RemoteName,
+        is_tracked: bool,
+        behind_count: Option<usize>,
+        ahead_count: Option<usize>,
+    ) -> Option<crate::dag::BookmarkRemoteTarget> {
+        let repo = self.repo.as_ref();
+        let commit = repo.store().get_commit(commit_id).ok()?;
+
+        let resolved = repo.resolve_change_id(commit.change_id()).ok().flatten();
+        let is_divergent = resolved
+            .as_ref()
+            .is_some_and(|targets| targets.is_divergent());
+        let change_id_suffix = if is_divergent {
+            resolved
+                .as_ref()
+                .and_then(|targets| targets.find_offset(commit.id()))
+        } else {
+            None
+        };
+
+        let change_id_full = commit.change_id().reverse_hex();
+        let change_id = ShortId {
+            display: change_id_full
+                .get(..DISPLAY_ID_LEN)
+                .unwrap_or(&change_id_full)
+                .to_string(),
+            prefix_len: DETAIL_PREFIX_LEN,
+        };
+
+        let commit_id_hex = commit_id.hex();
+        let short_commit_id = ShortId {
+            display: commit_id_hex
+                .get(..DISPLAY_ID_LEN)
+                .unwrap_or(&commit_id_hex)
+                .to_string(),
+            prefix_len: DETAIL_PREFIX_LEN,
+        };
+
+        let raw_desc = commit.description().trim();
+        let description = if raw_desc.is_empty() || raw_desc == "(no description set)" {
+            None
+        } else {
+            raw_desc.lines().next().map(String::from)
+        };
+
+        Some(crate::dag::BookmarkRemoteTarget {
+            remote,
+            commit_id: UiCommitId::new(commit_id.hex()),
+            change_id,
+            short_commit_id,
+            description,
+            is_tracked,
+            behind_count,
+            ahead_count,
+            change_id_suffix,
+        })
+    }
+
+    /// Count commits reachable from `to` but not from `from`.
+    fn count_revs_between(
+        &self,
+        from: &BackendCommitId,
+        to: &BackendCommitId,
+    ) -> Option<usize> {
+        let revset = jj_lib::revset::walk_revs(
+            self.repo.as_ref(),
+            &[to.clone()],
+            &[from.clone()],
+        )
+        .ok()?;
+        Some(revset.iter().count())
     }
 }
 
