@@ -535,14 +535,7 @@ impl JJCommand {
                     args.push("--remote".into());
                     args.push(r.clone());
                 }
-                push_flags(
-                    &mut args,
-                    flags,
-                    &[
-                        (CommandFlags::DRY_RUN, "--dry-run"),
-                        (CommandFlags::ALLOW_NEW, "--allow-new"),
-                    ],
-                );
+                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
             }
             JJCommand::GitPushChange {
@@ -555,14 +548,7 @@ impl JJCommand {
                     args.push("--remote".into());
                     args.push(r.clone());
                 }
-                push_flags(
-                    &mut args,
-                    flags,
-                    &[
-                        (CommandFlags::DRY_RUN, "--dry-run"),
-                        (CommandFlags::ALLOW_NEW, "--allow-new"),
-                    ],
-                );
+                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
             }
             JJCommand::GitPushBookmark {
@@ -577,14 +563,7 @@ impl JJCommand {
                     args.push("--remote".into());
                     args.push(r.clone());
                 }
-                push_flags(
-                    &mut args,
-                    flags,
-                    &[
-                        (CommandFlags::DRY_RUN, "--dry-run"),
-                        (CommandFlags::ALLOW_NEW, "--allow-new"),
-                    ],
-                );
+                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
             }
             JJCommand::GitExport { .. } => vec!["git".into(), "export".into()],

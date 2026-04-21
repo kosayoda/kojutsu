@@ -37,7 +37,7 @@ bitflags::bitflags! {
         const ALLOW_BACKWARDS     = 1 << 8;
         const DRY_RUN             = 1 << 9;
         const PARALLEL            = 1 << 10;
-        const ALLOW_NEW           = 1 << 11;
+        // 1 << 11 was ALLOW_NEW (removed, jj deprecated --allow-new on git push)
     }
 }
 
@@ -333,7 +333,6 @@ impl Default for Keymap {
                         "push",
                         C,
                         vec![
-                            toggle("n", CommandFlags::ALLOW_NEW, "allow new"),
                             bind("p", AppAction::GitPush, "push", C),
                             bind("a", AppAction::GitPushAll, "all bookmarks", C),
                             bind("c", AppAction::GitPushChange, "change", C),
