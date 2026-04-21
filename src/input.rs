@@ -807,6 +807,17 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             })
         }
         AppAction::BmViewTrack => {
+            // On a remote target row: track that specific remote.
+            if let Some((entry, target)) = app.selected_remote_target() {
+                let br = BookmarkRef {
+                    name: entry.name.clone(),
+                    remote: target.remote.clone(),
+                };
+                return Action::RunJj(JJCommand::BookmarkTrack {
+                    bookmarks: smallvec![br],
+                    flags,
+                });
+            }
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
@@ -827,6 +838,17 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             })
         }
         AppAction::BmViewUntrack => {
+            // On a remote target row: untrack that specific remote.
+            if let Some((entry, target)) = app.selected_remote_target() {
+                let br = BookmarkRef {
+                    name: entry.name.clone(),
+                    remote: target.remote.clone(),
+                };
+                return Action::RunJj(JJCommand::BookmarkUntrack {
+                    bookmarks: smallvec![br],
+                    flags,
+                });
+            }
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
@@ -847,6 +869,16 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             })
         }
         AppAction::BmViewPush => {
+            // On a remote target row: push to that specific remote.
+            if let Some((entry, target)) = app.selected_remote_target() {
+                let name = entry.name.clone();
+                let remote = Str::from(target.remote.as_str());
+                return Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
+                    bookmarks: smallvec![name],
+                    remote: Some(remote),
+                    flags,
+                });
+            }
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
@@ -858,6 +890,33 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             })
         }
         AppAction::BmViewJumpToCommit => {
+            // On a conflict target row: resolve conflict by picking this side.
+            if let Some((entry, target)) = app.selected_conflict_target() {
+                let name = entry.name.clone();
+                let prefix = &target.change_id.display
+                    [..target.change_id.prefix_len.min(target.change_id.display.len())];
+                let change_id = match target.change_id_suffix {
+                    Some(suffix) => ChangeId::new(format!("{prefix}/{suffix}")),
+                    None => ChangeId::new(prefix),
+                };
+                return Action::RunJj(JJCommand::BookmarkSet {
+                    name,
+                    change_id,
+                    flags: flags | CommandFlags::ALLOW_BACKWARDS,
+                });
+            }
+            // On a remote target row: jump to that specific commit in DAG.
+            if let Some((_, target)) = app.selected_remote_target() {
+                let commit_id = target.commit_id.clone();
+                app.switch_view(crate::app::ActiveView::Dag);
+                if let Some(idx) = app.entry_by_commit_id(&commit_id) {
+                    if let Some(row) = app.row_of_commit(idx) {
+                        app.cursor = row;
+                    }
+                }
+                return Action::None;
+            }
+            // On a bookmark row: jump to the bookmark's commit in DAG.
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
@@ -924,6 +983,34 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 PendingCommand::BookmarkSetByName { name, flags },
             );
             Action::None
+        }
+        AppAction::BmViewFetch => {
+            // On a remote target row: fetch that specific bookmark+remote.
+            if let Some((entry, target)) = app.selected_remote_target() {
+                return Action::RunJj(JJCommand::GitFetchBookmark {
+                    bookmark: entry.name.clone(),
+                    remote: Str::from(target.remote.as_str()),
+                    flags,
+                });
+            }
+            // On a bookmark row: fetch from all remotes.
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            if entry.remote.is_some() {
+                // Remote bookmark row — fetch from that remote.
+                return Action::RunJj(JJCommand::GitFetchBookmark {
+                    bookmark: entry.name.clone(),
+                    remote: Str::from(entry.remote.as_ref().unwrap().as_str()),
+                    flags,
+                });
+            }
+            // Local bookmark — fetch from all remotes for this bookmark.
+            Action::RunJj(JJCommand::GitFetch {
+                all_remotes: false,
+                remote: None,
+                flags,
+            })
         }
     }
 }

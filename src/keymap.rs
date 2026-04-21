@@ -140,6 +140,7 @@ pub enum AppAction {
     BmViewMove,
     BmViewForget,
     BmViewSet,
+    BmViewFetch,
 }
 
 // ---------------------------------------------------------------------------
@@ -514,14 +515,24 @@ impl Default for Keymaps {
         bm_root.extend(vec![
             bind("d", AppAction::BmViewDelete, "delete", C),
             bind("t", AppAction::BmViewTrack, "track", C),
-            bind("u", AppAction::BmViewUntrack, "untrack", C),
+            bind("shift-u", AppAction::BmViewUntrack, "untrack", C),
             bind("p", AppAction::BmViewPush, "push", C),
-            bind("enter", AppAction::BmViewJumpToCommit, "jump to commit", C),
+            bind("enter", AppAction::BmViewJumpToCommit, "jump / pick", C),
             bind("e", AppAction::BmViewEdit, "edit (checkout)", C),
             bind("r", AppAction::BmViewRename, "rename", C),
             bind("m", AppAction::BmViewMove, "move…", C),
             bind("f", AppAction::BmViewFetch, "fetch", C),
             bind("s", AppAction::BmViewSet, "set…", C),
+            bind("shift-f", AppAction::BmViewForget, "forget", C),
+            prefix(
+                "u",
+                "undo/redo",
+                C,
+                vec![
+                    bind("u", AppAction::Undo, "undo", C),
+                    bind("r", AppAction::Redo, "redo", C),
+                ],
+            ),
         ]);
 
         Keymaps {

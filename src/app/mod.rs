@@ -490,6 +490,46 @@ impl App {
         self.bookmark_entries.get(bookmark_idx.raw())
     }
 
+    /// Get the conflict target under cursor (if on a `BookmarkConflictTarget` row).
+    pub fn selected_conflict_target(
+        &self,
+    ) -> Option<(&BookmarkViewEntry, &crate::dag::BookmarkConflictTarget)> {
+        let (bookmark_idx, target_idx) = match self.rows.get(self.cursor)? {
+            DisplayRow::BookmarkConflictTarget {
+                bookmark_idx,
+                target_idx,
+            } => (*bookmark_idx, *target_idx),
+            _ => return None,
+        };
+        let entry = self.bookmark_entries.get(bookmark_idx.raw())?;
+        let target = self
+            .bookmark_details
+            .get(&entry.name)?
+            .conflict_targets
+            .get(target_idx.raw())?;
+        Some((entry, target))
+    }
+
+    /// Get the remote target under cursor (if on a `BookmarkRemoteTarget` row).
+    pub fn selected_remote_target(
+        &self,
+    ) -> Option<(&BookmarkViewEntry, &crate::dag::BookmarkRemoteTarget)> {
+        let (bookmark_idx, target_idx) = match self.rows.get(self.cursor)? {
+            DisplayRow::BookmarkRemoteTarget {
+                bookmark_idx,
+                target_idx,
+            } => (*bookmark_idx, *target_idx),
+            _ => return None,
+        };
+        let entry = self.bookmark_entries.get(bookmark_idx.raw())?;
+        let target = self
+            .bookmark_details
+            .get(&entry.name)?
+            .remote_targets
+            .get(target_idx.raw())?;
+        Some((entry, target))
+    }
+
     /// Get the entry idx the cursor is on.
     pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
         let entry_idx = match self.rows.get(self.cursor)? {

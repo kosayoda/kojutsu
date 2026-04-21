@@ -158,6 +158,11 @@ pub enum JJCommand {
         remote: Option<Str>,
         flags: CommandFlags,
     },
+    GitFetchBookmark {
+        bookmark: BookmarkName,
+        remote: Str,
+        flags: CommandFlags,
+    },
     GitExport {
         flags: CommandFlags,
     },
@@ -261,6 +266,7 @@ impl JJCommand {
             | JJCommand::GitPush { flags, .. }
             | JJCommand::GitPushChange { flags, .. }
             | JJCommand::GitPushBookmark { flags, .. }
+            | JJCommand::GitFetchBookmark { flags, .. }
             | JJCommand::GitExport { flags, .. }
             | JJCommand::GitImport { flags, .. }
             | JJCommand::Absorb { flags, .. }
@@ -565,6 +571,18 @@ impl JJCommand {
                 }
                 push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
+            }
+            JJCommand::GitFetchBookmark {
+                bookmark, remote, ..
+            } => {
+                vec![
+                    "git".into(),
+                    "fetch".into(),
+                    "-b".into(),
+                    Str::from(bookmark.as_str()),
+                    "--remote".into(),
+                    remote.clone(),
+                ]
             }
             JJCommand::GitExport { .. } => vec!["git".into(), "export".into()],
             JJCommand::GitImport { .. } => vec!["git".into(), "import".into()],
