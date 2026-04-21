@@ -505,34 +505,33 @@ impl JjRepo {
             let before_present = values.before.is_present();
             let after_present = values.after.is_present();
 
-            let (status, old_path) =
-                if let Some(copy_op) = entry.path.copy_operation() {
-                    match copy_op {
-                        jj_lib::copies::CopyOperation::Rename => (
-                            FileStatus::Renamed,
-                            entry
-                                .path
-                                .source
-                                .as_ref()
-                                .map(|(p, _)| RepoPath::new(p.as_internal_file_string())),
-                        ),
-                        jj_lib::copies::CopyOperation::Copy => (
-                            FileStatus::Copied,
-                            entry
-                                .path
-                                .source
-                                .as_ref()
-                                .map(|(p, _)| RepoPath::new(p.as_internal_file_string())),
-                        ),
-                    }
-                } else {
-                    match (before_present, after_present) {
-                        (false, true) => (FileStatus::Added, None),
-                        (true, false) => (FileStatus::Deleted, None),
-                        (true, true) => (FileStatus::Modified, None),
-                        (false, false) => continue,
-                    }
-                };
+            let (status, old_path) = if let Some(copy_op) = entry.path.copy_operation() {
+                match copy_op {
+                    jj_lib::copies::CopyOperation::Rename => (
+                        FileStatus::Renamed,
+                        entry
+                            .path
+                            .source
+                            .as_ref()
+                            .map(|(p, _)| RepoPath::new(p.as_internal_file_string())),
+                    ),
+                    jj_lib::copies::CopyOperation::Copy => (
+                        FileStatus::Copied,
+                        entry
+                            .path
+                            .source
+                            .as_ref()
+                            .map(|(p, _)| RepoPath::new(p.as_internal_file_string())),
+                    ),
+                }
+            } else {
+                match (before_present, after_present) {
+                    (false, true) => (FileStatus::Added, None),
+                    (true, false) => (FileStatus::Deleted, None),
+                    (true, true) => (FileStatus::Modified, None),
+                    (false, false) => continue,
+                }
+            };
 
             let has_conflict = !values.after.is_resolved();
             changes.push(FileChange {
@@ -548,8 +547,7 @@ impl JjRepo {
                 .as_ref()
                 .and_then(|p| RepoPathBuf::from_internal_string(p.as_str()).ok())
                 .unwrap_or_else(|| {
-                    RepoPathBuf::from_internal_string(&target_path)
-                        .expect("target path is valid")
+                    RepoPathBuf::from_internal_string(&target_path).expect("target path is valid")
                 });
             let after_repo_path =
                 RepoPathBuf::from_internal_string(&target_path).expect("target path is valid");

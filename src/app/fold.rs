@@ -186,8 +186,7 @@ impl App {
             self.visual = None;
         } else {
             let fi = file_idx.raw();
-            let should_request = self
-                .nodes[entry_idx]
+            let should_request = self.nodes[entry_idx]
                 .diffs
                 .get(fi)
                 .is_none_or(Loadable::should_request);

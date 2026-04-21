@@ -1590,10 +1590,7 @@ fn resolve_selection(
                 })
             }
         }
-        PendingSelection::GitRemoteForFetch {
-            all_remotes,
-            flags,
-        } => {
+        PendingSelection::GitRemoteForFetch { all_remotes, flags } => {
             let remote = names.into_iter().next().map(Str::from);
             Action::SuspendAndRunJj(JJCommand::GitFetch {
                 all_remotes,

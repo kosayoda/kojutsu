@@ -495,10 +495,7 @@ impl App {
     }
 
     pub fn diff_lines(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<&Vec<DiffLine>> {
-        self.nodes[entry_idx]
-            .diffs
-            .get(file_idx.raw())?
-            .loaded()
+        self.nodes[entry_idx].diffs.get(file_idx.raw())?.loaded()
     }
 
     pub fn commit_stats(&self, entry_idx: EntryIdx) -> Option<LineStats> {
@@ -506,16 +503,9 @@ impl App {
     }
 
     /// Find the file index for a given path within a commit's loaded files.
-    pub fn file_idx_by_path(
-        &self,
-        entry_idx: EntryIdx,
-        path: &RepoPath,
-    ) -> Option<FileIdx> {
+    pub fn file_idx_by_path(&self, entry_idx: EntryIdx, path: &RepoPath) -> Option<FileIdx> {
         let files = self.files_for_entry(entry_idx)?;
-        files
-            .iter()
-            .position(|f| f.path == *path)
-            .map(FileIdx::new)
+        files.iter().position(|f| f.path == *path).map(FileIdx::new)
     }
 
     pub fn take_repo_requests(&mut self) -> Vec<RepoRequest> {

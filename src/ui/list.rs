@@ -127,7 +127,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     entry_idx,
                     line_idx,
                 } => {
-                    let graph_str = app.nodes[*entry_idx].graph
+                    let graph_str = app.nodes[*entry_idx]
+                        .graph
                         .extra
                         .get(line_idx.raw())
                         .map(|s| s.as_str())

@@ -546,9 +546,7 @@ impl JJCommand {
                 args
             }
             JJCommand::GitPushChange {
-                change_id,
-                remote,
-                ..
+                change_id, remote, ..
             } => {
                 let mut args: Vec<Str> = vec!["git".into(), "push".into()];
                 args.push("-c".into());
@@ -568,9 +566,7 @@ impl JJCommand {
                 args
             }
             JJCommand::GitPushBookmark {
-                bookmarks,
-                remote,
-                ..
+                bookmarks, remote, ..
             } => {
                 let mut args: Vec<Str> = vec!["git".into(), "push".into()];
                 for name in bookmarks {

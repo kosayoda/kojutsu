@@ -26,8 +26,12 @@ pub struct RepoResponseHandle {
 
 #[derive(Clone)]
 enum RepoRequestKind {
-    Revset { revset: Option<String> },
-    Commit { commit_id: CommitId },
+    Revset {
+        revset: Option<String>,
+    },
+    Commit {
+        commit_id: CommitId,
+    },
     FileDiff {
         commit_id: CommitId,
         path: RepoPath,
@@ -107,11 +111,7 @@ impl RepoRequest {
         }
     }
 
-    pub fn load_file_diff(
-        commit_id: CommitId,
-        path: RepoPath,
-        old_path: Option<RepoPath>,
-    ) -> Self {
+    pub fn load_file_diff(commit_id: CommitId, path: RepoPath, old_path: Option<RepoPath>) -> Self {
         Self {
             epoch: 0,
             kind: RepoRequestKind::FileDiff {

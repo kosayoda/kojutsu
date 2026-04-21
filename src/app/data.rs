@@ -57,12 +57,7 @@ impl App {
         > = std::mem::take(&mut self.nodes)
             .into_vec()
             .into_iter()
-            .map(|n| {
-                (
-                    n.commit.graph_id.clone(),
-                    (n.files, n.stats, n.diffs),
-                )
-            })
+            .map(|n| (n.commit.graph_id.clone(), (n.files, n.stats, n.diffs)))
             .collect();
 
         let mut nodes = super::build_nodes(entries, &new_commit_index, self.glyphs);
@@ -103,7 +98,8 @@ impl App {
         for idx_raw in 0..self.nodes.len() {
             let idx = EntryIdx::new(idx_raw);
             let change_id = self.nodes[idx].commit.unique_change_id();
-            if self.unfolded_commits.contains(&change_id) && self.nodes[idx].files.should_request() {
+            if self.unfolded_commits.contains(&change_id) && self.nodes[idx].files.should_request()
+            {
                 self.nodes[idx].files = Loadable::Loading;
                 self.nodes[idx].stats = Loadable::Loading;
             }
