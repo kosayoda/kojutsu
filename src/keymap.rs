@@ -135,6 +135,11 @@ pub enum AppAction {
     BmViewUntrack,
     BmViewPush,
     BmViewJumpToCommit,
+    BmViewEdit,
+    BmViewRename,
+    BmViewMove,
+    BmViewForget,
+    BmViewSet,
 }
 
 // ---------------------------------------------------------------------------
@@ -310,105 +315,198 @@ impl Default for Keymaps {
         let mut dag_root = shared_bindings();
         dag_root.extend(vec![
             bind("a", AppAction::Absorb, "absorb", C),
-            prefix("b", "bookmark", C, vec![
-                toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
-                bind("c", AppAction::BookmarkCreate, "create", C),
-                bind("s", AppAction::BookmarkSet, "set", C),
-                bind("d", AppAction::BookmarkDelete, "delete", C),
-                bind("f", AppAction::BookmarkForget, "forget", C),
-                bind("m", AppAction::BookmarkMove, "move…", C),
-                bind("r", AppAction::BookmarkRename, "rename", C),
-                bind("a", AppAction::BookmarkAdvance, "advance", C),
-                bind("t", AppAction::BookmarkTrack, "track", C),
-                bind("u", AppAction::BookmarkUntrack, "untrack", C),
-            ]),
-            prefix("t", "tag", C, vec![
-                toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
-                bind("s", AppAction::TagSet, "set", C),
-                bind("d", AppAction::TagDelete, "delete", C),
-                bind("l", AppAction::TagList, "list", C),
-            ]),
-            prefix("c", "commit", C, vec![
-                toggle("i", CommandFlags::INTERACTIVE, "interactive"),
-                bind("c", AppAction::Commit, "commit (in $EDITOR)", C),
-                bind("m", AppAction::CommitWithMessage, "with message", C),
-            ]),
-            prefix("d", "describe", C, vec![
-                bind("d", AppAction::Describe, "describe", C),
-                bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR", C),
-            ]),
+            prefix(
+                "b",
+                "bookmark",
+                C,
+                vec![
+                    toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
+                    bind("c", AppAction::BookmarkCreate, "create", C),
+                    bind("s", AppAction::BookmarkSet, "set", C),
+                    bind("d", AppAction::BookmarkDelete, "delete", C),
+                    bind("f", AppAction::BookmarkForget, "forget", C),
+                    bind("m", AppAction::BookmarkMove, "move…", C),
+                    bind("r", AppAction::BookmarkRename, "rename", C),
+                    bind("a", AppAction::BookmarkAdvance, "advance", C),
+                    bind("t", AppAction::BookmarkTrack, "track", C),
+                    bind("u", AppAction::BookmarkUntrack, "untrack", C),
+                ],
+            ),
+            prefix(
+                "t",
+                "tag",
+                C,
+                vec![
+                    toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
+                    bind("s", AppAction::TagSet, "set", C),
+                    bind("d", AppAction::TagDelete, "delete", C),
+                    bind("l", AppAction::TagList, "list", C),
+                ],
+            ),
+            prefix(
+                "c",
+                "commit",
+                C,
+                vec![
+                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                    bind("c", AppAction::Commit, "commit (in $EDITOR)", C),
+                    bind("m", AppAction::CommitWithMessage, "with message", C),
+                ],
+            ),
+            prefix(
+                "d",
+                "describe",
+                C,
+                vec![
+                    bind("d", AppAction::Describe, "describe", C),
+                    bind("shift-d", AppAction::DescribeInEditor, "in $EDITOR", C),
+                ],
+            ),
             bind("e", AppAction::Edit, "edit", C),
-            prefix("g", "git", C, vec![
-                toggle("d", CommandFlags::DRY_RUN, "dry run (push only)"),
-                prefix("f", "fetch", C, vec![
-                    bind("f", AppAction::GitFetch, "fetch", C),
-                    bind("a", AppAction::GitFetchAllRemotes, "all remotes", C),
-                ]),
-                prefix("p", "push", C, vec![
-                    bind("p", AppAction::GitPush, "push", C),
-                    bind("a", AppAction::GitPushAll, "all bookmarks", C),
-                    bind("c", AppAction::GitPushChange, "change", C),
-                    bind("b", AppAction::GitPushBookmark, "bookmark", C),
-                ]),
-                bind("e", AppAction::GitExport, "export (jj -> git)", C),
-                bind("i", AppAction::GitImport, "import (git -> jj)", C),
-            ]),
-            prefix("n", "new", C, vec![
-                toggle("e", CommandFlags::NO_EDIT, "no-edit"),
-                bind("n", AppAction::New, "new", C),
-                bind("a", AppAction::NewInsertAfter, "insert after", C),
-                bind("b", AppAction::NewInsertBefore, "insert before", C),
-            ]),
-            prefix("r", "rebase", C, vec![
-                bind("r", AppAction::RebaseRevision, "revision…", C),
-                bind("s", AppAction::RebaseSource, "source…", C),
-                bind("b", AppAction::RebaseBranch, "branch…", C),
-            ]),
-            prefix("shift-r", "restore", C, vec![
-                toggle("i", CommandFlags::INTERACTIVE, "interactive"),
-                toggle("d", CommandFlags::RESTORE_DESCENDANTS, "restore descendants"),
-                bind("shift-r", AppAction::Restore, "changes-in", C),
-                bind("f", AppAction::RestoreFrom, "from…", C),
-                bind("t", AppAction::RestoreInto, "into…", C),
-            ]),
-            prefix("shift-s", "split", C, vec![
-                toggle("i", CommandFlags::INTERACTIVE, "interactive"),
-                toggle("p", CommandFlags::PARALLEL, "parallel"),
-                bind("shift-s", AppAction::Split, "split", C),
-                bind("o", AppAction::SplitOnto, "onto…", C),
-                bind("a", AppAction::SplitAfter, "after…", C),
-                bind("b", AppAction::SplitBefore, "before…", C),
-            ]),
-            prefix("s", "squash", C, vec![
-                toggle("i", CommandFlags::INTERACTIVE, "interactive"),
-                toggle("k", CommandFlags::KEEP_EMPTIED, "keep emptied"),
-                bind("s", AppAction::Squash, "into parent", C),
-                bind("t", AppAction::SquashSelect(SquashKind::Into), "into…", C),
-                bind("o", AppAction::SquashSelect(SquashKind::Onto), "onto…", C),
-                bind("a", AppAction::SquashSelect(SquashKind::After), "after…", C),
-                bind("b", AppAction::SquashSelect(SquashKind::Before), "before…", C),
-            ]),
-            prefix("u", "undo/redo", C, vec![
-                bind("u", AppAction::Undo, "undo", C),
-                bind("r", AppAction::Redo, "redo", C),
-            ]),
-            prefix("x", "abandon", C, vec![
-                toggle("b", CommandFlags::RETAIN_BOOKMARKS, "keep bookmarks"),
-                toggle("d", CommandFlags::RESTORE_DESCENDANTS, "restore descendants"),
-                bind("x", AppAction::Abandon, "abandon", C),
-            ]),
-            prefix("y", "duplicate", C, vec![
-                bind("y", AppAction::Duplicate, "duplicate", C),
-                bind("t", AppAction::DuplicateOnto, "onto…", C),
-            ]),
+            prefix(
+                "g",
+                "git",
+                C,
+                vec![
+                    toggle("d", CommandFlags::DRY_RUN, "dry run (push only)"),
+                    prefix(
+                        "f",
+                        "fetch",
+                        C,
+                        vec![
+                            bind("f", AppAction::GitFetch, "fetch", C),
+                            bind("a", AppAction::GitFetchAllRemotes, "all remotes", C),
+                        ],
+                    ),
+                    prefix(
+                        "p",
+                        "push",
+                        C,
+                        vec![
+                            bind("p", AppAction::GitPush, "push", C),
+                            bind("a", AppAction::GitPushAll, "all bookmarks", C),
+                            bind("c", AppAction::GitPushChange, "change", C),
+                            bind("b", AppAction::GitPushBookmark, "bookmark", C),
+                        ],
+                    ),
+                    bind("e", AppAction::GitExport, "export (jj -> git)", C),
+                    bind("i", AppAction::GitImport, "import (git -> jj)", C),
+                ],
+            ),
+            prefix(
+                "n",
+                "new",
+                C,
+                vec![
+                    toggle("e", CommandFlags::NO_EDIT, "no-edit"),
+                    bind("n", AppAction::New, "new", C),
+                    bind("a", AppAction::NewInsertAfter, "insert after", C),
+                    bind("b", AppAction::NewInsertBefore, "insert before", C),
+                ],
+            ),
+            prefix(
+                "r",
+                "rebase",
+                C,
+                vec![
+                    bind("r", AppAction::RebaseRevision, "revision…", C),
+                    bind("s", AppAction::RebaseSource, "source…", C),
+                    bind("b", AppAction::RebaseBranch, "branch…", C),
+                ],
+            ),
+            prefix(
+                "shift-r",
+                "restore",
+                C,
+                vec![
+                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                    toggle(
+                        "d",
+                        CommandFlags::RESTORE_DESCENDANTS,
+                        "restore descendants",
+                    ),
+                    bind("shift-r", AppAction::Restore, "changes-in", C),
+                    bind("f", AppAction::RestoreFrom, "from…", C),
+                    bind("t", AppAction::RestoreInto, "into…", C),
+                ],
+            ),
+            prefix(
+                "shift-s",
+                "split",
+                C,
+                vec![
+                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                    toggle("p", CommandFlags::PARALLEL, "parallel"),
+                    bind("shift-s", AppAction::Split, "split", C),
+                    bind("o", AppAction::SplitOnto, "onto…", C),
+                    bind("a", AppAction::SplitAfter, "after…", C),
+                    bind("b", AppAction::SplitBefore, "before…", C),
+                ],
+            ),
+            prefix(
+                "s",
+                "squash",
+                C,
+                vec![
+                    toggle("i", CommandFlags::INTERACTIVE, "interactive"),
+                    toggle("k", CommandFlags::KEEP_EMPTIED, "keep emptied"),
+                    bind("s", AppAction::Squash, "into parent", C),
+                    bind("t", AppAction::SquashSelect(SquashKind::Into), "into…", C),
+                    bind("o", AppAction::SquashSelect(SquashKind::Onto), "onto…", C),
+                    bind("a", AppAction::SquashSelect(SquashKind::After), "after…", C),
+                    bind(
+                        "b",
+                        AppAction::SquashSelect(SquashKind::Before),
+                        "before…",
+                        C,
+                    ),
+                ],
+            ),
+            prefix(
+                "u",
+                "undo/redo",
+                C,
+                vec![
+                    bind("u", AppAction::Undo, "undo", C),
+                    bind("r", AppAction::Redo, "redo", C),
+                ],
+            ),
+            prefix(
+                "x",
+                "abandon",
+                C,
+                vec![
+                    toggle("b", CommandFlags::RETAIN_BOOKMARKS, "keep bookmarks"),
+                    toggle(
+                        "d",
+                        CommandFlags::RESTORE_DESCENDANTS,
+                        "restore descendants",
+                    ),
+                    bind("x", AppAction::Abandon, "abandon", C),
+                ],
+            ),
+            prefix(
+                "y",
+                "duplicate",
+                C,
+                vec![
+                    bind("y", AppAction::Duplicate, "duplicate", C),
+                    bind("t", AppAction::DuplicateOnto, "onto…", C),
+                ],
+            ),
             bind("p", AppAction::Parallelize, "parallelize", C),
             bind("shift-p", AppAction::SimplifyParents, "simplify parents", C),
             bind("z", AppAction::Revert, "revert", C),
-            prefix("w", "workspace", C, vec![
-                bind("a", AppAction::WorkspaceAdd, "add", C),
-                bind("f", AppAction::WorkspaceForget, "forget", C),
-                bind("l", AppAction::WorkspaceList, "list", C),
-            ]),
+            prefix(
+                "w",
+                "workspace",
+                C,
+                vec![
+                    bind("a", AppAction::WorkspaceAdd, "add", C),
+                    bind("f", AppAction::WorkspaceForget, "forget", C),
+                    bind("l", AppAction::WorkspaceList, "list", C),
+                ],
+            ),
         ]);
 
         // Bookmark view: shared bindings + bookmark-specific actions.
@@ -419,6 +517,11 @@ impl Default for Keymaps {
             bind("u", AppAction::BmViewUntrack, "untrack", C),
             bind("p", AppAction::BmViewPush, "push", C),
             bind("enter", AppAction::BmViewJumpToCommit, "jump to commit", C),
+            bind("e", AppAction::BmViewEdit, "edit (checkout)", C),
+            bind("r", AppAction::BmViewRename, "rename", C),
+            bind("m", AppAction::BmViewMove, "move…", C),
+            bind("f", AppAction::BmViewFetch, "fetch", C),
+            bind("s", AppAction::BmViewSet, "set…", C),
         ]);
 
         Keymaps {

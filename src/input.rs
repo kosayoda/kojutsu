@@ -816,7 +816,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             }
             let br = BookmarkRef {
                 name: entry.name.clone(),
-                remote: entry.remote.clone().unwrap_or_else(|| crate::types::RemoteName::new("")),
+                remote: entry
+                    .remote
+                    .clone()
+                    .unwrap_or_else(|| crate::types::RemoteName::new("")),
             };
             Action::RunJj(JJCommand::BookmarkTrack {
                 bookmarks: smallvec![br],
@@ -833,7 +836,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             }
             let br = BookmarkRef {
                 name: entry.name.clone(),
-                remote: entry.remote.clone().unwrap_or_else(|| crate::types::RemoteName::new("")),
+                remote: entry
+                    .remote
+                    .clone()
+                    .unwrap_or_else(|| crate::types::RemoteName::new("")),
             };
             Action::RunJj(JJCommand::BookmarkUntrack {
                 bookmarks: smallvec![br],
@@ -864,6 +870,59 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     }
                 }
             }
+            Action::None
+        }
+        AppAction::BmViewEdit => {
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            let Some(change_id) = entry.change_id.as_ref().map(|s| ChangeId::new(&s.display))
+            else {
+                app.set_error("bookmark has no associated commit");
+                return Action::None;
+            };
+            Action::RunJj(JJCommand::Edit { change_id, flags })
+        }
+        AppAction::BmViewRename => {
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            let old_name = entry.name.clone();
+            app.mode = AppMode::text_input(
+                "rename to: ",
+                entry.name.as_str(),
+                PendingCommand::BookmarkRename { old_name, flags },
+            );
+            Action::None
+        }
+        AppAction::BmViewMove => {
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            let bookmark_name = entry.name.clone();
+            app.switch_view(crate::app::ActiveView::Dag);
+            enter_target_select(app, TargetOperation::BookmarkMove { bookmark_name }, flags)
+        }
+        AppAction::BmViewForget => {
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            let name = entry.name.clone();
+            Action::RunJj(JJCommand::BookmarkForget {
+                names: smallvec![name],
+                flags,
+            })
+        }
+        AppAction::BmViewSet => {
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            let name = entry.name.clone();
+            app.mode = AppMode::text_input(
+                &format!("set {} to (change id): ", name),
+                "",
+                PendingCommand::BookmarkSetByName { name, flags },
+            );
             Action::None
         }
     }

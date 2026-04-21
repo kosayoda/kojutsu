@@ -120,6 +120,11 @@ pub enum PendingCommand {
         change_id: ChangeId,
         flags: CommandFlags,
     },
+    /// Set bookmark to a change ID (name already known, text is change ID).
+    BookmarkSetByName {
+        name: BookmarkName,
+        flags: CommandFlags,
+    },
     /// Rename a bookmark (old name already selected, text is new name).
     BookmarkRename {
         old_name: BookmarkName,
@@ -162,6 +167,11 @@ impl PendingCommand {
             PendingCommand::BookmarkSet { change_id, flags } => JJCommand::BookmarkSet {
                 name: BookmarkName::new(text),
                 change_id,
+                flags,
+            },
+            PendingCommand::BookmarkSetByName { name, flags } => JJCommand::BookmarkSet {
+                name,
+                change_id: ChangeId::new(text),
                 flags,
             },
             PendingCommand::BookmarkRename { old_name, flags } => JJCommand::BookmarkRename {

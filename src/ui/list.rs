@@ -192,13 +192,11 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         theme,
                     )
                 }
-                DisplayRow::BookmarkItem { bookmark_idx } => {
-                    render_bookmark_item(
-                        &app.bookmark_entries[bookmark_idx.raw()],
-                        row_search.as_ref(),
-                        theme,
-                    )
-                }
+                DisplayRow::BookmarkItem { bookmark_idx } => render_bookmark_item(
+                    &app.bookmark_entries[bookmark_idx.raw()],
+                    row_search.as_ref(),
+                    theme,
+                ),
             }
         })
         .collect();
@@ -685,7 +683,13 @@ fn render_bookmark_item(
     spans.push(Span::raw("  "));
     if let Some(remote) = &entry.remote {
         let name_style = Style::default().fg(theme.text);
-        push_searchable(&mut spans, entry.name.as_str(), SearchScopes::BOOKMARK, name_style, search);
+        push_searchable(
+            &mut spans,
+            entry.name.as_str(),
+            SearchScopes::BOOKMARK,
+            name_style,
+            search,
+        );
         spans.push(Span::styled(
             format!("@{remote}"),
             Style::default().fg(theme.muted),
@@ -695,23 +699,37 @@ fn render_bookmark_item(
         let style = Style::default()
             .fg(theme.warning)
             .add_modifier(Modifier::BOLD);
-        push_searchable(&mut spans, &name_display, SearchScopes::BOOKMARK, style, search);
+        push_searchable(
+            &mut spans,
+            &name_display,
+            SearchScopes::BOOKMARK,
+            style,
+            search,
+        );
     } else {
         let style = Style::default()
             .fg(theme.change_id)
             .add_modifier(Modifier::BOLD);
-        push_searchable(&mut spans, entry.name.as_str(), SearchScopes::BOOKMARK, style, search);
+        push_searchable(
+            &mut spans,
+            entry.name.as_str(),
+            SearchScopes::BOOKMARK,
+            style,
+            search,
+        );
     }
+
+    let dot = || Span::styled(" · ", Style::default().fg(theme.muted));
 
     // Change ID (if available), with prefix highlighting.
     if let Some(ref cid) = entry.change_id {
-        spans.push(Span::raw("  "));
+        spans.push(dot());
         push_short_id(&mut spans, cid, theme.change_id, theme);
     }
 
     // Description.
     if let Some(ref desc) = entry.description {
-        spans.push(Span::raw("  "));
+        spans.push(dot());
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }
 
