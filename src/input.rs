@@ -612,20 +612,26 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             enter_bookmark_select(app, flags, PendingSelectionKind::Rename)
         }
         AppAction::BookmarkAdvance => enter_bookmark_advance(app, flags),
-        AppAction::BookmarkTrack => enter_remote_bookmark_select(
-            app,
-            &app.untracked_bookmarks.clone(),
-            "no untracked remote bookmarks",
-            "track bookmark",
-            PendingSelection::BookmarkTrack { flags },
-        ),
-        AppAction::BookmarkUntrack => enter_remote_bookmark_select(
-            app,
-            &app.tracked_bookmarks.clone(),
-            "no tracked remote bookmarks",
-            "untrack bookmark",
-            PendingSelection::BookmarkUntrack { flags },
-        ),
+        AppAction::BookmarkTrack => {
+            let bookmarks = app.untracked_bookmarks.clone();
+            enter_remote_bookmark_select(
+                app,
+                bookmarks,
+                "no untracked remote bookmarks",
+                "track bookmark",
+                PendingSelection::BookmarkTrack { flags },
+            )
+        }
+        AppAction::BookmarkUntrack => {
+            let bookmarks = app.tracked_bookmarks.clone();
+            enter_remote_bookmark_select(
+                app,
+                bookmarks,
+                "no tracked remote bookmarks",
+                "untrack bookmark",
+                PendingSelection::BookmarkUntrack { flags },
+            )
+        }
 
         AppAction::TagSet => {
             let Some(change_id) = app.selected_change_id() else {
@@ -1158,7 +1164,7 @@ fn handle_follow_up(app: &mut App, key: KeyEvent) -> Action {
 /// Show a select-from-list for remote bookmarks, or a status message if empty.
 fn enter_remote_bookmark_select(
     app: &mut App,
-    bookmarks: &[String],
+    bookmarks: Vec<String>,
     empty_msg: &str,
     title: &str,
     on_select: PendingSelection,
@@ -1167,8 +1173,7 @@ fn enter_remote_bookmark_select(
         app.set_status(empty_msg);
         return Action::None;
     }
-    let items = bookmarks.to_vec();
-    app.mode = AppMode::select_from_list(title, items, true, on_select, true);
+    app.mode = AppMode::select_from_list(title, bookmarks, true, on_select, true);
     Action::None
 }
 

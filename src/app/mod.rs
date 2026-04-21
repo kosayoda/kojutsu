@@ -92,8 +92,17 @@ pub struct DagNode {
     pub diffs: Vec<Loadable<Vec<DiffLine>>>,
 }
 
+impl DagNode {
+    /// Ensure the diffs vector is large enough to hold `n` entries.
+    pub fn ensure_diffs(&mut self, n: usize) {
+        if self.diffs.len() < n {
+            self.diffs.resize_with(n, || Loadable::NotRequested);
+        }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub struct FileFoldKey {
+pub(crate) struct FileFoldKey {
     pub change_id: ChangeId,
     pub path: RepoPath,
 }
@@ -307,7 +316,7 @@ pub struct App {
     /// Per-commit fold state, keyed by change id (stable across mutations).
     pub unfolded_commits: HashSet<ChangeId>,
     /// Per-file fold state, keyed by (change id, path) (stable across mutations).
-    pub unfolded_files: HashSet<FileFoldKey>,
+    pub(crate) unfolded_files: HashSet<FileFoldKey>,
     /// Remote bookmarks not yet tracked (for bookmark track selection).
     pub untracked_bookmarks: Vec<String>,
     /// Remote bookmarks that are tracked (for bookmark untrack selection).
@@ -578,7 +587,7 @@ fn build_nodes(
                 .edges
                 .iter()
                 .filter(|e| matches!(e.kind, EdgeKind::Direct))
-                .filter_map(|e| commit_index.get(&CommitId::new(e.target.as_str())).copied())
+                .filter_map(|e| commit_index.get(&e.target).copied())
                 .collect();
             DagNode {
                 commit: entry.commit,

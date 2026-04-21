@@ -83,25 +83,17 @@ impl App {
         self.nodes = nodes;
 
         // Re-request data for commits that are still unfolded but whose
-        // new CommitId has no cached file data (happens after mutation).
-        for node in self.nodes.iter() {
-            let change_id = node.commit.unique_change_id();
-            if self.unfolded_commits.contains(&change_id) {
-                if node.files.should_request() {
-                    let commit_id = node.commit.graph_id.clone();
-                    self.pending_repo_requests
-                        .push(RepoRequest::load_commit_details(commit_id));
-                }
-            }
-        }
-        // Mark files/stats as Loading for re-requested commits.
+        // cached file data didn't survive the refresh (happens after mutation).
         for idx_raw in 0..self.nodes.len() {
             let idx = EntryIdx::new(idx_raw);
             let change_id = self.nodes[idx].commit.unique_change_id();
             if self.unfolded_commits.contains(&change_id) && self.nodes[idx].files.should_request()
             {
+                let commit_id = self.nodes[idx].commit.graph_id.clone();
                 self.nodes[idx].files = Loadable::Loading;
                 self.nodes[idx].stats = Loadable::Loading;
+                self.pending_repo_requests
+                    .push(RepoRequest::load_commit_details(commit_id));
             }
         }
 
@@ -229,15 +221,9 @@ impl App {
                         path: file.path.clone(),
                     };
                     if self.unfolded_files.contains(&fold_key) {
-                        // Ensure diffs vec is large enough.
-                        let file_idx = fi;
-                        if file_idx >= self.nodes[idx].diffs.len() {
-                            self.nodes[idx]
-                                .diffs
-                                .resize_with(file_idx + 1, || Loadable::NotRequested);
-                        }
-                        if self.nodes[idx].diffs[file_idx].should_request() {
-                            self.nodes[idx].diffs[file_idx] = Loadable::Loading;
+                        self.nodes[idx].ensure_diffs(fi + 1);
+                        if self.nodes[idx].diffs[fi].should_request() {
+                            self.nodes[idx].diffs[fi] = Loadable::Loading;
                             self.pending_repo_requests.push(RepoRequest::load_file_diff(
                                 commit_id.clone(),
                                 file.path.clone(),
@@ -252,11 +238,7 @@ impl App {
                 self.nodes[idx].stats = Loadable::Loaded(details.stats);
                 // Ensure diffs vec is sized to match files.
                 let nfiles = self.nodes[idx].files.loaded().map_or(0, |f| f.len());
-                if self.nodes[idx].diffs.len() < nfiles {
-                    self.nodes[idx]
-                        .diffs
-                        .resize_with(nfiles, || Loadable::NotRequested);
-                }
+                self.nodes[idx].ensure_diffs(nfiles);
                 self.rebuild_rows();
                 self.scroll_to_show_children();
             }
@@ -281,11 +263,7 @@ impl App {
                 if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                     if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
                         let fi = file_idx.raw();
-                        if fi >= self.nodes[idx].diffs.len() {
-                            self.nodes[idx]
-                                .diffs
-                                .resize_with(fi + 1, || Loadable::NotRequested);
-                        }
+                        self.nodes[idx].ensure_diffs(fi + 1);
                         self.nodes[idx].diffs[fi] = Loadable::Loaded(lines);
                     }
                 }
@@ -300,11 +278,7 @@ impl App {
                 if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                     if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
                         let fi = file_idx.raw();
-                        if fi >= self.nodes[idx].diffs.len() {
-                            self.nodes[idx]
-                                .diffs
-                                .resize_with(fi + 1, || Loadable::NotRequested);
-                        }
+                        self.nodes[idx].ensure_diffs(fi + 1);
                         self.nodes[idx].diffs[fi] = Loadable::Failed(error.clone());
                     }
                 }

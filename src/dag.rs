@@ -220,8 +220,8 @@ pub struct DagEntry {
 
 /// An edge from a commit to a parent in the DAG.
 pub struct Edge {
-    /// The change ID of the target commit.
-    pub target: ChangeId,
+    /// The commit ID hex of the target (parent) commit.
+    pub target: CommitId,
     pub kind: EdgeKind,
 }
 

@@ -36,7 +36,7 @@ use crate::dag::{
     DivergenceUpdate, Edge, EdgeKind, FileChange, FileStatus, LineStats, PrefixLengthUpdate,
     RemoteBookmarkInfo, ShortId,
 };
-use crate::types::{BookmarkName, ChangeId, CommitId as UiCommitId, RemoteName, RepoPath};
+use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, RepoPath};
 
 /// Number of hex characters to show for change/commit IDs.
 const DISPLAY_ID_LEN: usize = 8;
@@ -401,7 +401,7 @@ impl JjRepo {
             let dag_edges = edges
                 .into_iter()
                 .map(|e| Edge {
-                    target: ChangeId::new(e.target.hex()),
+                    target: UiCommitId::new(e.target.hex()),
                     kind: match e.edge_type {
                         GraphEdgeType::Direct => EdgeKind::Direct,
                         GraphEdgeType::Indirect => EdgeKind::Indirect,

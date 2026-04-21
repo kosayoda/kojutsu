@@ -198,12 +198,7 @@ impl App {
                     .map(|f| (f.path.clone(), f.old_path.clone()));
                 if let Some((path, old_path)) = file_info {
                     let commit_id = self.commit_id(entry_idx).clone();
-                    // Ensure diffs vec is large enough.
-                    if fi >= self.nodes[entry_idx].diffs.len() {
-                        self.nodes[entry_idx]
-                            .diffs
-                            .resize_with(fi + 1, || Loadable::NotRequested);
-                    }
+                    self.nodes[entry_idx].ensure_diffs(fi + 1);
                     self.nodes[entry_idx].diffs[fi] = Loadable::Loading;
                     self.pending_repo_requests
                         .push(RepoRequest::load_file_diff(commit_id, path, old_path));

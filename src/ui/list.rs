@@ -101,20 +101,19 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
             match row {
                 DisplayRow::CommitNode { entry_idx } => {
                     let node = &app.nodes[*entry_idx];
-                    let entry = node;
                     let gl = &node.graph;
                     let graph_node = gl.node.as_str();
                     let graph_cont = gl.cont.as_str();
                     let flags = RenderFlags {
                         is_source: target_select_source
-                            .is_some_and(|src| src == entry.commit.unique_prefix().as_str()),
+                            .is_some_and(|src| src == node.commit.unique_prefix().as_str()),
                         is_selected: app.is_commit_selected(*entry_idx),
                         in_visual: app.is_in_visual_commit_range(*entry_idx),
                     };
                     render_commit_item(
                         graph_node,
                         graph_cont,
-                        &entry.commit,
+                        &node.commit,
                         app.is_commit_unfolded(*entry_idx)
                             .then(|| app.commit_stats(*entry_idx))
                             .flatten(),
