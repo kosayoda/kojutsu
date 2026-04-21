@@ -202,6 +202,9 @@ pub enum TargetOperation {
         bookmark_name: BookmarkName,
     },
     DuplicateOnto,
+    Revert {
+        sources: SmallVec<ChangeId>,
+    },
 }
 
 impl TargetOperation {
@@ -227,6 +230,7 @@ impl TargetOperation {
             TargetOperation::RestoreInto => "restore into",
             TargetOperation::BookmarkMove { .. } => "move bookmark",
             TargetOperation::DuplicateOnto => "duplicate onto",
+            TargetOperation::Revert { .. } => "revert",
         }
     }
 
@@ -293,6 +297,20 @@ impl TargetOperation {
                     flags,
                 },
             ),
+            TargetOperation::Revert { sources } => RebaseKind::iter()
+                .map(|kind| FollowUpOption {
+                    key: kind.key(),
+                    label: kind.label(),
+                    action: FollowUpAction::Execute(JJCommand::Revert {
+                        change_ids: sources.clone(),
+                        dest: RebaseTarget {
+                            target: target.clone(),
+                            kind,
+                        },
+                        flags,
+                    }),
+                })
+                .collect(),
         }
     }
 }

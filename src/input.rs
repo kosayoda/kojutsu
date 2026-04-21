@@ -776,10 +776,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             change_ids: ids,
             flags,
         }),
-        AppAction::Revert => make_multi_command(app, |ids| JJCommand::Revert {
-            change_ids: ids,
-            flags,
-        }),
+        AppAction::Revert => {
+            let sources = app.selected_change_ids();
+            enter_target_select(app, TargetOperation::Revert { sources }, flags)
+        }
     }
 }
 

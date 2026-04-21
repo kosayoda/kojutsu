@@ -194,6 +194,7 @@ pub enum JJCommand {
     },
     Revert {
         change_ids: SmallVec<ChangeId>,
+        dest: RebaseTarget,
         flags: CommandFlags,
     },
     WorkspaceAdd {
@@ -642,12 +643,16 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::Revert { change_ids, .. } => {
+            JJCommand::Revert {
+                change_ids, dest, ..
+            } => {
                 let mut args: Vec<Str> = vec!["revert".into()];
                 for id in change_ids {
                     args.push("-r".into());
                     args.push(format_compact!("{id}"));
                 }
+                args.push(dest.kind.flag().into());
+                args.push(format_compact!("{}", dest.target));
                 args
             }
             JJCommand::Duplicate {
