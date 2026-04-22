@@ -87,17 +87,39 @@ pub fn handle_key(app: &mut App, keymaps: &'static Keymaps, key: KeyEvent) -> Ac
                 handle_normal_key(app, keymap, &node)
             }
         }
-        AppMode::Help => {
-            app.mode = app.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
-            if node.key == keymap_parser::Key::Esc {
-                Action::None
-            } else {
-                match &app.mode {
-                    AppMode::Normal => handle_normal_key(app, keymap, &node),
-                    AppMode::TargetSelect { .. } => handle_target_select(app, key),
-                    AppMode::CommitSelect { .. } => handle_commit_select(app, key),
-                    _ => Action::None,
+        AppMode::Help { .. } => {
+            use keymap_parser::Key;
+            match node.key {
+                Key::Char('j') | Key::Down => {
+                    if let AppMode::Help { scroll } = &mut app.mode {
+                        *scroll = scroll.saturating_add(1);
+                    }
+                    Action::None
                 }
+                Key::Char('k') | Key::Up => {
+                    if let AppMode::Help { scroll } = &mut app.mode {
+                        *scroll = scroll.saturating_sub(1);
+                    }
+                    Action::None
+                }
+                // Dismiss without forwarding.
+                Key::Esc | Key::Char('q') | Key::Char('?') => {
+                    app.mode = app.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
+                    Action::None
+                }
+                // Dismiss and forward printable keys to the underlying mode.
+                Key::Char(_) => {
+                    app.mode = app.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
+                    match &app.mode {
+                        AppMode::Normal => handle_normal_key(app, keymap, &node),
+                        AppMode::TargetSelect { .. } => handle_target_select(app, key),
+                        AppMode::CommitSelect { .. } => handle_commit_select(app, key),
+                        _ => Action::None,
+                    }
+                }
+                // Ignore everything else (function keys, modifier combos,
+                // spurious escape sequences from terminal resize, etc.).
+                _ => Action::None,
             }
         }
         AppMode::TextInput { .. } => handle_text_input(app, key),
@@ -453,7 +475,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::WorkspaceList => Action::RunJj(JJCommand::WorkspaceList { flags }),
         AppAction::ShowHelp => {
-            app.mode = AppMode::Help;
+            app.mode = AppMode::Help { scroll: 0 };
             Action::None
         }
         AppAction::Abandon => make_multi_command(app, |ids| JJCommand::Abandon {
@@ -1237,7 +1259,7 @@ fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<Action> {
             Some(Action::None)
         }
         (Key::Char('?'), _, _) => {
-            let old_mode = std::mem::replace(&mut app.mode, AppMode::Help);
+            let old_mode = std::mem::replace(&mut app.mode, AppMode::Help { scroll: 0 });
             app.pre_overlay_mode = Some(old_mode);
             Some(Action::None)
         }

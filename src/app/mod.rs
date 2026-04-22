@@ -217,7 +217,7 @@ pub enum AppMode {
         success: bool,
     },
     /// Help overlay showing all keybindings.
-    Help,
+    Help { scroll: u16 },
     /// Single-line text input in the bottom bar.
     TextInput {
         prompt: String,

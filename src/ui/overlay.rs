@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Wrap};
 use ratatui::Frame;
 
 use crate::app::App;
@@ -50,6 +50,7 @@ pub(super) fn draw_help(
     app: &App,
     left_groups: &[&(HelpGroup, Vec<HelpEntry>)],
     right_groups: &[&(HelpGroup, Vec<HelpEntry>)],
+    scroll: u16,
     theme: &Theme,
 ) {
     use ratatui::widgets::Padding;
@@ -73,8 +74,8 @@ pub(super) fn draw_help(
     let [left_area, right_area] =
         Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(inner);
 
-    render_help_column(frame, left_area, app, left_groups, theme);
-    render_help_column(frame, right_area, app, right_groups, theme);
+    render_help_column(frame, left_area, app, left_groups, scroll, theme);
+    render_help_column(frame, right_area, app, right_groups, scroll, theme);
 }
 
 fn render_help_column(
@@ -82,6 +83,7 @@ fn render_help_column(
     area: Rect,
     app: &App,
     groups: &[&(HelpGroup, Vec<HelpEntry>)],
+    scroll: u16,
     theme: &Theme,
 ) {
     let header_style = Style::default()
@@ -137,7 +139,8 @@ fn render_help_column(
 
     let widths = [Constraint::Length(20), Constraint::Fill(1)];
     let table = Table::new(rows, widths);
-    frame.render_widget(table, area);
+    let mut state = TableState::default().with_offset(scroll as usize);
+    frame.render_stateful_widget(table, area, &mut state);
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -241,7 +244,10 @@ pub(super) fn draw_submenu(
         action_spans.push(Span::styled(format!("({key_str})"), key_style));
         action_spans.push(Span::styled(format!(" {desc}"), desc_style));
     }
-    frame.render_widget(Paragraph::new(Line::from(action_spans)), inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(action_spans)).wrap(Wrap { trim: false }),
+        inner,
+    );
 }
 
 /// Render a single-line text input with horizontal scrolling and cursor placement.

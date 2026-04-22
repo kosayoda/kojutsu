@@ -55,7 +55,25 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
             children,
             flags,
         } => {
-            let area = overlay_area(overlay_base, 2);
+            // Calculate content width to determine how many lines we need.
+            let content_width: usize = children
+                .iter()
+                .filter(|(_, child)| !matches!(child, keymap::KeymapNode::Toggle { .. }))
+                .map(|(key_node, child)| {
+                    let key_str = keymap::display_key(key_node);
+                    let desc = match child {
+                        keymap::KeymapNode::Action { description, .. } => *description,
+                        keymap::KeymapNode::Prefix { label, .. } => *label,
+                        _ => "",
+                    };
+                    // "(key) desc" + "  " separator
+                    key_str.len() + 2 + 1 + desc.len() + 2
+                })
+                .sum();
+            let inner_width = overlay_base.width.saturating_sub(2).max(1) as usize;
+            let content_lines =
+                ((content_width.saturating_sub(2) + inner_width - 1) / inner_width).max(1);
+            let area = overlay_area(overlay_base, content_lines as u16 + 1);
             frame.render_widget(ratatui::widgets::Clear, area);
             overlay::draw_submenu(
                 frame,
@@ -82,7 +100,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
             frame.render_widget(ratatui::widgets::Clear, area);
             overlay::draw_command_output(frame, area, command, output, *success, theme);
         }
-        AppMode::Help => {
+        AppMode::Help { scroll } => {
             let groups = match &app.pre_overlay_mode {
                 Some(AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. }) => {
                     keymap::select_mode_help_entries()
@@ -100,9 +118,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
             let height = (max_col as u16 + 2)
                 .min(overlay_base.height * 7 / 10)
                 .max(4);
+            // Clamp scroll to content that doesn't fit — write back so the
+            // stored value never drifts past the end.
+            // Block has Borders::TOP only (no bottom), so inner height = height - 1.
+            let visible_rows = height.saturating_sub(1);
+            let max_scroll = (max_col as u16).saturating_sub(visible_rows);
+            *scroll = (*scroll).min(max_scroll);
+            let scroll = *scroll;
             let area = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_help(frame, area, app, &left, &right, theme);
+            overlay::draw_help(frame, area, app, &left, &right, scroll, theme);
         }
         AppMode::TextInput { prompt, input, .. } => {
             let area = overlay_area(overlay_base, 2);
