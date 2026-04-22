@@ -1910,9 +1910,11 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
                 _ => Action::None,
             }
         }
-        // Dismiss overlays that are just informational.
+        // Dismiss command output only on a deliberate click, not mouse movement.
         AppMode::CommandOutput { .. } => {
-            app.mode = AppMode::Normal;
+            if matches!(mouse.kind, MouseEventKind::Down(_)) {
+                app.mode = AppMode::Normal;
+            }
             Action::None
         }
         // Ignore mouse in modal input modes (text input, search, follow-up, list).
