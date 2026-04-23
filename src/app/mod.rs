@@ -36,7 +36,6 @@ pub struct PersistedState {
     pub debug: bool,
     pub search_scopes: u8,
     pub active_preset: Option<usize>,
-    pub active_view: ActiveView,
 }
 
 pub fn load_persisted_state() -> PersistedState {
@@ -654,7 +653,6 @@ impl App {
             debug: self.toggles.contains(CommandFlags::DEBUG),
             search_scopes: self.search_scopes.bits(),
             active_preset: self.active_preset,
-            active_view: self.active_view,
         }
     }
 
@@ -669,7 +667,6 @@ impl App {
             self.search_scopes = SearchScopes::from_bits_truncate(state.search_scopes);
         }
         self.active_preset = state.active_preset.filter(|&i| i < self.presets.len());
-        self.active_view = state.active_view;
     }
 
     /// Get the scroll offset from the list state.
