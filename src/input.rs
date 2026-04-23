@@ -895,6 +895,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     if let Some(row) = app.row_of_commit(idx) {
                         app.cursor = row;
                     }
+                } else {
+                    app.set_status("commit not in current revset");
                 }
                 return Action::None;
             }
@@ -903,13 +905,17 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             };
             let commit_id = entry.commit_id.clone();
-            app.switch_view(crate::app::ActiveView::Dag);
             if let Some(cid) = commit_id {
+                app.switch_view(crate::app::ActiveView::Dag);
                 if let Some(idx) = app.entry_by_commit_id(&cid) {
                     if let Some(row) = app.row_of_commit(idx) {
                         app.cursor = row;
                     }
+                } else {
+                    app.set_status("commit not in current revset");
                 }
+            } else {
+                app.set_error("bookmark has no associated commit");
             }
             Action::None
         }

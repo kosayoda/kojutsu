@@ -187,6 +187,7 @@ impl App {
                 }
             }
         }
+        self.set_status("bookmark not in current revset");
     }
 
     /// Move cursor up by `n` selectable rows (commits or files).
