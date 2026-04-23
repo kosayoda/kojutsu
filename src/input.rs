@@ -14,7 +14,7 @@ use crate::keymap::{
 use smallvec::smallvec;
 
 use crate::types::{
-    BookmarkName, ChangeId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode,
+    BookmarkName, ChangeId, CommitId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode,
     PendingCommand, PendingCommitSelect, PendingSelection, RebaseSource, SelectionKind, SmallVec,
     SplitKind, SquashKind, Str, TargetOperation,
 };
@@ -636,7 +636,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::BookmarkAdvance => enter_bookmark_advance(app, flags),
         AppAction::BookmarkTrack => {
-            let bookmarks = app.untracked_bookmarks.clone();
+            let bookmarks: Vec<String> = app.untracked_bookmarks.iter().map(|s| s.to_string()).collect();
             enter_remote_bookmark_select(
                 app,
                 bookmarks,
@@ -646,7 +646,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             )
         }
         AppAction::BookmarkUntrack => {
-            let bookmarks = app.tracked_bookmarks.clone();
+            let bookmarks: Vec<String> = app.tracked_bookmarks.iter().map(|s| s.to_string()).collect();
             enter_remote_bookmark_select(
                 app,
                 bookmarks,
@@ -665,7 +665,6 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             Action::None
         }
         AppAction::TagDelete => enter_tag_delete(app, flags),
-        AppAction::TagList => Action::RunJj(JJCommand::TagList { flags }),
 
         AppAction::Undo => Action::RunJj(JJCommand::Undo { flags }),
         AppAction::Redo => Action::RunJj(JJCommand::Redo { flags }),
@@ -888,35 +887,26 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 });
             }
             // On a remote target row: jump to that specific commit in DAG.
-            if let Some((_, target)) = app.selected_remote_target() {
-                let commit_id = target.commit_id.clone();
-                app.switch_view(crate::app::ActiveView::Dag);
-                if let Some(idx) = app.entry_by_commit_id(&commit_id) {
-                    if let Some(row) = app.row_of_commit(idx) {
-                        app.cursor = row;
-                    }
-                } else {
-                    app.set_status("commit not in current revset");
-                }
+            if let Some(ids) = app
+                .selected_remote_target()
+                .map(|(_, t)| (t.commit_id.clone(), t.change_id.clone()))
+            {
+                jump_to_commit_in_dag(app, Some(&ids.0), Some(&ids.1), "");
                 return Action::None;
             }
             // On a bookmark row: jump to the bookmark's commit in DAG.
-            let Some(entry) = app.selected_bookmark_entry() else {
+            let Some(ids) = app
+                .selected_bookmark_entry()
+                .map(|e| (e.commit_id.clone(), e.change_id.clone()))
+            else {
                 return Action::None;
             };
-            let commit_id = entry.commit_id.clone();
-            if let Some(cid) = commit_id {
-                app.switch_view(crate::app::ActiveView::Dag);
-                if let Some(idx) = app.entry_by_commit_id(&cid) {
-                    if let Some(row) = app.row_of_commit(idx) {
-                        app.cursor = row;
-                    }
-                } else {
-                    app.set_status("commit not in current revset");
-                }
-            } else {
-                app.set_error("bookmark has no associated commit");
-            }
+            jump_to_commit_in_dag(
+                app,
+                ids.0.as_ref(),
+                ids.1.as_ref(),
+                "bookmark has no associated commit",
+            );
             Action::None
         }
         AppAction::BmViewEdit => {
@@ -1000,6 +990,48 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 flags,
             })
         }
+        // Tag view actions
+        AppAction::SwitchToTagView => {
+            app.switch_view(crate::app::ActiveView::Tags);
+            Action::None
+        }
+        AppAction::TgViewDelete => {
+            let Some(entry) = app.selected_tag_entry() else {
+                return Action::None;
+            };
+            let name = entry.name.to_string();
+            Action::RunJj(JJCommand::TagDelete {
+                names: smallvec![name],
+                flags,
+            })
+        }
+        AppAction::TgViewSet => {
+            let Some(entry) = app.selected_tag_entry() else {
+                return Action::None;
+            };
+            let name = entry.name.to_string();
+            app.mode = AppMode::text_input(
+                &format!("set {name} to (change id): "),
+                "",
+                PendingCommand::TagSetByName { name, flags },
+            );
+            Action::None
+        }
+        AppAction::TgViewJumpToCommit => {
+            let Some(ids) = app
+                .selected_tag_entry()
+                .map(|e| (e.commit_id.clone(), e.change_id.clone()))
+            else {
+                return Action::None;
+            };
+            jump_to_commit_in_dag(
+                app,
+                ids.0.as_ref(),
+                ids.1.as_ref(),
+                "tag has no associated commit",
+            );
+            Action::None
+        }
     }
 }
 
@@ -1013,12 +1045,60 @@ fn run_cmd(cmd: JJCommand) -> Action {
 }
 
 /// Dispatch a follow-up action (execute command or enter text input).
+/// Try to jump to a commit in the DAG view. If the commit is in the current
+/// revset, switches to DAG and moves the cursor. Otherwise offers to widen
+/// the revset. If there's no commit at all, shows an error.
+fn jump_to_commit_in_dag(
+    app: &mut App,
+    commit_id: Option<&CommitId>,
+    change_id: Option<&crate::dag::ShortId>,
+    missing_msg: &str,
+) {
+    let Some(cid) = commit_id else {
+        app.set_error(missing_msg);
+        return;
+    };
+    if let Some(idx) = app.entry_by_commit_id(cid) {
+        app.switch_view(crate::app::ActiveView::Dag);
+        if let Some(row) = app.row_of_commit(idx) {
+            app.cursor = row;
+        }
+    } else {
+        offer_widen_revset(app, change_id);
+    }
+}
+
+/// Show a FollowUp prompt offering to widen the revset to include a change.
+fn offer_widen_revset(app: &mut App, change_id: Option<&crate::dag::ShortId>) {
+    if let Some(cid) = change_id {
+        app.mode = AppMode::FollowUp {
+            prompt: "commit not in current revset".into(),
+            options: vec![FollowUpOption {
+                key: 'w',
+                label: "widen revset",
+                action: FollowUpAction::WidenRevset {
+                    change_id: cid.display.clone(),
+                },
+            }],
+        };
+    } else {
+        app.set_status("commit not in current revset");
+    }
+}
+
 fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action {
     match action {
         FollowUpAction::Execute(cmd) => run_cmd(cmd),
         FollowUpAction::TextInput { prompt, pending } => {
             app.mode = AppMode::text_input(prompt, "", pending);
             Action::None
+        }
+        FollowUpAction::WidenRevset { change_id } => {
+            let new_revset = format!("({}) | {}", app.revset, change_id);
+            app.jump_after_refresh = Some(crate::app::JumpTarget::ChangeId(change_id));
+            app.switch_view(crate::app::ActiveView::Dag);
+            app.active_preset = None;
+            Action::UpdateRevset(new_revset)
         }
     }
 }
@@ -1432,6 +1512,8 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             Some(DisplayRow::BookmarkItem { .. })
             | Some(DisplayRow::BookmarkConflictTarget { .. })
             | Some(DisplayRow::BookmarkRemoteTarget { .. })
+            | Some(DisplayRow::TagItem { .. })
+            | Some(DisplayRow::TagRemoteTarget { .. })
             | None => None,
         };
         entry_idx.is_some_and(|idx| app.nodes[idx].commit.is_working_copy())

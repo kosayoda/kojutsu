@@ -190,6 +190,17 @@ impl App {
         self.set_status("bookmark not in current revset");
     }
 
+    pub fn jump_to_change_id(&mut self, prefix: &str) {
+        for (idx, node) in self.nodes.iter_enumerated() {
+            if node.commit.change_id.display.starts_with(prefix) {
+                if let Some(pos) = self.row_of_commit(idx) {
+                    self.cursor = pos;
+                    return;
+                }
+            }
+        }
+    }
+
     /// Move cursor up by `n` selectable rows (commits or files).
     pub fn page_up(&mut self, n: usize) {
         for _ in 0..n {

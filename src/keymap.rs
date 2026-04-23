@@ -124,11 +124,11 @@ pub enum AppAction {
     GitPushBookmark,
     TagSet,
     TagDelete,
-    TagList,
     SelectPreset,
     SwitchPreset(usize),
     SwitchToDagView,
     SwitchToBookmarkView,
+    SwitchToTagView,
     // Bookmark view actions (operate on selected BookmarkViewEntry)
     BmViewDelete,
     BmViewTrack,
@@ -141,6 +141,10 @@ pub enum AppAction {
     BmViewForget,
     BmViewSet,
     BmViewFetch,
+    // Tag view actions (operate on selected TagViewEntry)
+    TgViewDelete,
+    TgViewSet,
+    TgViewJumpToCommit,
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +219,7 @@ impl Keymap {
 pub struct Keymaps {
     pub dag: Keymap,
     pub bookmarks: Keymap,
+    pub tags: Keymap,
 }
 
 impl Keymaps {
@@ -222,6 +227,7 @@ impl Keymaps {
         match view {
             crate::app::ActiveView::Dag => &self.dag,
             crate::app::ActiveView::Bookmarks => &self.bookmarks,
+            crate::app::ActiveView::Tags => &self.tags,
         }
     }
 }
@@ -259,6 +265,7 @@ fn shared_bindings() -> Vec<(Node, KeymapNode)> {
         // View switching
         bind("1", AppAction::SwitchToDagView, "DAG view", G),
         bind("2", AppAction::SwitchToBookmarkView, "bookmarks view", G),
+        bind("3", AppAction::SwitchToTagView, "tags view", G),
         // Fold / Select
         bind("tab", AppAction::ToggleFold, "toggle fold", N),
         bind("space", AppAction::ToggleSelect, "toggle select", N),
@@ -341,7 +348,6 @@ impl Default for Keymaps {
                     toggle("shift-b", CommandFlags::ALLOW_BACKWARDS, "allow backwards"),
                     bind("s", AppAction::TagSet, "set", C),
                     bind("d", AppAction::TagDelete, "delete", C),
-                    bind("l", AppAction::TagList, "list", C),
                 ],
             ),
             prefix(
@@ -535,9 +541,27 @@ impl Default for Keymaps {
             ),
         ]);
 
+        // Tag view: shared bindings + tag-specific actions.
+        let mut tg_root = shared_bindings();
+        tg_root.extend(vec![
+            bind("d", AppAction::TgViewDelete, "delete", C),
+            bind("s", AppAction::TgViewSet, "set…", C),
+            bind("enter", AppAction::TgViewJumpToCommit, "jump to commit", C),
+            prefix(
+                "u",
+                "undo/redo",
+                C,
+                vec![
+                    bind("u", AppAction::Undo, "undo", C),
+                    bind("r", AppAction::Redo, "redo", C),
+                ],
+            ),
+        ]);
+
         Keymaps {
             dag: Keymap { root: dag_root },
             bookmarks: Keymap { root: bm_root },
+            tags: Keymap { root: tg_root },
         }
     }
 }
@@ -729,8 +753,7 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::SimplifyParents
         | AppAction::Revert
         | AppAction::TagSet
-        | AppAction::TagDelete
-        | AppAction::TagList => &[Commit],
+        | AppAction::TagDelete => &[Commit],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }
@@ -772,7 +795,11 @@ pub fn action_label(action: AppAction) -> &'static str {
         | AppAction::GitPushBookmark
         | AppAction::GitExport
         | AppAction::GitImport => "git",
-        AppAction::TagSet | AppAction::TagDelete | AppAction::TagList => "tag",
+        AppAction::TagSet
+        | AppAction::TagDelete
+        | AppAction::TgViewDelete
+        | AppAction::TgViewSet
+        | AppAction::TgViewJumpToCommit => "tag",
         AppAction::Duplicate | AppAction::DuplicateOnto => "duplicate",
         AppAction::Parallelize => "parallelize",
         AppAction::SimplifyParents => "simplify-parents",

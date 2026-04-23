@@ -1,4 +1,7 @@
-use crate::idx::{BookmarkDetailIdx, BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
+use crate::idx::{
+    BookmarkDetailIdx, BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, TagDetailIdx,
+    TagIdx,
+};
 
 /// Identifies a display row for cursor restore after rebuild.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -10,6 +13,8 @@ pub enum RowKey {
     BookmarkItem(BookmarkIdx),
     BookmarkConflictTarget(BookmarkIdx, BookmarkDetailIdx),
     BookmarkRemoteTarget(BookmarkIdx, BookmarkDetailIdx),
+    TagItem(TagIdx),
+    TagRemoteTarget(TagIdx, TagDetailIdx),
 }
 
 /// One visual row in the list.
@@ -44,6 +49,13 @@ pub enum DisplayRow {
         bookmark_idx: BookmarkIdx,
         target_idx: BookmarkDetailIdx,
     },
+    /// A tag row in the tag view.
+    TagItem { tag_idx: TagIdx },
+    /// A remote tracking line under a tag.
+    TagRemoteTarget {
+        tag_idx: TagIdx,
+        target_idx: TagDetailIdx,
+    },
 }
 
 impl DisplayRow {
@@ -72,6 +84,11 @@ impl DisplayRow {
                 bookmark_idx,
                 target_idx,
             } => RowKey::BookmarkRemoteTarget(bookmark_idx, target_idx),
+            DisplayRow::TagItem { tag_idx } => RowKey::TagItem(tag_idx),
+            DisplayRow::TagRemoteTarget {
+                tag_idx,
+                target_idx,
+            } => RowKey::TagRemoteTarget(tag_idx, target_idx),
         }
     }
 }

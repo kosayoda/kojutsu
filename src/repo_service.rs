@@ -50,9 +50,11 @@ pub enum RepoResult {
         revset: String,
         repo_root: String,
         entries: Vec<DagEntry>,
-        untracked_bookmarks: Vec<String>,
-        tracked_bookmarks: Vec<String>,
+        untracked_bookmarks: Vec<Str>,
+        tracked_bookmarks: Vec<Str>,
         remotes: Vec<Str>,
+        all_tags: Vec<Str>,
+        tag_details: std::collections::HashMap<Str, crate::dag::TagDetails>,
         bookmark_details: std::collections::HashMap<BookmarkName, crate::dag::BookmarkDetails>,
     },
     RevsetFailed {
@@ -292,14 +294,24 @@ impl RepoServiceState {
                 let untracked_bookmarks = repo.untracked_remote_bookmarks();
                 let tracked_bookmarks = repo.tracked_remote_bookmarks();
                 let remotes = repo.git_remotes();
+                let all_tags = repo.all_local_tags();
+                let tag_details = repo.extract_tag_details();
                 let bookmark_details = repo.extract_bookmark_details();
 
-                // Collect unique commit IDs from bookmark details for prefix computation.
+                // Collect unique commit IDs from bookmark + tag details for prefix computation.
                 let detail_commit_ids: Vec<CommitId> = {
                     let mut ids = std::collections::HashSet::new();
                     for details in bookmark_details.values() {
                         for ct in &details.conflict_targets {
                             ids.insert(ct.commit_id.clone());
+                        }
+                        for rt in &details.remote_targets {
+                            ids.insert(rt.commit_id.clone());
+                        }
+                    }
+                    for details in tag_details.values() {
+                        if let Some(lt) = &details.local_target {
+                            ids.insert(lt.commit_id.clone());
                         }
                         for rt in &details.remote_targets {
                             ids.insert(rt.commit_id.clone());
@@ -317,6 +329,8 @@ impl RepoServiceState {
                         untracked_bookmarks,
                         tracked_bookmarks,
                         remotes,
+                        all_tags,
+                        tag_details,
                         bookmark_details,
                     },
                 );

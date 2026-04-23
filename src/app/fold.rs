@@ -1,5 +1,8 @@
 use super::{ActiveView, App, Loadable};
-use crate::idx::{BookmarkDetailIdx, BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx};
+use crate::idx::{
+    BookmarkDetailIdx, BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, TagDetailIdx,
+    TagIdx,
+};
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
 
@@ -9,6 +12,7 @@ impl App {
         match self.active_view {
             ActiveView::Dag => self.rebuild_dag_rows(),
             ActiveView::Bookmarks => self.rebuild_bookmark_rows(),
+            ActiveView::Tags => self.rebuild_tag_rows(),
         }
     }
 
@@ -48,6 +52,33 @@ impl App {
         self.cursor = prev_cursor
             .and_then(|key| self.rows.iter().position(|r| r.key() == key))
             .or_else(|| fallback.and_then(|key| self.rows.iter().position(|r| r.key() == key)))
+            .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
+    }
+
+    fn rebuild_tag_rows(&mut self) {
+        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        self.rows.clear();
+        for idx in 0..self.tag_entries.len() {
+            let ti = TagIdx::new(idx);
+            self.rows.push(DisplayRow::TagItem { tag_idx: ti });
+
+            // Emit remote target child rows (skip if same commit as local).
+            if let Some(details) = self.tag_details.get(&self.tag_entries[idx].name) {
+                let local_commit = details.local_target.as_ref().map(|lt| &lt.commit_id);
+                for ri in 0..details.remote_targets.len() {
+                    let rt = &details.remote_targets[ri];
+                    if local_commit == Some(&rt.commit_id) {
+                        continue;
+                    }
+                    self.rows.push(DisplayRow::TagRemoteTarget {
+                        tag_idx: ti,
+                        target_idx: TagDetailIdx::new(ri),
+                    });
+                }
+            }
+        }
+        self.cursor = prev_cursor
+            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
             .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
     }
 

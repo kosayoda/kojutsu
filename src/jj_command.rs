@@ -224,9 +224,6 @@ pub enum JJCommand {
         names: SmallVec<String>,
         flags: CommandFlags,
     },
-    TagList {
-        flags: CommandFlags,
-    },
 }
 
 /// The result of running a jj command.
@@ -280,8 +277,7 @@ impl JJCommand {
             | JJCommand::WorkspaceForget { flags, .. }
             | JJCommand::WorkspaceList { flags, .. }
             | JJCommand::TagSet { flags, .. }
-            | JJCommand::TagDelete { flags, .. }
-            | JJCommand::TagList { flags, .. } => *flags,
+            | JJCommand::TagDelete { flags, .. } => *flags,
         }
     }
 
@@ -744,9 +740,6 @@ impl JJCommand {
                 let mut args: Vec<Str> = vec!["tag".into(), "delete".into()];
                 args.extend(names.iter().map(|n| Str::from(n.as_str())));
                 args
-            }
-            JJCommand::TagList { .. } => {
-                vec!["tag".into(), "list".into()]
             }
         };
 

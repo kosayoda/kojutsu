@@ -276,6 +276,20 @@ impl App {
             DisplayRow::BookmarkConflictTarget { .. } | DisplayRow::BookmarkRemoteTarget { .. } => {
                 false
             }
+            DisplayRow::TagItem { tag_idx } => {
+                let Some(entry) = self.tag_entries.get(tag_idx.raw()) else {
+                    return false;
+                };
+                (scopes.contains(SearchScopes::TAG) && contains(entry.name.as_str()))
+                    || (scopes.contains(SearchScopes::DESCRIPTION)
+                        && entry.description.as_deref().is_some_and(contains))
+                    || (scopes.contains(SearchScopes::CHANGE_ID)
+                        && entry
+                            .change_id
+                            .as_ref()
+                            .is_some_and(|c| contains(&c.display)))
+            }
+            DisplayRow::TagRemoteTarget { .. } => false,
         }
     }
 }

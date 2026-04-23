@@ -82,6 +82,16 @@ pub struct PrefixLengthUpdate {
     pub commit_prefix_len: usize,
 }
 
+impl PrefixLengthUpdate {
+    /// Apply this update to a (change_id, short_commit_id) pair.
+    pub fn apply(&self, change_id: &mut ShortId, short_commit_id: &mut ShortId) {
+        change_id.display.clone_from(&self.change_display);
+        change_id.prefix_len = self.change_prefix_len;
+        short_commit_id.display.clone_from(&self.commit_display);
+        short_commit_id.prefix_len = self.commit_prefix_len;
+    }
+}
+
 /// Divergence and hidden status for a commit.
 pub struct DivergenceUpdate {
     pub is_divergent: bool,
@@ -180,6 +190,38 @@ pub struct BookmarkRemoteTarget {
 pub struct BookmarkDetails {
     pub conflict_targets: Vec<BookmarkConflictTarget>,
     pub remote_targets: Vec<BookmarkRemoteTarget>,
+}
+
+/// Remote tracking info for a tag at a specific remote.
+pub struct TagRemoteTarget {
+    /// Remote name (e.g., "origin", "git").
+    pub remote: RemoteName,
+    /// Full commit ID hex (for comparison with local target).
+    pub commit_id: CommitId,
+    /// Short change ID of the remote's target commit.
+    pub change_id: ShortId,
+    /// Short commit ID of the remote's target commit.
+    pub short_commit_id: ShortId,
+    /// First line of description.
+    pub description: Option<String>,
+}
+
+/// Rich data for a single tag (local target + remote tracking).
+pub struct TagDetails {
+    /// Whether the local tag has been deleted (remote-only).
+    pub is_deleted: bool,
+    /// Commit info for the local target (if present).
+    pub local_target: Option<TagLocalTarget>,
+    /// Remote tracking info.
+    pub remote_targets: Vec<TagRemoteTarget>,
+}
+
+/// Local target info for a tag.
+pub struct TagLocalTarget {
+    pub commit_id: CommitId,
+    pub change_id: ShortId,
+    pub short_commit_id: ShortId,
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]

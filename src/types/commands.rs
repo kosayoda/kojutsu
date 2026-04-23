@@ -96,6 +96,10 @@ pub enum FollowUpAction {
         prompt: String,
         pending: PendingCommand,
     },
+    /// Widen the current revset to include a specific change, then jump to it.
+    WidenRevset {
+        change_id: String,
+    },
 }
 
 /// What to do when a TextInput is submitted.
@@ -140,6 +144,8 @@ pub enum PendingCommand {
         change_id: ChangeId,
         flags: CommandFlags,
     },
+    /// Set tag to a change ID (name already known, text is change ID).
+    TagSetByName { name: String, flags: CommandFlags },
     /// Workspace add step 1: collecting path. Text = path.
     WorkspaceAddPath { flags: CommandFlags },
     /// Workspace add step 2: path collected, collecting name. Text = name.
@@ -182,6 +188,11 @@ impl PendingCommand {
             PendingCommand::TagSet { change_id, flags } => JJCommand::TagSet {
                 name: text,
                 change_id,
+                flags,
+            },
+            PendingCommand::TagSetByName { name, flags } => JJCommand::TagSet {
+                name,
+                change_id: ChangeId::new(text),
                 flags,
             },
             PendingCommand::Commit { flags, selection } => JJCommand::Commit {

@@ -7,7 +7,7 @@ use ratatui::Frame;
 
 use super::search::*;
 use super::spans::*;
-use crate::app::{App, AppMode, BookmarkViewEntry};
+use crate::app::{App, AppMode, BookmarkViewEntry, TagViewEntry};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
 use crate::theme::{Config, Theme};
 use crate::types::{DisplayRow, FileSelectionState, SearchScopes};
@@ -218,6 +218,24 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .get(&entry.name)
                         .and_then(|d| d.remote_targets.get(target_idx.raw()));
                     render_bookmark_remote_target(target, theme)
+                }
+                DisplayRow::TagItem { tag_idx } => {
+                    if let Some(entry) = app.tag_entries.get(tag_idx.raw()) {
+                        render_tag_item(entry, row_search.as_ref(), theme)
+                    } else {
+                        ListItem::new(Line::raw(""))
+                    }
+                }
+                DisplayRow::TagRemoteTarget {
+                    tag_idx,
+                    target_idx,
+                } => {
+                    let target = app
+                        .tag_entries
+                        .get(tag_idx.raw())
+                        .and_then(|entry| app.tag_details.get(&entry.name))
+                        .and_then(|d| d.remote_targets.get(target_idx.raw()));
+                    render_tag_remote_target(target, theme)
                 }
             }
         })
@@ -691,6 +709,84 @@ fn render_diff_line(
 }
 
 /// Factor out common directory prefix and suffix from a rename pair.
+fn render_tag_item(
+    entry: &TagViewEntry,
+    search: Option<&SearchRender<'_>>,
+    theme: &Theme,
+) -> ListItem<'static> {
+    let mut spans = vec![search_gutter(
+        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
+        theme,
+    )];
+
+    // Tag name.
+    let style = if entry.is_deleted {
+        Style::default().fg(theme.muted)
+    } else {
+        Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD)
+    };
+    push_searchable(
+        &mut spans,
+        entry.name.as_str(),
+        SearchScopes::TAG,
+        style,
+        search,
+    );
+
+    if entry.is_deleted {
+        spans.push(Span::styled(" (deleted)", Style::default().fg(theme.muted)));
+    }
+
+    let dot = || Span::styled(" · ", Style::default().fg(theme.muted));
+
+    // Change ID (if available), with prefix highlighting.
+    if let Some(ref cid) = entry.change_id {
+        spans.push(dot());
+        push_short_id(&mut spans, cid, theme.change_id, theme);
+    }
+
+    // Description.
+    if let Some(ref desc) = entry.description {
+        spans.push(dot());
+        spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
+    }
+
+    ListItem::new(Line::from(spans))
+}
+
+fn render_tag_remote_target(
+    target: Option<&crate::dag::TagRemoteTarget>,
+    theme: &Theme,
+) -> ListItem<'static> {
+    let Some(target) = target else {
+        return ListItem::new(Line::raw(""));
+    };
+    let mut spans: Vec<Span<'static>> = Vec::new();
+
+    // Indent + @remote.
+    spans.push(Span::styled(
+        format!("    @{}", target.remote),
+        Style::default().fg(Color::Cyan),
+    ));
+
+    spans.push(Span::styled(": ", Style::default().fg(theme.muted)));
+
+    // Change ID + commit ID.
+    push_short_id(&mut spans, &target.change_id, theme.change_id, theme);
+    spans.push(Span::raw(" "));
+    push_short_id(&mut spans, &target.short_commit_id, theme.commit_id, theme);
+
+    // Description.
+    if let Some(ref desc) = target.description {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
+    }
+
+    ListItem::new(Line::from(spans))
+}
+
 fn render_bookmark_item(
     entry: &BookmarkViewEntry,
     search: Option<&SearchRender<'_>>,

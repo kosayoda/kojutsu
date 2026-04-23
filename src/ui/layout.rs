@@ -79,6 +79,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
     let view_title = match app.active_view {
         crate::app::ActiveView::Dag => " Log ",
         crate::app::ActiveView::Bookmarks => " Bookmarks ",
+        crate::app::ActiveView::Tags => " Tags ",
     };
 
     let mut wc_spans: Vec<Span> = Vec::new();

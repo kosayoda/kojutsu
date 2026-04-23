@@ -59,6 +59,14 @@ define_idx!(
     /// Index into `BookmarkDetails::conflict_targets` or `remote_targets`.
     pub BookmarkDetailIdx
 );
+define_idx!(
+    /// Index into `App::tag_entries`.
+    pub TagIdx
+);
+define_idx!(
+    /// Index into `TagDetails::remote_targets`.
+    pub TagDetailIdx
+);
 
 // ---------------------------------------------------------------------------
 // IndexVec<I, T> -- a Vec<T> indexed by a typed index I.
@@ -179,6 +187,16 @@ impl From<usize> for BookmarkIdx {
     }
 }
 impl From<usize> for BookmarkDetailIdx {
+    fn from(v: usize) -> Self {
+        Self(v)
+    }
+}
+impl From<usize> for TagIdx {
+    fn from(v: usize) -> Self {
+        Self(v)
+    }
+}
+impl From<usize> for TagDetailIdx {
     fn from(v: usize) -> Self {
         Self(v)
     }

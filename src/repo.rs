@@ -36,7 +36,7 @@ use crate::dag::{
     DivergenceUpdate, Edge, EdgeKind, FileChange, FileStatus, LineStats, PrefixLengthUpdate,
     RemoteBookmarkInfo, ShortId,
 };
-use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, RepoPath};
+use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, RepoPath, Str};
 
 /// Number of hex characters to show for change/commit IDs.
 const DISPLAY_ID_LEN: usize = 8;
@@ -155,19 +155,19 @@ impl JjRepo {
     }
 
     /// Remote bookmarks that are not yet tracked locally.
-    pub fn untracked_remote_bookmarks(&self) -> Vec<String> {
+    pub fn untracked_remote_bookmarks(&self) -> Vec<Str> {
         self.filtered_remote_bookmarks(false)
     }
 
     /// Remote bookmarks that are tracked locally.
-    pub fn tracked_remote_bookmarks(&self) -> Vec<String> {
+    pub fn tracked_remote_bookmarks(&self) -> Vec<Str> {
         self.filtered_remote_bookmarks(true)
     }
 
-    fn filtered_remote_bookmarks(&self, tracked: bool) -> Vec<String> {
+    fn filtered_remote_bookmarks(&self, tracked: bool) -> Vec<Str> {
         self.remote_bookmarks()
             .filter(move |(_, r)| r.is_tracked() == tracked)
-            .map(|(s, _)| format!("{}@{}", s.name.as_str(), s.remote.as_str()))
+            .map(|(s, _)| Str::from(format!("{}@{}", s.name.as_str(), s.remote.as_str())))
             .collect()
     }
 
@@ -852,23 +852,6 @@ impl JjRepo {
         })
     }
 
-    /// Batch-compute `is_empty` for a set of commits (by hex ID).
-    /// Used to compute emptiness for commits in the background.
-    pub fn compute_empty_statuses(&self, commit_ids: &[UiCommitId]) -> Vec<(UiCommitId, bool)> {
-        commit_ids
-            .iter()
-            .filter_map(|id| {
-                let commit_id = BackendCommitId::try_from_hex(id.as_str())?;
-                let commit = self.repo.store().get_commit(&commit_id).ok()?;
-                let empty = commit
-                    .is_empty(self.repo.as_ref())
-                    .block_on()
-                    .unwrap_or(false);
-                Some((id.clone(), empty))
-            })
-            .collect()
-    }
-
     /// Compute shortest unique prefix lengths for a set of commits.
     /// Called in a background thread after the initial revset load.
     /// Returns (commit_hex_id, change_display, change_prefix_len, commit_display, commit_prefix_len).
@@ -977,6 +960,125 @@ impl JjRepo {
                 ))
             })
             .collect()
+    }
+
+    /// All local tag names (including those outside the current revset).
+    pub fn all_local_tags(&self) -> Vec<Str> {
+        self.repo
+            .as_ref()
+            .view()
+            .local_tags()
+            .map(|(name, _)| Str::from(name.as_str()))
+            .collect()
+    }
+
+    /// Extract rich tag details: local target + remote tracking info.
+    pub fn extract_tag_details(&self) -> HashMap<Str, crate::dag::TagDetails> {
+        use crate::dag::{TagDetails, TagLocalTarget, TagRemoteTarget};
+
+        let repo = self.repo.as_ref();
+        let view = repo.view();
+        let mut result: HashMap<Str, TagDetails> = HashMap::new();
+
+        // Pre-index remote tags by name.
+        let mut remotes_by_name: HashMap<String, Vec<(String, jj_lib::backend::CommitId)>> =
+            HashMap::new();
+        for (symbol, remote_ref) in view.all_remote_tags() {
+            if let Some(commit_id) = remote_ref.target.as_normal() {
+                remotes_by_name
+                    .entry(symbol.name.as_str().to_owned())
+                    .or_default()
+                    .push((symbol.remote.as_str().to_owned(), commit_id.clone()));
+            }
+        }
+
+        // Process local tags.
+        for (name, target) in view.local_tags() {
+            let tag_name = Str::from(name.as_str());
+            let local_target = target.as_normal().and_then(|commit_id| {
+                let (change_id, short_commit_id, description, _, _) =
+                    self.commit_detail_info(commit_id)?;
+                Some(TagLocalTarget {
+                    commit_id: UiCommitId::new(commit_id.hex()),
+                    change_id,
+                    short_commit_id,
+                    description,
+                })
+            });
+
+            let remote_targets: Vec<TagRemoteTarget> = remotes_by_name
+                .get(name.as_str())
+                .map(|refs| {
+                    refs.iter()
+                        .filter_map(|(remote, commit_id)| {
+                            let (change_id, short_commit_id, description, _, _) =
+                                self.commit_detail_info(commit_id)?;
+                            Some(TagRemoteTarget {
+                                remote: RemoteName::new(remote),
+                                commit_id: UiCommitId::new(commit_id.hex()),
+                                change_id,
+                                short_commit_id,
+                                description,
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+
+            if local_target.is_some() || !remote_targets.is_empty() {
+                result.insert(
+                    tag_name,
+                    TagDetails {
+                        is_deleted: false,
+                        local_target,
+                        remote_targets,
+                    },
+                );
+            }
+        }
+
+        // Remote-only tags (deleted locally).
+        for (name, refs) in &remotes_by_name {
+            let tag_name = Str::from(name.as_str());
+            if result.contains_key(&tag_name) {
+                continue;
+            }
+            let remote_targets: Vec<TagRemoteTarget> = refs
+                .iter()
+                .map(|(remote, commit_id)| {
+                    let hex = commit_id.hex();
+                    let resolved = self.commit_detail_info(commit_id);
+                    let (change_id, short_commit_id, description) = match resolved {
+                        Some((cid, scid, desc, _, _)) => (cid, scid, desc),
+                        None => {
+                            let display = hex.get(..DISPLAY_ID_LEN).unwrap_or(&hex).to_string();
+                            (
+                                ShortId { display: display.clone(), prefix_len: DETAIL_PREFIX_LEN },
+                                ShortId { display, prefix_len: DETAIL_PREFIX_LEN },
+                                None,
+                            )
+                        }
+                    };
+                    TagRemoteTarget {
+                        remote: RemoteName::new(remote),
+                        commit_id: UiCommitId::new(hex),
+                        change_id,
+                        short_commit_id,
+                        description,
+                    }
+                })
+                .collect();
+            result.insert(
+                tag_name,
+                TagDetails {
+                    is_deleted: true,
+                    local_target: None,
+                    remote_targets,
+                },
+            );
+        }
+
+        result
     }
 
     /// Extract rich bookmark details: conflict targets and remote tracking info.

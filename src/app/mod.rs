@@ -20,7 +20,7 @@ use crate::repo_service::RepoRequest;
 use crate::types::{
     BookmarkName, ChangeId, CommitId, DisplayRow, FollowUpOption, GlobalToggle, PendingCommand,
     PendingCommitSelect, PendingSelection, RemoteName, RepoPath, SearchScopes, SearchState,
-    SelectionContext, TargetOperation, VisualRange,
+    SelectionContext, Str, TargetOperation, VisualRange,
 };
 
 // ---------------------------------------------------------------------------
@@ -70,6 +70,7 @@ pub enum ActiveView {
     #[default]
     Dag,
     Bookmarks,
+    Tags,
 }
 
 pub struct BookmarkViewEntry {
@@ -83,6 +84,15 @@ pub struct BookmarkViewEntry {
     pub remote: Option<RemoteName>,
     /// Whether the bookmark has conflicting targets.
     pub is_conflicted: bool,
+}
+
+pub struct TagViewEntry {
+    pub name: Str,
+    pub commit_id: Option<CommitId>,
+    pub change_id: Option<crate::dag::ShortId>,
+    pub description: Option<String>,
+    /// Whether the local tag has been deleted (only remote refs remain).
+    pub is_deleted: bool,
 }
 
 #[derive(Clone)]
@@ -191,6 +201,8 @@ pub enum JumpTarget {
     WorkingCopy,
     /// Jump to the commit that has this local bookmark.
     Bookmark(BookmarkName),
+    /// Jump to a commit by change ID prefix.
+    ChangeId(String),
 }
 
 /// The current interaction mode.
@@ -314,6 +326,12 @@ pub struct App {
     pub bookmark_entries: Vec<BookmarkViewEntry>,
     /// Rich detail data per bookmark (conflict targets, remote tracking).
     pub bookmark_details: HashMap<BookmarkName, crate::dag::BookmarkDetails>,
+    /// All local tag names (including those outside the current revset).
+    pub all_tags: Vec<Str>,
+    /// Aggregated tag data for the tag view.
+    pub tag_entries: Vec<TagViewEntry>,
+    /// Rich detail data per tag (remote tracking).
+    pub tag_details: HashMap<Str, crate::dag::TagDetails>,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
@@ -321,6 +339,7 @@ pub struct App {
     /// Saved (cursor, scroll_offset) per view for restoration on switch.
     dag_view_state: (usize, usize),
     bookmark_view_state: (usize, usize),
+    tag_view_state: (usize, usize),
     /// Persisted list widget state (preserves scroll offset across frames).
     pub list_state: ListState,
     /// Header height from the last render (for mouse click translation).
@@ -346,9 +365,9 @@ pub struct App {
     /// Per-file fold state, keyed by (change id, path) (stable across mutations).
     pub(crate) unfolded_files: HashSet<FileFoldKey>,
     /// Remote bookmarks not yet tracked (for bookmark track selection).
-    pub untracked_bookmarks: Vec<String>,
+    pub untracked_bookmarks: Vec<Str>,
     /// Remote bookmarks that are tracked (for bookmark untrack selection).
-    pub tracked_bookmarks: Vec<String>,
+    pub tracked_bookmarks: Vec<Str>,
     /// Available git remote names.
     pub remotes: Vec<crate::types::Str>,
     /// Current revset load status.
@@ -401,10 +420,14 @@ impl App {
             commit_index,
             bookmark_entries: Vec::new(),
             bookmark_details: HashMap::new(),
+            all_tags: Vec::new(),
+            tag_entries: Vec::new(),
+            tag_details: HashMap::new(),
             rows: Vec::new(),
             cursor: 0,
             dag_view_state: (0, 0),
             bookmark_view_state: (0, 0),
+            tag_view_state: (0, 0),
             list_state: ListState::default(),
             last_header_height: 2,
             last_list_height: 0,
@@ -467,6 +490,7 @@ impl App {
         match self.active_view {
             ActiveView::Dag => self.dag_view_state = state,
             ActiveView::Bookmarks => self.bookmark_view_state = state,
+            ActiveView::Tags => self.tag_view_state = state,
         }
         self.active_view = view;
         self.rebuild_rows();
@@ -474,6 +498,7 @@ impl App {
         let (cursor, offset) = match self.active_view {
             ActiveView::Dag => self.dag_view_state,
             ActiveView::Bookmarks => self.bookmark_view_state,
+            ActiveView::Tags => self.tag_view_state,
         };
         self.cursor = cursor.min(self.rows.len().saturating_sub(1));
         *self.list_state.offset_mut() = offset;
@@ -546,6 +571,16 @@ impl App {
         })
     }
 
+    pub fn selected_tag_entry(&self) -> Option<&TagViewEntry> {
+        let tag_idx = match self.rows.get(self.cursor)? {
+            DisplayRow::TagItem { tag_idx } | DisplayRow::TagRemoteTarget { tag_idx, .. } => {
+                *tag_idx
+            }
+            _ => return None,
+        };
+        self.tag_entries.get(tag_idx.raw())
+    }
+
     /// Get the entry idx the cursor is on.
     pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
         let entry_idx = match self.rows.get(self.cursor)? {
@@ -555,7 +590,9 @@ impl App {
             | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,
             DisplayRow::BookmarkItem { .. }
             | DisplayRow::BookmarkConflictTarget { .. }
-            | DisplayRow::BookmarkRemoteTarget { .. } => return None,
+            | DisplayRow::BookmarkRemoteTarget { .. }
+            | DisplayRow::TagItem { .. }
+            | DisplayRow::TagRemoteTarget { .. } => return None,
         };
         Some(entry_idx)
     }

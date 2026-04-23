@@ -111,6 +111,7 @@ impl App {
             .retain(|s| live_change_ids.contains(s.change_id()));
 
         self.rebuild_bookmark_entries();
+        self.rebuild_tag_entries();
         self.rebuild_rows();
 
         // Restore cursor using stable ChangeId, with fallback chain:
@@ -168,6 +169,7 @@ impl App {
             match target {
                 JumpTarget::WorkingCopy => self.jump_to_working_copy(),
                 JumpTarget::Bookmark(ref name) => self.jump_to_bookmark(name),
+                JumpTarget::ChangeId(ref prefix) => self.jump_to_change_id(prefix),
             }
         }
 
@@ -183,6 +185,8 @@ impl App {
                 untracked_bookmarks,
                 tracked_bookmarks,
                 remotes,
+                all_tags,
+                tag_details,
                 bookmark_details,
             } => {
                 self.status_message = None;
@@ -193,6 +197,8 @@ impl App {
                 self.untracked_bookmarks = untracked_bookmarks;
                 self.tracked_bookmarks = tracked_bookmarks;
                 self.remotes = remotes;
+                self.all_tags = all_tags;
+                self.tag_details = tag_details;
                 self.bookmark_details = bookmark_details;
                 self.revset_state = Loadable::Loaded(());
                 self.apply_entries(entries);
@@ -326,21 +332,28 @@ impl App {
                 for details in self.bookmark_details.values_mut() {
                     for ct in &mut details.conflict_targets {
                         if let Some(u) = update_map.get(&ct.commit_id) {
-                            ct.change_id.display.clone_from(&u.change_display);
-                            ct.change_id.prefix_len = u.change_prefix_len;
-                            ct.short_commit_id.display.clone_from(&u.commit_display);
-                            ct.short_commit_id.prefix_len = u.commit_prefix_len;
+                            u.apply(&mut ct.change_id, &mut ct.short_commit_id);
                         }
                     }
                     for rt in &mut details.remote_targets {
                         if let Some(u) = update_map.get(&rt.commit_id) {
-                            rt.change_id.display.clone_from(&u.change_display);
-                            rt.change_id.prefix_len = u.change_prefix_len;
-                            rt.short_commit_id.display.clone_from(&u.commit_display);
-                            rt.short_commit_id.prefix_len = u.commit_prefix_len;
+                            u.apply(&mut rt.change_id, &mut rt.short_commit_id);
                         }
                     }
                 }
+                for details in self.tag_details.values_mut() {
+                    if let Some(lt) = &mut details.local_target {
+                        if let Some(u) = update_map.get(&lt.commit_id) {
+                            u.apply(&mut lt.change_id, &mut lt.short_commit_id);
+                        }
+                    }
+                    for rt in &mut details.remote_targets {
+                        if let Some(u) = update_map.get(&rt.commit_id) {
+                            u.apply(&mut rt.change_id, &mut rt.short_commit_id);
+                        }
+                    }
+                }
+                self.rebuild_tag_entries();
             }
             RepoResult::BackgroundError { error } => {
                 self.set_error(format!("background task failed: {error}"));
@@ -421,5 +434,75 @@ impl App {
         });
 
         self.bookmark_entries = entries;
+    }
+
+    /// Aggregate tag data from DAG nodes + tag_details into a flat list for the tag view.
+    pub fn rebuild_tag_entries(&mut self) {
+        use super::TagViewEntry;
+        use crate::types::Str;
+        use std::collections::HashSet;
+
+        let mut entries: Vec<TagViewEntry> = Vec::new();
+        let mut seen: HashSet<Str> = HashSet::new();
+
+        // Tags on visible commits (have full commit info).
+        for node in self.nodes.iter() {
+            for tag in &node.commit.tags {
+                if seen.insert(tag.clone()) {
+                    let is_deleted = self
+                        .tag_details
+                        .get(tag.as_str())
+                        .is_some_and(|d| d.is_deleted);
+                    entries.push(TagViewEntry {
+                        name: tag.clone(),
+                        commit_id: Some(node.commit.graph_id.clone()),
+                        change_id: Some(node.commit.change_id.clone()),
+                        description: node.commit.description.clone(),
+                        is_deleted,
+                    });
+                }
+            }
+        }
+
+        // Tags not attached to any visible commit (from all_tags or remote-only from tag_details).
+        for tag in &self.all_tags {
+            if seen.insert(tag.clone()) {
+                let details = self.tag_details.get(tag.as_str());
+                // Use local target info from tag_details if available.
+                let (commit_id, change_id, description) =
+                    if let Some(lt) = details.and_then(|d| d.local_target.as_ref()) {
+                        (
+                            Some(lt.commit_id.clone()),
+                            Some(lt.change_id.clone()),
+                            lt.description.clone(),
+                        )
+                    } else {
+                        (None, None, None)
+                    };
+                entries.push(TagViewEntry {
+                    name: tag.clone(),
+                    commit_id,
+                    change_id,
+                    description,
+                    is_deleted: false,
+                });
+            }
+        }
+
+        // Remote-only tags (deleted locally, not in all_tags).
+        for (name, details) in &self.tag_details {
+            if details.is_deleted && seen.insert(name.clone()) {
+                entries.push(TagViewEntry {
+                    name: name.clone(),
+                    commit_id: None,
+                    change_id: None,
+                    description: None,
+                    is_deleted: true,
+                });
+            }
+        }
+
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        self.tag_entries = entries;
     }
 }

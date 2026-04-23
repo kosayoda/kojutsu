@@ -85,10 +85,29 @@ pub const BOOKMARK_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
     },
 ];
 
+pub const TAG_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
+    SearchScopeSpec {
+        flag: SearchScopes::TAG,
+        hint: "t",
+        label: "tag",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::DESCRIPTION,
+        hint: "d",
+        label: "description",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::CHANGE_ID,
+        hint: "c",
+        label: "change-id",
+    },
+];
+
 pub fn scope_specs_for_view(view: crate::app::ActiveView) -> &'static [SearchScopeSpec] {
     match view {
         crate::app::ActiveView::Dag => SEARCH_SCOPE_SPECS,
         crate::app::ActiveView::Bookmarks => BOOKMARK_VIEW_SCOPE_SPECS,
+        crate::app::ActiveView::Tags => TAG_VIEW_SCOPE_SPECS,
     }
 }
 
