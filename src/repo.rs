@@ -1294,15 +1294,30 @@ impl JjRepo {
     /// Walk the operation log and return entries in reverse chronological order.
     /// Returns at most `limit` entries and a flag indicating whether more exist.
     pub fn operation_log(&self, limit: usize) -> Result<(Vec<crate::app::OpLogEntry>, bool)> {
-        // Load one extra to detect whether more exist, then truncate.
-        let fetch_limit = limit + 1;
+        use crate::dag::{Edge, EdgeKind};
         use futures::StreamExt as _;
 
+        // Load one extra to detect whether more exist, then truncate.
+        let fetch_limit = limit + 1;
         let current_op = self.repo.operation().clone();
         let current_op_id = current_op.id().hex();
         let stream = jj_lib::op_walk::walk_ancestors(&[current_op]);
-        let mut entries = Vec::new();
 
+        // Collect raw data + edges for graph rendering.
+        struct RawOp {
+            full_id: String,
+            display_id: Str,
+            description: Str,
+            relative_time: Str,
+            workspace: Option<Str>,
+            user: Str,
+            args: Option<Str>,
+            is_snapshot: bool,
+            is_current: bool,
+            edges: Vec<Edge>,
+        }
+
+        let mut raw_entries = Vec::new();
         let mut stream = std::pin::pin!(stream);
         while let Some(result) = stream.next().block_on() {
             let op = result.wrap_err("failed to read operation")?;
@@ -1310,7 +1325,6 @@ impl JjRepo {
             let id_hex = op.id().hex();
             let is_current = id_hex == current_op_id;
 
-            // Format relative time from the operation metadata.
             let millis = meta.time.start.timestamp.0;
             let secs = millis / 1000;
             let nanos = ((millis % 1000) * 1_000_000) as u32;
@@ -1320,20 +1334,27 @@ impl JjRepo {
             };
 
             let workspace: Option<Str> = meta.workspace_name.as_ref().map(|ws| ws.as_str().into());
-
             let user: Str = if meta.hostname.is_empty() {
                 meta.username.as_str().into()
             } else {
                 format!("{}@{}", meta.username, meta.hostname).into()
             };
-
-            // Truncate op ID for display.
             let display_id: Str = id_hex[..id_hex.len().min(12)].into();
-
             let args: Option<Str> = meta.tags.get("args").map(|s| s.as_str().into());
 
-            entries.push(crate::app::OpLogEntry {
-                id: display_id,
+            // Build edges from parent operation IDs.
+            let edges: Vec<Edge> = op
+                .parent_ids()
+                .iter()
+                .map(|pid| Edge {
+                    target: UiCommitId::new(pid.hex()),
+                    kind: EdgeKind::Direct,
+                })
+                .collect();
+
+            raw_entries.push(RawOp {
+                full_id: id_hex,
+                display_id,
                 description: meta.description.as_str().into(),
                 relative_time,
                 workspace,
@@ -1341,14 +1362,53 @@ impl JjRepo {
                 args,
                 is_snapshot: meta.is_snapshot,
                 is_current,
+                edges,
             });
-            if entries.len() >= fetch_limit {
+            if raw_entries.len() >= fetch_limit {
                 break;
             }
         }
 
-        let has_more = entries.len() > limit;
-        entries.truncate(limit);
+        let has_more = raw_entries.len() > limit;
+        raw_entries.truncate(limit);
+
+        // Mark edges to ops outside the loaded set as Missing.
+        let loaded_ids: HashSet<String> = raw_entries.iter().map(|e| e.full_id.clone()).collect();
+        for entry in &mut raw_entries {
+            for edge in &mut entry.edges {
+                if !loaded_ids.contains(edge.target.as_str()) {
+                    edge.kind = EdgeKind::Missing;
+                }
+            }
+        }
+
+        // Render graph lines.
+        let graph_input: Vec<(&str, &[Edge], char)> = raw_entries
+            .iter()
+            .map(|e| {
+                let glyph = if e.is_current { '@' } else { '○' };
+                (e.full_id.as_str(), e.edges.as_slice(), glyph)
+            })
+            .collect();
+        let graph_lines = crate::graph::render_generic(&graph_input);
+
+        // Build final entries with graph lines attached.
+        let entries = raw_entries
+            .into_iter()
+            .zip(graph_lines)
+            .map(|(raw, graph)| crate::app::OpLogEntry {
+                id: raw.display_id,
+                description: raw.description,
+                relative_time: raw.relative_time,
+                workspace: raw.workspace,
+                user: raw.user,
+                args: raw.args,
+                is_snapshot: raw.is_snapshot,
+                is_current: raw.is_current,
+                graph,
+            })
+            .collect();
+
         Ok((entries, has_more))
     }
 

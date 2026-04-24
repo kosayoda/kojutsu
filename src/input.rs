@@ -1573,6 +1573,7 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             | Some(DisplayRow::TagRemoteTarget { .. })
             | Some(DisplayRow::OpLogItem { .. })
             | Some(DisplayRow::OpLogDetailLine { .. })
+            | Some(DisplayRow::OpLogGraphLink { .. })
             | Some(DisplayRow::OpLogLoadMore)
             | None => None,
         };

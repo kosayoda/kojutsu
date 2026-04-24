@@ -286,6 +286,29 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|lines| lines.get(line_idx.raw()));
                     render_op_detail_line(detail, theme)
                 }
+                DisplayRow::OpLogGraphLink {
+                    op_log_idx,
+                    line_idx,
+                } => {
+                    let graph_str = app
+                        .op_log_entries
+                        .get(op_log_idx.raw())
+                        .and_then(|e| e.graph.extra.get(line_idx.raw()))
+                        .map(|s| s.as_str())
+                        .unwrap_or("");
+                    let mut spans = vec![search_gutter(
+                        row_search
+                            .as_ref()
+                            .map(|s| s.row_state)
+                            .unwrap_or(SearchRowState::None),
+                        theme,
+                    )];
+                    spans.push(Span::styled(
+                        graph_str.to_string(),
+                        Style::default().fg(theme.muted),
+                    ));
+                    ListItem::new(Line::from(spans))
+                }
                 DisplayRow::OpLogLoadMore => ListItem::new(Line::from(vec![
                     Span::styled("  [Tab] ", Style::default().fg(theme.accent)),
                     Span::styled("Load more…", Style::default().fg(theme.muted)),
@@ -856,17 +879,15 @@ fn render_op_log_item(
 
     let dot = || Span::styled(" · ", Style::default().fg(theme.muted));
 
-    // Current operation marker.
-    if entry.is_current {
-        spans.push(Span::styled(
-            "@ ",
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ));
+    // Graph prefix (contains the glyph character).
+    let graph_style = if entry.is_current {
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else {
-        spans.push(Span::styled("○ ", Style::default().fg(theme.muted)));
-    }
+        Style::default().fg(theme.muted)
+    };
+    spans.push(Span::styled(entry.graph.node.clone(), graph_style));
 
     // Operation ID (truncated hex).
     spans.push(Span::styled(
@@ -914,8 +935,14 @@ fn render_op_log_item(
 
     let line1 = Line::from(spans);
 
-    // Second line: workspace · command args.
-    let mut spans2 = vec![Span::raw("    ")];
+    // Second line: gutter + graph continuation + workspace · command args.
+    let mut spans2 = vec![
+        search_gutter(
+            search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
+            theme,
+        ),
+        Span::styled(entry.graph.cont.clone(), Style::default().fg(theme.muted)),
+    ];
     if let Some(ref ws) = entry.workspace {
         spans2.push(Span::styled(
             ws.to_string(),

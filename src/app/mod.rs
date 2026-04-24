@@ -150,6 +150,8 @@ pub struct OpLogEntry {
     pub is_snapshot: bool,
     /// Whether this is the repo's current operation.
     pub is_current: bool,
+    /// Pre-rendered graph lines.
+    pub graph: crate::graph::GraphLines,
 }
 
 #[derive(Clone)]
@@ -737,6 +739,7 @@ impl App {
             | DisplayRow::TagRemoteTarget { .. }
             | DisplayRow::OpLogItem { .. }
             | DisplayRow::OpLogDetailLine { .. }
+            | DisplayRow::OpLogGraphLink { .. }
             | DisplayRow::OpLogLoadMore => return None,
         };
         Some(entry_idx)

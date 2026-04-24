@@ -18,6 +18,7 @@ pub enum RowKey {
     TagRemoteTarget(TagIdx, TagDetailIdx),
     OpLogItem(OpLogIdx),
     OpLogDetailLine(OpLogIdx, OpLogDetailIdx),
+    OpLogGraphLink(OpLogIdx, GraphLineIdx),
     OpLogLoadMore,
 }
 
@@ -72,6 +73,11 @@ pub enum DisplayRow {
         op_log_idx: OpLogIdx,
         line_idx: OpLogDetailIdx,
     },
+    /// A graph link/pad line between operations.
+    OpLogGraphLink {
+        op_log_idx: OpLogIdx,
+        line_idx: GraphLineIdx,
+    },
     /// "Load more..." sentinel at the bottom of the op log.
     OpLogLoadMore,
 }
@@ -116,6 +122,10 @@ impl DisplayRow {
                 op_log_idx,
                 line_idx,
             } => RowKey::OpLogDetailLine(op_log_idx, line_idx),
+            DisplayRow::OpLogGraphLink {
+                op_log_idx,
+                line_idx,
+            } => RowKey::OpLogGraphLink(op_log_idx, line_idx),
             DisplayRow::OpLogLoadMore => RowKey::OpLogLoadMore,
         }
     }

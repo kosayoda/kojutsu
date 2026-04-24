@@ -110,6 +110,14 @@ impl App {
                     }
                 }
             }
+
+            // Graph link lines between operations.
+            for li in 0..self.op_log_entries[idx].graph.extra.len() {
+                self.rows.push(DisplayRow::OpLogGraphLink {
+                    op_log_idx: oi,
+                    line_idx: GraphLineIdx::new(li),
+                });
+            }
         }
         if self.op_log_has_more {
             self.rows.push(DisplayRow::OpLogLoadMore);
@@ -223,6 +231,7 @@ impl App {
                 DisplayRow::CommitNode { .. }
                 | DisplayRow::GraphLink { .. }
                 | DisplayRow::OpLogItem { .. }
+                | DisplayRow::OpLogGraphLink { .. }
                 | DisplayRow::OpLogLoadMore => break,
                 _ => last_child = idx,
             }
