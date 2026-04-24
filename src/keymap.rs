@@ -112,6 +112,7 @@ pub enum AppAction {
     SimplifyParents,
     Revert,
     Fix,
+    FileUntrack,
     ToggleIgnoreImmutable,
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
@@ -342,6 +343,12 @@ impl Default for Keymaps {
         dag_root.extend(vec![
             bind("a", AppAction::Absorb, "absorb", C),
             bind("f", AppAction::Fix, "fix", C),
+            prefix(
+                "shift-f",
+                "file",
+                C,
+                vec![bind("u", AppAction::FileUntrack, "untrack", C)],
+            ),
             prefix(
                 "b",
                 "bookmark",
@@ -798,6 +805,7 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::Fix
         | AppAction::TagSet
         | AppAction::TagDelete => &[Commit],
+        AppAction::FileUntrack => &[File],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }
@@ -849,6 +857,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::SimplifyParents => "simplify-parents",
         AppAction::Revert => "revert",
         AppAction::Fix => "fix",
+        AppAction::FileUntrack => "untrack",
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",

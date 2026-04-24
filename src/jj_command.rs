@@ -240,6 +240,10 @@ pub enum JJCommand {
         change_ids: SmallVec<ChangeId>,
         flags: CommandFlags,
     },
+    FileUntrack {
+        paths: SmallVec<Str>,
+        flags: CommandFlags,
+    },
 }
 
 /// The result of running a jj command.
@@ -297,7 +301,8 @@ impl JJCommand {
             | JJCommand::OpRestore { flags, .. }
             | JJCommand::OpRevert { flags, .. }
             | JJCommand::OpAbandon { flags, .. }
-            | JJCommand::Fix { flags, .. } => *flags,
+            | JJCommand::Fix { flags, .. }
+            | JJCommand::FileUntrack { flags, .. } => *flags,
         }
     }
 
@@ -775,6 +780,11 @@ impl JJCommand {
                 for id in change_ids {
                     args.push(format_compact!("{id}"));
                 }
+                args
+            }
+            JJCommand::FileUntrack { paths, .. } => {
+                let mut args: Vec<Str> = vec!["file".into(), "untrack".into()];
+                args.extend(paths.iter().cloned());
                 args
             }
         };

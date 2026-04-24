@@ -499,6 +499,17 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             change_ids: ids,
             flags,
         }),
+        AppAction::FileUntrack => {
+            let paths = app.selected_file_paths();
+            if paths.is_empty() {
+                app.set_status("no files selected");
+                return Action::None;
+            }
+            Action::RunJj(JJCommand::FileUntrack {
+                paths: paths.into(),
+                flags,
+            })
+        }
         AppAction::Commit => {
             let cmd = JJCommand::Commit {
                 message: None,
