@@ -81,19 +81,18 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     let vis_start = offset.min(app.cursor).saturating_sub(20);
     let vis_end = (offset.max(app.cursor) + area.height as usize + 20).min(app.rows.len());
 
-    let items: Vec<ListItem> = app
+    let max_w = area.width as usize;
+    let raw_items: Vec<Vec<Line>> = app
         .rows
         .iter()
         .enumerate()
-        .map(|(row_idx, row)| {
+        .map(|(row_idx, row)| -> Vec<Line<'static>> {
             if row_idx < vis_start || row_idx >= vis_end {
-                // Placeholder must match the real item's line count so
-                // ratatui's scroll offset stays correct (CommitNode = 2 lines).
                 return match row {
                     DisplayRow::CommitNode { .. } | DisplayRow::OpLogItem { .. } => {
-                        ListItem::new(vec![Line::raw(""), Line::raw("")])
+                        vec![Line::raw(""), Line::raw("")]
                     }
-                    _ => ListItem::new(""),
+                    _ => vec![Line::raw("")],
                 };
             }
             let row_search = search_ctx.as_ref().map(|ctx| SearchRender {
@@ -150,7 +149,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         format!("  {text}"),
                         Style::default().fg(theme.muted),
                     ));
-                    ListItem::new(Line::from(spans))
+                    vec![Line::from(spans)]
                 }
                 DisplayRow::GraphLink {
                     entry_idx,
@@ -186,7 +185,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         graph_str.to_string(),
                         Style::default().fg(theme.muted),
                     ));
-                    ListItem::new(Line::from(spans))
+                    vec![Line::from(spans)]
                 }
                 DisplayRow::FileChange {
                     entry_idx,
@@ -253,7 +252,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     if let Some(entry) = app.tag_entries.get(tag_idx.raw()) {
                         render_tag_item(entry, row_search.as_ref(), theme)
                     } else {
-                        ListItem::new(Line::raw(""))
+                        vec![Line::raw("")]
                     }
                 }
                 DisplayRow::TagRemoteTarget {
@@ -271,7 +270,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     if let Some(entry) = app.op_log_entries.get(op_log_idx.raw()) {
                         render_op_log_item(entry, row_search.as_ref(), theme)
                     } else {
-                        ListItem::new(Line::raw(""))
+                        vec![Line::raw("")]
                     }
                 }
                 DisplayRow::OpLogDetailLine {
@@ -307,13 +306,42 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         graph_str.to_string(),
                         Style::default().fg(theme.muted),
                     ));
-                    ListItem::new(Line::from(spans))
+                    vec![Line::from(spans)]
                 }
-                DisplayRow::OpLogLoadMore => ListItem::new(Line::from(vec![
+                DisplayRow::OpLogLoadMore => vec![Line::from(vec![
                     Span::styled("  [Tab] ", Style::default().fg(theme.accent)),
                     Span::styled("Load more…", Style::default().fg(theme.muted)),
-                ])),
+                ])],
             }
+        })
+        .collect();
+
+    // Compute max content width across all visible lines, then clamp h_scroll.
+    let max_content_width: usize = raw_items
+        .iter()
+        .flat_map(|lines| lines.iter().map(line_width))
+        .max()
+        .unwrap_or(0);
+    if max_content_width > max_w {
+        app.h_scroll = app.h_scroll.min(max_content_width - max_w);
+    } else {
+        app.h_scroll = 0;
+    }
+    let h_skip = app.h_scroll;
+
+    // Apply horizontal scroll trimming.
+    let items: Vec<ListItem> = raw_items
+        .into_iter()
+        .map(|lines| {
+            let trimmed: Vec<Line> = if h_skip > 0 {
+                lines
+                    .into_iter()
+                    .map(|line| trim_line(line, h_skip, max_w))
+                    .collect()
+            } else {
+                lines
+            };
+            ListItem::new(trimmed)
         })
         .collect();
 
@@ -344,7 +372,7 @@ fn render_commit_item<'a>(
     flags: &RenderFlags,
     search: Option<&SearchRender<'_>>,
     config: &Config,
-) -> ListItem<'static> {
+) -> Vec<Line<'static>> {
     let theme = &config.theme;
     let graph_color = if flags.is_source {
         theme.selection
@@ -635,7 +663,7 @@ fn render_commit_item<'a>(
         line2.push(Span::styled(placeholder, placeholder_style));
     }
 
-    ListItem::new(vec![Line::from(line1), Line::from(line2)])
+    vec![Line::from(line1), Line::from(line2)]
 }
 
 fn render_file_line(
@@ -644,7 +672,7 @@ fn render_file_line(
     sel_state: FileSelectionState,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
-) -> ListItem<'static> {
+) -> Vec<Line<'static>> {
     let (marker, color) = if file.has_conflict {
         ("C", theme.error)
     } else {
@@ -713,7 +741,7 @@ fn render_file_line(
         );
     }
     push_line_stats(&mut spans, file.stats, true, theme);
-    ListItem::new(Line::from(spans))
+    vec![Line::from(spans)]
 }
 
 fn render_diff_line(
@@ -722,7 +750,7 @@ fn render_diff_line(
     flags: &RenderFlags,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
-) -> ListItem<'static> {
+) -> Vec<Line<'static>> {
     let (marker, style) = match diff_line.kind {
         DiffLineKind::Header => (" ", Style::default().fg(theme.change_id)),
         DiffLineKind::Context => (" ", Style::default().fg(theme.muted)),
@@ -787,7 +815,7 @@ fn render_diff_line(
         );
     }
 
-    ListItem::new(Line::from(spans))
+    vec![Line::from(spans)]
 }
 
 /// Factor out common directory prefix and suffix from a rename pair.
@@ -795,7 +823,7 @@ fn render_tag_item(
     entry: &TagViewEntry,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
-) -> ListItem<'static> {
+) -> Vec<Line<'static>> {
     let mut spans = vec![search_gutter(
         search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
         theme,
@@ -833,15 +861,15 @@ fn render_tag_item(
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }
 
-    ListItem::new(Line::from(spans))
+    vec![Line::from(spans)]
 }
 
 fn render_tag_remote_target(
     target: Option<&crate::dag::TagRemoteTarget>,
     theme: &Theme,
-) -> ListItem<'static> {
+) -> Vec<Line<'static>> {
     let Some(target) = target else {
-        return ListItem::new(Line::raw(""));
+        return vec![Line::raw("")];
     };
     let mut spans: Vec<Span<'static>> = Vec::new();
 
@@ -864,14 +892,14 @@ fn render_tag_remote_target(
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }
 
-    ListItem::new(Line::from(spans))
+    vec![Line::from(spans)]
 }
 
 fn render_op_log_item(
     entry: &OpLogEntry,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
-) -> ListItem<'static> {
+) -> Vec<Line<'static>> {
     let mut spans = vec![search_gutter(
         search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
         theme,
@@ -963,22 +991,22 @@ fn render_op_log_item(
     }
     let line2 = Line::from(spans2);
 
-    ListItem::new(vec![line1, line2])
+    vec![line1, line2]
 }
 
-fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> ListItem<'static> {
+fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> Vec<Line<'static>> {
     let Some(detail) = detail else {
-        return ListItem::new(Line::raw(""));
+        return vec![Line::raw("")];
     };
     let muted = Style::default().fg(theme.muted);
     match detail {
-        OpDetailLine::SectionHeader(text) => ListItem::new(Line::from(vec![
+        OpDetailLine::SectionHeader(text) => vec![Line::from(vec![
             Span::raw("    "),
             Span::styled(
                 text.to_string(),
                 Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
             ),
-        ])),
+        ])],
         OpDetailLine::Commit(c) => {
             let (indicator, change_color, commit_color) = match c.kind {
                 OpDiffKind::Added => (
@@ -1008,7 +1036,7 @@ fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> ListIt
                     },
                 ));
             }
-            ListItem::new(Line::from(spans))
+            vec![Line::from(spans)]
         }
         OpDetailLine::WorkingCopy(wc) => {
             let mut spans = vec![Span::raw("      ")];
@@ -1027,7 +1055,7 @@ fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> ListIt
                 spans.push(Span::styled(" ← ", muted));
                 spans.push(Span::styled(old.to_string(), muted));
             }
-            ListItem::new(Line::from(spans))
+            vec![Line::from(spans)]
         }
         OpDetailLine::Bookmark(bm) => {
             let mut spans = vec![Span::raw("      ")];
@@ -1050,7 +1078,7 @@ fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> ListIt
                 spans.push(Span::styled(" ← ", muted));
                 spans.push(Span::styled(old.to_string(), muted));
             }
-            ListItem::new(Line::from(spans))
+            vec![Line::from(spans)]
         }
     }
 }
@@ -1059,7 +1087,7 @@ fn render_bookmark_item(
     entry: &BookmarkViewEntry,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
-) -> ListItem<'static> {
+) -> Vec<Line<'static>> {
     let mut spans = vec![search_gutter(
         search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
         theme,
@@ -1123,7 +1151,7 @@ fn render_bookmark_item(
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }
 
-    ListItem::new(Line::from(spans))
+    vec![Line::from(spans)]
 }
 
 /// Push a ShortId with an optional divergence suffix (e.g., `/2`).
@@ -1144,9 +1172,9 @@ fn push_short_id_with_suffix(
 fn render_bookmark_conflict_target(
     target: Option<&crate::dag::BookmarkConflictTarget>,
     theme: &Theme,
-) -> ListItem<'static> {
+) -> Vec<Line<'static>> {
     let Some(target) = target else {
-        return ListItem::new(Line::raw(""));
+        return vec![Line::raw("")];
     };
     let mut spans: Vec<Span<'static>> = Vec::new();
 
@@ -1177,16 +1205,16 @@ fn render_bookmark_conflict_target(
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }
 
-    ListItem::new(Line::from(spans))
+    vec![Line::from(spans)]
 }
 
 /// Render a remote tracking child row, indented under the bookmark name.
 fn render_bookmark_remote_target(
     target: Option<&crate::dag::BookmarkRemoteTarget>,
     theme: &Theme,
-) -> ListItem<'static> {
+) -> Vec<Line<'static>> {
     let Some(target) = target else {
-        return ListItem::new(Line::raw(""));
+        return vec![Line::raw("")];
     };
     let mut spans: Vec<Span<'static>> = Vec::new();
 
@@ -1243,7 +1271,7 @@ fn render_bookmark_remote_target(
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }
 
-    ListItem::new(Line::from(spans))
+    vec![Line::from(spans)]
 }
 
 /// Returns `(prefix, old_mid, new_mid, suffix)`.

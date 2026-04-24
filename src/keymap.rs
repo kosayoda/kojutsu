@@ -58,6 +58,8 @@ pub enum AppAction {
     JumpToWorkingCopy,
     MoveToTop,
     MoveToBottom,
+    ScrollLeft,
+    ScrollRight,
     ToggleFold,
     Refresh,
     Abandon,
@@ -268,6 +270,11 @@ fn shared_bindings() -> Vec<(Node, KeymapNode)> {
         bind("pagedown", AppAction::PageDown, "page down", N),
         bind("ctrl-u", AppAction::PageUp, "page up", N),
         bind("pageup", AppAction::PageUp, "page up", N),
+        // Horizontal scroll
+        bind("left", AppAction::ScrollLeft, "scroll left", N),
+        bind("right", AppAction::ScrollRight, "scroll right", N),
+        bind("h", AppAction::ScrollLeft, "scroll left", N),
+        bind("l", AppAction::ScrollRight, "scroll right", N),
         // Jump
         bind("@", AppAction::JumpToWorkingCopy, "jump to @", N),
         bind("0", AppAction::MoveToTop, "go to top", N),

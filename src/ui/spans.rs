@@ -1,8 +1,73 @@
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Span;
+use ratatui::text::{Line, Span};
+use unicode_width::UnicodeWidthChar;
 
 use crate::dag::ShortId;
 use crate::theme::Theme;
+
+/// Skip `skip` display columns from the left and cap at `max_width` visible columns.
+pub(super) fn trim_line(line: Line<'static>, skip: usize, max_width: usize) -> Line<'static> {
+    if skip == 0 {
+        return line;
+    }
+
+    let mut result: Vec<Span<'static>> = Vec::new();
+    let mut col: usize = 0;
+    let mut visible: usize = 0;
+
+    for span in line.spans {
+        if visible >= max_width {
+            break;
+        }
+
+        let style = span.style;
+        let text = span.content.into_owned();
+        let span_width: usize = text.chars().map(|c| c.width().unwrap_or(0)).sum();
+
+        if col + span_width <= skip {
+            col += span_width;
+            continue;
+        }
+
+        // Find visible portion of this span.
+        let mut start_byte = 0;
+        let mut end_byte = text.len();
+        let mut char_col = col;
+        let mut span_visible = 0;
+
+        for (bi, ch) in text.char_indices() {
+            let w = ch.width().unwrap_or(0);
+            if char_col < skip {
+                char_col += w;
+                start_byte = bi + ch.len_utf8();
+                continue;
+            }
+            if visible + span_visible + w > max_width {
+                end_byte = bi;
+                break;
+            }
+            span_visible += w;
+            char_col += w;
+        }
+
+        if start_byte < end_byte {
+            result.push(Span::styled(text[start_byte..end_byte].to_string(), style));
+            visible += span_visible;
+        }
+
+        col += span_width;
+    }
+
+    Line::from(result)
+}
+
+/// Compute the display width of a line (sum of all span character widths).
+pub(super) fn line_width(line: &Line<'_>) -> usize {
+    line.spans
+        .iter()
+        .map(|s| s.content.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>())
+        .sum()
+}
 
 /// Push a `ShortId` as two spans: bright prefix + dimmed suffix.
 pub(super) fn push_short_id(

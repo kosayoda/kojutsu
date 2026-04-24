@@ -2211,6 +2211,7 @@ dependencies = [
  "tracing-error",
  "tracing-subscriber",
  "tui-input",
+ "unicode-width",
  "walkdir",
 ]
 

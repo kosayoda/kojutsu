@@ -414,6 +414,11 @@ pub struct App {
     bookmark_view_state: (usize, usize),
     tag_view_state: (usize, usize),
     op_log_view_state: (usize, usize),
+    /// Saved horizontal scroll per view.
+    dag_h_scroll: usize,
+    bookmark_h_scroll: usize,
+    tag_h_scroll: usize,
+    op_log_h_scroll: usize,
     /// Saved search scopes per view.
     dag_search_scopes: SearchScopes,
     bookmark_search_scopes: SearchScopes,
@@ -425,6 +430,8 @@ pub struct App {
     pub last_header_height: u16,
     /// Viewport height of the main list area (set during render).
     pub last_list_height: u16,
+    /// Horizontal scroll offset (display columns).
+    pub h_scroll: usize,
     pub revset: String,
     /// Last failed revset attempt (pre-fills the input on retry).
     pub revset_draft: Option<String>,
@@ -515,6 +522,10 @@ impl App {
             bookmark_view_state: (0, 0),
             tag_view_state: (0, 0),
             op_log_view_state: (0, 0),
+            dag_h_scroll: 0,
+            bookmark_h_scroll: 0,
+            tag_h_scroll: 0,
+            op_log_h_scroll: 0,
             dag_search_scopes: SearchScopes::DEFAULT,
             bookmark_search_scopes: SearchScopes::DEFAULT_BOOKMARK,
             tag_search_scopes: SearchScopes::DEFAULT_TAG,
@@ -522,6 +533,7 @@ impl App {
             list_state: ListState::default(),
             last_header_height: 2,
             last_list_height: 0,
+            h_scroll: 0,
             revset,
             revset_draft: None,
             presets,
@@ -582,18 +594,22 @@ impl App {
             ActiveView::Dag => {
                 self.dag_view_state = state;
                 self.dag_search_scopes = self.search_scopes;
+                self.dag_h_scroll = self.h_scroll;
             }
             ActiveView::Bookmarks => {
                 self.bookmark_view_state = state;
                 self.bookmark_search_scopes = self.search_scopes;
+                self.bookmark_h_scroll = self.h_scroll;
             }
             ActiveView::Tags => {
                 self.tag_view_state = state;
                 self.tag_search_scopes = self.search_scopes;
+                self.tag_h_scroll = self.h_scroll;
             }
             ActiveView::Operations => {
                 self.op_log_view_state = state;
                 self.op_log_search_scopes = self.search_scopes;
+                self.op_log_h_scroll = self.h_scroll;
             }
         }
         self.active_view = view;
@@ -629,6 +645,12 @@ impl App {
         self.cursor = cursor.min(self.rows.len().saturating_sub(1));
         *self.list_state.offset_mut() = offset;
         self.search_scopes = scopes;
+        self.h_scroll = match self.active_view {
+            ActiveView::Dag => self.dag_h_scroll,
+            ActiveView::Bookmarks => self.bookmark_h_scroll,
+            ActiveView::Tags => self.tag_h_scroll,
+            ActiveView::Operations => self.op_log_h_scroll,
+        };
     }
 
     pub fn request_op_log_load_more(&mut self) {

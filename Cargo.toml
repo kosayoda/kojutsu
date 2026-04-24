@@ -56,6 +56,8 @@ tempfile = "3"
 thiserror = "2.0.11"
 # Single-line text input widget for ratatui
 tui-input = "0.15"
+# Unicode display width calculation (for horizontal scroll trimming)
+unicode-width = "0.2"
 # Logging utilities
 time = { version = "0.3.37", features = ["formatting"] }
 tracing = "0.1.41"

@@ -265,6 +265,14 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
 
     match action {
         AppAction::Quit => Action::Quit,
+        AppAction::ScrollLeft => {
+            app.h_scroll = app.h_scroll.saturating_sub(4);
+            Action::None
+        }
+        AppAction::ScrollRight => {
+            app.h_scroll = app.h_scroll.saturating_add(4);
+            Action::None
+        }
         AppAction::MoveDown => {
             app.move_down();
             Action::None
