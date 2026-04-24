@@ -236,6 +236,10 @@ pub enum JJCommand {
         op_id: String,
         flags: CommandFlags,
     },
+    Fix {
+        change_ids: SmallVec<ChangeId>,
+        flags: CommandFlags,
+    },
 }
 
 /// The result of running a jj command.
@@ -292,7 +296,8 @@ impl JJCommand {
             | JJCommand::TagDelete { flags, .. }
             | JJCommand::OpRestore { flags, .. }
             | JJCommand::OpRevert { flags, .. }
-            | JJCommand::OpAbandon { flags, .. } => *flags,
+            | JJCommand::OpAbandon { flags, .. }
+            | JJCommand::Fix { flags, .. } => *flags,
         }
     }
 
@@ -764,6 +769,13 @@ impl JJCommand {
             }
             JJCommand::OpAbandon { op_id, .. } => {
                 vec!["op".into(), "abandon".into(), Str::from(op_id.as_str())]
+            }
+            JJCommand::Fix { change_ids, .. } => {
+                let mut args: Vec<Str> = vec!["fix".into(), "-s".into()];
+                for id in change_ids {
+                    args.push(format_compact!("{id}"));
+                }
+                args
             }
         };
 

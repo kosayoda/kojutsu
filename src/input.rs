@@ -487,6 +487,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             selection: build_change_selection(app),
             flags,
         }),
+        AppAction::Fix => make_multi_command(app, |ids| JJCommand::Fix {
+            change_ids: ids,
+            flags,
+        }),
         AppAction::Commit => {
             let cmd = JJCommand::Commit {
                 message: None,

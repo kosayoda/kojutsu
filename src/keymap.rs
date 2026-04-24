@@ -109,6 +109,7 @@ pub enum AppAction {
     Parallelize,
     SimplifyParents,
     Revert,
+    Fix,
     ToggleIgnoreImmutable,
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
@@ -333,6 +334,7 @@ impl Default for Keymaps {
         let mut dag_root = shared_bindings();
         dag_root.extend(vec![
             bind("a", AppAction::Absorb, "absorb", C),
+            bind("f", AppAction::Fix, "fix", C),
             prefix(
                 "b",
                 "bookmark",
@@ -786,6 +788,7 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::Parallelize
         | AppAction::SimplifyParents
         | AppAction::Revert
+        | AppAction::Fix
         | AppAction::TagSet
         | AppAction::TagDelete => &[Commit],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
@@ -838,6 +841,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::Parallelize => "parallelize",
         AppAction::SimplifyParents => "simplify-parents",
         AppAction::Revert => "revert",
+        AppAction::Fix => "fix",
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",
