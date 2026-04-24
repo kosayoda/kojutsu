@@ -122,6 +122,34 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         config,
                     )
                 }
+                DisplayRow::DescriptionLine {
+                    entry_idx,
+                    line_idx,
+                } => {
+                    let text = app.nodes[*entry_idx]
+                        .commit
+                        .full_description
+                        .as_ref()
+                        .and_then(|d| d.lines().nth(line_idx.raw() + 1))
+                        .unwrap_or("");
+                    let graph_cont = app.nodes[*entry_idx].graph.cont.as_str();
+                    let mut spans = vec![search_gutter(
+                        row_search
+                            .as_ref()
+                            .map(|s| s.row_state)
+                            .unwrap_or(SearchRowState::None),
+                        theme,
+                    )];
+                    spans.push(Span::styled(
+                        graph_cont.to_string(),
+                        Style::default().fg(theme.muted),
+                    ));
+                    spans.push(Span::styled(
+                        format!("  {text}"),
+                        Style::default().fg(theme.muted),
+                    ));
+                    ListItem::new(Line::from(spans))
+                }
                 DisplayRow::GraphLink {
                     entry_idx,
                     line_idx,
@@ -724,7 +752,7 @@ fn render_tag_item(
         Style::default().fg(theme.muted)
     } else {
         Style::default()
-            .fg(Color::Magenta)
+            .fg(theme.tag)
             .add_modifier(Modifier::BOLD)
     };
     push_searchable(
@@ -768,7 +796,7 @@ fn render_tag_remote_target(
     // Indent + @remote.
     spans.push(Span::styled(
         format!("    @{}", target.remote),
-        Style::default().fg(Color::Cyan),
+        Style::default().fg(theme.remote),
     ));
 
     spans.push(Span::styled(": ", Style::default().fg(theme.muted)));
@@ -925,7 +953,7 @@ fn render_bookmark_remote_target(
     // Gutter-width blank + conflict-indicator-width blank + indent + @remote.
     spans.push(Span::styled(
         format!("      @{}", target.remote),
-        Style::default().fg(Color::Cyan),
+        Style::default().fg(theme.remote),
     ));
 
     // Status annotations: ahead/behind counts, untracked marker.

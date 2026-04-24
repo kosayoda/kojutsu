@@ -289,7 +289,7 @@ impl App {
                             .as_ref()
                             .is_some_and(|c| contains(&c.display)))
             }
-            DisplayRow::TagRemoteTarget { .. } => false,
+            DisplayRow::DescriptionLine { .. } | DisplayRow::TagRemoteTarget { .. } => false,
         }
     }
 }

@@ -585,6 +585,7 @@ impl App {
     pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
         let entry_idx = match self.rows.get(self.cursor)? {
             DisplayRow::CommitNode { entry_idx }
+            | DisplayRow::DescriptionLine { entry_idx, .. }
             | DisplayRow::GraphLink { entry_idx, .. }
             | DisplayRow::FileChange { entry_idx, .. }
             | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,

@@ -33,6 +33,8 @@ pub struct CommitInfo {
     pub commit_id: ShortId,
     /// First line of description, or `None` if empty / "(no description set)".
     pub description: Option<String>,
+    /// Full description text (only set when multi-line).
+    pub full_description: Option<String>,
     /// Author information.
     pub author: AuthorInfo,
     /// Workspaces that have this commit as their working copy.

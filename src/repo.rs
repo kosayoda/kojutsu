@@ -765,6 +765,11 @@ impl JjRepo {
         } else {
             raw_desc.lines().next().map(String::from)
         };
+        let full_description = if raw_desc.contains('\n') {
+            Some(raw_desc.to_string())
+        } else {
+            None
+        };
 
         // Author
         let sig = commit.author();
@@ -837,6 +842,7 @@ impl JjRepo {
             change_id,
             commit_id,
             description,
+            full_description,
             author,
             workspaces,
             is_empty,

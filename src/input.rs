@@ -975,11 +975,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
-            if entry.remote.is_some() {
+            if let Some(remote) = &entry.remote {
                 // Remote bookmark row — fetch from that remote.
                 return Action::SuspendAndRunJj(JJCommand::GitFetchBookmark {
                     bookmark: entry.name.clone(),
-                    remote: Str::from(entry.remote.as_ref().unwrap().as_str()),
+                    remote: Str::from(remote.as_str()),
                     flags,
                 });
             }
@@ -1505,10 +1505,11 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
     let is_wc = app.selected_bookmarks().is_some_and(|_| {
         // Check via the entries
         let entry_idx = match app.rows.get(app.cursor) {
-            Some(DisplayRow::CommitNode { entry_idx }) => Some(*entry_idx),
-            Some(DisplayRow::GraphLink { entry_idx, .. }) => Some(*entry_idx),
-            Some(DisplayRow::FileChange { entry_idx, .. }) => Some(*entry_idx),
-            Some(DisplayRow::DiffLine { entry_idx, .. }) => Some(*entry_idx),
+            Some(DisplayRow::CommitNode { entry_idx })
+            | Some(DisplayRow::DescriptionLine { entry_idx, .. })
+            | Some(DisplayRow::GraphLink { entry_idx, .. })
+            | Some(DisplayRow::FileChange { entry_idx, .. })
+            | Some(DisplayRow::DiffLine { entry_idx, .. }) => Some(*entry_idx),
             Some(DisplayRow::BookmarkItem { .. })
             | Some(DisplayRow::BookmarkConflictTarget { .. })
             | Some(DisplayRow::BookmarkRemoteTarget { .. })

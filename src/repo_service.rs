@@ -279,7 +279,9 @@ impl RepoServiceState {
             }
         }
 
-        let repo = self.repo.as_ref().unwrap();
+        let Some(repo) = self.repo.as_ref() else {
+            return;
+        };
         let effective_revset = revset.unwrap_or_else(|| repo.default_revset());
         match repo.evaluate_revset(&effective_revset) {
             Ok(entries) => {

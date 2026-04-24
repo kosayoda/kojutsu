@@ -1,7 +1,7 @@
 use super::{ActiveView, App, Loadable};
 use crate::idx::{
-    BookmarkDetailIdx, BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, TagDetailIdx,
-    TagIdx,
+    BookmarkDetailIdx, BookmarkIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx,
+    GraphLineIdx, TagDetailIdx, TagIdx,
 };
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
@@ -93,6 +93,15 @@ impl App {
             self.rows.push(DisplayRow::CommitNode { entry_idx });
 
             if self.is_commit_unfolded(entry_idx) {
+                // Description continuation lines (skip first line — already in CommitNode).
+                if let Some(full) = &self.nodes[entry_idx].commit.full_description {
+                    for (i, _) in full.lines().skip(1).enumerate() {
+                        self.rows.push(DisplayRow::DescriptionLine {
+                            entry_idx,
+                            line_idx: DescriptionLineIdx::new(i),
+                        });
+                    }
+                }
                 if let Some(files) = self.files_for_entry(entry_idx) {
                     for file_idx_raw in 0..files.len() {
                         let file_idx = FileIdx::new(file_idx_raw);
@@ -135,6 +144,11 @@ impl App {
                 Some(RowKey::DiffLine(e, f, l)),
                 Some(RowKey::FileChange(e, f)),
                 Some(RowKey::CommitNode(e)),
+            ],
+            Some(RowKey::DescriptionLine(e, _)) => [
+                Some(RowKey::CommitNode(e)),
+                None,
+                None,
             ],
             Some(RowKey::FileChange(e, f)) => [
                 Some(RowKey::FileChange(e, f)),

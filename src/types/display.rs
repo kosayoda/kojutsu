@@ -1,6 +1,6 @@
 use crate::idx::{
-    BookmarkDetailIdx, BookmarkIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, TagDetailIdx,
-    TagIdx,
+    BookmarkDetailIdx, BookmarkIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx,
+    GraphLineIdx, TagDetailIdx, TagIdx,
 };
 
 /// Identifies a display row for cursor restore after rebuild.
@@ -10,6 +10,7 @@ pub enum RowKey {
     GraphLink(EntryIdx, GraphLineIdx),
     FileChange(EntryIdx, FileIdx),
     DiffLine(EntryIdx, FileIdx, DiffLineIdx),
+    DescriptionLine(EntryIdx, DescriptionLineIdx),
     BookmarkItem(BookmarkIdx),
     BookmarkConflictTarget(BookmarkIdx, BookmarkDetailIdx),
     BookmarkRemoteTarget(BookmarkIdx, BookmarkDetailIdx),
@@ -21,6 +22,11 @@ pub enum RowKey {
 pub enum DisplayRow {
     /// A commit node line (graph glyph + commit info).
     CommitNode { entry_idx: EntryIdx },
+    /// A continuation line of a multi-line commit description (shown when unfolded).
+    DescriptionLine {
+        entry_idx: EntryIdx,
+        line_idx: DescriptionLineIdx,
+    },
     /// A graph link/pad line between commits.
     GraphLink {
         entry_idx: EntryIdx,
@@ -62,6 +68,10 @@ impl DisplayRow {
     pub fn key(&self) -> RowKey {
         match *self {
             DisplayRow::CommitNode { entry_idx } => RowKey::CommitNode(entry_idx),
+            DisplayRow::DescriptionLine {
+                entry_idx,
+                line_idx,
+            } => RowKey::DescriptionLine(entry_idx, line_idx),
             DisplayRow::GraphLink {
                 entry_idx,
                 line_idx,

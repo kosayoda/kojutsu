@@ -212,6 +212,12 @@ pub struct Theme {
     /// Background highlight for selected rows.
     #[serde(default = "default_selection_bg", deserialize_with = "de_color")]
     pub selection_bg: Color,
+    /// Tag names in the tag view.
+    #[serde(default = "default_tag", deserialize_with = "de_color")]
+    pub tag: Color,
+    /// Remote names (@git, @origin).
+    #[serde(default = "default_remote", deserialize_with = "de_color")]
+    pub remote: Color,
 }
 
 impl Default for Theme {
@@ -227,6 +233,8 @@ impl Default for Theme {
             change_id: default_change_id(),
             commit_id: default_commit_id(),
             selection_bg: default_selection_bg(),
+            tag: default_tag(),
+            remote: default_remote(),
         }
     }
 }
@@ -260,6 +268,12 @@ fn default_commit_id() -> Color {
 }
 fn default_selection_bg() -> Color {
     Color::Rgb(50, 50, 60)
+}
+fn default_tag() -> Color {
+    Color::Magenta
+}
+fn default_remote() -> Color {
+    Color::Cyan
 }
 
 /// Load config from `~/.config/kojutsu/config.toml` (or XDG equivalent).

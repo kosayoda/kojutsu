@@ -60,6 +60,10 @@ define_idx!(
     pub BookmarkDetailIdx
 );
 define_idx!(
+    /// Index into description continuation lines (skip(1) from full_description).
+    pub DescriptionLineIdx
+);
+define_idx!(
     /// Index into `App::tag_entries`.
     pub TagIdx
 );
@@ -187,6 +191,11 @@ impl From<usize> for BookmarkIdx {
     }
 }
 impl From<usize> for BookmarkDetailIdx {
+    fn from(v: usize) -> Self {
+        Self(v)
+    }
+}
+impl From<usize> for DescriptionLineIdx {
     fn from(v: usize) -> Self {
         Self(v)
     }
