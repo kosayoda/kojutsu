@@ -7,7 +7,9 @@ use ratatui::Frame;
 
 use super::search::*;
 use super::spans::*;
-use crate::app::{App, AppMode, BookmarkViewEntry, OpLogEntry, TagViewEntry};
+use crate::app::{
+    App, AppMode, BookmarkViewEntry, OpDetailLine, OpDiffKind, OpLogEntry, TagViewEntry,
+};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
 use crate::theme::{Config, Theme};
 use crate::types::{DisplayRow, FileSelectionState, SearchScopes};
@@ -272,12 +274,22 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         ListItem::new(Line::raw(""))
                     }
                 }
-                DisplayRow::OpLogLoadMore => {
-                    ListItem::new(Line::from(vec![
-                        Span::styled("  [Tab] ", Style::default().fg(theme.accent)),
-                        Span::styled("Load more…", Style::default().fg(theme.muted)),
-                    ]))
+                DisplayRow::OpLogDetailLine {
+                    op_log_idx,
+                    line_idx,
+                } => {
+                    let detail = app
+                        .op_log_entries
+                        .get(op_log_idx.raw())
+                        .and_then(|entry| app.op_details.get(&entry.id))
+                        .and_then(|l| l.loaded())
+                        .and_then(|lines| lines.get(line_idx.raw()));
+                    render_op_detail_line(detail, theme)
                 }
+                DisplayRow::OpLogLoadMore => ListItem::new(Line::from(vec![
+                    Span::styled("  [Tab] ", Style::default().fg(theme.accent)),
+                    Span::styled("Load more…", Style::default().fg(theme.muted)),
+                ])),
             }
         })
         .collect();
@@ -925,6 +937,95 @@ fn render_op_log_item(
     let line2 = Line::from(spans2);
 
     ListItem::new(vec![line1, line2])
+}
+
+fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> ListItem<'static> {
+    let Some(detail) = detail else {
+        return ListItem::new(Line::raw(""));
+    };
+    let muted = Style::default().fg(theme.muted);
+    match detail {
+        OpDetailLine::SectionHeader(text) => ListItem::new(Line::from(vec![
+            Span::raw("    "),
+            Span::styled(
+                text.to_string(),
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            ),
+        ])),
+        OpDetailLine::Commit(c) => {
+            let (indicator, change_color, commit_color) = match c.kind {
+                OpDiffKind::Added => (
+                    Span::styled("      + ", Style::default().fg(theme.added)),
+                    theme.change_id,
+                    theme.commit_id,
+                ),
+                OpDiffKind::Removed => (
+                    Span::styled("      - ", Style::default().fg(theme.error)),
+                    theme.muted,
+                    theme.muted,
+                ),
+            };
+            let mut spans = vec![indicator];
+            if !c.change_id.display.is_empty() {
+                push_short_id(&mut spans, &c.change_id, change_color, theme);
+                spans.push(Span::raw(" "));
+            }
+            push_short_id(&mut spans, &c.commit_id, commit_color, theme);
+            if let Some(ref desc) = c.description {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    desc.clone(),
+                    match c.kind {
+                        OpDiffKind::Added => Style::default().fg(theme.text),
+                        OpDiffKind::Removed => muted,
+                    },
+                ));
+            }
+            ListItem::new(Line::from(spans))
+        }
+        OpDetailLine::WorkingCopy(wc) => {
+            let mut spans = vec![Span::raw("      ")];
+            spans.push(Span::styled(
+                wc.workspace.to_string(),
+                Style::default().fg(theme.workspace),
+            ));
+            spans.push(Span::styled(": ", muted));
+            if let Some(ref new) = wc.new_commit {
+                spans.push(Span::styled(
+                    new.to_string(),
+                    Style::default().fg(theme.commit_id),
+                ));
+            }
+            if let Some(ref old) = wc.old_commit {
+                spans.push(Span::styled(" ← ", muted));
+                spans.push(Span::styled(old.to_string(), muted));
+            }
+            ListItem::new(Line::from(spans))
+        }
+        OpDetailLine::Bookmark(bm) => {
+            let mut spans = vec![Span::raw("      ")];
+            spans.push(Span::styled(
+                bm.name.to_string(),
+                Style::default()
+                    .fg(theme.bookmark)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(": ", muted));
+            if let Some(ref new) = bm.new_target {
+                spans.push(Span::styled(
+                    new.to_string(),
+                    Style::default().fg(theme.commit_id),
+                ));
+            } else {
+                spans.push(Span::styled("(deleted)", muted));
+            }
+            if let Some(ref old) = bm.old_target {
+                spans.push(Span::styled(" ← ", muted));
+                spans.push(Span::styled(old.to_string(), muted));
+            }
+            ListItem::new(Line::from(spans))
+        }
+    }
 }
 
 fn render_bookmark_item(

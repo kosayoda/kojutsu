@@ -1351,6 +1351,247 @@ impl JjRepo {
         entries.truncate(limit);
         Ok((entries, has_more))
     }
+
+    /// Compute the diff between an operation and its parent.
+    pub fn op_diff(&self, op_id_hex: &str) -> Result<Vec<crate::app::OpDetailLine>> {
+        use crate::app::{
+            OpDetailLine, OpDiffBookmark, OpDiffCommit, OpDiffKind, OpDiffWorkingCopy,
+        };
+
+        let op_store = self.repo.op_store();
+        let prefix = jj_lib::object_id::HexPrefix::try_from_hex(op_id_hex)
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid operation ID hex"))?;
+        let resolution = op_store
+            .resolve_operation_id_prefix(&prefix)
+            .block_on()
+            .wrap_err("failed to resolve operation ID prefix")?;
+        let op_id = match resolution {
+            jj_lib::object_id::PrefixResolution::SingleMatch(id) => id,
+            jj_lib::object_id::PrefixResolution::AmbiguousMatch => {
+                color_eyre::eyre::bail!("ambiguous operation ID prefix: {op_id_hex}");
+            }
+            jj_lib::object_id::PrefixResolution::NoMatch => {
+                color_eyre::eyre::bail!("no operation matches prefix: {op_id_hex}");
+            }
+        };
+
+        // Read the operation and its parent.
+        let op_data = op_store
+            .read_operation(&op_id)
+            .block_on()
+            .wrap_err("failed to read operation")?;
+        let Some(parent_id) = op_data.parents.first() else {
+            // Root operation — nothing to diff.
+            return Ok(Vec::new());
+        };
+        let parent_data = op_store
+            .read_operation(parent_id)
+            .block_on()
+            .wrap_err("failed to read parent operation")?;
+        let parent_view = op_store
+            .read_view(&parent_data.view_id)
+            .block_on()
+            .wrap_err("failed to read parent view")?;
+        let current_view = op_store
+            .read_view(&op_data.view_id)
+            .block_on()
+            .wrap_err("failed to read current view")?;
+
+        let mut lines = Vec::new();
+        let store = self.repo.store();
+
+        // Build prefix index for shortest unique ID computation.
+        let extensions = RevsetExtensions::default();
+        let fileset_aliases_map = FilesetAliasesMap::new();
+        let path_converter = RepoPathUiConverter::Fs {
+            cwd: self.workspace_root.clone(),
+            base: self.workspace_root.clone(),
+        };
+        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
+        let id_prefix_context = {
+            let short_prefixes_str = self
+                .settings
+                .config()
+                .get::<String>("revsets.short-prefixes")
+                .unwrap_or_else(|_| self.default_revset());
+            let mut diag = RevsetDiagnostics::new();
+            let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
+            if let Ok(expression) = jj_lib::revset::parse(&mut diag, &short_prefixes_str, &context)
+            {
+                ctx.disambiguate_within(expression)
+            } else {
+                ctx
+            }
+        };
+        let prefix_index = id_prefix_context
+            .populate(self.repo.as_ref())
+            .wrap_err("failed to populate ID prefix index")?;
+
+        // --- Changed commits ---
+        // Walk all commits reachable from new heads but not old (added),
+        // and vice versa (removed). This matches jj op show behavior.
+        let new_heads: Vec<_> = current_view.head_ids.iter().cloned().collect();
+        let old_heads: Vec<_> = parent_view.head_ids.iter().cloned().collect();
+        let added_commits: Vec<BackendCommitId> =
+            jj_lib::revset::walk_revs(self.repo.as_ref(), &new_heads, &old_heads)
+                .map(|revset| revset.iter().filter_map(|e| e.ok()).collect())
+                .unwrap_or_default();
+        let removed_commits: Vec<BackendCommitId> =
+            jj_lib::revset::walk_revs(self.repo.as_ref(), &old_heads, &new_heads)
+                .map(|revset| revset.iter().filter_map(|e| e.ok()).collect())
+                .unwrap_or_default();
+
+        if !added_commits.is_empty() || !removed_commits.is_empty() {
+            lines.push(OpDetailLine::SectionHeader("Changed commits:".into()));
+            for commit_id in &added_commits {
+                let (change_id, commit_id, desc) =
+                    self.short_commit_info(store, commit_id, &prefix_index);
+                lines.push(OpDetailLine::Commit(OpDiffCommit {
+                    change_id,
+                    commit_id,
+                    description: desc,
+                    kind: OpDiffKind::Added,
+                }));
+            }
+            for commit_id in &removed_commits {
+                let (change_id, commit_id, desc) =
+                    self.short_commit_info(store, commit_id, &prefix_index);
+                lines.push(OpDetailLine::Commit(OpDiffCommit {
+                    change_id,
+                    commit_id,
+                    description: desc,
+                    kind: OpDiffKind::Removed,
+                }));
+            }
+        }
+
+        // --- Changed working copies ---
+        let mut wc_changed = false;
+        for (ws, new_id) in &current_view.wc_commit_ids {
+            let old_id = parent_view.wc_commit_ids.get(ws);
+            if old_id != Some(new_id) {
+                if !wc_changed {
+                    lines.push(OpDetailLine::SectionHeader("Changed working copy:".into()));
+                    wc_changed = true;
+                }
+                lines.push(OpDetailLine::WorkingCopy(OpDiffWorkingCopy {
+                    workspace: Str::from(ws.as_str()),
+                    new_commit: Some(short_hex(new_id)),
+                    old_commit: old_id.map(short_hex),
+                }));
+            }
+        }
+        // Removed workspaces.
+        for (ws, old_id) in &parent_view.wc_commit_ids {
+            if !current_view.wc_commit_ids.contains_key(ws) {
+                if !wc_changed {
+                    lines.push(OpDetailLine::SectionHeader("Changed working copy:".into()));
+                    wc_changed = true;
+                }
+                lines.push(OpDetailLine::WorkingCopy(OpDiffWorkingCopy {
+                    workspace: Str::from(ws.as_str()),
+                    new_commit: None,
+                    old_commit: Some(short_hex(old_id)),
+                }));
+            }
+        }
+
+        // --- Changed local bookmarks ---
+        let mut bm_changed = false;
+        let all_bm_names: std::collections::BTreeSet<_> = current_view
+            .local_bookmarks
+            .keys()
+            .chain(parent_view.local_bookmarks.keys())
+            .collect();
+        for name in all_bm_names {
+            let cur = current_view.local_bookmarks.get(name);
+            let prev = parent_view.local_bookmarks.get(name);
+            if cur == prev {
+                continue;
+            }
+            if !bm_changed {
+                lines.push(OpDetailLine::SectionHeader("Changed bookmarks:".into()));
+                bm_changed = true;
+            }
+            let new_target = cur.and_then(|t| t.as_normal()).map(|id| short_hex(id));
+            let old_target = prev.and_then(|t| t.as_normal()).map(|id| short_hex(id));
+            lines.push(OpDetailLine::Bookmark(OpDiffBookmark {
+                name: Str::from(name.as_str()),
+                new_target,
+                old_target,
+            }));
+        }
+
+        Ok(lines)
+    }
+
+    /// Get change ID, short commit hex, and description for display.
+    fn short_commit_info(
+        &self,
+        store: &Arc<jj_lib::store::Store>,
+        commit_id: &BackendCommitId,
+        prefix_index: &jj_lib::id_prefix::IdPrefixIndex,
+    ) -> (ShortId, ShortId, Option<String>) {
+        let repo = self.repo.as_ref();
+        let commit = store.get_commit(commit_id).ok();
+
+        let change_prefix_len = commit
+            .as_ref()
+            .and_then(|c| {
+                prefix_index
+                    .shortest_change_prefix_len(repo, c.change_id())
+                    .ok()
+            })
+            .unwrap_or(DISPLAY_ID_LEN);
+        let change_id = commit
+            .as_ref()
+            .map(|c| {
+                let h = c.change_id().reverse_hex();
+                let display_len = change_prefix_len.max(DISPLAY_ID_LEN);
+                ShortId {
+                    display: h.get(..display_len).unwrap_or(&h).to_string(),
+                    prefix_len: change_prefix_len,
+                }
+            })
+            .unwrap_or_else(|| ShortId {
+                display: String::new(),
+                prefix_len: 0,
+            });
+
+        let commit_prefix_len = prefix_index
+            .shortest_commit_prefix_len(repo, commit_id)
+            .unwrap_or(DISPLAY_ID_LEN);
+        let commit_hex = commit_id.hex();
+        let commit_display_len = commit_prefix_len.max(DISPLAY_ID_LEN);
+        let short_commit = ShortId {
+            display: commit_hex
+                .get(..commit_display_len)
+                .unwrap_or(&commit_hex)
+                .to_string(),
+            prefix_len: commit_prefix_len,
+        };
+
+        let desc = commit.map(|c| {
+            let is_empty = c.is_empty(self.repo.as_ref()).block_on().unwrap_or(false);
+            let raw = c.description().trim().to_string();
+            let first_line = if raw.is_empty() {
+                "(no description set)".to_string()
+            } else {
+                raw.lines().next().unwrap_or_default().to_string()
+            };
+            if is_empty {
+                format!("(empty) {first_line}")
+            } else {
+                first_line
+            }
+        });
+        (change_id, short_commit, desc)
+    }
+}
+
+fn short_hex(id: &BackendCommitId) -> Str {
+    let hex = id.hex();
+    Str::from(&hex[..hex.len().min(8)])
 }
 
 fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {

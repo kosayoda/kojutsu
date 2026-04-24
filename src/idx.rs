@@ -75,6 +75,10 @@ define_idx!(
     /// Index into `App::op_log_entries`.
     pub OpLogIdx
 );
+define_idx!(
+    /// Index into the detail lines for an unfolded op log entry.
+    pub OpLogDetailIdx
+);
 
 // ---------------------------------------------------------------------------
 // IndexVec<I, T> -- a Vec<T> indexed by a typed index I.
@@ -215,6 +219,11 @@ impl From<usize> for TagDetailIdx {
     }
 }
 impl From<usize> for OpLogIdx {
+    fn from(v: usize) -> Self {
+        Self(v)
+    }
+}
+impl From<usize> for OpLogDetailIdx {
     fn from(v: usize) -> Self {
         Self(v)
     }

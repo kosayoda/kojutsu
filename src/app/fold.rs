@@ -1,7 +1,7 @@
 use super::{ActiveView, App, Loadable};
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx,
-    GraphLineIdx, OpLogIdx, TagDetailIdx, TagIdx,
+    GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx,
 };
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
@@ -95,9 +95,21 @@ impl App {
                     }
                 }
             }
-            self.rows.push(DisplayRow::OpLogItem {
-                op_log_idx: OpLogIdx::new(idx),
-            });
+            let oi = OpLogIdx::new(idx);
+            self.rows.push(DisplayRow::OpLogItem { op_log_idx: oi });
+
+            // Emit detail lines if this op is unfolded and data is loaded.
+            let op_id = &self.op_log_entries[idx].id;
+            if self.unfolded_ops.contains(op_id) {
+                if let Some(Loadable::Loaded(lines)) = self.op_details.get(op_id) {
+                    for li in 0..lines.len() {
+                        self.rows.push(DisplayRow::OpLogDetailLine {
+                            op_log_idx: oi,
+                            line_idx: OpLogDetailIdx::new(li),
+                        });
+                    }
+                }
+            }
         }
         if self.op_log_has_more {
             self.rows.push(DisplayRow::OpLogLoadMore);
@@ -105,8 +117,14 @@ impl App {
         // Don't follow the LoadMore sentinel — keep the numeric position so
         // the cursor lands on the first newly loaded entry.
         let prev_cursor = prev_cursor.filter(|k| *k != RowKey::OpLogLoadMore);
+        // Detail lines fall back to their parent OpLogItem.
+        let fallback = match prev_cursor {
+            Some(RowKey::OpLogDetailLine(oi, _)) => Some(RowKey::OpLogItem(oi)),
+            _ => None,
+        };
         self.cursor = prev_cursor
             .and_then(|key| self.rows.iter().position(|r| r.key() == key))
+            .or_else(|| fallback.and_then(|key| self.rows.iter().position(|r| r.key() == key)))
             .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
     }
 
@@ -202,7 +220,10 @@ impl App {
         let mut last_child = self.cursor;
         for idx in (self.cursor + 1)..self.rows.len() {
             match self.rows[idx] {
-                DisplayRow::CommitNode { .. } | DisplayRow::GraphLink { .. } => break,
+                DisplayRow::CommitNode { .. }
+                | DisplayRow::GraphLink { .. }
+                | DisplayRow::OpLogItem { .. }
+                | DisplayRow::OpLogLoadMore => break,
                 _ => last_child = idx,
             }
         }
@@ -215,7 +236,7 @@ impl App {
         let mut lines = 0;
         for idx in offset..=last_child {
             lines += match self.rows.get(idx) {
-                Some(DisplayRow::CommitNode { .. }) => 2,
+                Some(DisplayRow::CommitNode { .. } | DisplayRow::OpLogItem { .. }) => 2,
                 Some(_) => 1,
                 None => break,
             };
@@ -253,6 +274,12 @@ impl App {
             }) => {
                 // Folding on a diff line folds the parent file.
                 self.toggle_file_fold(*entry_idx, *file_idx);
+            }
+            Some(DisplayRow::OpLogItem { op_log_idx }) => {
+                self.toggle_op_fold(*op_log_idx);
+            }
+            Some(DisplayRow::OpLogDetailLine { op_log_idx, .. }) => {
+                self.toggle_op_fold(*op_log_idx);
             }
             Some(DisplayRow::OpLogLoadMore) => {
                 self.request_op_log_load_more();
@@ -327,6 +354,32 @@ impl App {
         self.rebuild_rows();
         if !currently_unfolded {
             // We just unfolded — scroll to show child rows.
+            self.scroll_to_show_children();
+        }
+    }
+
+    pub(crate) fn toggle_op_fold(&mut self, op_log_idx: OpLogIdx) {
+        let Some(entry) = self.op_log_entries.get(op_log_idx.raw()) else {
+            return;
+        };
+        let op_id = entry.id.clone();
+
+        if self.unfolded_ops.contains(&op_id) {
+            self.unfolded_ops.remove(&op_id);
+        } else {
+            if self
+                .op_details
+                .get(&op_id)
+                .is_none_or(Loadable::should_request)
+            {
+                self.op_details.insert(op_id.clone(), Loadable::Loading);
+                self.pending_repo_requests
+                    .push(RepoRequest::load_op_diff(op_id.clone()));
+            }
+            self.unfolded_ops.insert(op_id.clone());
+        }
+        self.rebuild_rows();
+        if self.unfolded_ops.contains(&op_id) {
             self.scroll_to_show_children();
         }
     }

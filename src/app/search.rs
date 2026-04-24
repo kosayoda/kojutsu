@@ -299,6 +299,7 @@ impl App {
             }
             DisplayRow::DescriptionLine { .. }
             | DisplayRow::TagRemoteTarget { .. }
+            | DisplayRow::OpLogDetailLine { .. }
             | DisplayRow::OpLogLoadMore => false,
         }
     }

@@ -196,6 +196,8 @@ impl App {
                 // Invalidate op log; re-request if currently viewing.
                 self.op_log_loaded = false;
                 self.op_log_limit = super::OP_LOG_BATCH_SIZE;
+                self.op_details.clear();
+                self.unfolded_ops.clear();
                 if self.active_view == super::ActiveView::Operations {
                     self.pending_repo_requests
                         .push(RepoRequest::load_operations(self.op_log_limit));
@@ -373,6 +375,19 @@ impl App {
             RepoResult::OperationsFailed { error } => {
                 self.op_log_loaded = false;
                 self.set_error(format!("failed to load operation log: {error}"));
+            }
+            RepoResult::OpDiffLoaded { op_id, lines } => {
+                self.op_details
+                    .insert(op_id, super::Loadable::Loaded(lines));
+                if self.active_view == super::ActiveView::Operations {
+                    self.rebuild_rows();
+                    self.scroll_to_show_children();
+                }
+            }
+            RepoResult::OpDiffFailed { op_id, error } => {
+                self.op_details
+                    .insert(op_id, super::Loadable::Failed(error.clone()));
+                self.set_error(format!("failed to load op diff: {error}"));
             }
             RepoResult::BackgroundError { error } => {
                 self.set_error(format!("background task failed: {error}"));

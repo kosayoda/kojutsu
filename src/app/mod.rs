@@ -102,6 +102,37 @@ pub struct TagViewEntry {
     pub is_deleted: bool,
 }
 
+pub enum OpDiffKind {
+    Added,
+    Removed,
+}
+
+pub struct OpDiffCommit {
+    pub change_id: crate::dag::ShortId,
+    pub commit_id: crate::dag::ShortId,
+    pub description: Option<String>,
+    pub kind: OpDiffKind,
+}
+
+pub struct OpDiffWorkingCopy {
+    pub workspace: Str,
+    pub new_commit: Option<Str>,
+    pub old_commit: Option<Str>,
+}
+
+pub struct OpDiffBookmark {
+    pub name: Str,
+    pub new_target: Option<Str>,
+    pub old_target: Option<Str>,
+}
+
+pub enum OpDetailLine {
+    SectionHeader(Str),
+    Commit(OpDiffCommit),
+    WorkingCopy(OpDiffWorkingCopy),
+    Bookmark(OpDiffBookmark),
+}
+
 pub struct OpLogEntry {
     /// Hex operation ID (truncated for display).
     pub id: Str,
@@ -164,7 +195,7 @@ pub(crate) struct FileFoldKey {
 }
 
 impl<T> Loadable<T> {
-    fn loaded(&self) -> Option<&T> {
+    pub fn loaded(&self) -> Option<&T> {
         match self {
             Self::Loaded(value) => Some(value),
             _ => None,
@@ -368,6 +399,10 @@ pub struct App {
     pub op_log_limit: usize,
     /// Active workspace filter for the op log view (empty = show all).
     pub op_log_workspace_filter: HashSet<Str>,
+    /// Set of op IDs that are currently unfolded.
+    pub unfolded_ops: HashSet<Str>,
+    /// Cached op detail lines per op ID.
+    pub op_details: HashMap<Str, Loadable<Vec<OpDetailLine>>>,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
@@ -470,6 +505,8 @@ impl App {
             op_log_has_more: false,
             op_log_limit: OP_LOG_BATCH_SIZE,
             op_log_workspace_filter: HashSet::from([Str::from("default")]),
+            unfolded_ops: HashSet::new(),
+            op_details: HashMap::new(),
             rows: Vec::new(),
             cursor: 0,
             dag_view_state: (0, 0),
@@ -678,7 +715,8 @@ impl App {
 
     pub fn selected_op_log_entry(&self) -> Option<&OpLogEntry> {
         let op_log_idx = match self.rows.get(self.cursor)? {
-            DisplayRow::OpLogItem { op_log_idx } => *op_log_idx,
+            DisplayRow::OpLogItem { op_log_idx }
+            | DisplayRow::OpLogDetailLine { op_log_idx, .. } => *op_log_idx,
             _ => return None,
         };
         self.op_log_entries.get(op_log_idx.raw())
@@ -698,6 +736,7 @@ impl App {
             | DisplayRow::TagItem { .. }
             | DisplayRow::TagRemoteTarget { .. }
             | DisplayRow::OpLogItem { .. }
+            | DisplayRow::OpLogDetailLine { .. }
             | DisplayRow::OpLogLoadMore => return None,
         };
         Some(entry_idx)

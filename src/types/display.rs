@@ -1,6 +1,6 @@
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx,
-    GraphLineIdx, OpLogIdx, TagDetailIdx, TagIdx,
+    GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx,
 };
 
 /// Identifies a display row for cursor restore after rebuild.
@@ -17,6 +17,7 @@ pub enum RowKey {
     TagItem(TagIdx),
     TagRemoteTarget(TagIdx, TagDetailIdx),
     OpLogItem(OpLogIdx),
+    OpLogDetailLine(OpLogIdx, OpLogDetailIdx),
     OpLogLoadMore,
 }
 
@@ -66,6 +67,11 @@ pub enum DisplayRow {
     },
     /// An operation row in the operation log view.
     OpLogItem { op_log_idx: OpLogIdx },
+    /// A detail line under an unfolded op log entry.
+    OpLogDetailLine {
+        op_log_idx: OpLogIdx,
+        line_idx: OpLogDetailIdx,
+    },
     /// "Load more..." sentinel at the bottom of the op log.
     OpLogLoadMore,
 }
@@ -106,6 +112,10 @@ impl DisplayRow {
                 target_idx,
             } => RowKey::TagRemoteTarget(tag_idx, target_idx),
             DisplayRow::OpLogItem { op_log_idx } => RowKey::OpLogItem(op_log_idx),
+            DisplayRow::OpLogDetailLine {
+                op_log_idx,
+                line_idx,
+            } => RowKey::OpLogDetailLine(op_log_idx, line_idx),
             DisplayRow::OpLogLoadMore => RowKey::OpLogLoadMore,
         }
     }
