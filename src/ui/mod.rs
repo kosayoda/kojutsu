@@ -55,8 +55,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
             children,
             flags,
         } => {
-            // Calculate content width to determine how many lines we need.
-            let content_width: usize = children
+            // Calculate how many lines we need by simulating the flow layout.
+            let inner_width = overlay_base.width.saturating_sub(2).max(1) as usize;
+            let pair_widths: Vec<usize> = children
                 .iter()
                 .filter(|(_, child)| !matches!(child, keymap::KeymapNode::Toggle { .. }))
                 .map(|(key_node, child)| {
@@ -66,13 +67,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
                         keymap::KeymapNode::Prefix { label, .. } => *label,
                         _ => "",
                     };
-                    // "(key) desc" + "  " separator
-                    key_str.len() + 2 + 1 + desc.len() + 2
+                    // "(key) desc"
+                    key_str.len() + 2 + 1 + desc.len()
                 })
-                .sum();
-            let inner_width = overlay_base.width.saturating_sub(2).max(1) as usize;
-            let content_lines =
-                ((content_width.saturating_sub(2) + inner_width - 1) / inner_width).max(1);
+                .collect();
+            let mut content_lines: usize = 1;
+            let mut line_width: usize = 0;
+            for &pw in &pair_widths {
+                let sep = if line_width == 0 { 0 } else { 2 };
+                if line_width > 0 && line_width + sep + pw > inner_width {
+                    content_lines += 1;
+                    line_width = pw;
+                } else {
+                    line_width += sep + pw;
+                }
+            }
             let area = overlay_area(overlay_base, content_lines as u16 + 1);
             frame.render_widget(ratatui::widgets::Clear, area);
             overlay::draw_submenu(

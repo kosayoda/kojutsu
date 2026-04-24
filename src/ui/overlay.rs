@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState, Wrap};
+use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 use ratatui::Frame;
 
 use crate::app::App;
@@ -204,8 +204,12 @@ pub(super) fn draw_submenu(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Content: action hints.
-    let mut action_spans: Vec<Span> = Vec::new();
+    // Content: action hints, flowed into lines so (key) desc pairs don't split.
+    let inner_width = inner.width as usize;
+    let mut lines: Vec<Line> = Vec::new();
+    let mut current_spans: Vec<Span> = Vec::new();
+    let mut current_width: usize = 0;
+
     for (key_node, child) in children.iter() {
         let (desc, blocked) = match child {
             KeymapNode::Action {
@@ -221,9 +225,6 @@ pub(super) fn draw_submenu(
             KeymapNode::Prefix { label, .. } => (*label, false),
             KeymapNode::Toggle { .. } => continue,
         };
-        if !action_spans.is_empty() {
-            action_spans.push(Span::raw("  "));
-        }
         let key_str = keymap::display_key(key_node);
         let key_style = if blocked {
             Style::default()
@@ -241,13 +242,30 @@ pub(super) fn draw_submenu(
         } else {
             Style::default().fg(theme.text)
         };
-        action_spans.push(Span::styled(format!("({key_str})"), key_style));
-        action_spans.push(Span::styled(format!(" {desc}"), desc_style));
+
+        // "(key) desc" as a unit.
+        let pair_width = key_str.len() + 2 + 1 + desc.len(); // "(" + key + ")" + " " + desc
+        let sep_width = if current_spans.is_empty() { 0 } else { 2 };
+
+        if !current_spans.is_empty() && current_width + sep_width + pair_width > inner_width {
+            lines.push(Line::from(std::mem::take(&mut current_spans)));
+            current_width = 0;
+        }
+
+        if !current_spans.is_empty() {
+            current_spans.push(Span::raw("  "));
+            current_width += 2;
+        }
+
+        current_spans.push(Span::styled(format!("({key_str})"), key_style));
+        current_spans.push(Span::styled(format!(" {desc}"), desc_style));
+        current_width += pair_width;
     }
-    frame.render_widget(
-        Paragraph::new(Line::from(action_spans)).wrap(Wrap { trim: false }),
-        inner,
-    );
+    if !current_spans.is_empty() {
+        lines.push(Line::from(current_spans));
+    }
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Render a single-line text input with horizontal scrolling and cursor placement.
