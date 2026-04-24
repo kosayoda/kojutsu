@@ -37,6 +37,7 @@ enum RepoRequestKind {
         path: RepoPath,
         old_path: Option<RepoPath>,
     },
+    Operations { limit: usize },
 }
 
 #[derive(Clone)]
@@ -98,6 +99,13 @@ pub enum RepoResult {
     BookmarkDetailPrefixLengths {
         updates: Vec<(CommitId, PrefixLengthUpdate)>,
     },
+    OperationsLoaded {
+        entries: Vec<crate::app::OpLogEntry>,
+        has_more: bool,
+    },
+    OperationsFailed {
+        error: String,
+    },
     /// A background computation thread panicked or failed.
     BackgroundError {
         error: String,
@@ -129,6 +137,13 @@ impl RepoRequest {
             },
         }
     }
+
+    pub fn load_operations(limit: usize) -> Self {
+        Self {
+            epoch: 0,
+            kind: RepoRequestKind::Operations { limit },
+        }
+    }
 }
 
 impl RepoService {
@@ -155,9 +170,9 @@ impl RepoRequestHandle {
     pub fn send(&self, mut request: RepoRequest) {
         request.epoch = match request.kind {
             RepoRequestKind::Revset { .. } => self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1,
-            RepoRequestKind::Commit { .. } | RepoRequestKind::FileDiff { .. } => {
-                self.current_epoch.load(Ordering::SeqCst)
-            }
+            RepoRequestKind::Commit { .. }
+            | RepoRequestKind::FileDiff { .. }
+            | RepoRequestKind::Operations { .. } => self.current_epoch.load(Ordering::SeqCst),
         };
         let _ = self.request_tx.send(request);
     }
@@ -231,6 +246,9 @@ impl RepoServiceState {
                 old_path,
             } => {
                 self.handle_file_diff(epoch, commit_id, path, old_path);
+            }
+            RepoRequestKind::Operations { limit } => {
+                self.handle_operations(epoch, limit);
             }
         }
     }
@@ -527,6 +545,44 @@ impl RepoServiceState {
             ),
         }
         self.in_flight_file_diffs.remove(&key);
+    }
+
+    fn handle_operations(&mut self, epoch: u64, limit: usize) {
+        if epoch != self.current_epoch.load(Ordering::SeqCst) {
+            return;
+        }
+        // Op log needs a repo; open one if not already loaded.
+        if self.repo.is_none() {
+            match JjRepo::open(&self.repo_path) {
+                Ok(repo) => self.repo = Some(repo),
+                Err(err) => {
+                    self.send_if_current(
+                        epoch,
+                        RepoResult::OperationsFailed {
+                            error: format!("{err:#}"),
+                        },
+                    );
+                    return;
+                }
+            }
+        }
+        let repo = self.repo.as_ref().unwrap();
+        match repo.operation_log(limit) {
+            Ok((entries, has_more)) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::OperationsLoaded { entries, has_more },
+                );
+            }
+            Err(err) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::OperationsFailed {
+                        error: format!("{err:#}"),
+                    },
+                );
+            }
+        }
     }
 
     fn send_if_current(&self, epoch: u64, result: RepoResult) {

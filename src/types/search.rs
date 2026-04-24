@@ -8,7 +8,7 @@ bitflags::bitflags! {
         const DESCRIPTION = 1 << 2;
         const BOOKMARK    = 1 << 3;
         const AUTHOR      = 1 << 4;
-        const PATH        = 1 << 5;
+        const PATH_COMMAND = 1 << 5;
         const LINE        = 1 << 6;
         const TAG         = 1 << 7;
     }
@@ -16,6 +16,9 @@ bitflags::bitflags! {
 
 impl SearchScopes {
     pub const DEFAULT: Self = Self::CHANGE_ID.union(Self::DESCRIPTION);
+    pub const DEFAULT_BOOKMARK: Self = Self::BOOKMARK.union(Self::DESCRIPTION);
+    pub const DEFAULT_TAG: Self = Self::TAG.union(Self::DESCRIPTION);
+    pub const DEFAULT_OP_LOG: Self = Self::DESCRIPTION;
 }
 
 pub struct SearchScopeSpec {
@@ -51,7 +54,7 @@ pub const SEARCH_SCOPE_SPECS: &[SearchScopeSpec] = &[
         label: "author",
     },
     SearchScopeSpec {
-        flag: SearchScopes::PATH,
+        flag: SearchScopes::PATH_COMMAND,
         hint: "p",
         label: "path",
     },
@@ -103,11 +106,25 @@ pub const TAG_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
     },
 ];
 
+pub const OP_LOG_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
+    SearchScopeSpec {
+        flag: SearchScopes::DESCRIPTION,
+        hint: "d",
+        label: "description",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::PATH_COMMAND,
+        hint: "c",
+        label: "command",
+    },
+];
+
 pub fn scope_specs_for_view(view: crate::app::ActiveView) -> &'static [SearchScopeSpec] {
     match view {
         crate::app::ActiveView::Dag => SEARCH_SCOPE_SPECS,
         crate::app::ActiveView::Bookmarks => BOOKMARK_VIEW_SCOPE_SPECS,
         crate::app::ActiveView::Tags => TAG_VIEW_SCOPE_SPECS,
+        crate::app::ActiveView::Operations => OP_LOG_VIEW_SCOPE_SPECS,
     }
 }
 

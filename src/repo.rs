@@ -1059,8 +1059,14 @@ impl JjRepo {
                         None => {
                             let display = hex.get(..DISPLAY_ID_LEN).unwrap_or(&hex).to_string();
                             (
-                                ShortId { display: display.clone(), prefix_len: DETAIL_PREFIX_LEN },
-                                ShortId { display, prefix_len: DETAIL_PREFIX_LEN },
+                                ShortId {
+                                    display: display.clone(),
+                                    prefix_len: DETAIL_PREFIX_LEN,
+                                },
+                                ShortId {
+                                    display,
+                                    prefix_len: DETAIL_PREFIX_LEN,
+                                },
                                 None,
                             )
                         }
@@ -1283,6 +1289,123 @@ impl JjRepo {
         let revset =
             jj_lib::revset::walk_revs(self.repo.as_ref(), &[to.clone()], &[from.clone()]).ok()?;
         Some(revset.iter().count())
+    }
+
+    /// Walk the operation log and return entries in reverse chronological order.
+    /// Returns at most `limit` entries and a flag indicating whether more exist.
+    pub fn operation_log(&self, limit: usize) -> Result<(Vec<crate::app::OpLogEntry>, bool)> {
+        // Load one extra to detect whether more exist, then truncate.
+        let fetch_limit = limit + 1;
+        use futures::StreamExt as _;
+
+        let current_op = self.repo.operation().clone();
+        let current_op_id = current_op.id().hex();
+        let stream = jj_lib::op_walk::walk_ancestors(&[current_op]);
+        let mut entries = Vec::new();
+
+        let mut stream = std::pin::pin!(stream);
+        while let Some(result) = stream.next().block_on() {
+            let op = result.wrap_err("failed to read operation")?;
+            let meta = op.metadata();
+            let id_hex = op.id().hex();
+            let is_current = id_hex == current_op_id;
+
+            // Format relative time from the operation metadata.
+            let millis = meta.time.start.timestamp.0;
+            let secs = millis / 1000;
+            let nanos = ((millis % 1000) * 1_000_000) as u32;
+            let relative_time: Str = match chrono::DateTime::from_timestamp(secs, nanos) {
+                Some(dt) => format_relative_time(dt).into(),
+                None => "unknown".into(),
+            };
+
+            let workspace: Option<Str> = meta.workspace_name.as_ref().map(|ws| ws.as_str().into());
+
+            let user: Str = if meta.hostname.is_empty() {
+                meta.username.as_str().into()
+            } else {
+                format!("{}@{}", meta.username, meta.hostname).into()
+            };
+
+            // Truncate op ID for display.
+            let display_id: Str = id_hex[..id_hex.len().min(12)].into();
+
+            let args: Option<Str> = meta.tags.get("args").map(|s| s.as_str().into());
+
+            entries.push(crate::app::OpLogEntry {
+                id: display_id,
+                description: meta.description.as_str().into(),
+                relative_time,
+                workspace,
+                user,
+                args,
+                is_snapshot: meta.is_snapshot,
+                is_current,
+            });
+            if entries.len() >= fetch_limit {
+                break;
+            }
+        }
+
+        let has_more = entries.len() > limit;
+        entries.truncate(limit);
+        Ok((entries, has_more))
+    }
+}
+
+fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {
+    let now = chrono::Utc::now();
+    let duration = now.signed_duration_since(dt);
+
+    if duration.num_seconds() < 0 {
+        return "just now".to_string();
+    }
+
+    let secs = duration.num_seconds();
+    if secs < 60 {
+        return if secs == 1 {
+            "1 second ago".to_string()
+        } else {
+            format!("{secs} seconds ago")
+        };
+    }
+    let mins = duration.num_minutes();
+    if mins < 60 {
+        return if mins == 1 {
+            "1 minute ago".to_string()
+        } else {
+            format!("{mins} minutes ago")
+        };
+    }
+    let hours = duration.num_hours();
+    if hours < 24 {
+        return if hours == 1 {
+            "1 hour ago".to_string()
+        } else {
+            format!("{hours} hours ago")
+        };
+    }
+    let days = duration.num_days();
+    if days < 30 {
+        return if days == 1 {
+            "1 day ago".to_string()
+        } else {
+            format!("{days} days ago")
+        };
+    }
+    let months = days / 30;
+    if months < 12 {
+        return if months == 1 {
+            "1 month ago".to_string()
+        } else {
+            format!("{months} months ago")
+        };
+    }
+    let years = days / 365;
+    if years == 1 {
+        "1 year ago".to_string()
+    } else {
+        format!("{years} years ago")
     }
 }
 

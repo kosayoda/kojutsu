@@ -235,7 +235,7 @@ impl App {
                 entry_idx,
                 file_idx,
             } => {
-                scopes.contains(SearchScopes::PATH)
+                scopes.contains(SearchScopes::PATH_COMMAND)
                     && self
                         .files_for_entry(*entry_idx)
                         .and_then(|files| files.get(file_idx.raw()))
@@ -251,7 +251,7 @@ impl App {
                         .diff_lines(*entry_idx, *file_idx)
                         .and_then(|lines| lines.get(line_idx.raw()))
                         .is_some_and(|line| contains(line.content.as_str())))
-                    || (scopes.contains(SearchScopes::PATH)
+                    || (scopes.contains(SearchScopes::PATH_COMMAND)
                         && self
                             .files_for_entry(*entry_idx)
                             .and_then(|files| files.get(file_idx.raw()))
@@ -289,7 +289,17 @@ impl App {
                             .as_ref()
                             .is_some_and(|c| contains(&c.display)))
             }
-            DisplayRow::DescriptionLine { .. } | DisplayRow::TagRemoteTarget { .. } => false,
+            DisplayRow::OpLogItem { op_log_idx } => {
+                let Some(entry) = self.op_log_entries.get(op_log_idx.raw()) else {
+                    return false;
+                };
+                (scopes.contains(SearchScopes::DESCRIPTION) && contains(&entry.description))
+                    || (scopes.contains(SearchScopes::PATH_COMMAND)
+                        && entry.args.as_deref().is_some_and(contains))
+            }
+            DisplayRow::DescriptionLine { .. }
+            | DisplayRow::TagRemoteTarget { .. }
+            | DisplayRow::OpLogLoadMore => false,
         }
     }
 }

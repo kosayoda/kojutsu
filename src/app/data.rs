@@ -193,6 +193,13 @@ impl App {
                 self.revset = revset;
                 self.revset_draft = None;
                 self.pending_revset = None;
+                // Invalidate op log; re-request if currently viewing.
+                self.op_log_loaded = false;
+                self.op_log_limit = super::OP_LOG_BATCH_SIZE;
+                if self.active_view == super::ActiveView::Operations {
+                    self.pending_repo_requests
+                        .push(RepoRequest::load_operations(self.op_log_limit));
+                }
                 self.repo_root = repo_root;
                 self.untracked_bookmarks = untracked_bookmarks;
                 self.tracked_bookmarks = tracked_bookmarks;
@@ -354,6 +361,18 @@ impl App {
                     }
                 }
                 self.rebuild_tag_entries();
+            }
+            RepoResult::OperationsLoaded { entries, has_more } => {
+                self.op_log_entries = entries;
+                self.op_log_loaded = true;
+                self.op_log_has_more = has_more;
+                if self.active_view == super::ActiveView::Operations {
+                    self.rebuild_rows();
+                }
+            }
+            RepoResult::OperationsFailed { error } => {
+                self.op_log_loaded = false;
+                self.set_error(format!("failed to load operation log: {error}"));
             }
             RepoResult::BackgroundError { error } => {
                 self.set_error(format!("background task failed: {error}"));

@@ -636,7 +636,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::BookmarkAdvance => enter_bookmark_advance(app, flags),
         AppAction::BookmarkTrack => {
-            let bookmarks: Vec<String> = app.untracked_bookmarks.iter().map(|s| s.to_string()).collect();
+            let bookmarks: Vec<String> = app
+                .untracked_bookmarks
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             enter_remote_bookmark_select(
                 app,
                 bookmarks,
@@ -646,7 +650,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             )
         }
         AppAction::BookmarkUntrack => {
-            let bookmarks: Vec<String> = app.tracked_bookmarks.iter().map(|s| s.to_string()).collect();
+            let bookmarks: Vec<String> = app
+                .tracked_bookmarks
+                .iter()
+                .map(|s| s.to_string())
+                .collect();
             enter_remote_bookmark_select(
                 app,
                 bookmarks,
@@ -1031,6 +1039,54 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 "tag has no associated commit",
             );
             Action::None
+        }
+        // Operations view actions
+        AppAction::SwitchToOpLogView => {
+            app.switch_view(crate::app::ActiveView::Operations);
+            Action::None
+        }
+        AppAction::OpLogFilterWorkspace => {
+            // Collect unique workspace names from op log entries.
+            let mut workspaces: Vec<String> = app
+                .op_log_entries
+                .iter()
+                .filter_map(|e| e.workspace.as_ref().map(|w| w.to_string()))
+                .collect();
+            workspaces.sort();
+            workspaces.dedup();
+            if workspaces.is_empty() {
+                app.set_status("no workspace info in operation log");
+                return Action::None;
+            }
+            app.mode = AppMode::select_from_list(
+                "filter by workspace",
+                workspaces,
+                true,
+                PendingSelection::OpLogWorkspaceFilter,
+                false,
+            );
+            Action::None
+        }
+        AppAction::OpLogRestore => {
+            let Some(entry) = app.selected_op_log_entry() else {
+                return Action::None;
+            };
+            let op_id = entry.id.to_string();
+            Action::RunJj(JJCommand::OpRestore { op_id, flags })
+        }
+        AppAction::OpLogRevert => {
+            let Some(entry) = app.selected_op_log_entry() else {
+                return Action::None;
+            };
+            let op_id = entry.id.to_string();
+            Action::RunJj(JJCommand::OpRevert { op_id, flags })
+        }
+        AppAction::OpLogAbandon => {
+            let Some(entry) = app.selected_op_log_entry() else {
+                return Action::None;
+            };
+            let op_id = entry.id.to_string();
+            Action::RunJj(JJCommand::OpAbandon { op_id, flags })
         }
     }
 }
@@ -1515,6 +1571,8 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             | Some(DisplayRow::BookmarkRemoteTarget { .. })
             | Some(DisplayRow::TagItem { .. })
             | Some(DisplayRow::TagRemoteTarget { .. })
+            | Some(DisplayRow::OpLogItem { .. })
+            | Some(DisplayRow::OpLogLoadMore)
             | None => None,
         };
         entry_idx.is_some_and(|idx| app.nodes[idx].commit.is_working_copy())
@@ -1943,6 +2001,11 @@ fn resolve_selection(
             } else {
                 Action::None
             }
+        }
+        PendingSelection::OpLogWorkspaceFilter => {
+            app.op_log_workspace_filter = names.into_iter().map(Str::from).collect();
+            app.rebuild_rows();
+            Action::None
         }
     }
 }

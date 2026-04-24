@@ -1,7 +1,7 @@
 use super::{ActiveView, App, Loadable};
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx,
-    GraphLineIdx, TagDetailIdx, TagIdx,
+    GraphLineIdx, OpLogIdx, TagDetailIdx, TagIdx,
 };
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
@@ -13,6 +13,7 @@ impl App {
             ActiveView::Dag => self.rebuild_dag_rows(),
             ActiveView::Bookmarks => self.rebuild_bookmark_rows(),
             ActiveView::Tags => self.rebuild_tag_rows(),
+            ActiveView::Operations => self.rebuild_op_log_rows(),
         }
     }
 
@@ -82,6 +83,33 @@ impl App {
             .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
     }
 
+    fn rebuild_op_log_rows(&mut self) {
+        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        self.rows.clear();
+        for idx in 0..self.op_log_entries.len() {
+            // Apply workspace filter (operations with no workspace always pass).
+            if !self.op_log_workspace_filter.is_empty() {
+                if let Some(ws) = &self.op_log_entries[idx].workspace {
+                    if !self.op_log_workspace_filter.contains(ws) {
+                        continue;
+                    }
+                }
+            }
+            self.rows.push(DisplayRow::OpLogItem {
+                op_log_idx: OpLogIdx::new(idx),
+            });
+        }
+        if self.op_log_has_more {
+            self.rows.push(DisplayRow::OpLogLoadMore);
+        }
+        // Don't follow the LoadMore sentinel — keep the numeric position so
+        // the cursor lands on the first newly loaded entry.
+        let prev_cursor = prev_cursor.filter(|k| *k != RowKey::OpLogLoadMore);
+        self.cursor = prev_cursor
+            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
+            .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
+    }
+
     fn rebuild_dag_rows(&mut self) {
         // Remember what the cursor was pointing at so we can restore it.
         let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
@@ -145,11 +173,7 @@ impl App {
                 Some(RowKey::FileChange(e, f)),
                 Some(RowKey::CommitNode(e)),
             ],
-            Some(RowKey::DescriptionLine(e, _)) => [
-                Some(RowKey::CommitNode(e)),
-                None,
-                None,
-            ],
+            Some(RowKey::DescriptionLine(e, _)) => [Some(RowKey::CommitNode(e)), None, None],
             Some(RowKey::FileChange(e, f)) => [
                 Some(RowKey::FileChange(e, f)),
                 Some(RowKey::CommitNode(e)),
@@ -229,6 +253,9 @@ impl App {
             }) => {
                 // Folding on a diff line folds the parent file.
                 self.toggle_file_fold(*entry_idx, *file_idx);
+            }
+            Some(DisplayRow::OpLogLoadMore) => {
+                self.request_op_log_load_more();
             }
             _ => {}
         }

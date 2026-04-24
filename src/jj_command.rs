@@ -224,6 +224,18 @@ pub enum JJCommand {
         names: SmallVec<String>,
         flags: CommandFlags,
     },
+    OpRestore {
+        op_id: String,
+        flags: CommandFlags,
+    },
+    OpRevert {
+        op_id: String,
+        flags: CommandFlags,
+    },
+    OpAbandon {
+        op_id: String,
+        flags: CommandFlags,
+    },
 }
 
 /// The result of running a jj command.
@@ -277,7 +289,10 @@ impl JJCommand {
             | JJCommand::WorkspaceForget { flags, .. }
             | JJCommand::WorkspaceList { flags, .. }
             | JJCommand::TagSet { flags, .. }
-            | JJCommand::TagDelete { flags, .. } => *flags,
+            | JJCommand::TagDelete { flags, .. }
+            | JJCommand::OpRestore { flags, .. }
+            | JJCommand::OpRevert { flags, .. }
+            | JJCommand::OpAbandon { flags, .. } => *flags,
         }
     }
 
@@ -740,6 +755,15 @@ impl JJCommand {
                 let mut args: Vec<Str> = vec!["tag".into(), "delete".into()];
                 args.extend(names.iter().map(|n| Str::from(n.as_str())));
                 args
+            }
+            JJCommand::OpRestore { op_id, .. } => {
+                vec!["op".into(), "restore".into(), Str::from(op_id.as_str())]
+            }
+            JJCommand::OpRevert { op_id, .. } => {
+                vec!["op".into(), "revert".into(), Str::from(op_id.as_str())]
+            }
+            JJCommand::OpAbandon { op_id, .. } => {
+                vec!["op".into(), "abandon".into(), Str::from(op_id.as_str())]
             }
         };
 

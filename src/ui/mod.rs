@@ -20,11 +20,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
         + layout::HEADER_SEP.len()
         + "revset: ".len()
         + app.revset.len();
-    let header_height = if single_line_len <= frame.area().width as usize {
-        1
-    } else {
-        2
-    };
+    let single_line = single_line_len <= frame.area().width as usize;
+    let base_height: u16 = if single_line { 1 } else { 2 };
+    let show_ws_filter = app.active_view == crate::app::ActiveView::Operations
+        && !app.op_log_workspace_filter.is_empty();
+    let header_height = base_height + if show_ws_filter { 1 } else { 0 };
 
     let [header_area, main_area, status_area] = Layout::vertical([
         Constraint::Length(header_height),
@@ -35,7 +35,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
 
     app.last_header_height = header_height;
     app.last_list_height = main_area.height;
-    layout::draw_header(frame, header_area, app, theme);
+    layout::draw_header(frame, header_area, app, theme, single_line);
     list::draw_list(frame, main_area, app, config);
     layout::draw_status_bar(frame, status_area, app, theme);
 

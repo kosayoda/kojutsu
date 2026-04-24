@@ -7,7 +7,7 @@ use ratatui::Frame;
 
 use super::search::*;
 use super::spans::*;
-use crate::app::{App, AppMode, BookmarkViewEntry, TagViewEntry};
+use crate::app::{App, AppMode, BookmarkViewEntry, OpLogEntry, TagViewEntry};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
 use crate::theme::{Config, Theme};
 use crate::types::{DisplayRow, FileSelectionState, SearchScopes};
@@ -88,7 +88,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                 // Placeholder must match the real item's line count so
                 // ratatui's scroll offset stays correct (CommitNode = 2 lines).
                 return match row {
-                    DisplayRow::CommitNode { .. } => {
+                    DisplayRow::CommitNode { .. } | DisplayRow::OpLogItem { .. } => {
                         ListItem::new(vec![Line::raw(""), Line::raw("")])
                     }
                     _ => ListItem::new(""),
@@ -265,6 +265,19 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|d| d.remote_targets.get(target_idx.raw()));
                     render_tag_remote_target(target, theme)
                 }
+                DisplayRow::OpLogItem { op_log_idx } => {
+                    if let Some(entry) = app.op_log_entries.get(op_log_idx.raw()) {
+                        render_op_log_item(entry, row_search.as_ref(), theme)
+                    } else {
+                        ListItem::new(Line::raw(""))
+                    }
+                }
+                DisplayRow::OpLogLoadMore => {
+                    ListItem::new(Line::from(vec![
+                        Span::styled("  [Tab] ", Style::default().fg(theme.accent)),
+                        Span::styled("Load more…", Style::default().fg(theme.muted)),
+                    ]))
+                }
             }
         })
         .collect();
@@ -413,7 +426,7 @@ fn render_commit_item<'a>(
         &mut line1,
         &c.author.email,
         SearchScopes::AUTHOR,
-        Style::default().fg(theme.selection),
+        Style::default().fg(theme.user),
         search,
     );
     line1.push(Span::raw(" "));
@@ -457,7 +470,7 @@ fn render_commit_item<'a>(
 
     // Local bookmarks (with * suffix if dirty)
     let bm_style = Style::default()
-        .fg(theme.change_id)
+        .fg(theme.bookmark)
         .add_modifier(Modifier::BOLD);
     for bm in &c.bookmarks {
         line1.push(Span::raw(" "));
@@ -477,7 +490,7 @@ fn render_commit_item<'a>(
 
     // Remote bookmarks (name@remote, shown when no local bookmark covers them)
     // Remote bookmarks (unsynced only — shown dimmer than local bookmarks).
-    let remote_bm_style = Style::default().fg(theme.change_id);
+    let remote_bm_style = Style::default().fg(theme.bookmark);
     for rb in &c.remote_bookmarks {
         line1.push(Span::raw(" "));
         let text = format!("{}@{}", rb.name, rb.remote);
@@ -644,7 +657,13 @@ fn render_file_line(
         spans.push(Span::styled("{", muted));
         spans.push(Span::styled(old_mid.to_string(), muted));
         spans.push(Span::styled(" → ", muted));
-        push_searchable(&mut spans, new_mid, SearchScopes::PATH, text, search);
+        push_searchable(
+            &mut spans,
+            new_mid,
+            SearchScopes::PATH_COMMAND,
+            text,
+            search,
+        );
         spans.push(Span::styled("}", muted));
         if !suffix.is_empty() {
             spans.push(Span::styled(suffix.to_string(), text));
@@ -653,7 +672,7 @@ fn render_file_line(
         push_searchable(
             &mut spans,
             file.path.as_str(),
-            SearchScopes::PATH,
+            SearchScopes::PATH_COMMAND,
             Style::default().fg(theme.text),
             search,
         );
@@ -751,9 +770,7 @@ fn render_tag_item(
     let style = if entry.is_deleted {
         Style::default().fg(theme.muted)
     } else {
-        Style::default()
-            .fg(theme.tag)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(theme.tag).add_modifier(Modifier::BOLD)
     };
     push_searchable(
         &mut spans,
@@ -815,6 +832,101 @@ fn render_tag_remote_target(
     ListItem::new(Line::from(spans))
 }
 
+fn render_op_log_item(
+    entry: &OpLogEntry,
+    search: Option<&SearchRender<'_>>,
+    theme: &Theme,
+) -> ListItem<'static> {
+    let mut spans = vec![search_gutter(
+        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
+        theme,
+    )];
+
+    let dot = || Span::styled(" · ", Style::default().fg(theme.muted));
+
+    // Current operation marker.
+    if entry.is_current {
+        spans.push(Span::styled(
+            "@ ",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        spans.push(Span::styled("○ ", Style::default().fg(theme.muted)));
+    }
+
+    // Operation ID (truncated hex).
+    spans.push(Span::styled(
+        entry.id.to_string(),
+        Style::default().fg(theme.commit_id),
+    ));
+
+    // Description.
+    let desc_style = if entry.is_snapshot {
+        Style::default().fg(theme.muted)
+    } else if entry.is_current {
+        Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.text)
+    };
+    spans.push(dot());
+    push_searchable(
+        &mut spans,
+        &entry.description,
+        SearchScopes::DESCRIPTION,
+        desc_style,
+        search,
+    );
+
+    // Relative time.
+    spans.push(dot());
+    let time_color = if entry.is_snapshot {
+        theme.muted
+    } else {
+        Color::Cyan
+    };
+    spans.push(Span::styled(
+        entry.relative_time.to_string(),
+        Style::default().fg(time_color),
+    ));
+
+    // User.
+    if !entry.user.is_empty() {
+        spans.push(dot());
+        spans.push(Span::styled(
+            entry.user.to_string(),
+            Style::default().fg(theme.user),
+        ));
+    }
+
+    let line1 = Line::from(spans);
+
+    // Second line: workspace · command args.
+    let mut spans2 = vec![Span::raw("    ")];
+    if let Some(ref ws) = entry.workspace {
+        spans2.push(Span::styled(
+            ws.to_string(),
+            Style::default().fg(theme.workspace),
+        ));
+    }
+    if let Some(ref args) = entry.args {
+        if entry.workspace.is_some() {
+            spans2.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+        }
+        push_searchable(
+            &mut spans2,
+            args,
+            SearchScopes::PATH_COMMAND,
+            Style::default().fg(theme.muted),
+            search,
+        );
+    }
+    let line2 = Line::from(spans2);
+
+    ListItem::new(vec![line1, line2])
+}
+
 fn render_bookmark_item(
     entry: &BookmarkViewEntry,
     search: Option<&SearchRender<'_>>,
@@ -858,7 +970,7 @@ fn render_bookmark_item(
         );
     } else {
         let style = Style::default()
-            .fg(theme.change_id)
+            .fg(theme.bookmark)
             .add_modifier(Modifier::BOLD);
         push_searchable(
             &mut spans,

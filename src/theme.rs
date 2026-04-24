@@ -161,7 +161,7 @@ impl DefaultSearchScopes {
             flags |= SearchScopes::AUTHOR;
         }
         if self.path {
-            flags |= SearchScopes::PATH;
+            flags |= SearchScopes::PATH_COMMAND;
         }
         if self.line {
             flags |= SearchScopes::LINE;
@@ -218,6 +218,15 @@ pub struct Theme {
     /// Remote names (@git, @origin).
     #[serde(default = "default_remote", deserialize_with = "de_color")]
     pub remote: Color,
+    /// Bookmark names.
+    #[serde(default = "default_bookmark", deserialize_with = "de_color")]
+    pub bookmark: Color,
+    /// Author / user names.
+    #[serde(default = "default_user", deserialize_with = "de_color")]
+    pub user: Color,
+    /// Workspace names.
+    #[serde(default = "default_workspace", deserialize_with = "de_color")]
+    pub workspace: Color,
 }
 
 impl Default for Theme {
@@ -235,6 +244,9 @@ impl Default for Theme {
             selection_bg: default_selection_bg(),
             tag: default_tag(),
             remote: default_remote(),
+            bookmark: default_bookmark(),
+            user: default_user(),
+            workspace: default_workspace(),
         }
     }
 }
@@ -274,6 +286,15 @@ fn default_tag() -> Color {
 }
 fn default_remote() -> Color {
     Color::Cyan
+}
+fn default_bookmark() -> Color {
+    Color::Magenta
+}
+fn default_user() -> Color {
+    Color::Yellow
+}
+fn default_workspace() -> Color {
+    Color::Green
 }
 
 /// Load config from `~/.config/kojutsu/config.toml` (or XDG equivalent).

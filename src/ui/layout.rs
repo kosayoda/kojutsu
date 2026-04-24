@@ -10,8 +10,36 @@ use crate::theme::Theme;
 /// Minimum separator between repo and revset when on a single line.
 pub(super) const HEADER_SEP: &str = "  ";
 
-pub(super) fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
-    let header = if area.height == 1 {
+pub(super) fn draw_header(
+    frame: &mut Frame,
+    area: Rect,
+    app: &App,
+    theme: &Theme,
+    single_line: bool,
+) {
+    let show_ws_filter = app.active_view == crate::app::ActiveView::Operations
+        && !app.op_log_workspace_filter.is_empty();
+    let workspace_filter_line: Option<Line> = if !show_ws_filter {
+        None
+    } else {
+        let mut names: Vec<&str> = app
+            .op_log_workspace_filter
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        names.sort();
+        Some(Line::from(vec![
+            Span::styled("workspace: ", Style::default().fg(theme.muted)),
+            Span::styled(
+                names.join(", "),
+                Style::default()
+                    .fg(theme.workspace)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]))
+    };
+
+    let mut header = if single_line {
         // Single-line: "repository: <path>  revset: <revset>"
         vec![Line::from(vec![
             Span::styled("repository: ", Style::default().fg(theme.muted)),
@@ -46,6 +74,9 @@ pub(super) fn draw_header(frame: &mut Frame, area: Rect, app: &App, theme: &Them
             ]),
         ]
     };
+    if let Some(line) = workspace_filter_line {
+        header.push(line);
+    }
     frame.render_widget(Paragraph::new(header), area);
 }
 
@@ -80,6 +111,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         crate::app::ActiveView::Dag => " Log ",
         crate::app::ActiveView::Bookmarks => " Bookmarks ",
         crate::app::ActiveView::Tags => " Tags ",
+        crate::app::ActiveView::Operations => " Operations ",
     };
 
     let mut wc_spans: Vec<Span> = Vec::new();

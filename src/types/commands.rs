@@ -42,6 +42,8 @@ pub enum PendingSelection {
     TagDelete { flags: CommandFlags },
     /// Switch to a named revset preset.
     PresetSelect,
+    /// Filter op log by workspace.
+    OpLogWorkspaceFilter,
     /// Select a remote for git fetch.
     GitRemoteForFetch {
         all_remotes: bool,
@@ -97,9 +99,7 @@ pub enum FollowUpAction {
         pending: PendingCommand,
     },
     /// Widen the current revset to include a specific change, then jump to it.
-    WidenRevset {
-        change_id: String,
-    },
+    WidenRevset { change_id: String },
 }
 
 /// What to do when a TextInput is submitted.

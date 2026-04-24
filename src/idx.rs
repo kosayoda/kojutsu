@@ -71,6 +71,10 @@ define_idx!(
     /// Index into `TagDetails::remote_targets`.
     pub TagDetailIdx
 );
+define_idx!(
+    /// Index into `App::op_log_entries`.
+    pub OpLogIdx
+);
 
 // ---------------------------------------------------------------------------
 // IndexVec<I, T> -- a Vec<T> indexed by a typed index I.
@@ -206,6 +210,11 @@ impl From<usize> for TagIdx {
     }
 }
 impl From<usize> for TagDetailIdx {
+    fn from(v: usize) -> Self {
+        Self(v)
+    }
+}
+impl From<usize> for OpLogIdx {
     fn from(v: usize) -> Self {
         Self(v)
     }

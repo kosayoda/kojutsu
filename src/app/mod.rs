@@ -35,6 +35,9 @@ pub struct PersistedState {
     pub ignore_working_copy: bool,
     pub debug: bool,
     pub search_scopes: u8,
+    pub bookmark_search_scopes: u8,
+    pub tag_search_scopes: u8,
+    pub op_log_search_scopes: u8,
     pub active_preset: Option<usize>,
 }
 
@@ -65,12 +68,16 @@ pub enum StatusLevel {
     Error,
 }
 
+/// Number of operations to load per batch in the op log view.
+pub const OP_LOG_BATCH_SIZE: usize = 200;
+
 #[derive(Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ActiveView {
     #[default]
     Dag,
     Bookmarks,
     Tags,
+    Operations,
 }
 
 pub struct BookmarkViewEntry {
@@ -93,6 +100,25 @@ pub struct TagViewEntry {
     pub description: Option<String>,
     /// Whether the local tag has been deleted (only remote refs remain).
     pub is_deleted: bool,
+}
+
+pub struct OpLogEntry {
+    /// Hex operation ID (truncated for display).
+    pub id: Str,
+    /// Human-readable operation description.
+    pub description: Str,
+    /// Relative time string (e.g. "5 hours ago").
+    pub relative_time: Str,
+    /// Workspace name that ran this operation.
+    pub workspace: Option<Str>,
+    /// "user@host" who performed the operation.
+    pub user: Str,
+    /// The CLI args that produced this operation (from metadata tags).
+    pub args: Option<Str>,
+    /// Whether this is a pure working-copy snapshot.
+    pub is_snapshot: bool,
+    /// Whether this is the repo's current operation.
+    pub is_current: bool,
 }
 
 #[derive(Clone)]
@@ -332,6 +358,16 @@ pub struct App {
     pub tag_entries: Vec<TagViewEntry>,
     /// Rich detail data per tag (remote tracking).
     pub tag_details: HashMap<Str, crate::dag::TagDetails>,
+    /// Aggregated operation log data for the operations view.
+    pub op_log_entries: Vec<OpLogEntry>,
+    /// Whether the operation log has been loaded (lazy).
+    pub op_log_loaded: bool,
+    /// Whether there are more operations beyond the current batch.
+    pub op_log_has_more: bool,
+    /// How many operations to request in the next load.
+    pub op_log_limit: usize,
+    /// Active workspace filter for the op log view (empty = show all).
+    pub op_log_workspace_filter: HashSet<Str>,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
@@ -340,6 +376,12 @@ pub struct App {
     dag_view_state: (usize, usize),
     bookmark_view_state: (usize, usize),
     tag_view_state: (usize, usize),
+    op_log_view_state: (usize, usize),
+    /// Saved search scopes per view.
+    dag_search_scopes: SearchScopes,
+    bookmark_search_scopes: SearchScopes,
+    tag_search_scopes: SearchScopes,
+    op_log_search_scopes: SearchScopes,
     /// Persisted list widget state (preserves scroll offset across frames).
     pub list_state: ListState,
     /// Header height from the last render (for mouse click translation).
@@ -423,11 +465,21 @@ impl App {
             all_tags: Vec::new(),
             tag_entries: Vec::new(),
             tag_details: HashMap::new(),
+            op_log_entries: Vec::new(),
+            op_log_loaded: false,
+            op_log_has_more: false,
+            op_log_limit: OP_LOG_BATCH_SIZE,
+            op_log_workspace_filter: HashSet::from([Str::from("default")]),
             rows: Vec::new(),
             cursor: 0,
             dag_view_state: (0, 0),
             bookmark_view_state: (0, 0),
             tag_view_state: (0, 0),
+            op_log_view_state: (0, 0),
+            dag_search_scopes: SearchScopes::DEFAULT,
+            bookmark_search_scopes: SearchScopes::DEFAULT_BOOKMARK,
+            tag_search_scopes: SearchScopes::DEFAULT_TAG,
+            op_log_search_scopes: SearchScopes::DEFAULT_OP_LOG,
             list_state: ListState::default(),
             last_header_height: 2,
             last_list_height: 0,
@@ -485,23 +537,66 @@ impl App {
         if self.active_view == view {
             return;
         }
-        // Save current view state.
+        // Save current view state (cursor, scroll, search scopes).
         let state = (self.cursor, self.scroll_offset());
         match self.active_view {
-            ActiveView::Dag => self.dag_view_state = state,
-            ActiveView::Bookmarks => self.bookmark_view_state = state,
-            ActiveView::Tags => self.tag_view_state = state,
+            ActiveView::Dag => {
+                self.dag_view_state = state;
+                self.dag_search_scopes = self.search_scopes;
+            }
+            ActiveView::Bookmarks => {
+                self.bookmark_view_state = state;
+                self.bookmark_search_scopes = self.search_scopes;
+            }
+            ActiveView::Tags => {
+                self.tag_view_state = state;
+                self.tag_search_scopes = self.search_scopes;
+            }
+            ActiveView::Operations => {
+                self.op_log_view_state = state;
+                self.op_log_search_scopes = self.search_scopes;
+            }
         }
         self.active_view = view;
+        // Trigger lazy load of operation log data.
+        if view == ActiveView::Operations && !self.op_log_loaded {
+            self.pending_repo_requests
+                .push(RepoRequest::load_operations(self.op_log_limit));
+        }
         self.rebuild_rows();
         // Restore saved state for new view.
-        let (cursor, offset) = match self.active_view {
-            ActiveView::Dag => self.dag_view_state,
-            ActiveView::Bookmarks => self.bookmark_view_state,
-            ActiveView::Tags => self.tag_view_state,
+        let (cursor, offset, scopes) = match self.active_view {
+            ActiveView::Dag => (
+                self.dag_view_state.0,
+                self.dag_view_state.1,
+                self.dag_search_scopes,
+            ),
+            ActiveView::Bookmarks => (
+                self.bookmark_view_state.0,
+                self.bookmark_view_state.1,
+                self.bookmark_search_scopes,
+            ),
+            ActiveView::Tags => (
+                self.tag_view_state.0,
+                self.tag_view_state.1,
+                self.tag_search_scopes,
+            ),
+            ActiveView::Operations => (
+                self.op_log_view_state.0,
+                self.op_log_view_state.1,
+                self.op_log_search_scopes,
+            ),
         };
         self.cursor = cursor.min(self.rows.len().saturating_sub(1));
         *self.list_state.offset_mut() = offset;
+        self.search_scopes = scopes;
+    }
+
+    pub fn request_op_log_load_more(&mut self) {
+        self.op_log_limit += OP_LOG_BATCH_SIZE;
+        self.op_log_loaded = false;
+        self.pending_repo_requests
+            .push(RepoRequest::load_operations(self.op_log_limit));
     }
 
     pub fn selected_bookmark_entry(&self) -> Option<&BookmarkViewEntry> {
@@ -581,6 +676,14 @@ impl App {
         self.tag_entries.get(tag_idx.raw())
     }
 
+    pub fn selected_op_log_entry(&self) -> Option<&OpLogEntry> {
+        let op_log_idx = match self.rows.get(self.cursor)? {
+            DisplayRow::OpLogItem { op_log_idx } => *op_log_idx,
+            _ => return None,
+        };
+        self.op_log_entries.get(op_log_idx.raw())
+    }
+
     /// Get the entry idx the cursor is on.
     pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
         let entry_idx = match self.rows.get(self.cursor)? {
@@ -593,7 +696,9 @@ impl App {
             | DisplayRow::BookmarkConflictTarget { .. }
             | DisplayRow::BookmarkRemoteTarget { .. }
             | DisplayRow::TagItem { .. }
-            | DisplayRow::TagRemoteTarget { .. } => return None,
+            | DisplayRow::TagRemoteTarget { .. }
+            | DisplayRow::OpLogItem { .. }
+            | DisplayRow::OpLogLoadMore => return None,
         };
         Some(entry_idx)
     }
@@ -689,7 +794,10 @@ impl App {
             ignore_immutable: self.toggles.contains(CommandFlags::IGNORE_IMMUTABLE),
             ignore_working_copy: self.toggles.contains(CommandFlags::IGNORE_WORKING_COPY),
             debug: self.toggles.contains(CommandFlags::DEBUG),
-            search_scopes: self.search_scopes.bits(),
+            search_scopes: self.dag_search_scopes.bits(),
+            bookmark_search_scopes: self.bookmark_search_scopes.bits(),
+            tag_search_scopes: self.tag_search_scopes.bits(),
+            op_log_search_scopes: self.op_log_search_scopes.bits(),
             active_preset: self.active_preset,
         }
     }
@@ -702,7 +810,19 @@ impl App {
             .set(CommandFlags::IGNORE_WORKING_COPY, state.ignore_working_copy);
         self.toggles.set(CommandFlags::DEBUG, state.debug);
         if state.search_scopes != 0 {
-            self.search_scopes = SearchScopes::from_bits_truncate(state.search_scopes);
+            self.dag_search_scopes = SearchScopes::from_bits_truncate(state.search_scopes);
+            self.search_scopes = self.dag_search_scopes;
+        }
+        if state.bookmark_search_scopes != 0 {
+            self.bookmark_search_scopes =
+                SearchScopes::from_bits_truncate(state.bookmark_search_scopes);
+        }
+        if state.tag_search_scopes != 0 {
+            self.tag_search_scopes = SearchScopes::from_bits_truncate(state.tag_search_scopes);
+        }
+        if state.op_log_search_scopes != 0 {
+            self.op_log_search_scopes =
+                SearchScopes::from_bits_truncate(state.op_log_search_scopes);
         }
         self.active_preset = state.active_preset.filter(|&i| i < self.presets.len());
     }
