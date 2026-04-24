@@ -238,6 +238,17 @@ fn spawn_terminal_events(event_tx: mpsc::Sender<AppEvent>) -> TerminalEvents {
                         if let Ok((cols, rows)) = crossterm::terminal::size() {
                             let _ = event_tx.send(AppEvent::Terminal(Event::Resize(cols, rows)));
                         }
+                        // Drain any stdin events triggered by the resize (e.g.
+                        // mouse position reports) so they don't delay the next
+                        // real keypress.
+                        while event::poll(std::time::Duration::ZERO).unwrap_or(false) {
+                            match event::read() {
+                                Ok(ev) => {
+                                    let _ = event_tx.send(AppEvent::Terminal(ev));
+                                }
+                                Err(_) => break,
+                            }
+                        }
                     }
                     STDIN_TOKEN => {
                         // Read the first event, then drain any events
