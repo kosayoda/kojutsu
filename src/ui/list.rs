@@ -134,6 +134,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|d| d.lines().nth(line_idx.raw() + 1))
                         .unwrap_or("");
                     let graph_cont = app.nodes[*entry_idx].graph.cont.as_str();
+                    let is_selected = app.is_commit_selected(*entry_idx);
+                    let in_visual = app.is_in_visual_commit_range(*entry_idx);
                     let mut spans = vec![search_gutter(
                         row_search
                             .as_ref()
@@ -141,6 +143,17 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             .unwrap_or(SearchRowState::None),
                         theme,
                     )];
+                    // Visual + selection bars (same as line 2 of commit item).
+                    spans.push(if in_visual {
+                        Span::styled("│", Style::default().fg(theme.accent))
+                    } else {
+                        Span::raw(" ")
+                    });
+                    spans.push(if is_selected {
+                        Span::styled("▎", Style::default().fg(theme.selection))
+                    } else {
+                        Span::raw(" ")
+                    });
                     spans.push(Span::styled(
                         graph_cont.to_string(),
                         Style::default().fg(theme.muted),
