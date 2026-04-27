@@ -230,7 +230,7 @@ impl App {
         let mut lines_consumed = 0;
         for idx in offset..self.rows.len() {
             let height = match self.rows[idx] {
-                DisplayRow::CommitNode { .. } => 2,
+                DisplayRow::CommitNode { .. } | DisplayRow::OpLogItem { .. } => 2,
                 _ => 1,
             };
             if lines_consumed + height > screen_line {
