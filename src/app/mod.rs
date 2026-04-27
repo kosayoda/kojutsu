@@ -653,6 +653,25 @@ impl App {
         };
     }
 
+    /// Number of ancestor generations to load when expanding at a terminator.
+    const ANCESTOR_EXPAND_COUNT: usize = 10;
+
+    /// Widen the revset to include ancestors of the given commit.
+    pub fn expand_ancestors(&mut self, entry_idx: crate::idx::EntryIdx) {
+        let change_id = self.change_id(entry_idx);
+        let new_revset = format!(
+            "({}) | ancestors({}, {})",
+            self.revset,
+            change_id,
+            Self::ANCESTOR_EXPAND_COUNT,
+        );
+        self.jump_after_refresh = Some(JumpTarget::ChangeId(change_id.to_string()));
+        self.revset_state = Loadable::Loading;
+        self.pending_revset = Some(new_revset.clone());
+        self.pending_repo_requests
+            .push(RepoRequest::load_revset(Some(new_revset)));
+    }
+
     pub fn request_op_log_load_more(&mut self) {
         self.op_log_limit += OP_LOG_BATCH_SIZE;
         self.op_log_loaded = false;

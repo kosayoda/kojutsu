@@ -36,29 +36,20 @@ pub fn render(entries: &[DagEntry], glyphs: &GlyphChars) -> Vec<GraphLines> {
     entries
         .iter()
         .map(|entry| {
-            // Filter out Missing edges when there are reachable (Direct/Indirect)
-            // edges. Missing edges only add useless ~ terminator columns on
-            // merge commits whose parents are outside the revset.
-            let has_reachable = entry
-                .edges
-                .iter()
-                .any(|e| !matches!(e.kind, EdgeKind::Missing));
-            let parents: Vec<Ancestor<String>> = if has_reachable {
+            // Convert edges to renderdag ancestors. Missing edges become
+            // Anonymous to produce ~ terminator lines in the graph.
+            let parents: Vec<Ancestor<String>> = if entry.edges.is_empty() {
+                vec![]
+            } else {
                 entry
                     .edges
                     .iter()
-                    .filter(|e| !matches!(e.kind, EdgeKind::Missing))
                     .map(|e| match e.kind {
                         EdgeKind::Direct => Ancestor::Parent(e.target.to_string()),
                         EdgeKind::Indirect => Ancestor::Ancestor(e.target.to_string()),
-                        EdgeKind::Missing => unreachable!(),
+                        EdgeKind::Missing => Ancestor::Anonymous,
                     })
                     .collect()
-            } else if entry.edges.is_empty() {
-                vec![]
-            } else {
-                // All edges are Missing -- keep one for the ~ terminator.
-                vec![Ancestor::Anonymous]
             };
 
             let glyph_char = glyphs.char_for(entry.commit.glyph());
@@ -110,21 +101,17 @@ pub fn render_generic(entries: &[(&str, &[Edge], char)]) -> Vec<GraphLines> {
     entries
         .iter()
         .map(|(id, edges, glyph)| {
-            let has_reachable = edges.iter().any(|e| !matches!(e.kind, EdgeKind::Missing));
-            let parents: Vec<Ancestor<String>> = if has_reachable {
+            let parents: Vec<Ancestor<String>> = if edges.is_empty() {
+                vec![]
+            } else {
                 edges
                     .iter()
-                    .filter(|e| !matches!(e.kind, EdgeKind::Missing))
                     .map(|e| match e.kind {
                         EdgeKind::Direct => Ancestor::Parent(e.target.to_string()),
                         EdgeKind::Indirect => Ancestor::Ancestor(e.target.to_string()),
-                        EdgeKind::Missing => unreachable!(),
+                        EdgeKind::Missing => Ancestor::Anonymous,
                     })
                     .collect()
-            } else if edges.is_empty() {
-                vec![]
-            } else {
-                vec![Ancestor::Anonymous]
             };
 
             let message = format!("{NODE_SENTINEL}\n{CONT_SENTINEL}");

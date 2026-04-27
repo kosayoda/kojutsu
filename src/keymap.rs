@@ -62,6 +62,7 @@ pub enum AppAction {
     ScrollRight,
     ToggleFold,
     Refresh,
+    ExpandAncestors,
     Abandon,
     Absorb,
     Commit,
@@ -342,6 +343,7 @@ impl Default for Keymaps {
         let mut dag_root = shared_bindings();
         dag_root.extend(vec![
             bind("a", AppAction::Absorb, "absorb", C),
+            bind("+", AppAction::ExpandAncestors, "expand ancestors", C),
             bind("f", AppAction::Fix, "fix", C),
             prefix(
                 "shift-f",
@@ -802,6 +804,7 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::Parallelize
         | AppAction::SimplifyParents
         | AppAction::Revert
+        | AppAction::ExpandAncestors
         | AppAction::Fix
         | AppAction::TagSet
         | AppAction::TagDelete => &[Commit],
@@ -856,6 +859,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::Parallelize => "parallelize",
         AppAction::SimplifyParents => "simplify-parents",
         AppAction::Revert => "revert",
+        AppAction::ExpandAncestors => "expand",
         AppAction::Fix => "fix",
         AppAction::FileUntrack => "untrack",
         AppAction::SelectPreset => "preset",
