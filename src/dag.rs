@@ -359,11 +359,20 @@ pub enum FileStatus {
     Copied,
 }
 
+/// A token within a diff line (for word-level highlighting).
+#[derive(Clone)]
+pub struct DiffToken {
+    pub text: String,
+    pub is_different: bool,
+}
+
 /// A single line of a unified diff.
 #[derive(Clone)]
 pub struct DiffLine {
     pub kind: DiffLineKind,
     pub content: String,
+    /// Token spans for word-level highlighting within the line.
+    pub tokens: Vec<DiffToken>,
     /// Line number in the old (removed) file. `None` for added lines and headers.
     pub old_line: Option<u32>,
     /// Line number in the new (added) file. `None` for removed lines and headers.

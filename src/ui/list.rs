@@ -765,6 +765,43 @@ fn render_file_line(
     vec![Line::from(spans)]
 }
 
+/// Push diff line content with word-level highlighting.
+/// For add/remove lines with token data, `Different` tokens are rendered bold.
+/// Falls back to `push_searchable` for lines without token data or during search.
+fn push_diff_tokens(
+    spans: &mut Vec<Span<'static>>,
+    diff_line: &DiffLine,
+    base_style: Style,
+    search: Option<&SearchRender<'_>>,
+) {
+    let has_tokens = diff_line.tokens.len() > 1 && diff_line.tokens.iter().any(|t| t.is_different);
+
+    if !has_tokens || search.is_some_and(|s| s.row_state != SearchRowState::None) {
+        // No token data, or search is active — render as a single span.
+        push_searchable(
+            spans,
+            &diff_line.content,
+            SearchScopes::LINE,
+            base_style,
+            search,
+        );
+        return;
+    }
+
+    let emphasis = base_style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
+    for token in &diff_line.tokens {
+        if token.text.is_empty() {
+            continue;
+        }
+        let style = if token.is_different {
+            emphasis
+        } else {
+            base_style
+        };
+        spans.push(Span::styled(token.text.clone(), style));
+    }
+}
+
 fn render_diff_line(
     diff_line: &DiffLine,
     show_line_numbers: bool,
@@ -811,13 +848,7 @@ fn render_diff_line(
         write!(nums, " ").unwrap();
         spans.push(Span::styled(nums, line_num_style));
         spans.push(Span::styled(marker, style));
-        push_searchable(
-            &mut spans,
-            &diff_line.content,
-            SearchScopes::LINE,
-            style,
-            search,
-        );
+        push_diff_tokens(&mut spans, diff_line, style, search);
     } else {
         // Original layout: fixed indent + marker + content
         let prefix = match diff_line.kind {
@@ -827,13 +858,7 @@ fn render_diff_line(
             DiffLineKind::Removed => "      -",
         };
         spans.push(Span::styled(prefix, style));
-        push_searchable(
-            &mut spans,
-            &diff_line.content,
-            SearchScopes::LINE,
-            style,
-            search,
-        );
+        push_diff_tokens(&mut spans, diff_line, style, search);
     }
 
     vec![Line::from(spans)]

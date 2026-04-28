@@ -28,6 +28,7 @@ use pollster::FutureExt as _;
 use jj_lib::conflict_labels::ConflictLabels;
 use jj_lib::conflicts::{materialize_tree_value, ConflictMaterializeOptions};
 use jj_lib::diff_presentation::unified::{self, git_diff_part, DiffLineType};
+use jj_lib::diff_presentation::DiffTokenType;
 use jj_lib::merge::Diff;
 use jj_lib::repo_path::RepoPathBuf;
 
@@ -654,6 +655,7 @@ impl JjRepo {
             return Ok(vec![DiffLine {
                 kind: DiffLineKind::Header,
                 content: "(binary file)".to_string(),
+                tokens: vec![],
                 old_line: None,
                 new_line: None,
             }]);
@@ -681,6 +683,7 @@ impl JjRepo {
                     hunk.right_line_range.start + 1,
                     hunk.right_line_range.len(),
                 ),
+                tokens: vec![],
                 old_line: None,
                 new_line: None,
             });
@@ -690,13 +693,22 @@ impl JjRepo {
             let mut new_line = hunk.right_line_range.start as u32 + 1;
 
             for (line_type, tokens) in &hunk.lines {
-                // Concatenate all tokens into a single string.
-                let text: String = tokens
-                    .iter()
-                    .map(|(_, bytes)| String::from_utf8_lossy(bytes))
-                    .collect::<String>()
-                    .trim_end_matches('\n')
-                    .to_string();
+                // Build token spans preserving word-level diff info.
+                let mut diff_tokens = Vec::new();
+                let mut full_text = String::new();
+                for (tag, bytes) in tokens {
+                    let text = String::from_utf8_lossy(bytes).to_string();
+                    full_text.push_str(&text);
+                    diff_tokens.push(crate::dag::DiffToken {
+                        text,
+                        is_different: matches!(tag, DiffTokenType::Different),
+                    });
+                }
+                // Trim trailing newline from last token.
+                if let Some(last) = diff_tokens.last_mut() {
+                    last.text = last.text.trim_end_matches('\n').to_string();
+                }
+                let text = full_text.trim_end_matches('\n').to_string();
 
                 let (kind, ol, nl) = match line_type {
                     DiffLineType::Context => {
@@ -719,6 +731,7 @@ impl JjRepo {
                 lines.push(DiffLine {
                     kind,
                     content: text,
+                    tokens: diff_tokens,
                     old_line: ol,
                     new_line: nl,
                 });
