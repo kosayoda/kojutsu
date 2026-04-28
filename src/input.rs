@@ -514,6 +514,52 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             change_ids: ids,
             flags,
         }),
+        AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
+            // Get the file under cursor.
+            let (entry_idx, file_idx) = match app.rows.get(app.cursor) {
+                Some(DisplayRow::FileChange {
+                    entry_idx,
+                    file_idx,
+                })
+                | Some(DisplayRow::DiffLine {
+                    entry_idx,
+                    file_idx,
+                    ..
+                }) => (*entry_idx, *file_idx),
+                _ => {
+                    app.set_status("cursor must be on a file");
+                    return Action::None;
+                }
+            };
+            let Some(file) = app
+                .files_for_entry(entry_idx)
+                .and_then(|f| f.get(file_idx.raw()))
+            else {
+                return Action::None;
+            };
+            if !file.has_conflict {
+                app.set_status("no conflict on this file");
+                return Action::None;
+            }
+            let change_id = app.change_id(entry_idx);
+            let path = Str::from(file.path.as_str());
+            let tool = match action {
+                AppAction::ResolveOurs => crate::jj_command::ResolveTool::Ours,
+                AppAction::ResolveTheirs => crate::jj_command::ResolveTool::Theirs,
+                _ => crate::jj_command::ResolveTool::Default,
+            };
+            let cmd = JJCommand::Resolve {
+                change_id,
+                path,
+                tool: tool.clone(),
+                flags,
+            };
+            if matches!(tool, crate::jj_command::ResolveTool::Default) {
+                Action::SuspendAndRunJj(cmd)
+            } else {
+                Action::RunJj(cmd)
+            }
+        }
         AppAction::FileUntrack => {
             let paths = app.selected_file_paths();
             if paths.is_empty() {

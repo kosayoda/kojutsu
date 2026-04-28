@@ -114,6 +114,9 @@ pub enum AppAction {
     Revert,
     Fix,
     FileUntrack,
+    ResolveOurs,
+    ResolveTheirs,
+    ResolveMergeTool,
     ToggleIgnoreImmutable,
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
@@ -352,6 +355,16 @@ impl Default for Keymaps {
         dag_root.extend(vec![
             bind("a", AppAction::Absorb, "absorb", C),
             bind("+", AppAction::ExpandAncestors, "expand ancestors", C),
+            prefix(
+                "shift-c",
+                "conflict",
+                C,
+                vec![
+                    bind("o", AppAction::ResolveOurs, "take ours", C),
+                    bind("t", AppAction::ResolveTheirs, "take theirs", C),
+                    bind("m", AppAction::ResolveMergeTool, "merge tool", C),
+                ],
+            ),
             bind("f", AppAction::Fix, "fix", C),
             prefix(
                 "shift-f",
@@ -836,7 +849,10 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::Fix
         | AppAction::TagSet
         | AppAction::TagDelete => &[Commit],
-        AppAction::FileUntrack => &[File],
+        AppAction::FileUntrack
+        | AppAction::ResolveOurs
+        | AppAction::ResolveTheirs
+        | AppAction::ResolveMergeTool => &[File],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }
@@ -890,6 +906,9 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::ExpandAncestors => "expand",
         AppAction::Fix => "fix",
         AppAction::FileUntrack => "untrack",
+        AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
+            "resolve"
+        }
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",

@@ -248,6 +248,19 @@ pub enum JJCommand {
         paths: SmallVec<Str>,
         flags: CommandFlags,
     },
+    Resolve {
+        change_id: ChangeId,
+        path: Str,
+        tool: ResolveTool,
+        flags: CommandFlags,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum ResolveTool {
+    Ours,
+    Theirs,
+    Default,
 }
 
 /// The result of running a jj command.
@@ -307,7 +320,8 @@ impl JJCommand {
             | JJCommand::OpRevert { flags, .. }
             | JJCommand::OpAbandon { flags, .. }
             | JJCommand::Fix { flags, .. }
-            | JJCommand::FileUntrack { flags, .. } => *flags,
+            | JJCommand::FileUntrack { flags, .. }
+            | JJCommand::Resolve { flags, .. } => *flags,
         }
     }
 
@@ -799,6 +813,23 @@ impl JJCommand {
                 args.extend(paths.iter().cloned());
                 args
             }
+            JJCommand::Resolve {
+                change_id,
+                path,
+                tool,
+                ..
+            } => {
+                let mut args: Vec<Str> = vec!["resolve".into()];
+                args.push("-r".into());
+                args.push(format_compact!("{change_id}"));
+                match tool {
+                    ResolveTool::Ours => args.push("--tool=:ours".into()),
+                    ResolveTool::Theirs => args.push("--tool=:theirs".into()),
+                    ResolveTool::Default => {}
+                }
+                args.push(path.clone());
+                args
+            }
         };
 
         // Append global flags (ignore-immutable, etc.) once at the end.
@@ -848,6 +879,7 @@ impl JJCommand {
                     || matches!(selection, ChangeSelection::Lines(_))
             }
             JJCommand::Split { .. } => true,
+            JJCommand::Resolve { tool, .. } => matches!(tool, ResolveTool::Default),
             _ => false,
         }
     }
