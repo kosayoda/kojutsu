@@ -3,165 +3,26 @@ mod fold;
 mod navigation;
 mod search;
 mod selection;
+mod types;
 mod visual;
+
+pub use types::*;
 
 use std::collections::{HashMap, HashSet};
 
 use ratatui::widgets::ListState;
-use tui_input::Input;
 
 use crate::dag::{DagEntry, DiffLine, EdgeKind, FileChange, LineStats};
-use crate::graph::{self, GraphLines};
+use crate::graph;
 use crate::idx::{EntryIdx, FileIdx, IndexVec};
 use crate::types::SmallVec;
 
-use crate::keymap::{CommandFlags, KeymapNode};
+use crate::keymap::CommandFlags;
 use crate::repo_service::RepoRequest;
 use crate::types::{
-    BookmarkName, ChangeId, CommitId, DisplayRow, FollowUpOption, GlobalToggle, PendingCommand,
-    PendingCommitSelect, PendingSelection, RemoteName, RepoPath, SearchScopes, SearchState,
-    SelectionContext, Str, TargetOperation, VisualRange,
+    BookmarkName, ChangeId, CommitId, DisplayRow, RepoPath, SearchScopes, SearchState,
+    SelectionContext, Str,
 };
-
-// ---------------------------------------------------------------------------
-// Persisted state -- saved to ~/.local/state/kojutsu/state.json across app restarts.
-// ---------------------------------------------------------------------------
-
-#[derive(Default, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
-pub struct PersistedState {
-    pub show_line_numbers: bool,
-    pub ignore_immutable: bool,
-    pub ignore_working_copy: bool,
-    pub debug: bool,
-    pub search_scopes: u8,
-    pub bookmark_search_scopes: u8,
-    pub tag_search_scopes: u8,
-    pub op_log_search_scopes: u8,
-    pub active_preset: Option<usize>,
-}
-
-pub fn load_persisted_state() -> PersistedState {
-    let Some(path) = crate::theme::state_path() else {
-        return PersistedState::default();
-    };
-    match std::fs::read_to_string(&path) {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-        Err(_) => PersistedState::default(),
-    }
-}
-
-pub fn save_persisted_state(state: &PersistedState) {
-    let Some(path) = crate::theme::state_path() else {
-        return;
-    };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(json) = serde_json::to_string_pretty(state) {
-        let _ = std::fs::write(&path, json);
-    }
-}
-
-pub enum StatusLevel {
-    Info,
-    Error,
-}
-
-/// Number of operations to load per batch in the op log view.
-pub const OP_LOG_BATCH_SIZE: usize = 200;
-
-#[derive(Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
-pub enum ActiveView {
-    #[default]
-    Dag,
-    Bookmarks,
-    Tags,
-    Operations,
-    Workspaces,
-}
-
-pub struct BookmarkViewEntry {
-    pub name: BookmarkName,
-    pub commit_id: Option<CommitId>,
-    pub change_id: Option<crate::dag::ShortId>,
-    pub description: Option<String>,
-    pub is_tracked: bool,
-    pub is_synced: bool,
-    pub is_dirty: bool,
-    pub remote: Option<RemoteName>,
-    /// Whether the bookmark has conflicting targets.
-    pub is_conflicted: bool,
-}
-
-pub struct TagViewEntry {
-    pub name: Str,
-    pub commit_id: Option<CommitId>,
-    pub change_id: Option<crate::dag::ShortId>,
-    pub description: Option<String>,
-    /// Whether the local tag has been deleted (only remote refs remain).
-    pub is_deleted: bool,
-}
-
-pub enum OpDiffKind {
-    Added,
-    Removed,
-}
-
-pub struct OpDiffCommit {
-    pub change_id: crate::dag::ShortId,
-    pub commit_id: crate::dag::ShortId,
-    pub description: Option<String>,
-    pub kind: OpDiffKind,
-}
-
-pub struct OpDiffWorkingCopy {
-    pub workspace: Str,
-    pub new_commit: Option<Str>,
-    pub old_commit: Option<Str>,
-}
-
-pub struct OpDiffBookmark {
-    pub name: Str,
-    pub new_target: Option<Str>,
-    pub old_target: Option<Str>,
-}
-
-pub enum OpDetailLine {
-    SectionHeader(Str),
-    Commit(OpDiffCommit),
-    WorkingCopy(OpDiffWorkingCopy),
-    Bookmark(OpDiffBookmark),
-}
-
-pub struct OpLogEntry {
-    /// Hex operation ID (truncated for display).
-    pub id: Str,
-    /// Human-readable operation description.
-    pub description: Str,
-    /// Relative time string (e.g. "5 hours ago").
-    pub relative_time: Str,
-    /// Workspace name that ran this operation.
-    pub workspace: Option<Str>,
-    /// "user@host" who performed the operation.
-    pub user: Str,
-    /// The CLI args that produced this operation (from metadata tags).
-    pub args: Option<Str>,
-    /// Whether this is a pure working-copy snapshot.
-    pub is_snapshot: bool,
-    /// Whether this is the repo's current operation.
-    pub is_current: bool,
-    /// Pre-rendered graph lines.
-    pub graph: crate::graph::GraphLines,
-}
-
-pub struct WorkspaceViewEntry {
-    pub name: Str,
-    pub commit_id: Option<CommitId>,
-    pub change_id: Option<crate::dag::ShortId>,
-    pub description: Option<String>,
-    pub is_current: bool,
-}
 
 #[derive(Clone)]
 pub enum Loadable<T> {
@@ -171,11 +32,24 @@ pub enum Loadable<T> {
     Failed(String),
 }
 
+impl<T> Loadable<T> {
+    pub fn loaded(&self) -> Option<&T> {
+        match self {
+            Self::Loaded(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    fn should_request(&self) -> bool {
+        matches!(self, Self::NotRequested | Self::Failed(_))
+    }
+}
+
 /// Consolidated per-commit node in the DAG. Holds commit metadata, resolved
 /// graph edges, rendering data, and lazily loaded file/diff caches.
 pub struct DagNode {
     pub commit: crate::dag::CommitInfo,
-    pub graph: GraphLines,
+    pub graph: crate::graph::GraphLines,
     /// Resolved direct parent entry indices (from DAG edges).
     pub parents: SmallVec<EntryIdx>,
     /// Resolved child entry indices (reverse edges, filled in second pass).
@@ -203,185 +77,6 @@ impl DagNode {
 pub(crate) struct FileFoldKey {
     pub change_id: ChangeId,
     pub path: RepoPath,
-}
-
-impl<T> Loadable<T> {
-    pub fn loaded(&self) -> Option<&T> {
-        match self {
-            Self::Loaded(value) => Some(value),
-            _ => None,
-        }
-    }
-
-    fn should_request(&self) -> bool {
-        matches!(self, Self::NotRequested | Self::Failed(_))
-    }
-}
-
-/// All global toggles. Single source of truth for status bar rendering,
-/// help display, and CLI arg generation.
-pub const GLOBAL_TOGGLES: &[GlobalToggle] = &[
-    GlobalToggle {
-        flag: CommandFlags::IGNORE_IMMUTABLE,
-        hint: "I",
-        label: "ignore-immutable",
-        cli_flag: "--ignore-immutable",
-    },
-    GlobalToggle {
-        flag: CommandFlags::IGNORE_WORKING_COPY,
-        hint: "W",
-        label: "ignore-working-copy",
-        cli_flag: "--ignore-working-copy",
-    },
-    GlobalToggle {
-        flag: CommandFlags::DEBUG,
-        hint: "D",
-        label: "debug",
-        cli_flag: "--debug",
-    },
-];
-
-/// Active visual selection mode.
-pub enum VisualMode {
-    /// Visual selection of diff lines within one file.
-    Lines {
-        /// Row index where `v` was pressed.
-        anchor: usize,
-    },
-    /// Visual selection of commits along a branch.
-    Commits {
-        /// Entry where `v` was pressed.
-        anchor: EntryIdx,
-        /// Ordered path from newest to oldest along Direct edges (inclusive).
-        path: Vec<EntryIdx>,
-    },
-}
-
-/// Persistent visual range (survives exiting visual mode with `v`).
-pub enum PersistentVisualRange {
-    Lines(VisualRange),
-    Commits(Vec<EntryIdx>),
-}
-
-/// Where to jump the cursor after the next DAG refresh.
-pub enum JumpTarget {
-    /// Jump to the working copy commit (@).
-    WorkingCopy,
-    /// Jump to the commit that has this local bookmark.
-    Bookmark(BookmarkName),
-    /// Jump to a commit by change ID prefix.
-    ChangeId(String),
-}
-
-/// The current interaction mode.
-pub enum AppMode {
-    /// Normal browsing.
-    Normal,
-    /// A prefix key was pressed; showing submenu options in the bottom bar.
-    /// References point into the leaked `&'static Keymap`.
-    Submenu {
-        /// Display string for the prefix key (e.g., "s", "b", "g").
-        key: String,
-        label: &'static str,
-        children: &'static [(keymap_parser::Node, KeymapNode)],
-        flags: CommandFlags,
-    },
-    /// Showing the result of a shell command. Dismissed on next keypress.
-    CommandOutput {
-        /// The command that was run, e.g. `"$ jj abandon xvzwolmw"`.
-        command: String,
-        /// Raw stdout+stderr bytes (may contain ANSI color codes).
-        output: Vec<u8>,
-        /// Whether the command succeeded.
-        success: bool,
-    },
-    /// Help overlay showing all keybindings.
-    Help { scroll: u16 },
-    /// Single-line text input in the bottom bar.
-    TextInput {
-        prompt: String,
-        input: Input,
-        on_submit: PendingCommand,
-    },
-    /// Live search input at the bottom bar.
-    SearchInput,
-    /// Navigating to select a target commit for a two-commit operation.
-    TargetSelect {
-        prompt: &'static str,
-        source: ChangeId,
-        restore_cursor: usize,
-        operation: TargetOperation,
-        flags: CommandFlags,
-    },
-    /// Navigating to select a single commit (e.g. for workspace revision).
-    CommitSelect {
-        restore_cursor: usize,
-        pending: PendingCommitSelect,
-        flags: CommandFlags,
-    },
-    /// Choosing from a set of follow-up options after target selection.
-    FollowUp {
-        prompt: String,
-        options: Vec<FollowUpOption>,
-    },
-    /// Selecting an item from a list (e.g. picking a bookmark).
-    SelectFromList {
-        title: String,
-        items: Vec<String>,
-        /// Indices into `items` that match the current filter.
-        filtered_indices: Vec<usize>,
-        /// Cursor position within `filtered_indices`.
-        cursor: usize,
-        /// Scroll offset for the list viewport.
-        scroll_offset: usize,
-        /// Indices of toggled items in original `items` (multiselect only).
-        marked: HashSet<usize>,
-        /// Whether multiselect is enabled.
-        multi: bool,
-        /// Current filter text (empty = no filter active).
-        filter: String,
-        /// Whether the filter input is focused.
-        filtering: bool,
-        on_select: PendingSelection,
-    },
-}
-
-impl AppMode {
-    /// Construct a `TextInput` mode with the given prompt, prefill, and submit handler.
-    pub fn text_input(
-        prompt: impl Into<String>,
-        prefill: impl Into<String>,
-        on_submit: PendingCommand,
-    ) -> Self {
-        AppMode::TextInput {
-            prompt: prompt.into(),
-            input: Input::new(prefill.into()),
-            on_submit,
-        }
-    }
-
-    /// Construct a `SelectFromList` mode with default cursor/filter state.
-    pub fn select_from_list(
-        title: impl Into<String>,
-        items: Vec<String>,
-        multi: bool,
-        on_select: PendingSelection,
-        focus_filter: bool,
-    ) -> Self {
-        let filtered_indices = (0..items.len()).collect();
-        AppMode::SelectFromList {
-            title: title.into(),
-            items,
-            filtered_indices,
-            cursor: 0,
-            scroll_offset: 0,
-            marked: HashSet::new(),
-            multi,
-            filter: String::new(),
-            filtering: focus_filter,
-            on_select,
-        }
-    }
 }
 
 /// Application state. Pure data -- no I/O, no rendering.
@@ -420,24 +115,8 @@ pub struct App {
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
     pub cursor: usize,
-    /// Saved (cursor, scroll_offset) per view for restoration on switch.
-    dag_view_state: (usize, usize),
-    bookmark_view_state: (usize, usize),
-    tag_view_state: (usize, usize),
-    op_log_view_state: (usize, usize),
-    workspace_view_state: (usize, usize),
-    /// Saved horizontal scroll per view.
-    dag_h_scroll: usize,
-    bookmark_h_scroll: usize,
-    tag_h_scroll: usize,
-    op_log_h_scroll: usize,
-    workspace_h_scroll: usize,
-    /// Saved search scopes per view.
-    dag_search_scopes: SearchScopes,
-    bookmark_search_scopes: SearchScopes,
-    tag_search_scopes: SearchScopes,
-    op_log_search_scopes: SearchScopes,
-    workspace_search_scopes: SearchScopes,
+    /// Saved per-view state (cursor, scroll, h_scroll, search scopes).
+    view_states: [ViewState; <ActiveView as strum::EnumCount>::COUNT],
     /// Persisted list widget state (preserves scroll offset across frames).
     pub list_state: ListState,
     /// Header height from the last render (for mouse click translation).
@@ -533,21 +212,7 @@ impl App {
             op_details: HashMap::new(),
             rows: Vec::new(),
             cursor: 0,
-            dag_view_state: (0, 0),
-            bookmark_view_state: (0, 0),
-            tag_view_state: (0, 0),
-            op_log_view_state: (0, 0),
-            workspace_view_state: (0, 0),
-            dag_h_scroll: 0,
-            bookmark_h_scroll: 0,
-            tag_h_scroll: 0,
-            op_log_h_scroll: 0,
-            workspace_h_scroll: 0,
-            dag_search_scopes: SearchScopes::DEFAULT,
-            bookmark_search_scopes: SearchScopes::DEFAULT_BOOKMARK,
-            tag_search_scopes: SearchScopes::DEFAULT_TAG,
-            op_log_search_scopes: SearchScopes::DEFAULT_OP_LOG,
-            workspace_search_scopes: SearchScopes::DEFAULT,
+            view_states: default_view_states(),
             list_state: ListState::default(),
             last_header_height: 2,
             last_list_height: 0,
@@ -606,35 +271,14 @@ impl App {
         if self.active_view == view {
             return;
         }
-        // Save current view state (cursor, scroll, search scopes).
-        let state = (self.cursor, self.scroll_offset());
-        match self.active_view {
-            ActiveView::Dag => {
-                self.dag_view_state = state;
-                self.dag_search_scopes = self.search_scopes;
-                self.dag_h_scroll = self.h_scroll;
-            }
-            ActiveView::Bookmarks => {
-                self.bookmark_view_state = state;
-                self.bookmark_search_scopes = self.search_scopes;
-                self.bookmark_h_scroll = self.h_scroll;
-            }
-            ActiveView::Tags => {
-                self.tag_view_state = state;
-                self.tag_search_scopes = self.search_scopes;
-                self.tag_h_scroll = self.h_scroll;
-            }
-            ActiveView::Operations => {
-                self.op_log_view_state = state;
-                self.op_log_search_scopes = self.search_scopes;
-                self.op_log_h_scroll = self.h_scroll;
-            }
-            ActiveView::Workspaces => {
-                self.workspace_view_state = state;
-                self.workspace_search_scopes = self.search_scopes;
-                self.workspace_h_scroll = self.h_scroll;
-            }
-        }
+        // Save current view state.
+        let offset = self.scroll_offset();
+        let vs = &mut self.view_states[self.active_view.idx()];
+        vs.cursor = self.cursor;
+        vs.scroll_offset = offset;
+        vs.h_scroll = self.h_scroll;
+        vs.search_scopes = self.search_scopes;
+
         self.active_view = view;
         // Trigger lazy load of operation log data.
         if view == ActiveView::Operations && !self.op_log_loaded {
@@ -642,44 +286,13 @@ impl App {
                 .push(RepoRequest::load_operations(self.op_log_limit));
         }
         self.rebuild_rows();
+
         // Restore saved state for new view.
-        let (cursor, offset, scopes) = match self.active_view {
-            ActiveView::Dag => (
-                self.dag_view_state.0,
-                self.dag_view_state.1,
-                self.dag_search_scopes,
-            ),
-            ActiveView::Bookmarks => (
-                self.bookmark_view_state.0,
-                self.bookmark_view_state.1,
-                self.bookmark_search_scopes,
-            ),
-            ActiveView::Tags => (
-                self.tag_view_state.0,
-                self.tag_view_state.1,
-                self.tag_search_scopes,
-            ),
-            ActiveView::Operations => (
-                self.op_log_view_state.0,
-                self.op_log_view_state.1,
-                self.op_log_search_scopes,
-            ),
-            ActiveView::Workspaces => (
-                self.workspace_view_state.0,
-                self.workspace_view_state.1,
-                self.workspace_search_scopes,
-            ),
-        };
-        self.cursor = cursor.min(self.rows.len().saturating_sub(1));
-        *self.list_state.offset_mut() = offset;
-        self.search_scopes = scopes;
-        self.h_scroll = match self.active_view {
-            ActiveView::Dag => self.dag_h_scroll,
-            ActiveView::Bookmarks => self.bookmark_h_scroll,
-            ActiveView::Tags => self.tag_h_scroll,
-            ActiveView::Operations => self.op_log_h_scroll,
-            ActiveView::Workspaces => self.workspace_h_scroll,
-        };
+        let vs = &self.view_states[view.idx()];
+        self.cursor = vs.cursor.min(self.rows.len().saturating_sub(1));
+        *self.list_state.offset_mut() = vs.scroll_offset;
+        self.search_scopes = vs.search_scopes;
+        self.h_scroll = vs.h_scroll;
     }
 
     /// Number of ancestor generations to load when expanding at a terminator.
@@ -909,16 +522,27 @@ impl App {
         std::mem::take(&mut self.pending_repo_requests)
     }
 
+    /// Get effective search scopes for a view (live value for active view,
+    /// saved value for others).
+    fn effective_scopes(&self, view: ActiveView) -> SearchScopes {
+        if self.active_view == view {
+            self.search_scopes
+        } else {
+            self.view_states[view.idx()].search_scopes
+        }
+    }
+
     pub fn to_persisted_state(&self) -> PersistedState {
         PersistedState {
             show_line_numbers: self.show_line_numbers,
             ignore_immutable: self.toggles.contains(CommandFlags::IGNORE_IMMUTABLE),
             ignore_working_copy: self.toggles.contains(CommandFlags::IGNORE_WORKING_COPY),
             debug: self.toggles.contains(CommandFlags::DEBUG),
-            search_scopes: self.dag_search_scopes.bits(),
-            bookmark_search_scopes: self.bookmark_search_scopes.bits(),
-            tag_search_scopes: self.tag_search_scopes.bits(),
-            op_log_search_scopes: self.op_log_search_scopes.bits(),
+            search_scopes: self.effective_scopes(ActiveView::Dag).bits(),
+            bookmark_search_scopes: self.effective_scopes(ActiveView::Bookmarks).bits(),
+            tag_search_scopes: self.effective_scopes(ActiveView::Tags).bits(),
+            op_log_search_scopes: self.effective_scopes(ActiveView::Operations).bits(),
+            workspace_search_scopes: self.effective_scopes(ActiveView::Workspaces).bits(),
             active_preset: self.active_preset,
         }
     }
@@ -931,19 +555,25 @@ impl App {
             .set(CommandFlags::IGNORE_WORKING_COPY, state.ignore_working_copy);
         self.toggles.set(CommandFlags::DEBUG, state.debug);
         if state.search_scopes != 0 {
-            self.dag_search_scopes = SearchScopes::from_bits_truncate(state.search_scopes);
-            self.search_scopes = self.dag_search_scopes;
+            let scopes = SearchScopes::from_bits_truncate(state.search_scopes);
+            self.view_states[ActiveView::Dag.idx()].search_scopes = scopes;
+            self.search_scopes = scopes; // DAG is default active view
         }
         if state.bookmark_search_scopes != 0 {
-            self.bookmark_search_scopes =
+            self.view_states[ActiveView::Bookmarks.idx()].search_scopes =
                 SearchScopes::from_bits_truncate(state.bookmark_search_scopes);
         }
         if state.tag_search_scopes != 0 {
-            self.tag_search_scopes = SearchScopes::from_bits_truncate(state.tag_search_scopes);
+            self.view_states[ActiveView::Tags.idx()].search_scopes =
+                SearchScopes::from_bits_truncate(state.tag_search_scopes);
         }
         if state.op_log_search_scopes != 0 {
-            self.op_log_search_scopes =
+            self.view_states[ActiveView::Operations.idx()].search_scopes =
                 SearchScopes::from_bits_truncate(state.op_log_search_scopes);
+        }
+        if state.workspace_search_scopes != 0 {
+            self.view_states[ActiveView::Workspaces.idx()].search_scopes =
+                SearchScopes::from_bits_truncate(state.workspace_search_scopes);
         }
         self.active_preset = state.active_preset.filter(|&i| i < self.presets.len());
     }

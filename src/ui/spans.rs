@@ -5,6 +5,11 @@ use unicode_width::UnicodeWidthChar;
 use crate::dag::ShortId;
 use crate::theme::Theme;
 
+/// Middle dot separator span: ` · ` in muted color.
+pub(super) fn dot(theme: &Theme) -> Span<'static> {
+    Span::styled(" · ", Style::default().fg(theme.muted))
+}
+
 /// Skip `skip` display columns from the left and cap at `max_width` visible columns.
 pub(super) fn trim_line(line: Line<'static>, skip: usize, max_width: usize) -> Line<'static> {
     if skip == 0 {
@@ -65,7 +70,12 @@ pub(super) fn trim_line(line: Line<'static>, skip: usize, max_width: usize) -> L
 pub(super) fn line_width(line: &Line<'_>) -> usize {
     line.spans
         .iter()
-        .map(|s| s.content.chars().map(|c| c.width().unwrap_or(0)).sum::<usize>())
+        .map(|s| {
+            s.content
+                .chars()
+                .map(|c| c.width().unwrap_or(0))
+                .sum::<usize>()
+        })
         .sum()
 }
 

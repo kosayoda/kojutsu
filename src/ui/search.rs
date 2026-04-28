@@ -49,6 +49,14 @@ pub(super) fn search_gutter<'a>(state: SearchRowState, theme: &Theme) -> Span<'a
     }
 }
 
+/// Convenience: extract the search row state and build the gutter span.
+pub(super) fn gutter_span<'a>(search: Option<&SearchRender<'_>>, theme: &Theme) -> Span<'a> {
+    search_gutter(
+        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
+        theme,
+    )
+}
+
 pub(super) fn contains_query(haystack: &str, needle: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         haystack.contains(needle)

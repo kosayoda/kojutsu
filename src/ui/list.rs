@@ -137,13 +137,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let graph_cont = app.nodes[*entry_idx].graph.cont.as_str();
                     let is_selected = app.is_commit_selected(*entry_idx);
                     let in_visual = app.is_in_visual_commit_range(*entry_idx);
-                    let mut spans = vec![search_gutter(
-                        row_search
-                            .as_ref()
-                            .map(|s| s.row_state)
-                            .unwrap_or(SearchRowState::None),
-                        theme,
-                    )];
+                    let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
                     // Visual + selection bars (same as line 2 of commit item).
                     spans.push(if in_visual {
                         Span::styled("│", Style::default().fg(theme.accent))
@@ -175,13 +169,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .get(line_idx.raw())
                         .map(|s| s.as_str())
                         .unwrap_or("");
-                    let mut spans = vec![search_gutter(
-                        row_search
-                            .as_ref()
-                            .map(|s| s.row_state)
-                            .unwrap_or(SearchRowState::None),
-                        theme,
-                    )];
+                    let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
                     // Continue visual + selection bars through graph links.
                     let is_selected = app.is_commit_selected(*entry_idx);
                     let in_visual = app.is_in_visual_commit_range(*entry_idx);
@@ -309,13 +297,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|e| e.graph.extra.get(line_idx.raw()))
                         .map(|s| s.as_str())
                         .unwrap_or("");
-                    let mut spans = vec![search_gutter(
-                        row_search
-                            .as_ref()
-                            .map(|s| s.row_state)
-                            .unwrap_or(SearchRowState::None),
-                        theme,
-                    )];
+                    let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
                     spans.push(Span::styled(
                         graph_str.to_string(),
                         Style::default().fg(theme.muted),
@@ -713,10 +695,7 @@ fn render_file_line(
         FileSelectionState::None => " ",
     };
 
-    let mut spans = vec![search_gutter(
-        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
-        theme,
-    )];
+    let mut spans = vec![gutter_span(search, theme)];
     spans.extend(vec![
         Span::styled(
             format!("  {select_char} "),
@@ -818,10 +797,7 @@ fn render_diff_line(
 
     let line_num_style = Style::default().fg(theme.muted);
 
-    let mut spans = vec![search_gutter(
-        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
-        theme,
-    )];
+    let mut spans = vec![gutter_span(search, theme)];
     // Left margin: visual range bar │ + selection indicator ▎.
     let is_selectable = diff_line.kind.is_selectable();
     if is_selectable {
@@ -870,10 +846,7 @@ fn render_tag_item(
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let mut spans = vec![search_gutter(
-        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
-        theme,
-    )];
+    let mut spans = vec![gutter_span(search, theme)];
 
     // Tag name.
     let style = if entry.is_deleted {
@@ -893,17 +866,15 @@ fn render_tag_item(
         spans.push(Span::styled(" (deleted)", Style::default().fg(theme.muted)));
     }
 
-    let dot = || Span::styled(" · ", Style::default().fg(theme.muted));
-
     // Change ID (if available), with prefix highlighting.
     if let Some(ref cid) = entry.change_id {
-        spans.push(dot());
+        spans.push(dot(theme));
         push_short_id(&mut spans, cid, theme.change_id, theme);
     }
 
     // Description.
     if let Some(ref desc) = entry.description {
-        spans.push(dot());
+        spans.push(dot(theme));
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }
 
@@ -946,12 +917,7 @@ fn render_op_log_item(
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let mut spans = vec![search_gutter(
-        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
-        theme,
-    )];
-
-    let dot = || Span::styled(" · ", Style::default().fg(theme.muted));
+    let mut spans = vec![gutter_span(search, theme)];
 
     // Graph prefix (contains the glyph character).
     let graph_style = if entry.is_current {
@@ -977,7 +943,7 @@ fn render_op_log_item(
     } else {
         Style::default().fg(theme.text)
     };
-    spans.push(dot());
+    spans.push(dot(theme));
     push_searchable(
         &mut spans,
         &entry.description,
@@ -987,7 +953,7 @@ fn render_op_log_item(
     );
 
     // Relative time.
-    spans.push(dot());
+    spans.push(dot(theme));
     let time_color = if entry.is_snapshot {
         theme.muted
     } else {
@@ -1000,7 +966,7 @@ fn render_op_log_item(
 
     // User.
     if !entry.user.is_empty() {
-        spans.push(dot());
+        spans.push(dot(theme));
         spans.push(Span::styled(
             entry.user.to_string(),
             Style::default().fg(theme.user),
@@ -1011,10 +977,7 @@ fn render_op_log_item(
 
     // Second line: gutter + graph continuation + workspace · command args.
     let mut spans2 = vec![
-        search_gutter(
-            search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
-            theme,
-        ),
+        gutter_span(search, theme),
         Span::styled(entry.graph.cont.clone(), Style::default().fg(theme.muted)),
     ];
     if let Some(ref ws) = entry.workspace {
@@ -1134,12 +1097,7 @@ fn render_workspace_item(
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let mut spans = vec![search_gutter(
-        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
-        theme,
-    )];
-
-    let dot = || Span::styled(" · ", Style::default().fg(theme.muted));
+    let mut spans = vec![gutter_span(search, theme)];
 
     // Workspace name.
     let name_style = if entry.is_current {
@@ -1156,13 +1114,13 @@ fn render_workspace_item(
 
     // Change ID.
     if let Some(ref cid) = entry.change_id {
-        spans.push(dot());
+        spans.push(dot(theme));
         push_short_id(&mut spans, cid, theme.change_id, theme);
     }
 
     // Description.
     if let Some(ref desc) = entry.description {
-        spans.push(dot());
+        spans.push(dot(theme));
         push_searchable(
             &mut spans,
             desc,
@@ -1180,10 +1138,7 @@ fn render_bookmark_item(
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let mut spans = vec![search_gutter(
-        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
-        theme,
-    )];
+    let mut spans = vec![gutter_span(search, theme)];
 
     // Conflict indicator for bookmark conflicts (divergent operations).
     if entry.is_conflicted {
@@ -1229,17 +1184,15 @@ fn render_bookmark_item(
         );
     }
 
-    let dot = || Span::styled(" · ", Style::default().fg(theme.muted));
-
     // Change ID (if available), with prefix highlighting.
     if let Some(ref cid) = entry.change_id {
-        spans.push(dot());
+        spans.push(dot(theme));
         push_short_id(&mut spans, cid, theme.change_id, theme);
     }
 
     // Description.
     if let Some(ref desc) = entry.description {
-        spans.push(dot());
+        spans.push(dot(theme));
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }
 
