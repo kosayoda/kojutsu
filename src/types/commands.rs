@@ -150,6 +150,8 @@ pub enum PendingCommand {
     WorkspaceAddPath { flags: CommandFlags },
     /// Workspace add step 2: path collected, collecting name. Text = name.
     WorkspaceAddName { path: String, flags: CommandFlags },
+    /// Rename current workspace. Text = new name.
+    WorkspaceRename { flags: CommandFlags },
 }
 
 impl PendingCommand {
@@ -198,6 +200,10 @@ impl PendingCommand {
             PendingCommand::Commit { flags, selection } => JJCommand::Commit {
                 message: Some(text),
                 selection,
+                flags,
+            },
+            PendingCommand::WorkspaceRename { flags } => JJCommand::WorkspaceRename {
+                new_name: text,
                 flags,
             },
             PendingCommand::WorkspaceAddPath { .. } | PendingCommand::WorkspaceAddName { .. } => {

@@ -121,6 +121,7 @@ pub enum AppAction {
     WorkspaceAdd,
     WorkspaceForget,
     WorkspaceList,
+    WorkspaceRename,
     ToggleSelect,
     EnterVisualMode,
     StartSearch,
@@ -540,6 +541,7 @@ impl Default for Keymaps {
                     bind("a", AppAction::WorkspaceAdd, "add", C),
                     bind("f", AppAction::WorkspaceForget, "forget", C),
                     bind("l", AppAction::WorkspaceList, "list", C),
+                    bind("r", AppAction::WorkspaceRename, "rename", C),
                 ],
             ),
         ]);

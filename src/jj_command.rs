@@ -215,6 +215,10 @@ pub enum JJCommand {
     WorkspaceList {
         flags: CommandFlags,
     },
+    WorkspaceRename {
+        new_name: String,
+        flags: CommandFlags,
+    },
     TagSet {
         name: String,
         change_id: ChangeId,
@@ -296,6 +300,7 @@ impl JJCommand {
             | JJCommand::WorkspaceAdd { flags, .. }
             | JJCommand::WorkspaceForget { flags, .. }
             | JJCommand::WorkspaceList { flags, .. }
+            | JJCommand::WorkspaceRename { flags, .. }
             | JJCommand::TagSet { flags, .. }
             | JJCommand::TagDelete { flags, .. }
             | JJCommand::OpRestore { flags, .. }
@@ -746,6 +751,13 @@ impl JJCommand {
             }
             JJCommand::WorkspaceList { .. } => {
                 vec!["workspace".into(), "list".into()]
+            }
+            JJCommand::WorkspaceRename { new_name, .. } => {
+                vec![
+                    "workspace".into(),
+                    "rename".into(),
+                    Str::from(new_name.as_str()),
+                ]
             }
             JJCommand::TagSet {
                 name, change_id, ..

@@ -482,6 +482,14 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             }
         }
         AppAction::WorkspaceList => Action::RunJj(JJCommand::WorkspaceList { flags }),
+        AppAction::WorkspaceRename => {
+            app.mode = AppMode::text_input(
+                "rename workspace to: ",
+                "",
+                PendingCommand::WorkspaceRename { flags },
+            );
+            Action::None
+        }
         AppAction::ShowHelp => {
             app.mode = AppMode::Help { scroll: 0 };
             Action::None
