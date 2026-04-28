@@ -62,6 +62,8 @@ pub struct DagNode {
     pub stats: Loadable<LineStats>,
     /// Lazily loaded diff lines, parallel to `files` (indexed by FileIdx).
     pub diffs: Vec<Loadable<Vec<DiffLine>>>,
+    /// Lazily loaded conflict hunks, parallel to `files` (for conflicted files).
+    pub conflict_hunks: Vec<Loadable<Vec<crate::dag::ConflictHunk>>>,
 }
 
 impl DagNode {
@@ -69,6 +71,14 @@ impl DagNode {
     pub fn ensure_diffs(&mut self, n: usize) {
         if self.diffs.len() < n {
             self.diffs.resize_with(n, || Loadable::NotRequested);
+        }
+    }
+
+    /// Ensure the conflict_hunks vector is large enough to hold `n` entries.
+    pub fn ensure_conflict_hunks(&mut self, n: usize) {
+        if self.conflict_hunks.len() < n {
+            self.conflict_hunks
+                .resize_with(n, || Loadable::NotRequested);
         }
     }
 }
@@ -398,6 +408,87 @@ impl App {
         self.tag_entries.get(tag_idx.raw())
     }
 
+    /// Pick a side for a conflict hunk. If all hunks are resolved, write the file back.
+    pub fn pick_conflict_side(
+        &mut self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: crate::idx::ConflictHunkIdx,
+        side: usize,
+    ) {
+        let fi = file_idx.raw();
+        let hi = hunk_idx.raw();
+        let Some(hunks) = self.nodes[entry_idx]
+            .conflict_hunks
+            .get_mut(fi)
+            .and_then(|l| match l {
+                Loadable::Loaded(h) => Some(h),
+                _ => None,
+            })
+        else {
+            return;
+        };
+        let Some(hunk) = hunks.get_mut(hi) else {
+            return;
+        };
+        if let crate::dag::ConflictHunkKind::Conflict {
+            sides, selected, ..
+        } = &mut hunk.kind
+        {
+            if side < sides.len() {
+                *selected = Some(side);
+            }
+        }
+
+        // Check if all conflict hunks are now resolved.
+        let all_resolved = hunks.iter().all(|h| match &h.kind {
+            crate::dag::ConflictHunkKind::Resolved { .. } => true,
+            crate::dag::ConflictHunkKind::Conflict { selected, .. } => selected.is_some(),
+        });
+
+        if all_resolved {
+            // Assemble resolved content.
+            let mut content = String::new();
+            for h in hunks.iter() {
+                match &h.kind {
+                    crate::dag::ConflictHunkKind::Resolved { lines } => {
+                        for line in lines {
+                            content.push_str(line);
+                            content.push('\n');
+                        }
+                    }
+                    crate::dag::ConflictHunkKind::Conflict {
+                        sides, selected, ..
+                    } => {
+                        if let Some(si) = selected {
+                            if let Some(side_lines) = sides.get(*si) {
+                                for line in side_lines {
+                                    content.push_str(line);
+                                    content.push('\n');
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Write to the working copy file.
+            let path = self
+                .files_for_entry(entry_idx)
+                .and_then(|f| f.get(fi))
+                .map(|f| f.path.clone());
+            if let Some(file_path) = path {
+                let full_path = std::path::Path::new(&self.repo_root).join(file_path.as_str());
+                if std::fs::write(&full_path, &content).is_ok() {
+                    self.set_status(format!("resolved {}", file_path));
+                } else {
+                    self.set_error(format!("failed to write {}", file_path));
+                }
+            }
+        }
+
+        self.rebuild_rows();
+    }
+
     pub fn selected_op_log_entry(&self) -> Option<&OpLogEntry> {
         let op_log_idx = match self.rows.get(self.cursor)? {
             DisplayRow::OpLogItem { op_log_idx }
@@ -432,7 +523,10 @@ impl App {
             | DisplayRow::OpLogDetailLine { .. }
             | DisplayRow::OpLogGraphLink { .. }
             | DisplayRow::OpLogLoadMore
-            | DisplayRow::WorkspaceItem { .. } => return None,
+            | DisplayRow::WorkspaceItem { .. }
+            | DisplayRow::ConflictHeader { .. }
+            | DisplayRow::ConflictSide { .. }
+            | DisplayRow::ConflictContext { .. } => return None,
         };
         Some(entry_idx)
     }
@@ -631,6 +725,7 @@ fn build_nodes(
                 files: Loadable::NotRequested,
                 stats: Loadable::NotRequested,
                 diffs: Vec::new(),
+                conflict_hunks: Vec::new(),
             }
         })
         .collect();

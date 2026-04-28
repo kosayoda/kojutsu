@@ -301,7 +301,10 @@ impl App {
             | DisplayRow::TagRemoteTarget { .. }
             | DisplayRow::OpLogDetailLine { .. }
             | DisplayRow::OpLogGraphLink { .. }
-            | DisplayRow::OpLogLoadMore => false,
+            | DisplayRow::OpLogLoadMore
+            | DisplayRow::ConflictHeader { .. }
+            | DisplayRow::ConflictSide { .. }
+            | DisplayRow::ConflictContext { .. } => false,
             DisplayRow::WorkspaceItem { workspace_idx } => {
                 let Some(entry) = self.workspace_entries.get(workspace_idx.raw()) else {
                     return false;

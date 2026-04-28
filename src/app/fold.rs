@@ -1,7 +1,8 @@
 use super::{ActiveView, App, Loadable};
 use crate::idx::{
-    BookmarkDetailIdx, BookmarkIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx,
-    GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
+    BookmarkDetailIdx, BookmarkIdx, ConflictHunkIdx, ConflictLineIdx, ConflictSideIdx,
+    DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx,
+    TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
@@ -178,9 +179,57 @@ impl App {
                             file_idx,
                         });
 
-                        // If this file is unfolded, show diff lines.
+                        // If this file is unfolded, show diff lines or conflict hunks.
                         if self.is_file_unfolded(entry_idx, file_idx) {
-                            if let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) {
+                            let has_conflict_hunks = self.nodes[entry_idx]
+                                .conflict_hunks
+                                .get(file_idx_raw)
+                                .and_then(|l| l.loaded())
+                                .is_some();
+
+                            if has_conflict_hunks {
+                                // Show conflict hunks instead of diff.
+                                let hunks = self.nodes[entry_idx].conflict_hunks[file_idx_raw]
+                                    .loaded()
+                                    .unwrap();
+                                let mut conflict_num = 0;
+                                for (hi, hunk) in hunks.iter().enumerate() {
+                                    match &hunk.kind {
+                                        crate::dag::ConflictHunkKind::Resolved { lines } => {
+                                            for li in 0..lines.len() {
+                                                self.rows.push(DisplayRow::ConflictContext {
+                                                    entry_idx,
+                                                    file_idx,
+                                                    hunk_idx: ConflictHunkIdx::new(hi),
+                                                    line_idx: ConflictLineIdx::new(li),
+                                                });
+                                            }
+                                        }
+                                        crate::dag::ConflictHunkKind::Conflict {
+                                            sides, ..
+                                        } => {
+                                            self.rows.push(DisplayRow::ConflictHeader {
+                                                entry_idx,
+                                                file_idx,
+                                                hunk_idx: ConflictHunkIdx::new(hi),
+                                            });
+                                            for (si, side) in sides.iter().enumerate() {
+                                                for li in 0..side.len() {
+                                                    self.rows.push(DisplayRow::ConflictSide {
+                                                        entry_idx,
+                                                        file_idx,
+                                                        hunk_idx: ConflictHunkIdx::new(hi),
+                                                        side_idx: ConflictSideIdx::new(si),
+                                                        line_idx: ConflictLineIdx::new(li),
+                                                    });
+                                                }
+                                            }
+                                            conflict_num += 1;
+                                        }
+                                    }
+                                }
+                                let _ = conflict_num;
+                            } else if let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) {
                                 for line_idx_raw in 0..diff_lines.len() {
                                     self.rows.push(DisplayRow::DiffLine {
                                         entry_idx,
@@ -354,22 +403,41 @@ impl App {
             self.visual = None;
         } else {
             let fi = file_idx.raw();
-            let should_request = self.nodes[entry_idx]
-                .diffs
-                .get(fi)
-                .is_none_or(Loadable::should_request);
-            if should_request {
-                // Clone file data before mutating nodes.
-                let file_info = self
-                    .files_for_entry(entry_idx)
-                    .and_then(|f| f.get(fi))
-                    .map(|f| (f.path.clone(), f.old_path.clone()));
-                if let Some((path, old_path)) = file_info {
-                    let commit_id = self.commit_id(entry_idx).clone();
+            let file_info = self
+                .files_for_entry(entry_idx)
+                .and_then(|f| f.get(fi))
+                .map(|f| (f.path.clone(), f.old_path.clone(), f.has_conflict));
+
+            if let Some((path, old_path, has_conflict)) = file_info {
+                let commit_id = self.commit_id(entry_idx).clone();
+
+                // Request diff lines if needed.
+                let should_request_diff = self.nodes[entry_idx]
+                    .diffs
+                    .get(fi)
+                    .is_none_or(Loadable::should_request);
+                if should_request_diff {
                     self.nodes[entry_idx].ensure_diffs(fi + 1);
                     self.nodes[entry_idx].diffs[fi] = Loadable::Loading;
-                    self.pending_repo_requests
-                        .push(RepoRequest::load_file_diff(commit_id, path, old_path));
+                    self.pending_repo_requests.push(RepoRequest::load_file_diff(
+                        commit_id.clone(),
+                        path.clone(),
+                        old_path,
+                    ));
+                }
+
+                // Also request conflict hunks if the file is conflicted.
+                if has_conflict {
+                    let should_request_hunks = self.nodes[entry_idx]
+                        .conflict_hunks
+                        .get(fi)
+                        .is_none_or(Loadable::should_request);
+                    if should_request_hunks {
+                        self.nodes[entry_idx].ensure_conflict_hunks(fi + 1);
+                        self.nodes[entry_idx].conflict_hunks[fi] = Loadable::Loading;
+                        self.pending_repo_requests
+                            .push(RepoRequest::load_conflict_hunks(commit_id, path));
+                    }
                 }
             }
             self.unfolded_files.insert(fold_key);

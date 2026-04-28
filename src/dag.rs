@@ -359,6 +359,25 @@ pub enum FileStatus {
     Copied,
 }
 
+/// A hunk in a conflicted file — either auto-resolved or needing user choice.
+#[derive(Clone)]
+pub struct ConflictHunk {
+    pub kind: ConflictHunkKind,
+}
+
+#[derive(Clone)]
+pub enum ConflictHunkKind {
+    /// Auto-resolved section — just context lines.
+    Resolved { lines: Vec<String> },
+    /// Conflicted section with multiple sides to choose from.
+    Conflict {
+        /// Each side's content lines.
+        sides: Vec<Vec<String>>,
+        /// Which side the user picked (None = unresolved).
+        selected: Option<usize>,
+    },
+}
+
 /// A token within a diff line (for word-level highlighting).
 #[derive(Clone)]
 pub struct DiffToken {

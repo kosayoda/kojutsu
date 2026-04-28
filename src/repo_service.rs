@@ -40,6 +40,10 @@ enum RepoRequestKind {
     Operations {
         limit: usize,
     },
+    ConflictHunks {
+        commit_id: CommitId,
+        path: RepoPath,
+    },
     OpDiff {
         op_id: Str,
     },
@@ -112,6 +116,16 @@ pub enum RepoResult {
     OperationsFailed {
         error: String,
     },
+    ConflictHunksLoaded {
+        commit_id: CommitId,
+        path: RepoPath,
+        hunks: Vec<crate::dag::ConflictHunk>,
+    },
+    ConflictHunksFailed {
+        commit_id: CommitId,
+        path: RepoPath,
+        error: String,
+    },
     OpDiffLoaded {
         op_id: Str,
         lines: Vec<crate::app::OpDetailLine>,
@@ -149,6 +163,13 @@ impl RepoRequest {
                 path,
                 old_path,
             },
+        }
+    }
+
+    pub fn load_conflict_hunks(commit_id: CommitId, path: RepoPath) -> Self {
+        Self {
+            epoch: 0,
+            kind: RepoRequestKind::ConflictHunks { commit_id, path },
         }
     }
 
@@ -194,6 +215,7 @@ impl RepoRequestHandle {
             RepoRequestKind::Commit { .. }
             | RepoRequestKind::FileDiff { .. }
             | RepoRequestKind::Operations { .. }
+            | RepoRequestKind::ConflictHunks { .. }
             | RepoRequestKind::OpDiff { .. } => self.current_epoch.load(Ordering::SeqCst),
         };
         let _ = self.request_tx.send(request);
@@ -271,6 +293,9 @@ impl RepoServiceState {
             }
             RepoRequestKind::Operations { limit } => {
                 self.handle_operations(epoch, limit);
+            }
+            RepoRequestKind::ConflictHunks { commit_id, path } => {
+                self.handle_conflict_hunks(epoch, commit_id, path);
             }
             RepoRequestKind::OpDiff { op_id } => {
                 self.handle_op_diff(epoch, op_id);
@@ -602,6 +627,51 @@ impl RepoServiceState {
                 self.send_if_current(
                     epoch,
                     RepoResult::OperationsFailed {
+                        error: format!("{err:#}"),
+                    },
+                );
+            }
+        }
+    }
+
+    fn handle_conflict_hunks(&mut self, epoch: u64, commit_id: CommitId, path: RepoPath) {
+        if epoch != self.current_epoch.load(Ordering::SeqCst) {
+            return;
+        }
+        if self.repo.is_none() {
+            match JjRepo::open(&self.repo_path) {
+                Ok(repo) => self.repo = Some(repo),
+                Err(err) => {
+                    self.send_if_current(
+                        epoch,
+                        RepoResult::ConflictHunksFailed {
+                            commit_id,
+                            path,
+                            error: format!("{err:#}"),
+                        },
+                    );
+                    return;
+                }
+            }
+        }
+        let repo = self.repo.as_ref().unwrap();
+        match repo.conflict_hunks(&commit_id, &path) {
+            Ok(hunks) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::ConflictHunksLoaded {
+                        commit_id,
+                        path,
+                        hunks,
+                    },
+                );
+            }
+            Err(err) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::ConflictHunksFailed {
+                        commit_id,
+                        path,
                         error: format!("{err:#}"),
                     },
                 );

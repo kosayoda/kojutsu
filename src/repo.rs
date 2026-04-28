@@ -26,7 +26,9 @@ use jj_lib::workspace::{default_working_copy_factories, Workspace};
 use pollster::FutureExt as _;
 
 use jj_lib::conflict_labels::ConflictLabels;
-use jj_lib::conflicts::{materialize_tree_value, ConflictMaterializeOptions};
+use jj_lib::conflicts::{
+    materialize_tree_value, try_materialize_file_conflict_value, ConflictMaterializeOptions,
+};
 use jj_lib::diff_presentation::unified::{self, git_diff_part, DiffLineType};
 use jj_lib::diff_presentation::DiffTokenType;
 use jj_lib::merge::Diff;
@@ -739,6 +741,90 @@ impl JjRepo {
         }
 
         Ok(lines)
+    }
+
+    /// Get the conflict hunks for a conflicted file, broken down by hunk.
+    /// Returns a list of resolved (context) and conflicted hunks.
+    pub fn conflict_hunks(
+        &self,
+        commit_id: &UiCommitId,
+        path: &RepoPath,
+    ) -> Result<Vec<crate::dag::ConflictHunk>> {
+        use crate::dag::{ConflictHunk, ConflictHunkKind};
+
+        let repo = self.repo.as_ref();
+        let backend_id = BackendCommitId::try_from_hex(commit_id.as_str())
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
+        let commit = repo
+            .store()
+            .get_commit(&backend_id)
+            .wrap_err("failed to load commit")?;
+        let tree = commit.tree();
+        let repo_path = RepoPathBuf::from_internal_string(path.as_str())
+            .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
+        let tree_value = tree.path_value(&repo_path).block_on()?;
+        let labels = ConflictLabels::unlabeled();
+
+        let Some(materialized) =
+            try_materialize_file_conflict_value(repo.store(), &repo_path, &tree_value, &labels)
+                .block_on()
+                .wrap_err("failed to materialize conflict")?
+        else {
+            return Ok(vec![]);
+        };
+
+        let merge_options = jj_lib::tree_merge::MergeOptions {
+            hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
+            same_change: jj_lib::merge::SameChange::Accept,
+        };
+        let merge_result = jj_lib::files::merge_hunks(&materialized.contents, &merge_options);
+
+        let hunks = match merge_result {
+            jj_lib::files::MergeResult::Resolved(content) => {
+                let lines = String::from_utf8_lossy(&content)
+                    .lines()
+                    .map(String::from)
+                    .collect();
+                vec![ConflictHunk {
+                    kind: ConflictHunkKind::Resolved { lines },
+                }]
+            }
+            jj_lib::files::MergeResult::Conflict(merge_hunks) => {
+                merge_hunks
+                    .into_iter()
+                    .map(|hunk| {
+                        if let Some(resolved) = hunk.as_resolved() {
+                            let lines = String::from_utf8_lossy(resolved.as_ref())
+                                .lines()
+                                .map(String::from)
+                                .collect();
+                            ConflictHunk {
+                                kind: ConflictHunkKind::Resolved { lines },
+                            }
+                        } else {
+                            // Collect each side's content as lines.
+                            let sides: Vec<Vec<String>> = hunk
+                                .iter()
+                                .map(|side| {
+                                    String::from_utf8_lossy(side.as_ref())
+                                        .lines()
+                                        .map(String::from)
+                                        .collect()
+                                })
+                                .collect();
+                            ConflictHunk {
+                                kind: ConflictHunkKind::Conflict {
+                                    sides,
+                                    selected: None,
+                                },
+                            }
+                        }
+                    })
+                    .collect()
+            }
+        };
+
+        Ok(hunks)
     }
 
     fn extract_commit_info(

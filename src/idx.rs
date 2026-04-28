@@ -27,6 +27,11 @@ macro_rules! define_idx {
             fn from(idx: $name) -> usize { idx.0 }
         }
 
+        impl From<usize> for $name {
+            #[inline]
+            fn from(v: usize) -> Self { Self(v) }
+        }
+
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 self.0.fmt(f)
@@ -82,6 +87,18 @@ define_idx!(
 define_idx!(
     /// Index into `App::workspace_entries`.
     pub WorkspaceIdx
+);
+define_idx!(
+    /// Index into conflict hunks for a file.
+    pub ConflictHunkIdx
+);
+define_idx!(
+    /// Index into sides of a conflict hunk.
+    pub ConflictSideIdx
+);
+define_idx!(
+    /// Index into lines within a conflict side or context.
+    pub ConflictLineIdx
 );
 
 // ---------------------------------------------------------------------------
@@ -173,68 +190,6 @@ where
 {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// We need From<usize> on our index types for IndexVec::push/iter_enumerated.
-impl From<usize> for EntryIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-impl From<usize> for FileIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-impl From<usize> for DiffLineIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-impl From<usize> for GraphLineIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-impl From<usize> for BookmarkIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-impl From<usize> for BookmarkDetailIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-impl From<usize> for DescriptionLineIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-impl From<usize> for TagIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-impl From<usize> for TagDetailIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-impl From<usize> for OpLogIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-impl From<usize> for OpLogDetailIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
-    }
-}
-impl From<usize> for WorkspaceIdx {
-    fn from(v: usize) -> Self {
-        Self(v)
     }
 }
 

@@ -315,6 +315,108 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         vec![Line::raw("")]
                     }
                 }
+                DisplayRow::ConflictHeader {
+                    entry_idx,
+                    file_idx,
+                    hunk_idx,
+                } => {
+                    let total = app
+                        .nodes
+                        .get(*entry_idx)
+                        .and_then(|n| n.conflict_hunks.get(file_idx.raw()))
+                        .and_then(|l| l.loaded())
+                        .map(|hunks| {
+                            hunks
+                                .iter()
+                                .filter(|h| {
+                                    matches!(h.kind, crate::dag::ConflictHunkKind::Conflict { .. })
+                                })
+                                .count()
+                        })
+                        .unwrap_or(0);
+                    let num = hunk_idx.raw() + 1;
+                    vec![Line::from(vec![
+                        Span::raw("        "),
+                        Span::styled(
+                            format!("── conflict {num} of {total} ──"),
+                            Style::default()
+                                .fg(theme.error)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                    ])]
+                }
+                DisplayRow::ConflictSide {
+                    entry_idx,
+                    file_idx,
+                    hunk_idx,
+                    side_idx,
+                    line_idx,
+                } => {
+                    let text = app
+                        .nodes
+                        .get(*entry_idx)
+                        .and_then(|n| n.conflict_hunks.get(file_idx.raw()))
+                        .and_then(|l| l.loaded())
+                        .and_then(|hunks| hunks.get(hunk_idx.raw()))
+                        .and_then(|hunk| match &hunk.kind {
+                            crate::dag::ConflictHunkKind::Conflict {
+                                sides, selected, ..
+                            } => {
+                                let line = sides
+                                    .get(side_idx.raw())
+                                    .and_then(|s| s.get(line_idx.raw()))
+                                    .cloned()
+                                    .unwrap_or_default();
+                                let is_selected = *selected == Some(side_idx.raw());
+                                Some((line, is_selected, side_idx.raw()))
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    let (line_text, is_selected, si) = text;
+                    let label = match si {
+                        0 => "[ours]  ",
+                        1 => "[theirs]",
+                        _ => "[base]  ",
+                    };
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(theme.added)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.muted)
+                    };
+                    vec![Line::from(vec![
+                        Span::raw("          "),
+                        Span::styled(label, style),
+                        Span::raw(" "),
+                        Span::styled(line_text, style),
+                    ])]
+                }
+                DisplayRow::ConflictContext {
+                    entry_idx,
+                    file_idx,
+                    hunk_idx,
+                    line_idx,
+                } => {
+                    let text = app
+                        .nodes
+                        .get(*entry_idx)
+                        .and_then(|n| n.conflict_hunks.get(file_idx.raw()))
+                        .and_then(|l| l.loaded())
+                        .and_then(|hunks| hunks.get(hunk_idx.raw()))
+                        .and_then(|hunk| match &hunk.kind {
+                            crate::dag::ConflictHunkKind::Resolved { lines } => {
+                                lines.get(line_idx.raw()).cloned()
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or_default();
+                    vec![Line::from(vec![
+                        Span::raw("        "),
+                        Span::styled(text, Style::default().fg(theme.muted)),
+                    ])]
+                }
             }
         })
         .collect();

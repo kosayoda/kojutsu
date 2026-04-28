@@ -1,6 +1,7 @@
 use crate::idx::{
-    BookmarkDetailIdx, BookmarkIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx,
-    GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
+    BookmarkDetailIdx, BookmarkIdx, ConflictHunkIdx, ConflictLineIdx, ConflictSideIdx,
+    DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx,
+    TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 
 /// Identifies a display row for cursor restore after rebuild.
@@ -21,6 +22,15 @@ pub enum RowKey {
     OpLogGraphLink(OpLogIdx, GraphLineIdx),
     OpLogLoadMore,
     WorkspaceItem(WorkspaceIdx),
+    ConflictHeader(EntryIdx, FileIdx, ConflictHunkIdx),
+    ConflictSide(
+        EntryIdx,
+        FileIdx,
+        ConflictHunkIdx,
+        ConflictSideIdx,
+        ConflictLineIdx,
+    ),
+    ConflictContext(EntryIdx, FileIdx, ConflictHunkIdx, ConflictLineIdx),
 }
 
 /// One visual row in the list.
@@ -83,6 +93,27 @@ pub enum DisplayRow {
     OpLogLoadMore,
     /// A workspace row in the workspace view.
     WorkspaceItem { workspace_idx: WorkspaceIdx },
+    /// Header for a conflict hunk (e.g. "── conflict 1 of 2 ──").
+    ConflictHeader {
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: ConflictHunkIdx,
+    },
+    /// A line from a conflict side (ours/theirs/base).
+    ConflictSide {
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: ConflictHunkIdx,
+        side_idx: ConflictSideIdx,
+        line_idx: ConflictLineIdx,
+    },
+    /// A resolved (context) line within a conflict view.
+    ConflictContext {
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: ConflictHunkIdx,
+        line_idx: ConflictLineIdx,
+    },
 }
 
 impl DisplayRow {
@@ -131,6 +162,24 @@ impl DisplayRow {
             } => RowKey::OpLogGraphLink(op_log_idx, line_idx),
             DisplayRow::OpLogLoadMore => RowKey::OpLogLoadMore,
             DisplayRow::WorkspaceItem { workspace_idx } => RowKey::WorkspaceItem(workspace_idx),
+            DisplayRow::ConflictHeader {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            } => RowKey::ConflictHeader(entry_idx, file_idx, hunk_idx),
+            DisplayRow::ConflictSide {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                side_idx,
+                line_idx,
+            } => RowKey::ConflictSide(entry_idx, file_idx, hunk_idx, side_idx, line_idx),
+            DisplayRow::ConflictContext {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                line_idx,
+            } => RowKey::ConflictContext(entry_idx, file_idx, hunk_idx, line_idx),
         }
     }
 }

@@ -8,7 +8,9 @@ impl App {
     /// Skips graph links and context diff lines (not actionable).
     fn is_row_skippable(&self, row_idx: usize) -> bool {
         match &self.rows[row_idx] {
-            DisplayRow::GraphLink { .. } | DisplayRow::DescriptionLine { .. } => true,
+            DisplayRow::GraphLink { .. }
+            | DisplayRow::DescriptionLine { .. }
+            | DisplayRow::ConflictContext { .. } => true,
             DisplayRow::DiffLine {
                 entry_idx,
                 file_idx,

@@ -515,7 +515,33 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             flags,
         }),
         AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
-            // Get the file under cursor.
+            // Check if cursor is on a conflict hunk row (per-hunk resolution).
+            if let Some(DisplayRow::ConflictHeader {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            })
+            | Some(DisplayRow::ConflictSide {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                ..
+            }) = app.rows.get(app.cursor)
+            {
+                let side = match action {
+                    AppAction::ResolveOurs => 0,
+                    AppAction::ResolveTheirs => 1,
+                    _ => {
+                        // Merge tool doesn't apply per-hunk.
+                        app.set_status("merge tool is for whole-file only");
+                        return Action::None;
+                    }
+                };
+                app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, side);
+                return Action::None;
+            }
+
+            // Whole-file resolution from FileChange/DiffLine rows.
             let (entry_idx, file_idx) = match app.rows.get(app.cursor) {
                 Some(DisplayRow::FileChange {
                     entry_idx,
@@ -527,7 +553,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     ..
                 }) => (*entry_idx, *file_idx),
                 _ => {
-                    app.set_status("cursor must be on a file");
+                    app.set_status("cursor must be on a file or conflict hunk");
                     return Action::None;
                 }
             };
@@ -559,6 +585,31 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             } else {
                 Action::RunJj(cmd)
             }
+        }
+        AppAction::ConflictPickOurs
+        | AppAction::ConflictPickTheirs
+        | AppAction::ConflictPickBase => {
+            // Per-hunk conflict picking (also accessible via c→o/t on conflict rows).
+            if let Some(DisplayRow::ConflictHeader {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            })
+            | Some(DisplayRow::ConflictSide {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                ..
+            }) = app.rows.get(app.cursor)
+            {
+                let side = match action {
+                    AppAction::ConflictPickOurs => 0,
+                    AppAction::ConflictPickTheirs => 1,
+                    _ => 2, // base
+                };
+                app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, side);
+            }
+            Action::None
         }
         AppAction::FileUntrack => {
             let paths = app.selected_file_paths();
@@ -1693,6 +1744,9 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             | Some(DisplayRow::OpLogGraphLink { .. })
             | Some(DisplayRow::OpLogLoadMore)
             | Some(DisplayRow::WorkspaceItem { .. })
+            | Some(DisplayRow::ConflictHeader { .. })
+            | Some(DisplayRow::ConflictSide { .. })
+            | Some(DisplayRow::ConflictContext { .. })
             | None => None,
         };
         entry_idx.is_some_and(|idx| app.nodes[idx].commit.is_working_copy())

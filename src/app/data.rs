@@ -391,6 +391,35 @@ impl App {
                     .insert(op_id, super::Loadable::Failed(error.clone()));
                 self.set_error(format!("failed to load op diff: {error}"));
             }
+            RepoResult::ConflictHunksLoaded {
+                commit_id,
+                path,
+                hunks,
+            } => {
+                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                    if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
+                        let fi = file_idx.raw();
+                        self.nodes[idx].ensure_conflict_hunks(fi + 1);
+                        self.nodes[idx].conflict_hunks[fi] = super::Loadable::Loaded(hunks);
+                    }
+                }
+                self.rebuild_rows();
+                self.scroll_to_show_children();
+            }
+            RepoResult::ConflictHunksFailed {
+                commit_id,
+                path,
+                error,
+            } => {
+                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                    if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
+                        let fi = file_idx.raw();
+                        self.nodes[idx].ensure_conflict_hunks(fi + 1);
+                        self.nodes[idx].conflict_hunks[fi] = super::Loadable::Failed(error.clone());
+                    }
+                }
+                self.set_error(format!("failed to load conflict hunks for {path}: {error}"));
+            }
             RepoResult::BackgroundError { error } => {
                 self.set_error(format!("background task failed: {error}"));
             }
