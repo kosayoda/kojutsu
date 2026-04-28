@@ -302,6 +302,13 @@ impl App {
             | DisplayRow::OpLogDetailLine { .. }
             | DisplayRow::OpLogGraphLink { .. }
             | DisplayRow::OpLogLoadMore => false,
+            DisplayRow::WorkspaceItem { workspace_idx } => {
+                let Some(entry) = self.workspace_entries.get(workspace_idx.raw()) else {
+                    return false;
+                };
+                scopes.contains(SearchScopes::DESCRIPTION)
+                    && entry.description.as_deref().is_some_and(contains)
+            }
         }
     }
 }

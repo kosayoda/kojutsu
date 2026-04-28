@@ -1,7 +1,7 @@
 use super::{ActiveView, App, Loadable};
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx,
-    GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx,
+    GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
@@ -14,6 +14,7 @@ impl App {
             ActiveView::Bookmarks => self.rebuild_bookmark_rows(),
             ActiveView::Tags => self.rebuild_tag_rows(),
             ActiveView::Operations => self.rebuild_op_log_rows(),
+            ActiveView::Workspaces => self.rebuild_workspace_rows(),
         }
     }
 
@@ -77,6 +78,19 @@ impl App {
                     });
                 }
             }
+        }
+        self.cursor = prev_cursor
+            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
+            .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
+    }
+
+    fn rebuild_workspace_rows(&mut self) {
+        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        self.rows.clear();
+        for idx in 0..self.workspace_entries.len() {
+            self.rows.push(DisplayRow::WorkspaceItem {
+                workspace_idx: WorkspaceIdx::new(idx),
+            });
         }
         self.cursor = prev_cursor
             .and_then(|key| self.rows.iter().position(|r| r.key() == key))

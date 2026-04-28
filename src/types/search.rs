@@ -125,8 +125,15 @@ pub fn scope_specs_for_view(view: crate::app::ActiveView) -> &'static [SearchSco
         crate::app::ActiveView::Bookmarks => BOOKMARK_VIEW_SCOPE_SPECS,
         crate::app::ActiveView::Tags => TAG_VIEW_SCOPE_SPECS,
         crate::app::ActiveView::Operations => OP_LOG_VIEW_SCOPE_SPECS,
+        crate::app::ActiveView::Workspaces => WORKSPACE_VIEW_SCOPE_SPECS,
     }
 }
+
+pub const WORKSPACE_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[SearchScopeSpec {
+    flag: SearchScopes::DESCRIPTION,
+    hint: "d",
+    label: "description",
+}];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SearchFocus {

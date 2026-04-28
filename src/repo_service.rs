@@ -62,6 +62,7 @@ pub enum RepoResult {
         all_tags: Vec<Str>,
         tag_details: std::collections::HashMap<Str, crate::dag::TagDetails>,
         bookmark_details: std::collections::HashMap<BookmarkName, crate::dag::BookmarkDetails>,
+        workspace_entries: Vec<crate::app::WorkspaceViewEntry>,
     },
     RevsetFailed {
         revset: String,
@@ -341,6 +342,7 @@ impl RepoServiceState {
                 let all_tags = repo.all_local_tags();
                 let tag_details = repo.extract_tag_details();
                 let bookmark_details = repo.extract_bookmark_details();
+                let workspace_entries = repo.workspace_entries();
 
                 // Collect unique commit IDs from bookmark + tag details for prefix computation.
                 let detail_commit_ids: Vec<CommitId> = {
@@ -376,6 +378,7 @@ impl RepoServiceState {
                         all_tags,
                         tag_details,
                         bookmark_details,
+                        workspace_entries,
                     },
                 );
 

@@ -1,6 +1,6 @@
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx,
-    GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx,
+    GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 
 /// Identifies a display row for cursor restore after rebuild.
@@ -20,6 +20,7 @@ pub enum RowKey {
     OpLogDetailLine(OpLogIdx, OpLogDetailIdx),
     OpLogGraphLink(OpLogIdx, GraphLineIdx),
     OpLogLoadMore,
+    WorkspaceItem(WorkspaceIdx),
 }
 
 /// One visual row in the list.
@@ -80,6 +81,8 @@ pub enum DisplayRow {
     },
     /// "Load more..." sentinel at the bottom of the op log.
     OpLogLoadMore,
+    /// A workspace row in the workspace view.
+    WorkspaceItem { workspace_idx: WorkspaceIdx },
 }
 
 impl DisplayRow {
@@ -127,6 +130,7 @@ impl DisplayRow {
                 line_idx,
             } => RowKey::OpLogGraphLink(op_log_idx, line_idx),
             DisplayRow::OpLogLoadMore => RowKey::OpLogLoadMore,
+            DisplayRow::WorkspaceItem { workspace_idx } => RowKey::WorkspaceItem(workspace_idx),
         }
     }
 }

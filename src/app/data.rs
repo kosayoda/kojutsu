@@ -188,6 +188,7 @@ impl App {
                 all_tags,
                 tag_details,
                 bookmark_details,
+                workspace_entries,
             } => {
                 self.status_message = None;
                 self.revset = revset;
@@ -209,6 +210,7 @@ impl App {
                 self.all_tags = all_tags;
                 self.tag_details = tag_details;
                 self.bookmark_details = bookmark_details;
+                self.workspace_entries = workspace_entries;
                 self.revset_state = Loadable::Loaded(());
                 self.apply_entries(entries);
             }

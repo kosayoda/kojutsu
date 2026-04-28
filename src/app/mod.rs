@@ -78,6 +78,7 @@ pub enum ActiveView {
     Bookmarks,
     Tags,
     Operations,
+    Workspaces,
 }
 
 pub struct BookmarkViewEntry {
@@ -152,6 +153,14 @@ pub struct OpLogEntry {
     pub is_current: bool,
     /// Pre-rendered graph lines.
     pub graph: crate::graph::GraphLines,
+}
+
+pub struct WorkspaceViewEntry {
+    pub name: Str,
+    pub commit_id: Option<CommitId>,
+    pub change_id: Option<crate::dag::ShortId>,
+    pub description: Option<String>,
+    pub is_current: bool,
 }
 
 #[derive(Clone)]
@@ -391,6 +400,8 @@ pub struct App {
     pub tag_entries: Vec<TagViewEntry>,
     /// Rich detail data per tag (remote tracking).
     pub tag_details: HashMap<Str, crate::dag::TagDetails>,
+    /// Aggregated workspace data for the workspace view.
+    pub workspace_entries: Vec<WorkspaceViewEntry>,
     /// Aggregated operation log data for the operations view.
     pub op_log_entries: Vec<OpLogEntry>,
     /// Whether the operation log has been loaded (lazy).
@@ -414,16 +425,19 @@ pub struct App {
     bookmark_view_state: (usize, usize),
     tag_view_state: (usize, usize),
     op_log_view_state: (usize, usize),
+    workspace_view_state: (usize, usize),
     /// Saved horizontal scroll per view.
     dag_h_scroll: usize,
     bookmark_h_scroll: usize,
     tag_h_scroll: usize,
     op_log_h_scroll: usize,
+    workspace_h_scroll: usize,
     /// Saved search scopes per view.
     dag_search_scopes: SearchScopes,
     bookmark_search_scopes: SearchScopes,
     tag_search_scopes: SearchScopes,
     op_log_search_scopes: SearchScopes,
+    workspace_search_scopes: SearchScopes,
     /// Persisted list widget state (preserves scroll offset across frames).
     pub list_state: ListState,
     /// Header height from the last render (for mouse click translation).
@@ -509,6 +523,7 @@ impl App {
             all_tags: Vec::new(),
             tag_entries: Vec::new(),
             tag_details: HashMap::new(),
+            workspace_entries: Vec::new(),
             op_log_entries: Vec::new(),
             op_log_loaded: false,
             op_log_has_more: false,
@@ -522,14 +537,17 @@ impl App {
             bookmark_view_state: (0, 0),
             tag_view_state: (0, 0),
             op_log_view_state: (0, 0),
+            workspace_view_state: (0, 0),
             dag_h_scroll: 0,
             bookmark_h_scroll: 0,
             tag_h_scroll: 0,
             op_log_h_scroll: 0,
+            workspace_h_scroll: 0,
             dag_search_scopes: SearchScopes::DEFAULT,
             bookmark_search_scopes: SearchScopes::DEFAULT_BOOKMARK,
             tag_search_scopes: SearchScopes::DEFAULT_TAG,
             op_log_search_scopes: SearchScopes::DEFAULT_OP_LOG,
+            workspace_search_scopes: SearchScopes::DEFAULT,
             list_state: ListState::default(),
             last_header_height: 2,
             last_list_height: 0,
@@ -611,6 +629,11 @@ impl App {
                 self.op_log_search_scopes = self.search_scopes;
                 self.op_log_h_scroll = self.h_scroll;
             }
+            ActiveView::Workspaces => {
+                self.workspace_view_state = state;
+                self.workspace_search_scopes = self.search_scopes;
+                self.workspace_h_scroll = self.h_scroll;
+            }
         }
         self.active_view = view;
         // Trigger lazy load of operation log data.
@@ -641,6 +664,11 @@ impl App {
                 self.op_log_view_state.1,
                 self.op_log_search_scopes,
             ),
+            ActiveView::Workspaces => (
+                self.workspace_view_state.0,
+                self.workspace_view_state.1,
+                self.workspace_search_scopes,
+            ),
         };
         self.cursor = cursor.min(self.rows.len().saturating_sub(1));
         *self.list_state.offset_mut() = offset;
@@ -650,6 +678,7 @@ impl App {
             ActiveView::Bookmarks => self.bookmark_h_scroll,
             ActiveView::Tags => self.tag_h_scroll,
             ActiveView::Operations => self.op_log_h_scroll,
+            ActiveView::Workspaces => self.workspace_h_scroll,
         };
     }
 
@@ -765,6 +794,14 @@ impl App {
         self.op_log_entries.get(op_log_idx.raw())
     }
 
+    pub fn selected_workspace_entry(&self) -> Option<&WorkspaceViewEntry> {
+        let workspace_idx = match self.rows.get(self.cursor)? {
+            DisplayRow::WorkspaceItem { workspace_idx } => *workspace_idx,
+            _ => return None,
+        };
+        self.workspace_entries.get(workspace_idx.raw())
+    }
+
     /// Get the entry idx the cursor is on.
     pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
         let entry_idx = match self.rows.get(self.cursor)? {
@@ -781,7 +818,8 @@ impl App {
             | DisplayRow::OpLogItem { .. }
             | DisplayRow::OpLogDetailLine { .. }
             | DisplayRow::OpLogGraphLink { .. }
-            | DisplayRow::OpLogLoadMore => return None,
+            | DisplayRow::OpLogLoadMore
+            | DisplayRow::WorkspaceItem { .. } => return None,
         };
         Some(entry_idx)
     }

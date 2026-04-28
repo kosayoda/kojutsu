@@ -153,6 +153,10 @@ pub enum AppAction {
     TgViewJumpToCommit,
     // View switching
     SwitchToOpLogView,
+    SwitchToWorkspaceView,
+    // Workspace view actions
+    WsViewForget,
+    WsViewJumpToCommit,
     // Op log view actions
     OpLogRestore,
     OpLogRevert,
@@ -234,6 +238,7 @@ pub struct Keymaps {
     pub bookmarks: Keymap,
     pub tags: Keymap,
     pub operations: Keymap,
+    pub workspaces: Keymap,
 }
 
 impl Keymaps {
@@ -243,6 +248,7 @@ impl Keymaps {
             crate::app::ActiveView::Bookmarks => &self.bookmarks,
             crate::app::ActiveView::Tags => &self.tags,
             crate::app::ActiveView::Operations => &self.operations,
+            crate::app::ActiveView::Workspaces => &self.workspaces,
         }
     }
 }
@@ -286,7 +292,8 @@ fn shared_bindings() -> Vec<(Node, KeymapNode)> {
         bind("1", AppAction::SwitchToDagView, "DAG view", G),
         bind("2", AppAction::SwitchToBookmarkView, "bookmarks view", G),
         bind("3", AppAction::SwitchToTagView, "tags view", G),
-        bind("4", AppAction::SwitchToOpLogView, "operations view", G),
+        bind("4", AppAction::SwitchToWorkspaceView, "workspaces view", G),
+        bind("5", AppAction::SwitchToOpLogView, "operations view", G),
         // Fold / Select
         bind("tab", AppAction::ToggleFold, "toggle fold", N),
         bind("space", AppAction::ToggleSelect, "toggle select", N),
@@ -611,11 +618,30 @@ impl Default for Keymaps {
             ),
         ]);
 
+        // Workspaces view: shared bindings + workspace actions.
+        let mut ws_root = shared_bindings();
+        ws_root.extend(vec![
+            bind("a", AppAction::WorkspaceAdd, "add", C),
+            bind("f", AppAction::WsViewForget, "forget", C),
+            bind("r", AppAction::WorkspaceRename, "rename", C),
+            bind("enter", AppAction::WsViewJumpToCommit, "jump to commit", C),
+            prefix(
+                "u",
+                "undo/redo",
+                C,
+                vec![
+                    bind("u", AppAction::Undo, "undo", C),
+                    bind("r", AppAction::Redo, "redo", C),
+                ],
+            ),
+        ]);
+
         Keymaps {
             dag: Keymap { root: dag_root },
             bookmarks: Keymap { root: bm_root },
             tags: Keymap { root: tg_root },
             operations: Keymap { root: op_root },
+            workspaces: Keymap { root: ws_root },
         }
     }
 }

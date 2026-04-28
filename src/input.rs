@@ -1126,6 +1126,35 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             let op_id = entry.id.to_string();
             Action::RunJj(JJCommand::OpAbandon { op_id, flags })
         }
+        // Workspace view actions
+        AppAction::SwitchToWorkspaceView => {
+            app.switch_view(crate::app::ActiveView::Workspaces);
+            Action::None
+        }
+        AppAction::WsViewForget => {
+            let Some(entry) = app.selected_workspace_entry() else {
+                return Action::None;
+            };
+            let name = entry.name.to_string();
+            Action::RunJj(JJCommand::WorkspaceForget {
+                names: smallvec![name],
+                flags,
+            })
+        }
+        AppAction::WsViewJumpToCommit => {
+            let Some(entry) = app.selected_workspace_entry() else {
+                return Action::None;
+            };
+            let commit_id = entry.commit_id.clone();
+            let change_id = entry.change_id.clone();
+            jump_to_commit_in_dag(
+                app,
+                commit_id.as_ref(),
+                change_id.as_ref(),
+                "workspace has no associated commit",
+            );
+            Action::None
+        }
     }
 }
 
@@ -1266,6 +1295,10 @@ fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
                     }
                     PendingCommand::WorkspaceAddName { path, flags } => {
                         let name = if text.is_empty() { None } else { Some(text) };
+                        // CommitSelect needs the DAG view to navigate commits.
+                        if app.active_view != crate::app::ActiveView::Dag {
+                            app.switch_view(crate::app::ActiveView::Dag);
+                        }
                         let restore_cursor = app.cursor;
                         app.mode = AppMode::CommitSelect {
                             restore_cursor,
@@ -1613,6 +1646,7 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             | Some(DisplayRow::OpLogDetailLine { .. })
             | Some(DisplayRow::OpLogGraphLink { .. })
             | Some(DisplayRow::OpLogLoadMore)
+            | Some(DisplayRow::WorkspaceItem { .. })
             | None => None,
         };
         entry_idx.is_some_and(|idx| app.nodes[idx].commit.is_working_copy())

@@ -9,6 +9,7 @@ use super::search::*;
 use super::spans::*;
 use crate::app::{
     App, AppMode, BookmarkViewEntry, OpDetailLine, OpDiffKind, OpLogEntry, TagViewEntry,
+    WorkspaceViewEntry,
 };
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
 use crate::theme::{Config, Theme};
@@ -325,6 +326,13 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     Span::styled("  [Tab] ", Style::default().fg(theme.accent)),
                     Span::styled("Load more…", Style::default().fg(theme.muted)),
                 ])],
+                DisplayRow::WorkspaceItem { workspace_idx } => {
+                    if let Some(entry) = app.workspace_entries.get(workspace_idx.raw()) {
+                        render_workspace_item(entry, row_search.as_ref(), theme)
+                    } else {
+                        vec![Line::raw("")]
+                    }
+                }
             }
         })
         .collect();
@@ -1094,6 +1102,52 @@ fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> Vec<Li
             vec![Line::from(spans)]
         }
     }
+}
+
+fn render_workspace_item(
+    entry: &WorkspaceViewEntry,
+    search: Option<&SearchRender<'_>>,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut spans = vec![search_gutter(
+        search.map(|s| s.row_state).unwrap_or(SearchRowState::None),
+        theme,
+    )];
+
+    let dot = || Span::styled(" · ", Style::default().fg(theme.muted));
+
+    // Workspace name.
+    let name_style = if entry.is_current {
+        Style::default()
+            .fg(theme.workspace)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.workspace)
+    };
+    spans.push(Span::styled(entry.name.to_string(), name_style));
+    if entry.is_current {
+        spans.push(Span::styled(" (current)", Style::default().fg(theme.muted)));
+    }
+
+    // Change ID.
+    if let Some(ref cid) = entry.change_id {
+        spans.push(dot());
+        push_short_id(&mut spans, cid, theme.change_id, theme);
+    }
+
+    // Description.
+    if let Some(ref desc) = entry.description {
+        spans.push(dot());
+        push_searchable(
+            &mut spans,
+            desc,
+            SearchScopes::DESCRIPTION,
+            Style::default().fg(theme.text),
+            search,
+        );
+    }
+
+    vec![Line::from(spans)]
 }
 
 fn render_bookmark_item(

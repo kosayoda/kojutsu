@@ -969,6 +969,41 @@ impl JjRepo {
     }
 
     /// All local tag names (including those outside the current revset).
+    pub fn workspace_entries(&self) -> Vec<crate::app::WorkspaceViewEntry> {
+        let mut entries = Vec::new();
+        for (ws_name, commit_id) in self.repo.view().wc_commit_ids() {
+            let is_current = *ws_name == self.workspace_name;
+            let commit = self.repo.store().get_commit(commit_id).ok();
+            let change_id = commit.as_ref().map(|c| {
+                let h = c.change_id().reverse_hex();
+                ShortId {
+                    display: h.get(..DISPLAY_ID_LEN).unwrap_or(&h).to_string(),
+                    prefix_len: DISPLAY_ID_LEN,
+                }
+            });
+            let description = commit.as_ref().and_then(|c| {
+                let raw = c.description().trim().to_string();
+                if raw.is_empty() {
+                    None
+                } else {
+                    raw.lines().next().map(String::from)
+                }
+            });
+            let commit_hex = commit_id.hex();
+            entries.push(crate::app::WorkspaceViewEntry {
+                name: Str::from(ws_name.as_str()),
+                commit_id: Some(UiCommitId::new(
+                    commit_hex.get(..DISPLAY_ID_LEN).unwrap_or(&commit_hex),
+                )),
+                change_id,
+                description,
+                is_current,
+            });
+        }
+        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries
+    }
+
     pub fn all_local_tags(&self) -> Vec<Str> {
         self.repo
             .as_ref()
