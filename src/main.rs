@@ -7,7 +7,7 @@ use clap::Parser;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyEventKind};
 
-use kojutsu::app::{App, AppMode, Loadable};
+use kojutsu::app::{App, AppMode, DeferredWork, Loadable};
 use kojutsu::input::{self, Action};
 use kojutsu::jj_command::JJCommand;
 use kojutsu::keymap::Keymaps;
@@ -134,32 +134,73 @@ fn main() -> Result<()> {
     let mut terminal_events = spawn_terminal_events(event_tx.clone());
     let _ = event_tx.send(AppEvent::Init);
 
+    let mut dirty = true;
     loop {
-        terminal.draw(|frame| ui::draw(frame, &mut app, keymaps, config))?;
+        if dirty {
+            terminal.draw(|frame| ui::draw(frame, &mut app, keymaps, config))?;
+            dirty = false;
+        }
 
-        let app_event = match event_rx.recv() {
+        // Block for the first event.
+        let first = match event_rx.recv() {
             Ok(event) => event,
             Err(_) => break,
         };
 
-        let action = match app_event {
-            AppEvent::Init => Action::None,
-            AppEvent::Repo(result) => {
-                app.handle_repo_result(result);
-                Action::None
+        // Drain all pending events so we can process them as a batch.
+        let mut events = vec![first];
+        while let Ok(ev) = event_rx.try_recv() {
+            events.push(ev);
+        }
+
+        // Process batch.
+        let mut deferred = DeferredWork::default();
+        let mut breaking_action: Option<Action> = None;
+
+        for event in events {
+            let action = match event {
+                AppEvent::Init => Action::None,
+                AppEvent::Repo(result) => {
+                    deferred.merge(app.handle_repo_result_deferred(result));
+                    dirty = true;
+                    Action::None
+                }
+                AppEvent::Terminal(ev) => match ev {
+                    Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        dirty = true;
+                        input::handle_key(&mut app, keymaps, key)
+                    }
+                    Event::Mouse(mouse) => {
+                        dirty = true;
+                        let hdr = app.last_header_height;
+                        input::handle_mouse(&mut app, mouse, hdr)
+                    }
+                    Event::Resize(..) => {
+                        dirty = true;
+                        Action::None
+                    }
+                    _ => Action::None,
+                },
+            };
+            match action {
+                Action::None => {}
+                _ => {
+                    breaking_action = Some(action);
+                    break;
+                }
             }
-            AppEvent::Terminal(ev) => match ev {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    input::handle_key(&mut app, keymaps, key)
-                }
-                Event::Mouse(mouse) => {
-                    let hdr = app.last_header_height;
-                    input::handle_mouse(&mut app, mouse, hdr)
-                }
-                _ => Action::None,
-            },
-        };
-        match action {
+        }
+
+        // Apply deferred work once for the whole batch.
+        if deferred.rebuild {
+            app.rebuild_rows();
+        }
+        if deferred.scroll {
+            app.scroll_to_show_children();
+        }
+
+        // Handle breaking action.
+        match breaking_action.unwrap_or(Action::None) {
             Action::Quit => break,
             Action::RunJj(cmd) => {
                 run_jj_command(&mut app, &repo_path, cmd);

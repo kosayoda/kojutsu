@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use super::{App, AppMode, JumpTarget, Loadable};
+use super::{App, AppMode, DeferredWork, JumpTarget, Loadable};
 use crate::dag::DagEntry;
 use crate::idx::{EntryIdx, IndexVec};
 use crate::repo_service::{RepoRequest, RepoResult};
@@ -176,7 +176,10 @@ impl App {
         self.refresh_search_matches();
     }
 
-    pub fn handle_repo_result(&mut self, result: RepoResult) {
+    /// Process a repo result, deferring `rebuild_rows` and `scroll_to_show_children`.
+    /// The caller is responsible for applying deferred work after the batch.
+    pub fn handle_repo_result_deferred(&mut self, result: RepoResult) -> DeferredWork {
+        let mut deferred = DeferredWork::default();
         match result {
             RepoResult::RevsetLoaded {
                 revset,
@@ -212,6 +215,7 @@ impl App {
                 self.bookmark_details = bookmark_details;
                 self.workspace_entries = workspace_entries;
                 self.revset_state = Loadable::Loaded(());
+                // apply_entries does its own rebuild_rows (needed for cursor restoration).
                 self.apply_entries(entries);
             }
             RepoResult::RevsetFailed { revset, error } => {
@@ -228,7 +232,7 @@ impl App {
             RepoResult::CommitDetailsLoaded { commit_id, details } => {
                 self.status_message = None;
                 let Some(idx) = self.entry_by_commit_id(&commit_id) else {
-                    return;
+                    return deferred;
                 };
                 // Update is_empty for this commit.
                 self.nodes[idx].commit.is_empty = details.is_empty;
@@ -259,8 +263,8 @@ impl App {
                 // Ensure diffs vec is sized to match files.
                 let nfiles = self.nodes[idx].files.loaded().map_or(0, |f| f.len());
                 self.nodes[idx].ensure_diffs(nfiles);
-                self.rebuild_rows();
-                self.scroll_to_show_children();
+                deferred.rebuild = true;
+                deferred.scroll = true;
             }
             RepoResult::CommitDetailsFailed { commit_id, error } => {
                 if let Some(idx) = self.entry_by_commit_id(&commit_id) {
@@ -272,7 +276,7 @@ impl App {
                     output: error.into_bytes(),
                     success: false,
                 };
-                self.rebuild_rows();
+                deferred.rebuild = true;
             }
             RepoResult::FileDiffLoaded {
                 commit_id,
@@ -287,8 +291,8 @@ impl App {
                         self.nodes[idx].diffs[fi] = Loadable::Loaded(lines);
                     }
                 }
-                self.rebuild_rows();
-                self.scroll_to_show_children();
+                deferred.rebuild = true;
+                deferred.scroll = true;
             }
             RepoResult::FileDiffFailed {
                 commit_id,
@@ -307,7 +311,7 @@ impl App {
                     output: error.into_bytes(),
                     success: false,
                 };
-                self.rebuild_rows();
+                deferred.rebuild = true;
             }
             RepoResult::WorkspaceUpdatedStale { message } => {
                 self.set_status(message);
@@ -371,7 +375,7 @@ impl App {
                 self.op_log_loaded = true;
                 self.op_log_has_more = has_more;
                 if self.active_view == super::ActiveView::Operations {
-                    self.rebuild_rows();
+                    deferred.rebuild = true;
                 }
             }
             RepoResult::OperationsFailed { error } => {
@@ -382,8 +386,8 @@ impl App {
                 self.op_details
                     .insert(op_id, super::Loadable::Loaded(lines));
                 if self.active_view == super::ActiveView::Operations {
-                    self.rebuild_rows();
-                    self.scroll_to_show_children();
+                    deferred.rebuild = true;
+                    deferred.scroll = true;
                 }
             }
             RepoResult::OpDiffFailed { op_id, error } => {
@@ -403,8 +407,8 @@ impl App {
                         self.nodes[idx].conflict_hunks[fi] = super::Loadable::Loaded(hunks);
                     }
                 }
-                self.rebuild_rows();
-                self.scroll_to_show_children();
+                deferred.rebuild = true;
+                deferred.scroll = true;
             }
             RepoResult::ConflictHunksFailed {
                 commit_id,
@@ -423,6 +427,18 @@ impl App {
             RepoResult::BackgroundError { error } => {
                 self.set_error(format!("background task failed: {error}"));
             }
+        }
+        deferred
+    }
+
+    /// Process a repo result immediately (convenience wrapper).
+    pub fn handle_repo_result(&mut self, result: RepoResult) {
+        let deferred = self.handle_repo_result_deferred(result);
+        if deferred.rebuild {
+            self.rebuild_rows();
+        }
+        if deferred.scroll {
+            self.scroll_to_show_children();
         }
     }
 

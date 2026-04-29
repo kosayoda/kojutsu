@@ -10,6 +10,20 @@ pub use types::*;
 
 use std::collections::{HashMap, HashSet};
 
+/// Signals deferred work that should run once after a batch of repo results.
+#[derive(Default)]
+pub struct DeferredWork {
+    pub rebuild: bool,
+    pub scroll: bool,
+}
+
+impl DeferredWork {
+    pub fn merge(&mut self, other: Self) {
+        self.rebuild |= other.rebuild;
+        self.scroll |= other.scroll;
+    }
+}
+
 use ratatui::widgets::ListState;
 
 use crate::dag::{DagEntry, DiffLine, EdgeKind, FileChange, LineStats};
