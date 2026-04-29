@@ -7,12 +7,16 @@ use ratatui::Frame;
 
 use super::search::*;
 use super::spans::*;
+use std::collections::HashSet;
+
 use crate::app::{
     App, AppMode, BookmarkViewEntry, OpDetailLine, OpDiffKind, OpLogEntry, TagViewEntry,
-    WorkspaceViewEntry,
+    TargetMode, WorkspaceViewEntry,
 };
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
+use crate::idx::EntryIdx;
 use crate::theme::{Config, Theme};
+use crate::types::ChangeId;
 use crate::types::{DisplayRow, FileSelectionState, SearchScopes};
 
 /// Push `+N -M` spans for line stats, skipping zeros.
@@ -51,10 +55,24 @@ struct RenderFlags {
 
 pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &Config) {
     let theme = &config.theme;
-    // If in target selection mode, get the source change_id for highlighting.
-    let target_select_source: Option<&str> = match &app.mode {
-        AppMode::TargetSelect { source, .. } => Some(source.as_str()),
-        _ => None,
+    // If in target selection mode, get the source change_id for highlighting
+    // and the set of marked targets (multi-select).
+    let (target_select_source, target_marks): (Option<&str>, Option<&HashSet<ChangeId>>) =
+        match &app.mode {
+            AppMode::TargetSelect {
+                source,
+                target_mode: TargetMode::Multi { targets },
+                ..
+            } => (Some(source.as_str()), Some(targets)),
+            AppMode::TargetSelect { source, .. } => (Some(source.as_str()), None),
+            _ => (None, None),
+        };
+
+    let is_marked = |entry_idx: EntryIdx| -> bool {
+        target_marks.map_or_else(
+            || app.is_commit_selected(entry_idx),
+            |marks| marks.contains(&app.nodes[entry_idx].commit.unique_change_id()),
+        )
     };
 
     let search_case_sensitive = app
@@ -109,7 +127,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let flags = RenderFlags {
                         is_source: target_select_source
                             .is_some_and(|src| src == node.commit.unique_prefix().as_str()),
-                        is_selected: app.is_commit_selected(*entry_idx),
+                        is_selected: is_marked(*entry_idx),
                         in_visual: app.is_in_visual_commit_range(*entry_idx),
                     };
                     render_commit_item(
@@ -135,7 +153,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|d| d.lines().nth(line_idx.raw() + 1))
                         .unwrap_or("");
                     let graph_cont = app.nodes[*entry_idx].graph.cont.as_str();
-                    let is_selected = app.is_commit_selected(*entry_idx);
+                    let selected = is_marked(*entry_idx);
                     let in_visual = app.is_in_visual_commit_range(*entry_idx);
                     let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
                     // Visual + selection bars (same as line 2 of commit item).
@@ -144,7 +162,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     } else {
                         Span::raw(" ")
                     });
-                    spans.push(if is_selected {
+                    spans.push(if selected {
                         Span::styled("▎", Style::default().fg(theme.selection))
                     } else {
                         Span::raw(" ")
@@ -171,14 +189,14 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .unwrap_or("");
                     let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
                     // Continue visual + selection bars through graph links.
-                    let is_selected = app.is_commit_selected(*entry_idx);
+                    let selected = is_marked(*entry_idx);
                     let in_visual = app.is_in_visual_commit_range(*entry_idx);
                     spans.push(if in_visual {
                         Span::styled("│", Style::default().fg(theme.accent))
                     } else {
                         Span::raw(" ")
                     });
-                    spans.push(if is_selected {
+                    spans.push(if selected {
                         Span::styled("▎", Style::default().fg(theme.selection))
                     } else {
                         Span::raw(" ")

@@ -7,7 +7,7 @@ mod spans;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
 
-use crate::app::{App, AppMode};
+use crate::app::{App, AppMode, TargetMode};
 use crate::keymap::{self, Keymaps};
 use crate::theme::Config;
 
@@ -148,10 +148,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
             frame.render_widget(ratatui::widgets::Clear, area);
             overlay::draw_search_input(frame, area, app, theme);
         }
-        AppMode::TargetSelect { prompt, source, .. } => {
+        AppMode::TargetSelect {
+            prompt,
+            source,
+            target_mode,
+            ..
+        } => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_target_select(frame, area, prompt, source.as_str(), theme);
+            let multi = matches!(target_mode, TargetMode::Multi { .. });
+            overlay::draw_target_select(frame, area, prompt, source.as_str(), multi, theme);
         }
         AppMode::CommitSelect { pending, .. } => {
             let area = overlay_area(overlay_base, 2);

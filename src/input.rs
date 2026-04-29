@@ -3,7 +3,9 @@ use ratatui::crossterm::event::{
 };
 use tui_input::backend::crossterm::EventHandler;
 
-use crate::app::{App, AppMode};
+use std::collections::HashSet;
+
+use crate::app::{App, AppMode, TargetMode};
 use crate::dag::{BookmarkRef, DiffLineKind};
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{ChangeSelection, InsertPosition, JJCommand};
@@ -1486,12 +1488,20 @@ fn enter_target_select(app: &mut App, operation: TargetOperation, flags: Command
         return Action::None;
     };
     let restore_cursor = app.cursor;
+    let target_mode = if operation.multi_target() {
+        TargetMode::Multi {
+            targets: HashSet::new(),
+        }
+    } else {
+        TargetMode::Single
+    };
     app.mode = AppMode::TargetSelect {
         prompt: operation.label(),
         source,
         restore_cursor,
         operation,
         flags,
+        target_mode,
     };
     Action::None
 }
@@ -1579,26 +1589,57 @@ fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<Action> {
 
 fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
     match key.code {
+        KeyCode::Char(' ') => {
+            // Toggle target in multi-select mode.
+            let id = app.selected_change_id();
+            if let (
+                Some(id),
+                AppMode::TargetSelect {
+                    target_mode: TargetMode::Multi { targets },
+                    ..
+                },
+            ) = (id, &mut app.mode)
+            {
+                if !targets.remove(&id) {
+                    targets.insert(id);
+                }
+            }
+            Action::None
+        }
         KeyCode::Enter => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::TargetSelect {
                 source,
                 operation,
                 flags,
+                target_mode,
                 ..
             } = mode
             {
-                let Some(target) = app.selected_change_id() else {
-                    return Action::None;
+                let targets = match target_mode {
+                    TargetMode::Multi { targets } if !targets.is_empty() => {
+                        targets.into_iter().collect()
+                    }
+                    _ => {
+                        let Some(target) = app.selected_change_id() else {
+                            return Action::None;
+                        };
+                        smallvec![target]
+                    }
                 };
                 let label = operation.label();
                 let selection = build_change_selection(app);
-                let mut options = operation.follow_up(source, target.clone(), flags, selection);
+                let mut options = operation.follow_up(source, targets.clone(), flags, selection);
                 if options.len() == 1 {
                     let opt = options.remove(0);
                     return execute_follow_up(app, opt.action);
                 }
-                let prompt = format!("{label} {target}:");
+                let target_str: String = targets
+                    .iter()
+                    .map(|t| t.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let prompt = format!("{label} {target_str}:");
                 app.mode = AppMode::FollowUp { prompt, options };
             }
             Action::None
@@ -2151,6 +2192,7 @@ fn resolve_selection(
                     bookmark_name: name,
                 },
                 flags,
+                target_mode: TargetMode::Single,
             };
             Action::None
         }

@@ -235,6 +235,11 @@ pub enum TargetOperation {
 }
 
 impl TargetOperation {
+    /// Whether this operation supports selecting multiple targets.
+    pub fn multi_target(&self) -> bool {
+        matches!(self, TargetOperation::Rebase { .. })
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             TargetOperation::Squash(kind) => match kind {
@@ -264,14 +269,17 @@ impl TargetOperation {
     pub fn follow_up(
         self,
         source: ChangeId,
-        target: ChangeId,
+        targets: SmallVec<ChangeId>,
         flags: CommandFlags,
         selection: ChangeSelection,
     ) -> Vec<FollowUpOption> {
         match self {
             TargetOperation::Squash(kind) => squash_follow_up(
                 source,
-                Some(SquashTarget { target, kind }),
+                Some(SquashTarget {
+                    target: targets.into_iter().next().unwrap(),
+                    kind,
+                }),
                 selection,
                 flags,
             ),
@@ -279,7 +287,10 @@ impl TargetOperation {
                 "split",
                 JJCommand::Split {
                     change_id: source,
-                    target: Some(SplitTarget { target, kind }),
+                    target: Some(SplitTarget {
+                        target: targets.into_iter().next().unwrap(),
+                        kind,
+                    }),
                     selection,
                     flags,
                 },
@@ -287,11 +298,11 @@ impl TargetOperation {
             TargetOperation::Rebase {
                 source_mode,
                 sources,
-            } => rebase_follow_up(sources, target, source_mode, flags),
+            } => rebase_follow_up(sources, targets, source_mode, flags),
             TargetOperation::RestoreFrom => auto_follow_up(
                 "restore",
                 JJCommand::Restore {
-                    from: Some(target),
+                    from: targets.into_iter().next(),
                     into: None,
                     changes_in: None,
                     selection,
@@ -302,7 +313,7 @@ impl TargetOperation {
                 "restore",
                 JJCommand::Restore {
                     from: None,
-                    into: Some(target),
+                    into: targets.into_iter().next(),
                     changes_in: None,
                     selection,
                     flags,
@@ -312,7 +323,7 @@ impl TargetOperation {
                 "move",
                 JJCommand::BookmarkMove {
                     name: bookmark_name.clone(),
-                    target,
+                    target: targets.into_iter().next().unwrap(),
                     flags,
                 },
             ),
@@ -320,7 +331,7 @@ impl TargetOperation {
                 "duplicate",
                 JJCommand::Duplicate {
                     change_ids: smallvec::smallvec![source],
-                    onto: Some(target),
+                    onto: targets.into_iter().next(),
                     flags,
                 },
             ),
@@ -331,7 +342,7 @@ impl TargetOperation {
                     action: FollowUpAction::Execute(JJCommand::Revert {
                         change_ids: sources.clone(),
                         dest: RebaseTarget {
-                            target: target.clone(),
+                            targets: targets.clone(),
                             kind,
                         },
                         flags,
@@ -403,7 +414,7 @@ fn squash_follow_up(
 /// Build follow-up options for a rebase command (dest mode selection).
 fn rebase_follow_up(
     sources: SmallVec<ChangeId>,
-    target: ChangeId,
+    targets: SmallVec<ChangeId>,
     source_mode: RebaseSource,
     flags: CommandFlags,
 ) -> Vec<FollowUpOption> {
@@ -415,7 +426,7 @@ fn rebase_follow_up(
                 change_ids: sources.clone(),
                 source_mode: source_mode.clone(),
                 dest: RebaseTarget {
-                    target: target.clone(),
+                    targets: targets.clone(),
                     kind,
                 },
                 flags,

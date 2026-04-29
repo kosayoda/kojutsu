@@ -1,4 +1,4 @@
-use super::id::ChangeId;
+use super::id::{ChangeId, SmallVec};
 
 #[derive(Debug, Clone)]
 pub struct SquashTarget {
@@ -92,7 +92,7 @@ impl RebaseKind {
 
 #[derive(Debug, Clone)]
 pub struct RebaseTarget {
-    pub target: ChangeId,
+    pub targets: SmallVec<ChangeId>,
     pub kind: RebaseKind,
 }
 

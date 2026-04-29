@@ -414,8 +414,10 @@ impl JJCommand {
                     args.push(flag.into());
                     args.push(format_compact!("{id}"));
                 }
-                args.push(format_compact!("{}", dest.kind.flag()));
-                args.push(format_compact!("{}", dest.target));
+                for target in &dest.targets {
+                    args.push(format_compact!("{}", dest.kind.flag()));
+                    args.push(format_compact!("{target}"));
+                }
                 args
             }
             JJCommand::Restore {
@@ -684,8 +686,10 @@ impl JJCommand {
                     args.push("-r".into());
                     args.push(format_compact!("{id}"));
                 }
-                args.push(dest.kind.flag().into());
-                args.push(format_compact!("{}", dest.target));
+                for target in &dest.targets {
+                    args.push(dest.kind.flag().into());
+                    args.push(format_compact!("{target}"));
+                }
                 args
             }
             JJCommand::Duplicate {

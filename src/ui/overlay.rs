@@ -371,12 +371,18 @@ pub(super) fn draw_target_select(
     area: Rect,
     prompt: &str,
     source: &str,
+    multi: bool,
     theme: &Theme,
 ) {
     let block = top_border(theme);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
+    let hint = if multi {
+        " → select target(s) (Space = toggle, Enter = confirm, Esc = cancel)"
+    } else {
+        " → select target (Enter = confirm, Esc = cancel)"
+    };
     let spans = vec![
         Span::styled(
             format!("{prompt} "),
@@ -390,10 +396,7 @@ pub(super) fn draw_target_select(
                 .fg(theme.change_id)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            " → select target (Enter = confirm, Esc = cancel)",
-            Style::default().fg(theme.muted),
-        ),
+        Span::styled(hint, Style::default().fg(theme.muted)),
     ];
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }

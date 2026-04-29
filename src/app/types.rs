@@ -11,6 +11,13 @@ use crate::types::{
     VisualRange,
 };
 
+/// Whether the target-select picker allows one or many targets.
+#[derive(Debug, Clone)]
+pub enum TargetMode {
+    Single,
+    Multi { targets: HashSet<ChangeId> },
+}
+
 // ---------------------------------------------------------------------------
 // Persisted state -- saved to ~/.local/state/kojutsu/state.json across app restarts.
 // ---------------------------------------------------------------------------
@@ -294,6 +301,7 @@ pub enum AppMode {
         restore_cursor: usize,
         operation: TargetOperation,
         flags: CommandFlags,
+        target_mode: TargetMode,
     },
     /// Navigating to select a single commit (e.g. for workspace revision).
     CommitSelect {
