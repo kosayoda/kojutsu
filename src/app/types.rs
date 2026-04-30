@@ -171,6 +171,8 @@ pub struct PersistedState {
     pub op_log_search_scopes: u8,
     pub workspace_search_scopes: u8,
     pub active_preset: Option<usize>,
+    #[serde(default)]
+    pub git_diff: bool,
 }
 
 pub fn load_persisted_state() -> PersistedState {

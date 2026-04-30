@@ -37,7 +37,7 @@ bitflags::bitflags! {
         const ALLOW_BACKWARDS     = 1 << 8;
         const DRY_RUN             = 1 << 9;
         const PARALLEL            = 1 << 10;
-        // 1 << 11 was ALLOW_NEW (removed, jj deprecated --allow-new on git push)
+        const GIT_DIFF            = 1 << 11;
     }
 }
 
@@ -123,6 +123,7 @@ pub enum AppAction {
     ToggleIgnoreImmutable,
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
+    ToggleGitDiff,
     ToggleLineNumbers,
     WorkspaceAdd,
     WorkspaceForget,
@@ -347,6 +348,7 @@ fn shared_bindings() -> Vec<(Node, KeymapNode)> {
                 bind("d", AppAction::ResetRevset, "default revset", G),
                 bind("p", AppAction::SelectPreset, "switch preset", G),
                 bind("l", AppAction::ToggleLineNumbers, "toggle line numbers", G),
+                bind("g", AppAction::ToggleGitDiff, "toggle diff style", G),
                 bind("1", AppAction::SwitchPreset(0), "preset 1", G),
                 bind("2", AppAction::SwitchPreset(1), "preset 2", G),
                 bind("3", AppAction::SwitchPreset(2), "preset 3", G),

@@ -327,6 +327,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.toggles ^= CommandFlags::DEBUG;
             Action::None
         }
+        AppAction::ToggleGitDiff => {
+            app.toggles ^= CommandFlags::GIT_DIFF;
+            app.rebuild_rows();
+            Action::None
+        }
         AppAction::ToggleLineNumbers => {
             app.show_line_numbers = !app.show_line_numbers;
             Action::None

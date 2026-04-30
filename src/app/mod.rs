@@ -633,6 +633,7 @@ impl App {
             op_log_search_scopes: self.effective_scopes(ActiveView::Operations).bits(),
             workspace_search_scopes: self.effective_scopes(ActiveView::Workspaces).bits(),
             active_preset: self.revset.active_preset,
+            git_diff: self.toggles.contains(CommandFlags::GIT_DIFF),
         }
     }
 
@@ -643,6 +644,7 @@ impl App {
         self.toggles
             .set(CommandFlags::IGNORE_WORKING_COPY, state.ignore_working_copy);
         self.toggles.set(CommandFlags::DEBUG, state.debug);
+        self.toggles.set(CommandFlags::GIT_DIFF, state.git_diff);
         if state.search_scopes != 0 {
             let scopes = SearchScopes::from_bits_truncate(state.search_scopes);
             self.view_states[ActiveView::Dag.idx()].search_scopes = scopes;

@@ -383,10 +383,20 @@ pub enum ConflictHunkKind {
 }
 
 /// A token within a diff line (for word-level highlighting).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DiffTokenKind {
+    /// Unchanged text.
+    Unchanged,
+    /// Removed text (shown in error/red color).
+    Removed,
+    /// Added text (shown in added/green color).
+    Added,
+}
+
 #[derive(Clone)]
 pub struct DiffToken {
     pub text: String,
-    pub is_different: bool,
+    pub kind: DiffTokenKind,
 }
 
 /// A single line of a unified diff.

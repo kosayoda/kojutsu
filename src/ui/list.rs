@@ -13,7 +13,9 @@ use crate::app::{
     App, AppMode, BookmarkViewEntry, EvoLogEntry, OpDetailLine, OpDiffKind, OpLogEntry,
     TagViewEntry, TargetMode, WorkspaceViewEntry,
 };
-use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
+use crate::dag::{
+    CommitInfo, DiffLine, DiffLineKind, DiffTokenKind, FileChange, FileStatus, LineStats,
+};
 use crate::idx::EntryIdx;
 use crate::theme::{Config, Theme};
 use crate::types::ChangeId;
@@ -54,6 +56,7 @@ struct RenderFlags {
 
 pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &Config) {
     let theme = &config.theme;
+    let git_diff = app.toggles.contains(crate::keymap::CommandFlags::GIT_DIFF);
     // If in target selection mode, get the source change_id for highlighting
     // and the set of marked targets (multi-select).
     let (target_select_source, target_marks): (Option<&str>, Option<&HashSet<ChangeId>>) =
@@ -229,6 +232,17 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .diff_lines(*entry_idx, *file_idx)
                         .expect("visible diff row must be loaded");
                     let diff_line = &diff_lines[line_idx.raw()];
+
+                    // Look ahead for color-words merging: if this Removed line
+                    // is followed by an Added line, merge them inline.
+                    let next_added = if !git_diff && diff_line.kind == DiffLineKind::Removed {
+                        diff_lines
+                            .get(line_idx.raw() + 1)
+                            .filter(|n| n.kind == DiffLineKind::Added)
+                    } else {
+                        None
+                    };
+
                     let flags = RenderFlags {
                         is_source: false,
                         is_selected: app.is_line_selected(*entry_idx, *file_idx, *line_idx),
@@ -236,7 +250,9 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     };
                     render_diff_line(
                         diff_line,
+                        next_added,
                         app.show_line_numbers,
+                        git_diff,
                         &flags,
                         row_search.as_ref(),
                         theme,
@@ -382,7 +398,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     file_idx,
                     line_idx,
                 } => {
-                    let diff_line = app
+                    let diff_data = app
                         .evolog
                         .entries
                         .get(evolog_idx.raw())
@@ -390,27 +406,100 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             let files = app.evolog.files.get(&e.commit_id)?.loaded()?;
                             let file = files.get(file_idx.raw())?;
                             let key = (e.commit_id.clone(), file.path.clone());
-                            app.evolog.file_diffs.get(&key)?.loaded()
-                        })
-                        .and_then(|lines| lines.get(line_idx.raw()));
-                    if let Some(diff_line) = diff_line {
-                        let (base_style, prefix) = match diff_line.kind {
-                            DiffLineKind::Added => (Style::default().fg(theme.added), "+"),
-                            DiffLineKind::Removed => (Style::default().fg(theme.error), "-"),
-                            DiffLineKind::Context => (Style::default().fg(theme.muted), " "),
-                            DiffLineKind::Header => (
-                                Style::default()
-                                    .fg(theme.accent)
-                                    .add_modifier(Modifier::BOLD),
-                                "@",
-                            ),
+                            let lines = app.evolog.file_diffs.get(&key)?.loaded()?;
+                            Some((lines.get(line_idx.raw())?, lines))
+                        });
+                    if let Some((diff_line, all_lines)) = diff_data {
+                        // Color-words merge for evolog diffs.
+                        let next_added = if !git_diff
+                            && diff_line.kind == DiffLineKind::Removed
+                        {
+                            all_lines
+                                .get(line_idx.raw() + 1)
+                                .filter(|n| n.kind == DiffLineKind::Added)
+                        } else {
+                            None
                         };
-                        let mut spans = vec![
-                            gutter_span(row_search.as_ref(), theme),
-                            Span::styled(format!("    {prefix} "), base_style),
-                        ];
-                        push_diff_tokens(&mut spans, diff_line, base_style, row_search.as_ref());
-                        vec![Line::from(spans)]
+
+                        if let Some(added) = next_added {
+                            let base_style = Style::default().fg(theme.text);
+                            let mut spans = vec![
+                                gutter_span(row_search.as_ref(), theme),
+                                Span::styled("       ", base_style),
+                            ];
+                            let diff = jj_lib::diff::ContentDiff::by_word([
+                                diff_line.content.as_bytes(),
+                                added.content.as_bytes(),
+                            ]);
+                            for hunk in diff.hunks() {
+                                match hunk.kind {
+                                    jj_lib::diff::DiffHunkKind::Matching => {
+                                        let text =
+                                            String::from_utf8_lossy(hunk.contents[0]);
+                                        if !text.is_empty() {
+                                            spans.push(Span::styled(
+                                                text.to_string(),
+                                                base_style,
+                                            ));
+                                        }
+                                    }
+                                    jj_lib::diff::DiffHunkKind::Different => {
+                                        let removed =
+                                            String::from_utf8_lossy(hunk.contents[0]);
+                                        let added_text =
+                                            String::from_utf8_lossy(hunk.contents[1]);
+                                        if !removed.is_empty() {
+                                            spans.push(Span::styled(
+                                                removed.to_string(),
+                                                Style::default()
+                                                    .fg(theme.error)
+                                                    .add_modifier(Modifier::BOLD),
+                                            ));
+                                        }
+                                        if !added_text.is_empty() {
+                                            spans.push(Span::styled(
+                                                added_text.to_string(),
+                                                Style::default()
+                                                    .fg(theme.added)
+                                                    .add_modifier(Modifier::BOLD),
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            vec![Line::from(spans)]
+                        } else {
+                            let (base_style, prefix) = match diff_line.kind {
+                                DiffLineKind::Added => {
+                                    (Style::default().fg(theme.added), "+")
+                                }
+                                DiffLineKind::Removed => {
+                                    (Style::default().fg(theme.error), "-")
+                                }
+                                DiffLineKind::Context => {
+                                    (Style::default().fg(theme.muted), " ")
+                                }
+                                DiffLineKind::Header => (
+                                    Style::default()
+                                        .fg(theme.accent)
+                                        .add_modifier(Modifier::BOLD),
+                                    "@",
+                                ),
+                            };
+                            let mut spans = vec![
+                                gutter_span(row_search.as_ref(), theme),
+                                Span::styled(format!("    {prefix} "), base_style),
+                            ];
+                            push_diff_tokens(
+                                &mut spans,
+                                diff_line,
+                                base_style,
+                                row_search.as_ref(),
+                                git_diff,
+                                theme,
+                            );
+                            vec![Line::from(spans)]
+                        }
                     } else {
                         vec![Line::raw("")]
                     }
@@ -980,11 +1069,17 @@ fn push_diff_tokens(
     diff_line: &DiffLine,
     base_style: Style,
     search: Option<&SearchRender<'_>>,
+    git_diff: bool,
+    theme: &Theme,
 ) {
-    let has_tokens = diff_line.tokens.len() > 1 && diff_line.tokens.iter().any(|t| t.is_different);
+    let has_tokens = !git_diff
+        && diff_line.tokens.len() > 1
+        && diff_line
+            .tokens
+            .iter()
+            .any(|t| t.kind != DiffTokenKind::Unchanged);
 
     if !has_tokens || search.is_some_and(|s| s.row_state != SearchRowState::None) {
-        // No token data, or search is active — render as a single span.
         push_searchable(
             spans,
             &diff_line.content,
@@ -995,15 +1090,18 @@ fn push_diff_tokens(
         return;
     }
 
-    let emphasis = base_style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
     for token in &diff_line.tokens {
         if token.text.is_empty() {
             continue;
         }
-        let style = if token.is_different {
-            emphasis
-        } else {
-            base_style
+        let style = match token.kind {
+            DiffTokenKind::Unchanged => base_style,
+            DiffTokenKind::Removed => Style::default()
+                .fg(theme.error)
+                .add_modifier(Modifier::BOLD),
+            DiffTokenKind::Added => Style::default()
+                .fg(theme.added)
+                .add_modifier(Modifier::BOLD),
         };
         spans.push(Span::styled(token.text.clone(), style));
     }
@@ -1011,22 +1109,15 @@ fn push_diff_tokens(
 
 fn render_diff_line(
     diff_line: &DiffLine,
+    next_added: Option<&DiffLine>,
     show_line_numbers: bool,
+    git_diff: bool,
     flags: &RenderFlags,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let (marker, style) = match diff_line.kind {
-        DiffLineKind::Header => (" ", Style::default().fg(theme.change_id)),
-        DiffLineKind::Context => (" ", Style::default().fg(theme.muted)),
-        DiffLineKind::Added => ("+", Style::default().fg(theme.added)),
-        DiffLineKind::Removed => ("-", Style::default().fg(theme.error)),
-    };
-
-    let line_num_style = Style::default().fg(theme.muted);
-
+    // Shared gutter + visual/selection margin.
     let mut spans = vec![gutter_span(search, theme)];
-    // Left margin: visual range bar │ + selection indicator ▎.
     let is_selectable = diff_line.kind.is_selectable();
     if is_selectable {
         let bar = if flags.in_visual { "│" } else { " " };
@@ -1036,6 +1127,54 @@ fn render_diff_line(
     } else {
         spans.push(Span::raw("  "));
     }
+
+    // Color-words merge: Removed + Added → single line with inline word diff.
+    if let Some(added) = next_added {
+        let base_style = Style::default().fg(theme.text);
+        let removed_style = Style::default()
+            .fg(theme.error)
+            .add_modifier(Modifier::BOLD);
+        let added_style = Style::default()
+            .fg(theme.added)
+            .add_modifier(Modifier::BOLD);
+
+        spans.push(Span::styled("       ", base_style));
+        let diff =
+            jj_lib::diff::ContentDiff::by_word([
+                diff_line.content.as_bytes(),
+                added.content.as_bytes(),
+            ]);
+        for hunk in diff.hunks() {
+            match hunk.kind {
+                jj_lib::diff::DiffHunkKind::Matching => {
+                    let text = String::from_utf8_lossy(hunk.contents[0]);
+                    if !text.is_empty() {
+                        spans.push(Span::styled(text.to_string(), base_style));
+                    }
+                }
+                jj_lib::diff::DiffHunkKind::Different => {
+                    let removed = String::from_utf8_lossy(hunk.contents[0]);
+                    let added_text = String::from_utf8_lossy(hunk.contents[1]);
+                    if !removed.is_empty() {
+                        spans.push(Span::styled(removed.to_string(), removed_style));
+                    }
+                    if !added_text.is_empty() {
+                        spans.push(Span::styled(added_text.to_string(), added_style));
+                    }
+                }
+            }
+        }
+        return vec![Line::from(spans)];
+    }
+
+    let (marker, style) = match diff_line.kind {
+        DiffLineKind::Header => (" ", Style::default().fg(theme.change_id)),
+        DiffLineKind::Context => (" ", Style::default().fg(theme.muted)),
+        DiffLineKind::Added => ("+", Style::default().fg(theme.added)),
+        DiffLineKind::Removed => ("-", Style::default().fg(theme.error)),
+    };
+
+    let line_num_style = Style::default().fg(theme.muted);
     if show_line_numbers && diff_line.kind != DiffLineKind::Header {
         use std::fmt::Write;
         let mut nums = String::with_capacity(14);
@@ -1052,9 +1191,8 @@ fn render_diff_line(
         write!(nums, " ").unwrap();
         spans.push(Span::styled(nums, line_num_style));
         spans.push(Span::styled(marker, style));
-        push_diff_tokens(&mut spans, diff_line, style, search);
+        push_diff_tokens(&mut spans, diff_line, style, search, git_diff, theme);
     } else {
-        // Original layout: fixed indent + marker + content
         let prefix = match diff_line.kind {
             DiffLineKind::Header => "      ",
             DiffLineKind::Context => "       ",
@@ -1062,7 +1200,7 @@ fn render_diff_line(
             DiffLineKind::Removed => "      -",
         };
         spans.push(Span::styled(prefix, style));
-        push_diff_tokens(&mut spans, diff_line, style, search);
+        push_diff_tokens(&mut spans, diff_line, style, search, git_diff, theme);
     }
 
     vec![Line::from(spans)]

@@ -1602,11 +1602,7 @@ impl JjRepo {
     }
 
     /// Compute file-level changes between two commits (for evolog level-1 unfold).
-    pub fn inter_commit_details(
-        &self,
-        from_id: &str,
-        to_id: &str,
-    ) -> Result<Vec<FileChange>> {
+    pub fn inter_commit_details(&self, from_id: &str, to_id: &str) -> Result<Vec<FileChange>> {
         let repo = self.repo.as_ref();
         let from_commit_id = BackendCommitId::try_from_hex(from_id)
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
@@ -1959,10 +1955,7 @@ fn parse_first_line_description(raw: &str) -> Option<String> {
 }
 
 /// Convert unified diff hunks into `DiffLine` structs with token spans and line numbers.
-fn hunks_to_diff_lines(
-    hunks: &[unified::UnifiedDiffHunk<'_>],
-    out: &mut Vec<DiffLine>,
-) {
+fn hunks_to_diff_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut Vec<DiffLine>) {
     for hunk in hunks {
         out.push(DiffLine {
             kind: DiffLineKind::Header,
@@ -1987,10 +1980,14 @@ fn hunks_to_diff_lines(
             for (tag, bytes) in tokens {
                 let text = String::from_utf8_lossy(bytes).to_string();
                 full_text.push_str(&text);
-                diff_tokens.push(crate::dag::DiffToken {
-                    text,
-                    is_different: matches!(tag, DiffTokenType::Different),
-                });
+                let kind = match tag {
+                    DiffTokenType::Matching => crate::dag::DiffTokenKind::Unchanged,
+                    DiffTokenType::Different => match line_type {
+                        DiffLineType::Removed => crate::dag::DiffTokenKind::Removed,
+                        _ => crate::dag::DiffTokenKind::Added,
+                    },
+                };
+                diff_tokens.push(crate::dag::DiffToken { text, kind });
             }
             if let Some(last) = diff_tokens.last_mut() {
                 last.text = last.text.trim_end_matches('\n').to_string();
