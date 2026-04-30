@@ -1,8 +1,8 @@
 use super::{ActiveView, App, Loadable};
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, ConflictHunkIdx, ConflictLineIdx, ConflictSideIdx,
-    DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx,
-    TagDetailIdx, TagIdx, WorkspaceIdx,
+    DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx, FileIdx, GraphLineIdx, OpLogDetailIdx,
+    OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
@@ -15,6 +15,7 @@ impl App {
             ActiveView::Bookmarks => self.rebuild_bookmark_rows(),
             ActiveView::Tags => self.rebuild_tag_rows(),
             ActiveView::Operations => self.rebuild_op_log_rows(),
+            ActiveView::Evolog => self.rebuild_evolog_rows(),
             ActiveView::Workspaces => self.rebuild_workspace_rows(),
         }
     }
@@ -148,6 +149,24 @@ impl App {
         self.cursor = prev_cursor
             .and_then(|key| self.rows.iter().position(|r| r.key() == key))
             .or_else(|| fallback.and_then(|key| self.rows.iter().position(|r| r.key() == key)))
+            .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
+    }
+
+    fn rebuild_evolog_rows(&mut self) {
+        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        self.rows.clear();
+        for idx in 0..self.evolog_entries.len() {
+            let ei = EvoLogIdx::new(idx);
+            self.rows.push(DisplayRow::EvoLogItem { evolog_idx: ei });
+            for li in 0..self.evolog_entries[idx].graph.extra.len() {
+                self.rows.push(DisplayRow::EvoLogGraphLink {
+                    evolog_idx: ei,
+                    line_idx: GraphLineIdx::new(li),
+                });
+            }
+        }
+        self.cursor = prev_cursor
+            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
             .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
     }
 

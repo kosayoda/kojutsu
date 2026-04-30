@@ -411,6 +411,17 @@ impl App {
                 }
                 self.set_error(format!("failed to load conflict hunks for {path}: {error}"));
             }
+            RepoResult::EvoLogLoaded { entries } => {
+                self.evolog_entries = entries;
+                self.evolog_loaded = true;
+                if self.active_view == super::ActiveView::Evolog {
+                    deferred.rebuild = true;
+                }
+            }
+            RepoResult::EvoLogFailed { error } => {
+                self.evolog_loaded = false;
+                self.set_error(format!("failed to load evolog: {error}"));
+            }
             RepoResult::BackgroundError { error } => {
                 self.set_error(format!("background task failed: {error}"));
             }

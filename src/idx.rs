@@ -89,6 +89,10 @@ define_idx!(
     pub WorkspaceIdx
 );
 define_idx!(
+    /// Index into `App::evolog_entries`.
+    pub EvoLogIdx
+);
+define_idx!(
     /// Index into conflict hunks for a file.
     pub ConflictHunkIdx
 );

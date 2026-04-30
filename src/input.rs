@@ -1230,6 +1230,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.switch_view(crate::app::ActiveView::Workspaces);
             Action::None
         }
+        AppAction::SwitchToEvoLogView => {
+            app.switch_view(crate::app::ActiveView::Evolog);
+            Action::None
+        }
         AppAction::WsViewForget => {
             let Some(entry) = app.selected_workspace_entry() else {
                 return Action::None;
@@ -1784,6 +1788,8 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             | Some(DisplayRow::OpLogDetailLine { .. })
             | Some(DisplayRow::OpLogGraphLink { .. })
             | Some(DisplayRow::OpLogLoadMore)
+            | Some(DisplayRow::EvoLogItem { .. })
+            | Some(DisplayRow::EvoLogGraphLink { .. })
             | Some(DisplayRow::WorkspaceItem { .. })
             | Some(DisplayRow::ConflictHeader { .. })
             | Some(DisplayRow::ConflictSide { .. })

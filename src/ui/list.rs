@@ -10,8 +10,8 @@ use super::spans::*;
 use std::collections::HashSet;
 
 use crate::app::{
-    App, AppMode, BookmarkViewEntry, OpDetailLine, OpDiffKind, OpLogEntry, TagViewEntry,
-    TargetMode, WorkspaceViewEntry,
+    App, AppMode, BookmarkViewEntry, EvoLogEntry, OpDetailLine, OpDiffKind, OpLogEntry,
+    TagViewEntry, TargetMode, WorkspaceViewEntry,
 };
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
 use crate::idx::EntryIdx;
@@ -107,7 +107,9 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         .map(|(row_idx, row)| -> Vec<Line<'static>> {
             if row_idx < vis_start || row_idx >= vis_end {
                 return match row {
-                    DisplayRow::CommitNode { .. } | DisplayRow::OpLogItem { .. } => {
+                    DisplayRow::CommitNode { .. }
+                    | DisplayRow::OpLogItem { .. }
+                    | DisplayRow::EvoLogItem { .. } => {
                         vec![Line::raw(""), Line::raw("")]
                     }
                     _ => vec![Line::raw("")],
@@ -307,24 +309,34 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                 DisplayRow::OpLogGraphLink {
                     op_log_idx,
                     line_idx,
-                } => {
-                    let graph_str = app
-                        .op_log_entries
+                } => render_simple_graph_link(
+                    app.op_log_entries
                         .get(op_log_idx.raw())
-                        .and_then(|e| e.graph.extra.get(line_idx.raw()))
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
-                    let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
-                    spans.push(Span::styled(
-                        graph_str.to_string(),
-                        Style::default().fg(theme.muted),
-                    ));
-                    vec![Line::from(spans)]
-                }
+                        .and_then(|e| e.graph.extra.get(line_idx.raw())),
+                    row_search.as_ref(),
+                    theme,
+                ),
                 DisplayRow::OpLogLoadMore => vec![Line::from(vec![
                     Span::styled("  [Tab] ", Style::default().fg(theme.accent)),
                     Span::styled("Load more…", Style::default().fg(theme.muted)),
                 ])],
+                DisplayRow::EvoLogItem { evolog_idx } => {
+                    if let Some(entry) = app.evolog_entries.get(evolog_idx.raw()) {
+                        render_evolog_item(entry, row_search.as_ref(), config)
+                    } else {
+                        vec![Line::raw(""), Line::raw("")]
+                    }
+                }
+                DisplayRow::EvoLogGraphLink {
+                    evolog_idx,
+                    line_idx,
+                } => render_simple_graph_link(
+                    app.evolog_entries
+                        .get(evolog_idx.raw())
+                        .and_then(|e| e.graph.extra.get(line_idx.raw())),
+                    row_search.as_ref(),
+                    theme,
+                ),
                 DisplayRow::WorkspaceItem { workspace_idx } => {
                     if let Some(entry) = app.workspace_entries.get(workspace_idx.raw()) {
                         render_workspace_item(entry, row_search.as_ref(), theme)
@@ -483,6 +495,36 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
 /// Render a commit as a 2-line ListItem matching `jj log` default format:
 ///
 /// ```text
+fn push_graph_node_spans(
+    spans: &mut Vec<Span<'static>>,
+    node: &str,
+    glyph_style: Style,
+    config: &Config,
+) {
+    let theme = &config.theme;
+    for (is_glyph, group) in node
+        .char_indices()
+        .chunk_by(|&(_, c)| config.glyphs.is_glyph(c))
+        .into_iter()
+    {
+        let mut iter = group.into_iter();
+        let (start, c) = iter.next().expect("chunk_by groups are non-empty");
+        let end = {
+            let (end, c) = iter.last().unwrap_or((start, c));
+            end + c.len_utf8()
+        };
+        let s = &node[start..end];
+        if is_glyph {
+            spans.push(Span::styled(s.to_string(), glyph_style));
+        } else {
+            spans.push(Span::styled(
+                s.to_string(),
+                Style::default().fg(theme.muted),
+            ));
+        }
+    }
+}
+
 /// ○  change_id author timestamp bookmarks commit_id
 /// │  description
 /// ```
@@ -530,29 +572,7 @@ fn render_commit_item<'a>(
         line1.push(Span::raw(" "));
     }
 
-    // Graph prefix (properly padded by the renderer).
-    // Split into glyph characters vs connector characters for coloring.
-    for (is_glyph, group) in graph_node
-        .char_indices()
-        .chunk_by(|&(_, c)| config.glyphs.is_glyph(c))
-        .into_iter()
-    {
-        let mut iter = group.into_iter();
-        let (start, c) = iter.next().expect("chunk_by groups are non-empty");
-        let end = {
-            let (end, c) = iter.last().unwrap_or((start, c));
-            end + c.len_utf8()
-        };
-        let span = &graph_node[start..end];
-        if is_glyph {
-            line1.push(Span::styled(span.to_string(), graph_style));
-        } else {
-            line1.push(Span::styled(
-                span.to_string(),
-                Style::default().fg(theme.muted),
-            ));
-        }
-    }
+    push_graph_node_spans(&mut line1, graph_node, graph_style, config);
 
     // Change ID (prefix bright, rest dimmed; red if divergent)
     let change_color = if c.is_divergent {
@@ -1208,6 +1228,95 @@ fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> Vec<Li
             vec![Line::from(spans)]
         }
     }
+}
+
+fn render_evolog_item(
+    entry: &EvoLogEntry,
+    search: Option<&SearchRender<'_>>,
+    config: &Config,
+) -> Vec<Line<'static>> {
+    let theme = &config.theme;
+    let mut spans = vec![gutter_span(search, theme)];
+
+    // Graph prefix.
+    let graph_style = if entry.is_current {
+        Style::default()
+            .fg(theme.added)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.muted)
+    };
+    push_graph_node_spans(&mut spans, &entry.graph.node, graph_style, config);
+
+    // Change ID.
+    push_searchable(
+        &mut spans,
+        &entry.change_id,
+        SearchScopes::CHANGE_ID,
+        Style::default().fg(theme.change_id),
+        search,
+    );
+
+    // Description.
+    spans.push(dot(theme));
+    let desc = entry
+        .description
+        .as_deref()
+        .unwrap_or("(no description set)");
+    let desc_style = if entry.is_current {
+        Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.text)
+    };
+    push_searchable(
+        &mut spans,
+        desc,
+        SearchScopes::DESCRIPTION,
+        desc_style,
+        search,
+    );
+
+    let line1 = Line::from(spans);
+
+    // Second line: graph continuation + author · time · op description.
+    let mut spans2 = vec![
+        gutter_span(search, theme),
+        Span::styled(entry.graph.cont.clone(), Style::default().fg(theme.muted)),
+    ];
+
+    spans2.push(Span::styled(
+        entry.author.to_string(),
+        Style::default().fg(theme.user),
+    ));
+
+    spans2.push(dot(theme));
+    spans2.push(Span::styled(
+        entry.relative_time.to_string(),
+        Style::default().fg(Color::Cyan),
+    ));
+
+    if let Some(ref op) = entry.op_description {
+        spans2.push(dot(theme));
+        spans2.push(Span::styled(
+            op.to_string(),
+            Style::default().fg(theme.muted),
+        ));
+    }
+
+    let line2 = Line::from(spans2);
+    vec![line1, line2]
+}
+
+fn render_simple_graph_link(
+    graph_str: Option<&String>,
+    search: Option<&SearchRender<'_>>,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let s = graph_str.map(|s| s.as_str()).unwrap_or("");
+    vec![Line::from(vec![
+        gutter_span(search, theme),
+        Span::styled(s.to_string(), Style::default().fg(theme.muted)),
+    ])]
 }
 
 fn render_workspace_item(

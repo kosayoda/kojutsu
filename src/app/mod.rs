@@ -135,6 +135,12 @@ pub struct App {
     pub unfolded_ops: HashSet<Str>,
     /// Cached op detail lines per op ID.
     pub op_details: HashMap<Str, Loadable<Vec<OpDetailLine>>>,
+    /// Aggregated evolution log data for the evolog view.
+    pub evolog_entries: Vec<EvoLogEntry>,
+    /// Whether the evolog has been loaded (lazy).
+    pub evolog_loaded: bool,
+    /// Which commit ID the evolog is loaded for.
+    pub evolog_commit_id: Option<CommitId>,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
@@ -234,6 +240,9 @@ impl App {
             op_log_workspace_filter: HashSet::from([Str::from("default")]),
             unfolded_ops: HashSet::new(),
             op_details: HashMap::new(),
+            evolog_entries: Vec::new(),
+            evolog_loaded: false,
+            evolog_commit_id: None,
             rows: Vec::new(),
             cursor: 0,
             view_states: default_view_states(),
@@ -308,6 +317,22 @@ impl App {
         if view == ActiveView::Operations && !self.op_log_loaded {
             self.pending_repo_requests
                 .push(RepoRequest::load_operations(self.op_log_limit));
+        }
+        // Trigger lazy load of evolog data.
+        if view == ActiveView::Evolog {
+            if let Some(commit_id) = self
+                .selected_entry_idx()
+                .map(|idx| self.nodes[idx].commit.graph_id.clone())
+            {
+                let changed = self.evolog_commit_id.as_ref() != Some(&commit_id);
+                if changed || !self.evolog_loaded {
+                    self.evolog_commit_id = Some(commit_id.clone());
+                    self.evolog_loaded = false;
+                    self.evolog_entries.clear();
+                    self.pending_repo_requests
+                        .push(RepoRequest::load_evolution_log(commit_id));
+                }
+            }
         }
         self.rebuild_rows();
 
@@ -537,6 +562,8 @@ impl App {
             | DisplayRow::OpLogDetailLine { .. }
             | DisplayRow::OpLogGraphLink { .. }
             | DisplayRow::OpLogLoadMore
+            | DisplayRow::EvoLogItem { .. }
+            | DisplayRow::EvoLogGraphLink { .. }
             | DisplayRow::WorkspaceItem { .. }
             | DisplayRow::ConflictHeader { .. }
             | DisplayRow::ConflictSide { .. }

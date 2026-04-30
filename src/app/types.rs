@@ -77,6 +77,7 @@ pub enum ActiveView {
     Tags,
     Operations,
     Workspaces,
+    Evolog,
 }
 
 impl ActiveView {
@@ -91,6 +92,7 @@ impl ActiveView {
             Self::Tags => SearchScopes::DEFAULT_TAG,
             Self::Operations => SearchScopes::DEFAULT_OP_LOG,
             Self::Workspaces => SearchScopes::DEFAULT,
+            Self::Evolog => SearchScopes::DEFAULT,
         }
     }
 }
@@ -122,6 +124,7 @@ pub(super) fn default_view_states() -> [ViewState; <ActiveView as strum::EnumCou
         ViewState::new(ActiveView::Tags.default_scopes()),
         ViewState::new(ActiveView::Operations.default_scopes()),
         ViewState::new(ActiveView::Workspaces.default_scopes()),
+        ViewState::new(ActiveView::Evolog.default_scopes()),
     ]
 }
 
@@ -196,6 +199,25 @@ pub struct OpLogEntry {
     /// Whether this is a pure working-copy snapshot.
     pub is_snapshot: bool,
     /// Whether this is the repo's current operation.
+    pub is_current: bool,
+    /// Pre-rendered graph lines.
+    pub graph: crate::graph::GraphLines,
+}
+
+pub struct EvoLogEntry {
+    /// Full hex commit ID.
+    pub commit_id: CommitId,
+    /// Short change ID for display.
+    pub change_id: Str,
+    /// First line of commit description.
+    pub description: Option<String>,
+    /// Author name/email.
+    pub author: Str,
+    /// Relative time string (e.g. "5 hours ago").
+    pub relative_time: Str,
+    /// Description of the operation that produced this version.
+    pub op_description: Option<Str>,
+    /// Whether this is the newest (current) version.
     pub is_current: bool,
     /// Pre-rendered graph lines.
     pub graph: crate::graph::GraphLines,

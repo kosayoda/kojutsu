@@ -112,6 +112,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         crate::app::ActiveView::Bookmarks => " Bookmarks ",
         crate::app::ActiveView::Tags => " Tags ",
         crate::app::ActiveView::Operations => " Operations ",
+        crate::app::ActiveView::Evolog => " Evolog ",
         crate::app::ActiveView::Workspaces => " Workspaces ",
     };
 

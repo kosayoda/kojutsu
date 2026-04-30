@@ -1,7 +1,7 @@
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, ConflictHunkIdx, ConflictLineIdx, ConflictSideIdx,
-    DescriptionLineIdx, DiffLineIdx, EntryIdx, FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx,
-    TagDetailIdx, TagIdx, WorkspaceIdx,
+    DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx, FileIdx, GraphLineIdx, OpLogDetailIdx,
+    OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 
 /// Identifies a display row for cursor restore after rebuild.
@@ -21,6 +21,8 @@ pub enum RowKey {
     OpLogDetailLine(OpLogIdx, OpLogDetailIdx),
     OpLogGraphLink(OpLogIdx, GraphLineIdx),
     OpLogLoadMore,
+    EvoLogItem(EvoLogIdx),
+    EvoLogGraphLink(EvoLogIdx, GraphLineIdx),
     WorkspaceItem(WorkspaceIdx),
     ConflictHeader(EntryIdx, FileIdx, ConflictHunkIdx),
     ConflictSide(
@@ -91,6 +93,13 @@ pub enum DisplayRow {
     },
     /// "Load more..." sentinel at the bottom of the op log.
     OpLogLoadMore,
+    /// An evolution log entry.
+    EvoLogItem { evolog_idx: EvoLogIdx },
+    /// A graph link/pad line between evolog entries.
+    EvoLogGraphLink {
+        evolog_idx: EvoLogIdx,
+        line_idx: GraphLineIdx,
+    },
     /// A workspace row in the workspace view.
     WorkspaceItem { workspace_idx: WorkspaceIdx },
     /// Header for a conflict hunk (e.g. "── conflict 1 of 2 ──").
@@ -161,6 +170,11 @@ impl DisplayRow {
                 line_idx,
             } => RowKey::OpLogGraphLink(op_log_idx, line_idx),
             DisplayRow::OpLogLoadMore => RowKey::OpLogLoadMore,
+            DisplayRow::EvoLogItem { evolog_idx } => RowKey::EvoLogItem(evolog_idx),
+            DisplayRow::EvoLogGraphLink {
+                evolog_idx,
+                line_idx,
+            } => RowKey::EvoLogGraphLink(evolog_idx, line_idx),
             DisplayRow::WorkspaceItem { workspace_idx } => RowKey::WorkspaceItem(workspace_idx),
             DisplayRow::ConflictHeader {
                 entry_idx,

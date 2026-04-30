@@ -125,6 +125,7 @@ pub fn scope_specs_for_view(view: crate::app::ActiveView) -> &'static [SearchSco
         crate::app::ActiveView::Bookmarks => BOOKMARK_VIEW_SCOPE_SPECS,
         crate::app::ActiveView::Tags => TAG_VIEW_SCOPE_SPECS,
         crate::app::ActiveView::Operations => OP_LOG_VIEW_SCOPE_SPECS,
+        crate::app::ActiveView::Evolog => SEARCH_SCOPE_SPECS,
         crate::app::ActiveView::Workspaces => WORKSPACE_VIEW_SCOPE_SPECS,
     }
 }

@@ -877,11 +877,7 @@ impl JjRepo {
 
         // Description
         let raw_desc = commit.description().trim();
-        let description = if raw_desc.is_empty() || raw_desc == "(no description set)" {
-            None
-        } else {
-            raw_desc.lines().next().map(String::from)
-        };
+        let description = parse_first_line_description(commit.description());
         let full_description = if raw_desc.contains('\n') {
             Some(raw_desc.to_string())
         } else {
@@ -903,7 +899,8 @@ impl JjRepo {
         };
 
         // Workspaces (O(1) lookup from pre-built map)
-        let workspaces = ctx.wc_commit_workspaces
+        let workspaces = ctx
+            .wc_commit_workspaces
             .get(commit.id())
             .cloned()
             .unwrap_or_default();
@@ -939,7 +936,8 @@ impl JjRepo {
         // Remote bookmarks pointing at this commit, excluding synced ones
         // (where the remote target matches the local target). Matches jj's
         // collect_distinct_refs behavior: show local + unsynced remote.
-        let remote_bookmarks: Vec<RemoteBookmarkInfo> = ctx.remote_bookmark_map
+        let remote_bookmarks: Vec<RemoteBookmarkInfo> = ctx
+            .remote_bookmark_map
             .get(commit.id())
             .map(|rbs| rbs.iter().filter(|rb| !rb.synced).cloned().collect())
             .unwrap_or_default();
@@ -1324,10 +1322,7 @@ impl JjRepo {
     }
 
     /// Build an `IdPrefixContext` using the `revsets.short-prefixes` config.
-    fn build_id_prefix_context(
-        &self,
-        context: &RevsetParseContext<'_>,
-    ) -> IdPrefixContext {
+    fn build_id_prefix_context(&self, context: &RevsetParseContext<'_>) -> IdPrefixContext {
         let short_prefixes_str = self
             .settings
             .config()
@@ -1378,12 +1373,7 @@ impl JjRepo {
             prefix_len: DETAIL_PREFIX_LEN,
         };
 
-        let raw_desc = commit.description().trim();
-        let description = if raw_desc.is_empty() || raw_desc == "(no description set)" {
-            None
-        } else {
-            raw_desc.lines().next().map(String::from)
-        };
+        let description = parse_first_line_description(commit.description());
 
         Some(CommitDetailInfo {
             change_id,
@@ -1480,13 +1470,7 @@ impl JjRepo {
             let id_hex = op.id().hex();
             let is_current = id_hex == current_op_id;
 
-            let millis = meta.time.start.timestamp.0;
-            let secs = millis / 1000;
-            let nanos = ((millis % 1000) * 1_000_000) as u32;
-            let relative_time: Str = match chrono::DateTime::from_timestamp(secs, nanos) {
-                Some(dt) => format_relative_time(dt).into(),
-                None => "unknown".into(),
-            };
+            let relative_time = millis_to_relative_time(meta.time.start.timestamp.0);
 
             let workspace: Option<Str> = meta.workspace_name.as_ref().map(|ws| ws.as_str().into());
             let user: Str = if meta.hostname.is_empty() {
@@ -1565,6 +1549,114 @@ impl JjRepo {
             .collect();
 
         Ok((entries, has_more))
+    }
+
+    /// Load the evolution log (predecessor chain) for a commit.
+    pub fn evolution_log(&self, commit_id_hex: &str) -> Result<Vec<crate::app::EvoLogEntry>> {
+        use crate::dag::{Edge, EdgeKind};
+
+        let repo = self.repo.as_ref();
+        let commit_id = BackendCommitId::try_from_hex(commit_id_hex)
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit id hex"))?;
+
+        struct RawEntry {
+            full_id: String,
+            change_id: Str,
+            description: Option<String>,
+            author: Str,
+            relative_time: Str,
+            op_description: Option<Str>,
+            is_current: bool,
+            edges: Vec<Edge>,
+        }
+
+        let mut raw_entries = Vec::new();
+        let mut is_first = true;
+        for result in jj_lib::evolution::walk_predecessors(repo, &[commit_id]) {
+            let entry = result.wrap_err("failed to walk predecessors")?;
+            let commit = &entry.commit;
+
+            let change_id_hex = commit.change_id().reverse_hex();
+            let change_id: Str = change_id_hex
+                .get(..DISPLAY_ID_LEN)
+                .unwrap_or(&change_id_hex)
+                .into();
+
+            let description = parse_first_line_description(commit.description());
+
+            let sig = commit.author();
+            let author: Str = if sig.email.is_empty() {
+                sig.name.as_str().into()
+            } else {
+                sig.email.as_str().into()
+            };
+
+            let relative_time = millis_to_relative_time(sig.timestamp.timestamp.0);
+
+            let op_description: Option<Str> = entry
+                .operation
+                .as_ref()
+                .map(|op| op.metadata().description.as_str().into());
+
+            let full_id = commit.id().hex();
+            let edges: Vec<Edge> = entry
+                .predecessor_ids()
+                .iter()
+                .map(|pid| Edge {
+                    target: UiCommitId::new(pid.hex()),
+                    kind: EdgeKind::Direct,
+                })
+                .collect();
+
+            let is_current = is_first;
+            is_first = false;
+
+            raw_entries.push(RawEntry {
+                full_id,
+                change_id,
+                description,
+                author,
+                relative_time,
+                op_description,
+                is_current,
+                edges,
+            });
+        }
+
+        let loaded_ids: HashSet<String> = raw_entries.iter().map(|e| e.full_id.clone()).collect();
+        for entry in &mut raw_entries {
+            for edge in &mut entry.edges {
+                if !loaded_ids.contains(edge.target.as_str()) {
+                    edge.kind = EdgeKind::Missing;
+                }
+            }
+        }
+
+        let graph_input: Vec<(&str, &[Edge], char)> = raw_entries
+            .iter()
+            .map(|e| {
+                let glyph = if e.is_current { '@' } else { '○' };
+                (e.full_id.as_str(), e.edges.as_slice(), glyph)
+            })
+            .collect();
+        let graph_lines = crate::graph::render_generic(&graph_input);
+
+        let entries = raw_entries
+            .into_iter()
+            .zip(graph_lines)
+            .map(|(raw, graph)| crate::app::EvoLogEntry {
+                commit_id: UiCommitId::new(raw.full_id),
+                change_id: raw.change_id,
+                description: raw.description,
+                author: raw.author,
+                relative_time: raw.relative_time,
+                op_description: raw.op_description,
+                is_current: raw.is_current,
+                graph,
+            })
+            .collect();
+
+        Ok(entries)
     }
 
     /// Compute the diff between an operation and its parent.
@@ -1793,6 +1885,26 @@ impl JjRepo {
 fn short_hex(id: &BackendCommitId) -> Str {
     let hex = id.hex();
     Str::from(&hex[..hex.len().min(8)])
+}
+
+/// Convert a millisecond timestamp to a relative time string (e.g. "5 hours ago").
+fn millis_to_relative_time(millis: i64) -> Str {
+    let secs = millis / 1000;
+    let nanos = ((millis % 1000) * 1_000_000) as u32;
+    match chrono::DateTime::from_timestamp(secs, nanos) {
+        Some(dt) => format_relative_time(dt).into(),
+        None => "unknown".into(),
+    }
+}
+
+/// Parse a commit description, returning `None` for empty/placeholder descriptions.
+fn parse_first_line_description(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed == "(no description set)" {
+        None
+    } else {
+        trimmed.lines().next().map(String::from)
+    }
 }
 
 fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {

@@ -47,6 +47,9 @@ enum RepoRequestKind {
     OpDiff {
         op_id: Str,
     },
+    EvolutionLog {
+        commit_id: CommitId,
+    },
 }
 
 #[derive(Clone)]
@@ -136,6 +139,12 @@ pub enum RepoResult {
         op_id: Str,
         error: String,
     },
+    EvoLogLoaded {
+        entries: Vec<crate::app::EvoLogEntry>,
+    },
+    EvoLogFailed {
+        error: String,
+    },
     /// A background computation thread panicked or failed.
     BackgroundError {
         error: String,
@@ -188,6 +197,13 @@ impl RepoRequest {
             kind: RepoRequestKind::OpDiff { op_id },
         }
     }
+
+    pub fn load_evolution_log(commit_id: CommitId) -> Self {
+        Self {
+            epoch: 0,
+            kind: RepoRequestKind::EvolutionLog { commit_id },
+        }
+    }
 }
 
 impl RepoService {
@@ -218,7 +234,8 @@ impl RepoRequestHandle {
             | RepoRequestKind::FileDiff { .. }
             | RepoRequestKind::Operations { .. }
             | RepoRequestKind::ConflictHunks { .. }
-            | RepoRequestKind::OpDiff { .. } => self.current_epoch.load(Ordering::SeqCst),
+            | RepoRequestKind::OpDiff { .. }
+            | RepoRequestKind::EvolutionLog { .. } => self.current_epoch.load(Ordering::SeqCst),
         };
         let _ = self.request_tx.send(request);
     }
@@ -301,6 +318,9 @@ impl RepoServiceState {
             }
             RepoRequestKind::OpDiff { op_id } => {
                 self.handle_op_diff(epoch, op_id);
+            }
+            RepoRequestKind::EvolutionLog { commit_id } => {
+                self.handle_evolution_log(epoch, commit_id);
             }
         }
     }
@@ -679,6 +699,25 @@ impl RepoServiceState {
                     epoch,
                     RepoResult::OpDiffFailed {
                         op_id,
+                        error: format!("{err:#}"),
+                    },
+                );
+            }
+        }
+    }
+
+    fn handle_evolution_log(&mut self, epoch: u64, commit_id: CommitId) {
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::EvoLogFailed { error }) else {
+            return;
+        };
+        match repo.evolution_log(commit_id.as_str()) {
+            Ok(entries) => {
+                self.send_if_current(epoch, RepoResult::EvoLogLoaded { entries });
+            }
+            Err(err) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::EvoLogFailed {
                         error: format!("{err:#}"),
                     },
                 );

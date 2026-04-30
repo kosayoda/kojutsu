@@ -160,6 +160,7 @@ pub enum AppAction {
     // View switching
     SwitchToOpLogView,
     SwitchToWorkspaceView,
+    SwitchToEvoLogView,
     // Workspace view actions
     WsViewForget,
     WsViewJumpToCommit,
@@ -245,6 +246,7 @@ pub struct Keymaps {
     pub tags: Keymap,
     pub operations: Keymap,
     pub workspaces: Keymap,
+    pub evolog: Keymap,
 }
 
 impl Keymaps {
@@ -254,6 +256,7 @@ impl Keymaps {
             crate::app::ActiveView::Bookmarks => &self.bookmarks,
             crate::app::ActiveView::Tags => &self.tags,
             crate::app::ActiveView::Operations => &self.operations,
+            crate::app::ActiveView::Evolog => &self.evolog,
             crate::app::ActiveView::Workspaces => &self.workspaces,
         }
     }
@@ -300,6 +303,7 @@ fn shared_bindings() -> Vec<(Node, KeymapNode)> {
         bind("3", AppAction::SwitchToTagView, "tags view", G),
         bind("4", AppAction::SwitchToWorkspaceView, "workspaces view", G),
         bind("5", AppAction::SwitchToOpLogView, "operations view", G),
+        bind("6", AppAction::SwitchToEvoLogView, "evolog view", G),
         // Fold / Select
         bind("tab", AppAction::ToggleFold, "toggle fold", N),
         bind("space", AppAction::ToggleSelect, "toggle select", N),
@@ -356,6 +360,7 @@ impl Default for Keymaps {
         // DAG view: shared bindings + all commit/graph operations.
         let mut dag_root = shared_bindings();
         dag_root.extend(vec![
+            bind("shift-e", AppAction::SwitchToEvoLogView, "evolog", C),
             bind("a", AppAction::Absorb, "absorb", C),
             bind("+", AppAction::ExpandAncestors, "expand ancestors", C),
             prefix(
@@ -652,12 +657,15 @@ impl Default for Keymaps {
             ),
         ]);
 
+        let evolog_root = shared_bindings();
+
         Keymaps {
             dag: Keymap { root: dag_root },
             bookmarks: Keymap { root: bm_root },
             tags: Keymap { root: tg_root },
             operations: Keymap { root: op_root },
             workspaces: Keymap { root: ws_root },
+            evolog: Keymap { root: evolog_root },
         }
     }
 }
