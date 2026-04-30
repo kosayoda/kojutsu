@@ -473,6 +473,27 @@ impl App {
             }
         }
 
+        // Tracked remote bookmarks not attached to any visible node
+        // (forgotten locally but still tracked on remote).
+        for raw in &self.tracked_bookmarks {
+            if let Some((name, remote)) = raw.rsplit_once('@') {
+                let key = BookmarkName::new(raw.as_str());
+                if seen.insert(key) {
+                    entries.push(BookmarkViewEntry {
+                        name: BookmarkName::new(name),
+                        commit_id: None,
+                        change_id: None,
+                        description: None,
+                        is_tracked: true,
+                        is_synced: false,
+                        is_dirty: false,
+                        remote: Some(RemoteName::new(remote)),
+                        is_conflicted: false,
+                    });
+                }
+            }
+        }
+
         // Untracked remote bookmarks not attached to any visible node.
         for raw in &self.untracked_bookmarks {
             if let Some((name, remote)) = raw.rsplit_once('@') {
@@ -493,12 +514,31 @@ impl App {
             }
         }
 
-        // Sort: local first, then by name.
+        // Find the working copy commit ID for priority sorting.
+        let wc_commit_id: Option<CommitId> = self
+            .nodes
+            .iter()
+            .find(|n| n.commit.is_working_copy())
+            .map(|n| n.commit.graph_id.clone());
+
+        // Sort priority: bookmarks on working copy → forgotten-but-tracked →
+        // other locals → remotes. Within each group, alphabetical.
         entries.sort_by(|a, b| {
-            a.remote
-                .is_some()
-                .cmp(&b.remote.is_some())
-                .then(a.name.cmp(&b.name))
+            let rank = |e: &BookmarkViewEntry| -> u8 {
+                let on_wc = wc_commit_id
+                    .as_ref()
+                    .is_some_and(|wc| e.commit_id.as_ref() == Some(wc));
+                if on_wc {
+                    0 // on working copy
+                } else if e.remote.is_some() && e.is_tracked {
+                    1 // forgotten locally, still tracked on remote
+                } else if e.remote.is_none() {
+                    2 // normal local bookmark
+                } else {
+                    3 // untracked remote
+                }
+            };
+            rank(a).cmp(&rank(b)).then(a.name.cmp(&b.name))
         });
 
         self.bookmark_entries = entries;
