@@ -128,7 +128,7 @@ fn main() -> Result<()> {
     app.default_search_scopes = config.default_search_scopes.to_flags();
     app.search_scopes = app.default_search_scopes;
     app.apply_persisted_state(&persisted);
-    app.active_preset = active_preset;
+    app.revset.active_preset = active_preset;
     app.request_revset_load(requested_revset);
     flush_repo_requests(&mut app, &repo_requests);
     let mut terminal = kojutsu::terminal::init()?;
@@ -220,7 +220,7 @@ fn main() -> Result<()> {
                 update_revset(&mut app, revset_str);
             }
             Action::EditRevsetInEditor => {
-                app.active_preset = None;
+                app.revset.active_preset = None;
                 terminal_events.stop();
                 edit_revset_in_editor(&mut app, &mut terminal);
                 terminal_events = spawn_terminal_events(event_tx.clone());
@@ -332,9 +332,9 @@ impl TerminalEvents {
 }
 
 fn refresh_app(app: &mut App) {
-    let revset = match &app.revset_state {
-        Loadable::Loading => app.pending_revset.clone(),
-        _ => Some(app.revset.clone()),
+    let revset = match &app.revset.load_state {
+        Loadable::Loading => app.revset.pending.clone(),
+        _ => Some(app.revset.current.clone()),
     };
     app.request_revset_load(revset);
 }

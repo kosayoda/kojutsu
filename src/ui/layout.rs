@@ -18,12 +18,13 @@ pub(super) fn draw_header(
     single_line: bool,
 ) {
     let show_ws_filter = app.active_view == crate::app::ActiveView::Operations
-        && !app.op_log_workspace_filter.is_empty();
+        && !app.op_log.workspace_filter.is_empty();
     let workspace_filter_line: Option<Line> = if !show_ws_filter {
         None
     } else {
         let mut names: Vec<&str> = app
-            .op_log_workspace_filter
+            .op_log
+            .workspace_filter
             .iter()
             .map(|s| s.as_str())
             .collect();
@@ -46,14 +47,18 @@ pub(super) fn draw_header(
             Span::styled(&app.repo_root, Style::default().fg(theme.text)),
             Span::raw(HEADER_SEP),
             Span::styled(
-                if let Some(preset) = app.active_preset.and_then(|i| app.presets.get(i)) {
+                if let Some(preset) = app
+                    .revset
+                    .active_preset
+                    .and_then(|i| app.revset.presets.get(i))
+                {
                     format!("revset ({}): ", preset.name)
                 } else {
                     "revset: ".to_string()
                 },
                 Style::default().fg(theme.muted),
             ),
-            Span::styled(&app.revset, Style::default().fg(theme.accent)),
+            Span::styled(&app.revset.current, Style::default().fg(theme.accent)),
         ])]
     } else {
         vec![
@@ -63,14 +68,18 @@ pub(super) fn draw_header(
             ]),
             Line::from(vec![
                 Span::styled(
-                    if let Some(preset) = app.active_preset.and_then(|i| app.presets.get(i)) {
+                    if let Some(preset) = app
+                        .revset
+                        .active_preset
+                        .and_then(|i| app.revset.presets.get(i))
+                    {
                         format!("revset ({}): ", preset.name)
                     } else {
                         "revset: ".to_string()
                     },
                     Style::default().fg(theme.muted),
                 ),
-                Span::styled(&app.revset, Style::default().fg(theme.accent)),
+                Span::styled(&app.revset.current, Style::default().fg(theme.accent)),
             ]),
         ]
     };

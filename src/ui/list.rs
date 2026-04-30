@@ -243,7 +243,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     )
                 }
                 DisplayRow::BookmarkItem { bookmark_idx } => render_bookmark_item(
-                    &app.bookmark_entries[bookmark_idx.raw()],
+                    &app.views.bookmark_entries[bookmark_idx.raw()],
                     row_search.as_ref(),
                     theme,
                 ),
@@ -251,8 +251,9 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     bookmark_idx,
                     target_idx,
                 } => {
-                    let entry = &app.bookmark_entries[bookmark_idx.raw()];
+                    let entry = &app.views.bookmark_entries[bookmark_idx.raw()];
                     let target = app
+                        .views
                         .bookmark_details
                         .get(&entry.name)
                         .and_then(|d| d.conflict_targets.get(target_idx.raw()));
@@ -262,15 +263,16 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     bookmark_idx,
                     target_idx,
                 } => {
-                    let entry = &app.bookmark_entries[bookmark_idx.raw()];
+                    let entry = &app.views.bookmark_entries[bookmark_idx.raw()];
                     let target = app
+                        .views
                         .bookmark_details
                         .get(&entry.name)
                         .and_then(|d| d.remote_targets.get(target_idx.raw()));
                     render_bookmark_remote_target(target, theme)
                 }
                 DisplayRow::TagItem { tag_idx } => {
-                    if let Some(entry) = app.tag_entries.get(tag_idx.raw()) {
+                    if let Some(entry) = app.views.tag_entries.get(tag_idx.raw()) {
                         render_tag_item(entry, row_search.as_ref(), theme)
                     } else {
                         vec![Line::raw("")]
@@ -281,14 +283,15 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     target_idx,
                 } => {
                     let target = app
+                        .views
                         .tag_entries
                         .get(tag_idx.raw())
-                        .and_then(|entry| app.tag_details.get(&entry.name))
+                        .and_then(|entry| app.views.tag_details.get(&entry.name))
                         .and_then(|d| d.remote_targets.get(target_idx.raw()));
                     render_tag_remote_target(target, theme)
                 }
                 DisplayRow::OpLogItem { op_log_idx } => {
-                    if let Some(entry) = app.op_log_entries.get(op_log_idx.raw()) {
+                    if let Some(entry) = app.op_log.entries.get(op_log_idx.raw()) {
                         render_op_log_item(entry, row_search.as_ref(), theme)
                     } else {
                         vec![Line::raw("")]
@@ -299,9 +302,10 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     line_idx,
                 } => {
                     let detail = app
-                        .op_log_entries
+                        .op_log
+                        .entries
                         .get(op_log_idx.raw())
-                        .and_then(|entry| app.op_details.get(&entry.id))
+                        .and_then(|entry| app.op_log.details.get(&entry.id))
                         .and_then(|l| l.loaded())
                         .and_then(|lines| lines.get(line_idx.raw()));
                     render_op_detail_line(detail, theme)
@@ -310,7 +314,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     op_log_idx,
                     line_idx,
                 } => render_simple_graph_link(
-                    app.op_log_entries
+                    app.op_log
+                        .entries
                         .get(op_log_idx.raw())
                         .and_then(|e| e.graph.extra.get(line_idx.raw())),
                     row_search.as_ref(),
@@ -321,7 +326,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     Span::styled("Load more…", Style::default().fg(theme.muted)),
                 ])],
                 DisplayRow::EvoLogItem { evolog_idx } => {
-                    if let Some(entry) = app.evolog_entries.get(evolog_idx.raw()) {
+                    if let Some(entry) = app.evolog.entries.get(evolog_idx.raw()) {
                         render_evolog_item(entry, row_search.as_ref(), config)
                     } else {
                         vec![Line::raw(""), Line::raw("")]
@@ -332,9 +337,10 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     file_idx,
                 } => {
                     let file = app
-                        .evolog_entries
+                        .evolog
+                        .entries
                         .get(evolog_idx.raw())
-                        .and_then(|e| app.evolog_files.get(&e.commit_id))
+                        .and_then(|e| app.evolog.files.get(&e.commit_id))
                         .and_then(|l| l.loaded())
                         .and_then(|files| files.get(file_idx.raw()));
                     if let Some(file) = file {
@@ -377,13 +383,14 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     line_idx,
                 } => {
                     let diff_line = app
-                        .evolog_entries
+                        .evolog
+                        .entries
                         .get(evolog_idx.raw())
                         .and_then(|e| {
-                            let files = app.evolog_files.get(&e.commit_id)?.loaded()?;
+                            let files = app.evolog.files.get(&e.commit_id)?.loaded()?;
                             let file = files.get(file_idx.raw())?;
                             let key = (e.commit_id.clone(), file.path.clone());
-                            app.evolog_file_diffs.get(&key)?.loaded()
+                            app.evolog.file_diffs.get(&key)?.loaded()
                         })
                         .and_then(|lines| lines.get(line_idx.raw()));
                     if let Some(diff_line) = diff_line {
@@ -412,14 +419,15 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     evolog_idx,
                     line_idx,
                 } => render_simple_graph_link(
-                    app.evolog_entries
+                    app.evolog
+                        .entries
                         .get(evolog_idx.raw())
                         .and_then(|e| e.graph.extra.get(line_idx.raw())),
                     row_search.as_ref(),
                     theme,
                 ),
                 DisplayRow::WorkspaceItem { workspace_idx } => {
-                    if let Some(entry) = app.workspace_entries.get(workspace_idx.raw()) {
+                    if let Some(entry) = app.views.workspace_entries.get(workspace_idx.raw()) {
                         render_workspace_item(entry, row_search.as_ref(), theme)
                     } else {
                         vec![Line::raw("")]

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tui_input::Input;
 
@@ -7,9 +7,145 @@ use crate::idx::EntryIdx;
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::types::{
     BookmarkName, ChangeId, CommitId, FollowUpOption, GlobalToggle, PendingCommand,
-    PendingCommitSelect, PendingSelection, RemoteName, SearchScopes, Str, TargetOperation,
-    VisualRange,
+    PendingCommitSelect, PendingSelection, RemoteName, RepoPath, SearchScopes, Str,
+    TargetOperation, VisualRange,
 };
+
+use super::Loadable;
+
+/// Visual selection state.
+pub struct VisualState {
+    /// Active visual selection mode (line or commit).
+    pub mode: Option<VisualMode>,
+    /// Persistent visual range (survives exiting visual mode with `v`).
+    pub persistent: Option<PersistentVisualRange>,
+}
+
+impl VisualState {
+    pub fn new() -> Self {
+        Self {
+            mode: None,
+            persistent: None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// View-specific state sub-structs
+// ---------------------------------------------------------------------------
+
+/// Data loaded from the repo for bookmark/tag/workspace views.
+pub struct ViewData {
+    /// Aggregated bookmark data for the bookmark view.
+    pub bookmark_entries: Vec<BookmarkViewEntry>,
+    /// Rich detail data per bookmark (conflict targets, remote tracking).
+    pub bookmark_details: HashMap<BookmarkName, crate::dag::BookmarkDetails>,
+    /// All local tag names (including those outside the current revset).
+    pub all_tags: Vec<Str>,
+    /// Aggregated tag data for the tag view.
+    pub tag_entries: Vec<TagViewEntry>,
+    /// Rich detail data per tag (remote tracking).
+    pub tag_details: HashMap<Str, crate::dag::TagDetails>,
+    /// Aggregated workspace data for the workspace view.
+    pub workspace_entries: Vec<WorkspaceViewEntry>,
+    /// Remote bookmarks not yet tracked.
+    pub untracked_bookmarks: Vec<Str>,
+    /// Remote bookmarks that are tracked.
+    pub tracked_bookmarks: Vec<Str>,
+    /// Available git remote names.
+    pub remotes: Vec<Str>,
+}
+
+impl ViewData {
+    pub fn new() -> Self {
+        Self {
+            bookmark_entries: Vec::new(),
+            bookmark_details: HashMap::new(),
+            all_tags: Vec::new(),
+            tag_entries: Vec::new(),
+            tag_details: HashMap::new(),
+            workspace_entries: Vec::new(),
+            untracked_bookmarks: Vec::new(),
+            tracked_bookmarks: Vec::new(),
+            remotes: Vec::new(),
+        }
+    }
+}
+
+/// Revset configuration and loading state.
+pub struct RevsetConfig {
+    /// The current revset expression.
+    pub current: String,
+    /// Last failed revset attempt (pre-fills the input on retry).
+    pub draft: Option<String>,
+    /// Current revset load status.
+    pub load_state: Loadable<()>,
+    /// Revset currently being requested, if any.
+    pub pending: Option<String>,
+    /// Active preset index (into `presets`), or `None` for jj default / manual revset.
+    pub active_preset: Option<usize>,
+    /// Named revset presets from config.
+    pub presets: &'static [crate::theme::Preset],
+}
+
+/// State for the operation log view.
+pub struct OpLogState {
+    pub entries: Vec<OpLogEntry>,
+    pub loaded: bool,
+    pub has_more: bool,
+    pub limit: usize,
+    pub workspace_filter: HashSet<Str>,
+    pub unfolded: HashSet<Str>,
+    pub details: HashMap<Str, Loadable<Vec<OpDetailLine>>>,
+}
+
+impl OpLogState {
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            loaded: false,
+            has_more: false,
+            limit: super::OP_LOG_BATCH_SIZE,
+            workspace_filter: HashSet::from([Str::from("default")]),
+            unfolded: HashSet::new(),
+            details: HashMap::new(),
+        }
+    }
+}
+
+/// State for the evolution log view.
+pub struct EvoLogState {
+    pub entries: Vec<EvoLogEntry>,
+    pub loaded: bool,
+    pub commit_id: Option<CommitId>,
+    pub unfolded: HashSet<CommitId>,
+    pub files: HashMap<CommitId, Loadable<Vec<crate::dag::FileChange>>>,
+    pub unfolded_files: HashSet<(CommitId, RepoPath)>,
+    pub file_diffs: HashMap<(CommitId, RepoPath), Loadable<Vec<crate::dag::DiffLine>>>,
+}
+
+impl EvoLogState {
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            loaded: false,
+            commit_id: None,
+            unfolded: HashSet::new(),
+            files: HashMap::new(),
+            unfolded_files: HashSet::new(),
+            file_diffs: HashMap::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.loaded = false;
+        self.unfolded.clear();
+        self.files.clear();
+        self.unfolded_files.clear();
+        self.file_diffs.clear();
+    }
+}
 
 /// Whether the target-select picker allows one or many targets.
 #[derive(Debug, Clone)]

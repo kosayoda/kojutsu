@@ -407,11 +407,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::Refresh => Action::Refresh,
         AppAction::SelectPreset => {
-            if app.presets.is_empty() {
+            if app.revset.presets.is_empty() {
                 app.set_status("no presets configured");
                 return Action::None;
             }
-            let items: Vec<String> = app.presets.iter().map(|p| p.name.clone()).collect();
+            let items: Vec<String> = app.revset.presets.iter().map(|p| p.name.clone()).collect();
             app.mode = AppMode::select_from_list(
                 "switch preset",
                 items,
@@ -428,17 +428,17 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::EditRevsetInEditor => Action::EditRevsetInEditor,
         AppAction::ResetRevset => {
-            app.active_preset = None;
+            app.revset.active_preset = None;
             app.request_revset_load(None);
             Action::None
         }
         AppAction::SwitchPreset(slot) => {
-            if let Some(preset) = app.presets.get(slot) {
-                app.active_preset = Some(slot);
+            if let Some(preset) = app.revset.presets.get(slot) {
+                app.revset.active_preset = Some(slot);
                 Action::UpdateRevset(preset.revset.clone())
             } else {
                 // No preset at this slot — use jj's default revset.
-                app.active_preset = None;
+                app.revset.active_preset = None;
                 app.request_revset_load(None);
                 Action::None
             }
@@ -774,6 +774,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::BookmarkAdvance => enter_bookmark_advance(app, flags),
         AppAction::BookmarkTrack => {
             let bookmarks: Vec<String> = app
+                .views
                 .untracked_bookmarks
                 .iter()
                 .map(|s| s.to_string())
@@ -788,6 +789,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::BookmarkUntrack => {
             let bookmarks: Vec<String> = app
+                .views
                 .tracked_bookmarks
                 .iter()
                 .map(|s| s.to_string())
@@ -816,8 +818,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
 
         // Git commands (network ops suspend TUI for SSH auth / progress)
         AppAction::GitFetch => {
-            if app.remotes.len() > 1 {
-                let items = app.remotes.iter().map(|r| r.to_string()).collect();
+            if app.views.remotes.len() > 1 {
+                let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
                 app.mode = AppMode::select_from_list(
                     "fetch from remote",
                     items,
@@ -843,8 +845,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             flags,
         }),
         AppAction::GitPush => {
-            if app.remotes.len() > 1 {
-                let items = app.remotes.iter().map(|r| r.to_string()).collect();
+            if app.views.remotes.len() > 1 {
+                let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
                 app.mode = AppMode::select_from_list(
                     "push to remote",
                     items,
@@ -862,8 +864,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             }
         }
         AppAction::GitPushAll => {
-            if app.remotes.len() > 1 {
-                let items = app.remotes.iter().map(|r| r.to_string()).collect();
+            if app.views.remotes.len() > 1 {
+                let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
                 app.mode = AppMode::select_from_list(
                     "push all to remote",
                     items,
@@ -900,8 +902,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             if items.len() == 1 {
                 let bookmark_names: SmallVec<BookmarkName> =
                     bookmarks.iter().map(|b| b.name.clone()).collect();
-                if app.remotes.len() > 1 {
-                    let remote_items = app.remotes.iter().map(|r| r.to_string()).collect();
+                if app.views.remotes.len() > 1 {
+                    let remote_items = app.views.remotes.iter().map(|r| r.to_string()).collect();
                     app.mode = AppMode::select_from_list(
                         "push bookmark to remote",
                         remote_items,
@@ -1185,7 +1187,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::OpLogFilterWorkspace => {
             // Collect unique workspace names from op log entries.
             let mut workspaces: Vec<String> = app
-                .op_log_entries
+                .op_log
+                .entries
                 .iter()
                 .filter_map(|e| e.workspace.as_ref().map(|w| w.to_string()))
                 .collect();
@@ -1262,7 +1265,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             }
             let from = ChangeId::new(entry.commit_id.as_str());
             let into = app
-                .evolog_entries
+                .evolog
+                .entries
                 .iter()
                 .find(|e| e.is_current)
                 .map(|e| ChangeId::new(e.commit_id.as_str()));
@@ -1360,10 +1364,10 @@ fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action {
             Action::None
         }
         FollowUpAction::WidenRevset { change_id } => {
-            let new_revset = format!("({}) | {}", app.revset, change_id);
+            let new_revset = format!("({}) | {}", app.revset.current, change_id);
             app.jump_after_refresh = Some(crate::app::JumpTarget::ChangeId(change_id));
             app.switch_view(crate::app::ActiveView::Dag);
-            app.active_preset = None;
+            app.revset.active_preset = None;
             Action::UpdateRevset(new_revset)
         }
     }
@@ -1425,7 +1429,7 @@ fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
                 let text = input.to_string();
                 match on_submit {
                     PendingCommand::Revset => {
-                        app.active_preset = None;
+                        app.revset.active_preset = None;
                         Action::UpdateRevset(text)
                     }
                     PendingCommand::WorkspaceAddPath { flags } => {
@@ -1829,7 +1833,8 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             | Some(DisplayRow::OpLogGraphLink { .. })
             | Some(DisplayRow::OpLogLoadMore)
             | Some(DisplayRow::EvoLogItem { .. })
-            | Some(DisplayRow::EvoLogFileChange { .. }) | Some(DisplayRow::EvoLogFileDiffLine { .. })
+            | Some(DisplayRow::EvoLogFileChange { .. })
+            | Some(DisplayRow::EvoLogFileDiffLine { .. })
             | Some(DisplayRow::EvoLogGraphLink { .. })
             | Some(DisplayRow::WorkspaceItem { .. })
             | Some(DisplayRow::ConflictHeader { .. })
@@ -2185,8 +2190,8 @@ fn resolve_selection(
         PendingSelection::GitPushBookmark { flags } => {
             let bookmarks: SmallVec<BookmarkName> =
                 names.into_iter().map(BookmarkName::new).collect();
-            if app.remotes.len() > 1 {
-                let items = app.remotes.iter().map(|r| r.to_string()).collect();
+            if app.views.remotes.len() > 1 {
+                let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
                 app.mode = AppMode::select_from_list(
                     "push bookmark to remote",
                     items,
@@ -2257,16 +2262,16 @@ fn resolve_selection(
         }
         PendingSelection::PresetSelect => {
             let name = names.into_iter().next().unwrap_or_default();
-            let idx = app.presets.iter().position(|p| p.name == name);
+            let idx = app.revset.presets.iter().position(|p| p.name == name);
             if let Some(i) = idx {
-                app.active_preset = Some(i);
-                Action::UpdateRevset(app.presets[i].revset.clone())
+                app.revset.active_preset = Some(i);
+                Action::UpdateRevset(app.revset.presets[i].revset.clone())
             } else {
                 Action::None
             }
         }
         PendingSelection::OpLogWorkspaceFilter => {
-            app.op_log_workspace_filter = names.into_iter().map(Str::from).collect();
+            app.op_log.workspace_filter = names.into_iter().map(Str::from).collect();
             app.rebuild_rows();
             Action::None
         }

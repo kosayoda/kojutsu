@@ -23,13 +23,17 @@ impl App {
     fn rebuild_bookmark_rows(&mut self) {
         let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
         self.rows.clear();
-        for idx in 0..self.bookmark_entries.len() {
+        for idx in 0..self.views.bookmark_entries.len() {
             let bi = BookmarkIdx::new(idx);
             self.rows
                 .push(DisplayRow::BookmarkItem { bookmark_idx: bi });
 
             // Always emit detail rows (conflict targets + remote tracking).
-            if let Some(details) = self.bookmark_details.get(&self.bookmark_entries[idx].name) {
+            if let Some(details) = self
+                .views
+                .bookmark_details
+                .get(&self.views.bookmark_entries[idx].name)
+            {
                 for ti in 0..details.conflict_targets.len() {
                     self.rows.push(DisplayRow::BookmarkConflictTarget {
                         bookmark_idx: bi,
@@ -62,12 +66,16 @@ impl App {
     fn rebuild_tag_rows(&mut self) {
         let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
         self.rows.clear();
-        for idx in 0..self.tag_entries.len() {
+        for idx in 0..self.views.tag_entries.len() {
             let ti = TagIdx::new(idx);
             self.rows.push(DisplayRow::TagItem { tag_idx: ti });
 
             // Emit remote target child rows (skip if same commit as local).
-            if let Some(details) = self.tag_details.get(&self.tag_entries[idx].name) {
+            if let Some(details) = self
+                .views
+                .tag_details
+                .get(&self.views.tag_entries[idx].name)
+            {
                 let local_commit = details.local_target.as_ref().map(|lt| &lt.commit_id);
                 for ri in 0..details.remote_targets.len() {
                     let rt = &details.remote_targets[ri];
@@ -89,7 +97,7 @@ impl App {
     fn rebuild_workspace_rows(&mut self) {
         let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
         self.rows.clear();
-        for idx in 0..self.workspace_entries.len() {
+        for idx in 0..self.views.workspace_entries.len() {
             self.rows.push(DisplayRow::WorkspaceItem {
                 workspace_idx: WorkspaceIdx::new(idx),
             });
@@ -102,11 +110,11 @@ impl App {
     fn rebuild_op_log_rows(&mut self) {
         let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
         self.rows.clear();
-        for idx in 0..self.op_log_entries.len() {
+        for idx in 0..self.op_log.entries.len() {
             // Apply workspace filter (operations with no workspace always pass).
-            if !self.op_log_workspace_filter.is_empty() {
-                if let Some(ws) = &self.op_log_entries[idx].workspace {
-                    if !self.op_log_workspace_filter.contains(ws) {
+            if !self.op_log.workspace_filter.is_empty() {
+                if let Some(ws) = &self.op_log.entries[idx].workspace {
+                    if !self.op_log.workspace_filter.contains(ws) {
                         continue;
                     }
                 }
@@ -115,9 +123,9 @@ impl App {
             self.rows.push(DisplayRow::OpLogItem { op_log_idx: oi });
 
             // Emit detail lines if this op is unfolded and data is loaded.
-            let op_id = &self.op_log_entries[idx].id;
-            if self.unfolded_ops.contains(op_id) {
-                if let Some(Loadable::Loaded(lines)) = self.op_details.get(op_id) {
+            let op_id = &self.op_log.entries[idx].id;
+            if self.op_log.unfolded.contains(op_id) {
+                if let Some(Loadable::Loaded(lines)) = self.op_log.details.get(op_id) {
                     for li in 0..lines.len() {
                         self.rows.push(DisplayRow::OpLogDetailLine {
                             op_log_idx: oi,
@@ -128,14 +136,14 @@ impl App {
             }
 
             // Graph link lines between operations.
-            for li in 0..self.op_log_entries[idx].graph.extra.len() {
+            for li in 0..self.op_log.entries[idx].graph.extra.len() {
                 self.rows.push(DisplayRow::OpLogGraphLink {
                     op_log_idx: oi,
                     line_idx: GraphLineIdx::new(li),
                 });
             }
         }
-        if self.op_log_has_more {
+        if self.op_log.has_more {
             self.rows.push(DisplayRow::OpLogLoadMore);
         }
         // Don't follow the LoadMore sentinel — keep the numeric position so
@@ -155,14 +163,14 @@ impl App {
     fn rebuild_evolog_rows(&mut self) {
         let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
         self.rows.clear();
-        for idx in 0..self.evolog_entries.len() {
+        for idx in 0..self.evolog.entries.len() {
             let ei = EvoLogIdx::new(idx);
             self.rows.push(DisplayRow::EvoLogItem { evolog_idx: ei });
 
             // Emit file change rows if this entry is unfolded.
-            let commit_id = &self.evolog_entries[idx].commit_id;
-            if self.unfolded_evolog.contains(commit_id) {
-                if let Some(Loadable::Loaded(files)) = self.evolog_files.get(commit_id) {
+            let commit_id = &self.evolog.entries[idx].commit_id;
+            if self.evolog.unfolded.contains(commit_id) {
+                if let Some(Loadable::Loaded(files)) = self.evolog.files.get(commit_id) {
                     for fi in 0..files.len() {
                         let file_idx = FileIdx::new(fi);
                         self.rows.push(DisplayRow::EvoLogFileChange {
@@ -171,9 +179,8 @@ impl App {
                         });
                         // Emit diff lines if this file is unfolded.
                         let key = (commit_id.clone(), files[fi].path.clone());
-                        if self.unfolded_evolog_files.contains(&key) {
-                            if let Some(Loadable::Loaded(lines)) =
-                                self.evolog_file_diffs.get(&key)
+                        if self.evolog.unfolded_files.contains(&key) {
+                            if let Some(Loadable::Loaded(lines)) = self.evolog.file_diffs.get(&key)
                             {
                                 for li in 0..lines.len() {
                                     self.rows.push(DisplayRow::EvoLogFileDiffLine {
@@ -188,7 +195,7 @@ impl App {
                 }
             }
 
-            for li in 0..self.evolog_entries[idx].graph.extra.len() {
+            for li in 0..self.evolog.entries[idx].graph.extra.len() {
                 self.rows.push(DisplayRow::EvoLogGraphLink {
                     evolog_idx: ei,
                     line_idx: GraphLineIdx::new(li),
@@ -454,18 +461,18 @@ impl App {
         if currently_unfolded {
             self.unfolded_files.remove(&fold_key);
             // Clear visual state if it's for this file.
-            if let Some(super::PersistentVisualRange::Lines(vr)) = &self.visual_persistent {
+            if let Some(super::PersistentVisualRange::Lines(vr)) = &self.visual.persistent {
                 let cid = self.change_id(entry_idx);
                 if let Some(file) = self
                     .files_for_entry(entry_idx)
                     .and_then(|f| f.get(file_idx.raw()))
                 {
                     if cid == vr.change_id && file.path == vr.path {
-                        self.visual_persistent = None;
+                        self.visual.persistent = None;
                     }
                 }
             }
-            self.visual = None;
+            self.visual.mode = None;
         } else {
             let fi = file_idx.raw();
             let file_info = self
@@ -515,21 +522,23 @@ impl App {
     }
 
     pub(crate) fn toggle_evolog_fold(&mut self, evolog_idx: EvoLogIdx) {
-        let Some(entry) = self.evolog_entries.get(evolog_idx.raw()) else {
+        let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) else {
             return;
         };
         let commit_id = entry.commit_id.clone();
 
-        if self.unfolded_evolog.contains(&commit_id) {
-            self.unfolded_evolog.remove(&commit_id);
+        if self.evolog.unfolded.contains(&commit_id) {
+            self.evolog.unfolded.remove(&commit_id);
         } else {
             if self
-                .evolog_files
+                .evolog
+                .files
                 .get(&commit_id)
                 .is_none_or(Loadable::should_request)
             {
                 if let Some(pred_id) = entry.predecessor_ids.first() {
-                    self.evolog_files
+                    self.evolog
+                        .files
                         .insert(commit_id.clone(), Loadable::Loading);
                     self.pending_repo_requests
                         .push(RepoRequest::load_evolog_details(
@@ -538,24 +547,20 @@ impl App {
                         ));
                 }
             }
-            self.unfolded_evolog.insert(commit_id.clone());
+            self.evolog.unfolded.insert(commit_id.clone());
         }
         self.rebuild_rows();
-        if self.unfolded_evolog.contains(&commit_id) {
+        if self.evolog.unfolded.contains(&commit_id) {
             self.scroll_to_show_children();
         }
     }
 
-    pub(crate) fn toggle_evolog_file_fold(
-        &mut self,
-        evolog_idx: EvoLogIdx,
-        file_idx: FileIdx,
-    ) {
-        let Some(entry) = self.evolog_entries.get(evolog_idx.raw()) else {
+    pub(crate) fn toggle_evolog_file_fold(&mut self, evolog_idx: EvoLogIdx, file_idx: FileIdx) {
+        let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) else {
             return;
         };
         let commit_id = entry.commit_id.clone();
-        let files = match self.evolog_files.get(&commit_id) {
+        let files = match self.evolog.files.get(&commit_id) {
             Some(Loadable::Loaded(f)) => f,
             _ => return,
         };
@@ -565,16 +570,18 @@ impl App {
         let path = file.path.clone();
         let key = (commit_id.clone(), path.clone());
 
-        if self.unfolded_evolog_files.contains(&key) {
-            self.unfolded_evolog_files.remove(&key);
+        if self.evolog.unfolded_files.contains(&key) {
+            self.evolog.unfolded_files.remove(&key);
         } else {
             if self
-                .evolog_file_diffs
+                .evolog
+                .file_diffs
                 .get(&key)
                 .is_none_or(Loadable::should_request)
             {
                 if let Some(pred_id) = entry.predecessor_ids.first() {
-                    self.evolog_file_diffs
+                    self.evolog
+                        .file_diffs
                         .insert(key.clone(), Loadable::Loading);
                     self.pending_repo_requests
                         .push(RepoRequest::load_evolog_file_diff(
@@ -584,36 +591,37 @@ impl App {
                         ));
                 }
             }
-            self.unfolded_evolog_files.insert(key.clone());
+            self.evolog.unfolded_files.insert(key.clone());
         }
         self.rebuild_rows();
-        if self.unfolded_evolog_files.contains(&key) {
+        if self.evolog.unfolded_files.contains(&key) {
             self.scroll_to_show_children();
         }
     }
 
     pub(crate) fn toggle_op_fold(&mut self, op_log_idx: OpLogIdx) {
-        let Some(entry) = self.op_log_entries.get(op_log_idx.raw()) else {
+        let Some(entry) = self.op_log.entries.get(op_log_idx.raw()) else {
             return;
         };
         let op_id = entry.id.clone();
 
-        if self.unfolded_ops.contains(&op_id) {
-            self.unfolded_ops.remove(&op_id);
+        if self.op_log.unfolded.contains(&op_id) {
+            self.op_log.unfolded.remove(&op_id);
         } else {
             if self
-                .op_details
+                .op_log
+                .details
                 .get(&op_id)
                 .is_none_or(Loadable::should_request)
             {
-                self.op_details.insert(op_id.clone(), Loadable::Loading);
+                self.op_log.details.insert(op_id.clone(), Loadable::Loading);
                 self.pending_repo_requests
                     .push(RepoRequest::load_op_diff(op_id.clone()));
             }
-            self.unfolded_ops.insert(op_id.clone());
+            self.op_log.unfolded.insert(op_id.clone());
         }
         self.rebuild_rows();
-        if self.unfolded_ops.contains(&op_id) {
+        if self.op_log.unfolded.contains(&op_id) {
             self.scroll_to_show_children();
         }
     }

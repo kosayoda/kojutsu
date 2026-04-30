@@ -8,8 +8,8 @@ use crate::types::{ChangeId, CommitId, DisplayRow};
 
 impl App {
     pub fn request_revset_load(&mut self, revset: Option<String>) {
-        self.revset_state = Loadable::Loading;
-        self.pending_revset = revset.clone();
+        self.revset.load_state = Loadable::Loading;
+        self.revset.pending = revset.clone();
         self.status_message = None;
         self.pending_repo_requests
             .push(RepoRequest::load_revset(revset));
@@ -75,8 +75,8 @@ impl App {
             }
         }
 
-        self.visual = None;
-        self.visual_persistent = None;
+        self.visual.mode = None;
+        self.visual.persistent = None;
         self.commit_index = new_commit_index;
         self.nodes = nodes;
 
@@ -181,34 +181,34 @@ impl App {
         match result {
             RepoResult::RevsetLoaded(data) => {
                 self.status_message = None;
-                self.revset = data.revset;
-                self.revset_draft = None;
-                self.pending_revset = None;
+                self.revset.current = data.revset;
+                self.revset.draft = None;
+                self.revset.pending = None;
                 // Invalidate op log; re-request if currently viewing.
-                self.op_log_loaded = false;
-                self.op_log_limit = super::OP_LOG_BATCH_SIZE;
-                self.op_details.clear();
-                self.unfolded_ops.clear();
+                self.op_log.loaded = false;
+                self.op_log.limit = super::OP_LOG_BATCH_SIZE;
+                self.op_log.details.clear();
+                self.op_log.unfolded.clear();
                 if self.active_view == super::ActiveView::Operations {
                     self.pending_repo_requests
-                        .push(RepoRequest::load_operations(self.op_log_limit));
+                        .push(RepoRequest::load_operations(self.op_log.limit));
                 }
                 self.repo_root = data.repo_root;
-                self.untracked_bookmarks = data.untracked_bookmarks;
-                self.tracked_bookmarks = data.tracked_bookmarks;
-                self.remotes = data.remotes;
-                self.all_tags = data.all_tags;
-                self.tag_details = data.tag_details;
-                self.bookmark_details = data.bookmark_details;
-                self.workspace_entries = data.workspace_entries;
-                self.revset_state = Loadable::Loaded(());
+                self.views.untracked_bookmarks = data.untracked_bookmarks;
+                self.views.tracked_bookmarks = data.tracked_bookmarks;
+                self.views.remotes = data.remotes;
+                self.views.all_tags = data.all_tags;
+                self.views.tag_details = data.tag_details;
+                self.views.bookmark_details = data.bookmark_details;
+                self.views.workspace_entries = data.workspace_entries;
+                self.revset.load_state = Loadable::Loaded(());
                 // apply_entries does its own rebuild_rows (needed for cursor restoration).
                 self.apply_entries(data.entries);
             }
             RepoResult::RevsetFailed { revset, error } => {
-                self.pending_revset = None;
-                self.revset_draft = Some(revset);
-                self.revset_state = Loadable::Failed(error.clone());
+                self.revset.pending = None;
+                self.revset.draft = Some(revset);
+                self.revset.load_state = Loadable::Failed(error.clone());
                 self.set_error("failed to load revset");
                 self.mode = AppMode::CommandOutput {
                     command: "revset error".to_string(),
@@ -331,7 +331,7 @@ impl App {
             }
             RepoResult::BookmarkDetailPrefixLengths { updates } => {
                 let update_map: std::collections::HashMap<_, _> = updates.into_iter().collect();
-                for details in self.bookmark_details.values_mut() {
+                for details in self.views.bookmark_details.values_mut() {
                     for ct in &mut details.conflict_targets {
                         if let Some(u) = update_map.get(&ct.commit_id) {
                             u.apply(&mut ct.change_id, &mut ct.short_commit_id);
@@ -343,7 +343,7 @@ impl App {
                         }
                     }
                 }
-                for details in self.tag_details.values_mut() {
+                for details in self.views.tag_details.values_mut() {
                     if let Some(lt) = &mut details.local_target {
                         if let Some(u) = update_map.get(&lt.commit_id) {
                             u.apply(&mut lt.change_id, &mut lt.short_commit_id);
@@ -358,19 +358,20 @@ impl App {
                 self.rebuild_tag_entries();
             }
             RepoResult::OperationsLoaded { entries, has_more } => {
-                self.op_log_entries = entries;
-                self.op_log_loaded = true;
-                self.op_log_has_more = has_more;
+                self.op_log.entries = entries;
+                self.op_log.loaded = true;
+                self.op_log.has_more = has_more;
                 if self.active_view == super::ActiveView::Operations {
                     deferred.rebuild = true;
                 }
             }
             RepoResult::OperationsFailed { error } => {
-                self.op_log_loaded = false;
+                self.op_log.loaded = false;
                 self.set_error(format!("failed to load operation log: {error}"));
             }
             RepoResult::OpDiffLoaded { op_id, lines } => {
-                self.op_details
+                self.op_log
+                    .details
                     .insert(op_id, super::Loadable::Loaded(lines));
                 if self.active_view == super::ActiveView::Operations {
                     deferred.rebuild = true;
@@ -378,7 +379,8 @@ impl App {
                 }
             }
             RepoResult::OpDiffFailed { op_id, error } => {
-                self.op_details
+                self.op_log
+                    .details
                     .insert(op_id, super::Loadable::Failed(error.clone()));
                 self.set_error(format!("failed to load op diff: {error}"));
             }
@@ -412,14 +414,15 @@ impl App {
                 self.set_error(format!("failed to load conflict hunks for {path}: {error}"));
             }
             RepoResult::EvoLogLoaded { entries } => {
-                self.evolog_entries = entries;
-                self.evolog_loaded = true;
+                self.evolog.entries = entries;
+                self.evolog.loaded = true;
                 if self.active_view == super::ActiveView::Evolog {
                     deferred.rebuild = true;
                 }
             }
             RepoResult::EvoLogDetailsLoaded { commit_id, files } => {
-                self.evolog_files
+                self.evolog
+                    .files
                     .insert(commit_id, super::Loadable::Loaded(files));
                 if self.active_view == super::ActiveView::Evolog {
                     deferred.rebuild = true;
@@ -434,7 +437,8 @@ impl App {
                 path,
                 lines,
             } => {
-                self.evolog_file_diffs
+                self.evolog
+                    .file_diffs
                     .insert((commit_id, path), super::Loadable::Loaded(lines));
                 if self.active_view == super::ActiveView::Evolog {
                     deferred.rebuild = true;
@@ -445,7 +449,7 @@ impl App {
                 self.set_error(format!("failed to load evolog file diff: {error}"));
             }
             RepoResult::EvoLogFailed { error } => {
-                self.evolog_loaded = false;
+                self.evolog.loaded = false;
                 self.set_error(format!("failed to load evolog: {error}"));
             }
             RepoResult::BackgroundError { error } => {
@@ -514,10 +518,11 @@ impl App {
 
         // Remote bookmarks not attached to any visible node (tracked + untracked).
         for (raw, is_tracked) in self
+            .views
             .tracked_bookmarks
             .iter()
             .map(|r| (r, true))
-            .chain(self.untracked_bookmarks.iter().map(|r| (r, false)))
+            .chain(self.views.untracked_bookmarks.iter().map(|r| (r, false)))
         {
             if let Some((name, remote)) = raw.rsplit_once('@') {
                 let key = BookmarkName::new(raw.as_str());
@@ -555,7 +560,7 @@ impl App {
             rank(a).cmp(&rank(b)).then(a.name.cmp(&b.name))
         });
 
-        self.bookmark_entries = entries;
+        self.views.bookmark_entries = entries;
     }
 
     /// Aggregate tag data from DAG nodes + tag_details into a flat list for the tag view.
@@ -572,6 +577,7 @@ impl App {
             for tag in &node.commit.tags {
                 if seen.insert(tag.clone()) {
                     let is_deleted = self
+                        .views
                         .tag_details
                         .get(tag.as_str())
                         .is_some_and(|d| d.is_deleted);
@@ -587,9 +593,9 @@ impl App {
         }
 
         // Tags not attached to any visible commit (from all_tags or remote-only from tag_details).
-        for tag in &self.all_tags {
+        for tag in &self.views.all_tags {
             if seen.insert(tag.clone()) {
-                let details = self.tag_details.get(tag.as_str());
+                let details = self.views.tag_details.get(tag.as_str());
                 // Use local target info from tag_details if available.
                 let (commit_id, change_id, description) =
                     if let Some(lt) = details.and_then(|d| d.local_target.as_ref()) {
@@ -612,7 +618,7 @@ impl App {
         }
 
         // Remote-only tags (deleted locally, not in all_tags).
-        for (name, details) in &self.tag_details {
+        for (name, details) in &self.views.tag_details {
             if details.is_deleted && seen.insert(name.clone()) {
                 entries.push(TagViewEntry {
                     name: name.clone(),
@@ -625,6 +631,6 @@ impl App {
         }
 
         entries.sort_by(|a, b| a.name.cmp(&b.name));
-        self.tag_entries = entries;
+        self.views.tag_entries = entries;
     }
 }

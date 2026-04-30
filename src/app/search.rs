@@ -259,7 +259,7 @@ impl App {
             }
             DisplayRow::GraphLink { .. } => false,
             DisplayRow::BookmarkItem { bookmark_idx } => {
-                let Some(entry) = self.bookmark_entries.get(bookmark_idx.raw()) else {
+                let Some(entry) = self.views.bookmark_entries.get(bookmark_idx.raw()) else {
                     return false;
                 };
                 (scopes.contains(SearchScopes::BOOKMARK)
@@ -277,7 +277,7 @@ impl App {
                 false
             }
             DisplayRow::TagItem { tag_idx } => {
-                let Some(entry) = self.tag_entries.get(tag_idx.raw()) else {
+                let Some(entry) = self.views.tag_entries.get(tag_idx.raw()) else {
                     return false;
                 };
                 (scopes.contains(SearchScopes::TAG) && contains(entry.name.as_str()))
@@ -290,7 +290,7 @@ impl App {
                             .is_some_and(|c| contains(&c.display)))
             }
             DisplayRow::OpLogItem { op_log_idx } => {
-                let Some(entry) = self.op_log_entries.get(op_log_idx.raw()) else {
+                let Some(entry) = self.op_log.entries.get(op_log_idx.raw()) else {
                     return false;
                 };
                 (scopes.contains(SearchScopes::DESCRIPTION) && contains(&entry.description))
@@ -302,13 +302,14 @@ impl App {
             | DisplayRow::OpLogDetailLine { .. }
             | DisplayRow::OpLogGraphLink { .. }
             | DisplayRow::OpLogLoadMore
-            | DisplayRow::EvoLogFileChange { .. } | DisplayRow::EvoLogFileDiffLine { .. }
+            | DisplayRow::EvoLogFileChange { .. }
+            | DisplayRow::EvoLogFileDiffLine { .. }
             | DisplayRow::EvoLogGraphLink { .. }
             | DisplayRow::ConflictHeader { .. }
             | DisplayRow::ConflictSide { .. }
             | DisplayRow::ConflictContext { .. } => false,
             DisplayRow::EvoLogItem { evolog_idx } => {
-                let Some(entry) = self.evolog_entries.get(evolog_idx.raw()) else {
+                let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) else {
                     return false;
                 };
                 (scopes.contains(SearchScopes::CHANGE_ID) && contains(entry.change_id.as_str()))
@@ -316,7 +317,7 @@ impl App {
                         && entry.description.as_deref().is_some_and(contains))
             }
             DisplayRow::WorkspaceItem { workspace_idx } => {
-                let Some(entry) = self.workspace_entries.get(workspace_idx.raw()) else {
+                let Some(entry) = self.views.workspace_entries.get(workspace_idx.raw()) else {
                     return false;
                 };
                 scopes.contains(SearchScopes::DESCRIPTION)

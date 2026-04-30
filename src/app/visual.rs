@@ -20,7 +20,7 @@ impl App {
 
     /// Whether any visual mode is active (line or commit).
     pub fn in_visual_mode(&self) -> bool {
-        self.visual.is_some()
+        self.visual.mode.is_some()
     }
 
     /// Enter visual mode based on the current cursor row type.
@@ -29,11 +29,11 @@ impl App {
         match self.rows.get(self.cursor) {
             Some(DisplayRow::CommitNode { entry_idx }) => {
                 let entry_idx = *entry_idx;
-                self.visual = Some(VisualMode::Commits {
+                self.visual.mode = Some(VisualMode::Commits {
                     anchor: entry_idx,
                     path: vec![entry_idx],
                 });
-                self.visual_persistent = None;
+                self.visual.persistent = None;
             }
             Some(DisplayRow::DiffLine {
                 entry_idx,
@@ -45,10 +45,10 @@ impl App {
                 };
                 let dl = &diff_lines[line_idx.raw()];
                 if dl.kind.is_selectable() {
-                    self.visual = Some(VisualMode::Lines {
+                    self.visual.mode = Some(VisualMode::Lines {
                         anchor: self.cursor,
                     });
-                    self.visual_persistent = None;
+                    self.visual.persistent = None;
                 }
             }
             _ => {}
@@ -57,13 +57,13 @@ impl App {
 
     /// Exit visual mode with `v`: persist the range but don't create selections.
     pub fn exit_visual_mode(&mut self) {
-        match self.visual.take() {
+        match self.visual.mode.take() {
             Some(VisualMode::Lines { anchor }) => {
-                self.visual_persistent = self.compute_line_range(anchor);
+                self.visual.persistent = self.compute_line_range(anchor);
             }
             Some(VisualMode::Commits { path, .. }) => {
                 if !path.is_empty() {
-                    self.visual_persistent = Some(PersistentVisualRange::Commits(path));
+                    self.visual.persistent = Some(PersistentVisualRange::Commits(path));
                 }
             }
             None => {}
@@ -72,18 +72,18 @@ impl App {
 
     /// Cancel visual mode without persisting (Esc or other action).
     pub fn cancel_visual_mode(&mut self) {
-        self.visual = None;
+        self.visual.mode = None;
     }
 
     /// Space in visual mode: convert range to explicit selections and exit.
     pub fn persist_visual_selection(&mut self) {
-        match self.visual.take() {
+        match self.visual.mode.take() {
             Some(VisualMode::Lines { anchor }) => {
-                self.visual_persistent = self.compute_line_range(anchor);
+                self.visual.persistent = self.compute_line_range(anchor);
                 self.toggle_line_visual_selection();
             }
             Some(VisualMode::Commits { path, .. }) => {
-                self.visual_persistent = Some(PersistentVisualRange::Commits(path));
+                self.visual.persistent = Some(PersistentVisualRange::Commits(path));
                 self.toggle_commit_visual_selection();
             }
             None => {}
@@ -92,7 +92,7 @@ impl App {
 
     /// Check if the cursor is in a persistent visual range (for space toggle).
     pub fn cursor_in_persistent_visual_range(&self) -> bool {
-        match &self.visual_persistent {
+        match &self.visual.persistent {
             Some(PersistentVisualRange::Lines(vr)) => {
                 if let Some(DisplayRow::DiffLine {
                     entry_idx,
@@ -123,7 +123,7 @@ impl App {
 
     /// Space on a persistent visual range: toggle into/out of explicit selections.
     pub fn toggle_persistent_visual_selection(&mut self) {
-        match &self.visual_persistent {
+        match &self.visual.persistent {
             Some(PersistentVisualRange::Lines(_)) => {
                 self.toggle_line_visual_selection();
             }
@@ -139,7 +139,7 @@ impl App {
     // -----------------------------------------------------------------------
 
     pub fn visual_move_down(&mut self) {
-        match &self.visual {
+        match &self.visual.mode {
             Some(VisualMode::Lines { .. }) => self.line_visual_move_down(),
             Some(VisualMode::Commits { .. }) => self.commit_visual_move_down(),
             None => {}
@@ -147,7 +147,7 @@ impl App {
     }
 
     pub fn visual_move_up(&mut self) {
-        match &self.visual {
+        match &self.visual.mode {
             Some(VisualMode::Lines { .. }) => self.line_visual_move_up(),
             Some(VisualMode::Commits { .. }) => self.commit_visual_move_up(),
             None => {}
@@ -166,7 +166,7 @@ impl App {
         line_idx: DiffLineIdx,
     ) -> bool {
         // Check active line visual range.
-        if let Some(VisualMode::Lines { anchor }) = &self.visual {
+        if let Some(VisualMode::Lines { anchor }) = &self.visual.mode {
             let lo = (*anchor).min(self.cursor);
             let hi = (*anchor).max(self.cursor);
             if let Some(row_idx) = self.rows.iter().position(|r| {
@@ -178,7 +178,7 @@ impl App {
         }
 
         // Check persistent line range.
-        if let Some(PersistentVisualRange::Lines(vr)) = &self.visual_persistent {
+        if let Some(PersistentVisualRange::Lines(vr)) = &self.visual.persistent {
             let cid = self.nodes[entry_idx].commit.unique_change_id();
             if let Some(files) = self.files_for_entry(entry_idx) {
                 if let Some(file) = files.get(file_idx.raw()) {
@@ -198,12 +198,12 @@ impl App {
 
     /// Check if a commit is in the visual range (active or persistent).
     pub fn is_in_visual_commit_range(&self, entry_idx: EntryIdx) -> bool {
-        if let Some(VisualMode::Commits { path, .. }) = &self.visual {
+        if let Some(VisualMode::Commits { path, .. }) = &self.visual.mode {
             if path.contains(&entry_idx) {
                 return true;
             }
         }
-        if let Some(PersistentVisualRange::Commits(range)) = &self.visual_persistent {
+        if let Some(PersistentVisualRange::Commits(range)) = &self.visual.persistent {
             if range.contains(&entry_idx) {
                 return true;
             }
@@ -216,7 +216,7 @@ impl App {
     // -----------------------------------------------------------------------
 
     fn visual_line_file(&self) -> Option<(EntryIdx, FileIdx)> {
-        let Some(VisualMode::Lines { anchor }) = &self.visual else {
+        let Some(VisualMode::Lines { anchor }) = &self.visual.mode else {
             return None;
         };
         match self.rows.get(*anchor) {
@@ -329,7 +329,7 @@ impl App {
 
     /// Toggle all selectable lines in a persistent visual line range.
     fn toggle_line_visual_selection(&mut self) {
-        let Some(PersistentVisualRange::Lines(vr)) = &self.visual_persistent else {
+        let Some(PersistentVisualRange::Lines(vr)) = &self.visual.persistent else {
             return;
         };
         let vr = vr.clone();
@@ -421,14 +421,14 @@ impl App {
     // -----------------------------------------------------------------------
 
     fn commit_visual_move_down(&mut self) {
-        let Some(VisualMode::Commits { anchor, path }) = &self.visual else {
+        let Some(VisualMode::Commits { anchor, path }) = &self.visual.mode else {
             return;
         };
         let anchor = *anchor;
 
         // If anchor is at the bottom (last), cursor is at top — shrink from top.
         if path.len() > 1 && path.last() == Some(&anchor) {
-            let Some(VisualMode::Commits { path, .. }) = &mut self.visual else {
+            let Some(VisualMode::Commits { path, .. }) = &mut self.visual.mode else {
                 return;
             };
             path.remove(0);
@@ -438,13 +438,13 @@ impl App {
         }
 
         // Otherwise extend at the bottom: next entry in display order.
-        let tail = match &self.visual {
+        let tail = match &self.visual.mode {
             Some(VisualMode::Commits { path, .. }) => path.last().copied(),
             _ => None,
         };
         let Some(tail) = tail else { return };
         if let Some(parent) = self.next_entry_down(tail) {
-            let Some(VisualMode::Commits { path, .. }) = &mut self.visual else {
+            let Some(VisualMode::Commits { path, .. }) = &mut self.visual.mode else {
                 return;
             };
             path.push(parent);
@@ -453,14 +453,14 @@ impl App {
     }
 
     fn commit_visual_move_up(&mut self) {
-        let Some(VisualMode::Commits { anchor, path }) = &self.visual else {
+        let Some(VisualMode::Commits { anchor, path }) = &self.visual.mode else {
             return;
         };
         let anchor = *anchor;
 
         // If anchor is at the top (first), cursor is at bottom — shrink from bottom.
         if path.len() > 1 && path.first() == Some(&anchor) {
-            let Some(VisualMode::Commits { path, .. }) = &mut self.visual else {
+            let Some(VisualMode::Commits { path, .. }) = &mut self.visual.mode else {
                 return;
             };
             path.pop();
@@ -470,13 +470,13 @@ impl App {
         }
 
         // Otherwise extend at the top: next entry in display order (upward).
-        let head = match &self.visual {
+        let head = match &self.visual.mode {
             Some(VisualMode::Commits { path, .. }) => path.first().copied(),
             _ => None,
         };
         let Some(head) = head else { return };
         if let Some(child) = self.next_entry_up(head) {
-            let Some(VisualMode::Commits { path, .. }) = &mut self.visual else {
+            let Some(VisualMode::Commits { path, .. }) = &mut self.visual.mode else {
                 return;
             };
             path.insert(0, child);
@@ -486,7 +486,7 @@ impl App {
 
     /// Toggle all commits in the persistent visual commit range as explicit selections.
     fn toggle_commit_visual_selection(&mut self) {
-        let Some(PersistentVisualRange::Commits(range)) = &self.visual_persistent else {
+        let Some(PersistentVisualRange::Commits(range)) = &self.visual.persistent else {
             return;
         };
 
@@ -496,7 +496,7 @@ impl App {
             self.selection.contains(&Selection::Commit(cid))
         });
 
-        // Clone the range to avoid borrowing self.visual_persistent while mutating selection.
+        // Clone the range to avoid borrowing self.visual.persistent while mutating selection.
         let range: Vec<EntryIdx> = range.clone();
         if all_selected {
             for idx in &range {

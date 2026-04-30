@@ -19,11 +19,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
         + app.repo_root.len()
         + layout::HEADER_SEP.len()
         + "revset: ".len()
-        + app.revset.len();
+        + app.revset.current.len();
     let single_line = single_line_len <= frame.area().width as usize;
     let base_height: u16 = if single_line { 1 } else { 2 };
     let show_ws_filter = app.active_view == crate::app::ActiveView::Operations
-        && !app.op_log_workspace_filter.is_empty();
+        && !app.op_log.workspace_filter.is_empty();
     let header_height = base_height + if show_ws_filter { 1 } else { 0 };
 
     let [header_area, main_area, status_area] = Layout::vertical([
@@ -114,7 +114,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
                 Some(AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. }) => {
                     keymap::select_mode_help_entries()
                 }
-                _ => keymap::help_entries(keymaps.for_view(app.active_view), app.presets),
+                _ => keymap::help_entries(keymaps.for_view(app.active_view), app.revset.presets),
             };
             let (left, right) = overlay::balance_help_groups(&groups);
             let left_h: usize = left.iter().map(|(_, e)| e.len() + 1).sum();

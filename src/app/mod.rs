@@ -34,8 +34,7 @@ use crate::types::SmallVec;
 use crate::keymap::CommandFlags;
 use crate::repo_service::RepoRequest;
 use crate::types::{
-    BookmarkName, ChangeId, CommitId, DisplayRow, RepoPath, SearchScopes, SearchState,
-    SelectionContext, Str,
+    ChangeId, CommitId, DisplayRow, RepoPath, SearchScopes, SearchState, SelectionContext,
 };
 
 #[derive(Clone)]
@@ -109,46 +108,12 @@ pub struct App {
     pub nodes: IndexVec<EntryIdx, DagNode>,
     /// Lookup from commit graph_id → entry index (needed at event boundary).
     pub commit_index: HashMap<CommitId, EntryIdx>,
-    /// Aggregated bookmark data for the bookmark view.
-    pub bookmark_entries: Vec<BookmarkViewEntry>,
-    /// Rich detail data per bookmark (conflict targets, remote tracking).
-    pub bookmark_details: HashMap<BookmarkName, crate::dag::BookmarkDetails>,
-    /// All local tag names (including those outside the current revset).
-    pub all_tags: Vec<Str>,
-    /// Aggregated tag data for the tag view.
-    pub tag_entries: Vec<TagViewEntry>,
-    /// Rich detail data per tag (remote tracking).
-    pub tag_details: HashMap<Str, crate::dag::TagDetails>,
-    /// Aggregated workspace data for the workspace view.
-    pub workspace_entries: Vec<WorkspaceViewEntry>,
-    /// Aggregated operation log data for the operations view.
-    pub op_log_entries: Vec<OpLogEntry>,
-    /// Whether the operation log has been loaded (lazy).
-    pub op_log_loaded: bool,
-    /// Whether there are more operations beyond the current batch.
-    pub op_log_has_more: bool,
-    /// How many operations to request in the next load.
-    pub op_log_limit: usize,
-    /// Active workspace filter for the op log view (empty = show all).
-    pub op_log_workspace_filter: HashSet<Str>,
-    /// Set of op IDs that are currently unfolded.
-    pub unfolded_ops: HashSet<Str>,
-    /// Cached op detail lines per op ID.
-    pub op_details: HashMap<Str, Loadable<Vec<OpDetailLine>>>,
-    /// Aggregated evolution log data for the evolog view.
-    pub evolog_entries: Vec<EvoLogEntry>,
-    /// Whether the evolog has been loaded (lazy).
-    pub evolog_loaded: bool,
-    /// Which commit ID the evolog is loaded for.
-    pub evolog_commit_id: Option<CommitId>,
-    /// Evolog entries that are unfolded (showing files).
-    pub unfolded_evolog: HashSet<CommitId>,
-    /// Cached file changes per evolog entry commit ID.
-    pub evolog_files: HashMap<CommitId, Loadable<Vec<crate::dag::FileChange>>>,
-    /// Evolog files that are unfolded (showing diff lines).
-    pub unfolded_evolog_files: HashSet<(CommitId, crate::types::RepoPath)>,
-    /// Cached diff lines per (evolog commit ID, file path).
-    pub evolog_file_diffs: HashMap<(CommitId, crate::types::RepoPath), Loadable<Vec<crate::dag::DiffLine>>>,
+    /// Data for bookmark/tag/workspace views.
+    pub views: ViewData,
+    /// Operation log view state.
+    pub op_log: OpLogState,
+    /// Evolution log view state.
+    pub evolog: EvoLogState,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
@@ -163,17 +128,12 @@ pub struct App {
     pub last_list_height: u16,
     /// Horizontal scroll offset (display columns).
     pub h_scroll: usize,
-    pub revset: String,
-    /// Last failed revset attempt (pre-fills the input on retry).
-    pub revset_draft: Option<String>,
-    /// Named revset presets from config.
-    pub presets: &'static [crate::theme::Preset],
+    /// Revset configuration and state.
+    pub revset: RevsetConfig,
     /// Glyph characters for DAG rendering.
     pub glyphs: &'static crate::theme::GlyphChars,
     /// Default search scopes from config.
     pub default_search_scopes: SearchScopes,
-    /// Active preset index (into `presets`), or `None` for jj default / manual revset.
-    pub active_preset: Option<usize>,
     pub repo_root: String,
     /// Current interaction mode.
     pub mode: AppMode,
@@ -181,16 +141,6 @@ pub struct App {
     pub unfolded_commits: HashSet<ChangeId>,
     /// Per-file fold state, keyed by (change id, path) (stable across mutations).
     pub(crate) unfolded_files: HashSet<FileFoldKey>,
-    /// Remote bookmarks not yet tracked (for bookmark track selection).
-    pub untracked_bookmarks: Vec<Str>,
-    /// Remote bookmarks that are tracked (for bookmark untrack selection).
-    pub tracked_bookmarks: Vec<Str>,
-    /// Available git remote names.
-    pub remotes: Vec<crate::types::Str>,
-    /// Current revset load status.
-    pub revset_state: Loadable<()>,
-    /// Revset currently being requested, if any.
-    pub pending_revset: Option<String>,
     /// Repo requests waiting to be sent to the background service.
     pending_repo_requests: Vec<RepoRequest>,
     /// Global toggles that persist across commands.
@@ -207,11 +157,8 @@ pub struct App {
     /// Current selection context: implicit commit under cursor, or explicit
     /// homogeneous file/line selection.
     pub selection: SelectionContext,
-    /// Active visual selection mode (line or commit).
-    pub visual: Option<VisualMode>,
-    /// Persistent visual range (survives exiting visual mode with `v`).
-    /// Cleared on refresh, file collapse, or starting a new visual selection.
-    pub visual_persistent: Option<PersistentVisualRange>,
+    /// Visual selection state.
+    pub visual: VisualState,
     /// Active search state. Search remains active after closing the input.
     pub search: Option<SearchState>,
     /// Last-used search scopes (persisted across restarts).
@@ -235,26 +182,9 @@ impl App {
             active_view: ActiveView::Dag,
             nodes,
             commit_index,
-            bookmark_entries: Vec::new(),
-            bookmark_details: HashMap::new(),
-            all_tags: Vec::new(),
-            tag_entries: Vec::new(),
-            tag_details: HashMap::new(),
-            workspace_entries: Vec::new(),
-            op_log_entries: Vec::new(),
-            op_log_loaded: false,
-            op_log_has_more: false,
-            op_log_limit: OP_LOG_BATCH_SIZE,
-            op_log_workspace_filter: HashSet::from([Str::from("default")]),
-            unfolded_ops: HashSet::new(),
-            op_details: HashMap::new(),
-            evolog_entries: Vec::new(),
-            evolog_loaded: false,
-            evolog_commit_id: None,
-            unfolded_evolog: HashSet::new(),
-            evolog_files: HashMap::new(),
-            unfolded_evolog_files: HashSet::new(),
-            evolog_file_diffs: HashMap::new(),
+            views: ViewData::new(),
+            op_log: OpLogState::new(),
+            evolog: EvoLogState::new(),
             rows: Vec::new(),
             cursor: 0,
             view_states: default_view_states(),
@@ -262,21 +192,20 @@ impl App {
             last_header_height: 2,
             last_list_height: 0,
             h_scroll: 0,
-            revset,
-            revset_draft: None,
-            presets,
+            revset: RevsetConfig {
+                current: revset,
+                draft: None,
+                load_state: Loadable::NotRequested,
+                pending: None,
+                active_preset: None,
+                presets,
+            },
             glyphs,
             default_search_scopes: SearchScopes::DEFAULT,
-            active_preset: None,
             repo_root,
             mode: AppMode::Normal,
             unfolded_commits: HashSet::new(),
             unfolded_files: HashSet::new(),
-            untracked_bookmarks: Vec::new(),
-            tracked_bookmarks: Vec::new(),
-            remotes: Vec::new(),
-            revset_state: Loadable::NotRequested,
-            pending_revset: None,
             pending_repo_requests: Vec::new(),
             toggles: CommandFlags::empty(),
             last_command: None,
@@ -284,8 +213,7 @@ impl App {
             pre_overlay_mode: None,
             show_line_numbers: false,
             selection: SelectionContext::new(),
-            visual: None,
-            visual_persistent: None,
+            visual: VisualState::new(),
             search: None,
             search_scopes: SearchScopes::DEFAULT, // overwritten by apply_persisted_state or config
             jump_after_refresh: None,
@@ -326,9 +254,9 @@ impl App {
 
         self.active_view = view;
         // Trigger lazy load of operation log data.
-        if view == ActiveView::Operations && !self.op_log_loaded {
+        if view == ActiveView::Operations && !self.op_log.loaded {
             self.pending_repo_requests
-                .push(RepoRequest::load_operations(self.op_log_limit));
+                .push(RepoRequest::load_operations(self.op_log.limit));
         }
         // Trigger lazy load of evolog data.
         if view == ActiveView::Evolog {
@@ -336,15 +264,10 @@ impl App {
                 .selected_entry_idx()
                 .map(|idx| self.nodes[idx].commit.graph_id.clone())
             {
-                let changed = self.evolog_commit_id.as_ref() != Some(&commit_id);
-                if changed || !self.evolog_loaded {
-                    self.evolog_commit_id = Some(commit_id.clone());
-                    self.evolog_loaded = false;
-                    self.evolog_entries.clear();
-                    self.unfolded_evolog.clear();
-                    self.evolog_files.clear();
-                    self.unfolded_evolog_files.clear();
-                    self.evolog_file_diffs.clear();
+                let changed = self.evolog.commit_id.as_ref() != Some(&commit_id);
+                if changed || !self.evolog.loaded {
+                    self.evolog.clear();
+                    self.evolog.commit_id = Some(commit_id.clone());
                     self.pending_repo_requests
                         .push(RepoRequest::load_evolution_log(commit_id));
                 }
@@ -368,22 +291,22 @@ impl App {
         let change_id = self.change_id(entry_idx);
         let new_revset = format!(
             "({}) | ancestors({}, {})",
-            self.revset,
+            self.revset.current,
             change_id,
             Self::ANCESTOR_EXPAND_COUNT,
         );
         self.jump_after_refresh = Some(JumpTarget::ChangeId(change_id.to_string()));
-        self.revset_state = Loadable::Loading;
-        self.pending_revset = Some(new_revset.clone());
+        self.revset.load_state = Loadable::Loading;
+        self.revset.pending = Some(new_revset.clone());
         self.pending_repo_requests
             .push(RepoRequest::load_revset(Some(new_revset)));
     }
 
     pub fn request_op_log_load_more(&mut self) {
-        self.op_log_limit += OP_LOG_BATCH_SIZE;
-        self.op_log_loaded = false;
+        self.op_log.limit += OP_LOG_BATCH_SIZE;
+        self.op_log.loaded = false;
         self.pending_repo_requests
-            .push(RepoRequest::load_operations(self.op_log_limit));
+            .push(RepoRequest::load_operations(self.op_log.limit));
     }
 
     pub fn selected_bookmark_entry(&self) -> Option<&BookmarkViewEntry> {
@@ -393,7 +316,7 @@ impl App {
             | DisplayRow::BookmarkRemoteTarget { bookmark_idx, .. } => *bookmark_idx,
             _ => return None,
         };
-        self.bookmark_entries.get(bookmark_idx.raw())
+        self.views.bookmark_entries.get(bookmark_idx.raw())
     }
 
     /// Get the conflict target under cursor (if on a `BookmarkConflictTarget` row).
@@ -407,8 +330,9 @@ impl App {
             } => (*bookmark_idx, *target_idx),
             _ => return None,
         };
-        let entry = self.bookmark_entries.get(bookmark_idx.raw())?;
+        let entry = self.views.bookmark_entries.get(bookmark_idx.raw())?;
         let target = self
+            .views
             .bookmark_details
             .get(&entry.name)?
             .conflict_targets
@@ -427,8 +351,9 @@ impl App {
             } => (*bookmark_idx, *target_idx),
             _ => return None,
         };
-        let entry = self.bookmark_entries.get(bookmark_idx.raw())?;
+        let entry = self.views.bookmark_entries.get(bookmark_idx.raw())?;
         let target = self
+            .views
             .bookmark_details
             .get(&entry.name)?
             .remote_targets
@@ -460,7 +385,7 @@ impl App {
             }
             _ => return None,
         };
-        self.tag_entries.get(tag_idx.raw())
+        self.views.tag_entries.get(tag_idx.raw())
     }
 
     /// Pick a side for a conflict hunk. If all hunks are resolved, write the file back.
@@ -550,7 +475,7 @@ impl App {
             | DisplayRow::OpLogDetailLine { op_log_idx, .. } => *op_log_idx,
             _ => return None,
         };
-        self.op_log_entries.get(op_log_idx.raw())
+        self.op_log.entries.get(op_log_idx.raw())
     }
 
     pub fn selected_evolog_entry(&self) -> Option<&EvoLogEntry> {
@@ -561,7 +486,7 @@ impl App {
             | DisplayRow::EvoLogGraphLink { evolog_idx, .. } => *evolog_idx,
             _ => return None,
         };
-        self.evolog_entries.get(evolog_idx.raw())
+        self.evolog.entries.get(evolog_idx.raw())
     }
 
     pub fn selected_workspace_entry(&self) -> Option<&WorkspaceViewEntry> {
@@ -569,7 +494,7 @@ impl App {
             DisplayRow::WorkspaceItem { workspace_idx } => *workspace_idx,
             _ => return None,
         };
-        self.workspace_entries.get(workspace_idx.raw())
+        self.views.workspace_entries.get(workspace_idx.raw())
     }
 
     /// Get the entry idx the cursor is on.
@@ -590,7 +515,8 @@ impl App {
             | DisplayRow::OpLogGraphLink { .. }
             | DisplayRow::OpLogLoadMore
             | DisplayRow::EvoLogItem { .. }
-            | DisplayRow::EvoLogFileChange { .. } | DisplayRow::EvoLogFileDiffLine { .. }
+            | DisplayRow::EvoLogFileChange { .. }
+            | DisplayRow::EvoLogFileDiffLine { .. }
             | DisplayRow::EvoLogGraphLink { .. }
             | DisplayRow::WorkspaceItem { .. }
             | DisplayRow::ConflictHeader { .. }
@@ -706,7 +632,7 @@ impl App {
             tag_search_scopes: self.effective_scopes(ActiveView::Tags).bits(),
             op_log_search_scopes: self.effective_scopes(ActiveView::Operations).bits(),
             workspace_search_scopes: self.effective_scopes(ActiveView::Workspaces).bits(),
-            active_preset: self.active_preset,
+            active_preset: self.revset.active_preset,
         }
     }
 
@@ -738,7 +664,9 @@ impl App {
             self.view_states[ActiveView::Workspaces.idx()].search_scopes =
                 SearchScopes::from_bits_truncate(state.workspace_search_scopes);
         }
-        self.active_preset = state.active_preset.filter(|&i| i < self.presets.len());
+        self.revset.active_preset = state
+            .active_preset
+            .filter(|&i| i < self.revset.presets.len());
     }
 
     /// Get the scroll offset from the list state.
@@ -749,7 +677,7 @@ impl App {
     /// Get the text to pre-fill the revset input with.
     /// Uses the last failed draft if one exists, otherwise the current revset.
     pub fn revset_input_text(&self) -> &str {
-        self.revset_draft.as_deref().unwrap_or(&self.revset)
+        self.revset.draft.as_deref().unwrap_or(&self.revset.current)
     }
 
     /// Look up the entry index for a commit by its graph_id.
