@@ -537,6 +537,15 @@ impl App {
         self.op_log_entries.get(op_log_idx.raw())
     }
 
+    pub fn selected_evolog_entry(&self) -> Option<&EvoLogEntry> {
+        let evolog_idx = match self.rows.get(self.cursor)? {
+            DisplayRow::EvoLogItem { evolog_idx }
+            | DisplayRow::EvoLogGraphLink { evolog_idx, .. } => *evolog_idx,
+            _ => return None,
+        };
+        self.evolog_entries.get(evolog_idx.raw())
+    }
+
     pub fn selected_workspace_entry(&self) -> Option<&WorkspaceViewEntry> {
         let workspace_idx = match self.rows.get(self.cursor)? {
             DisplayRow::WorkspaceItem { workspace_idx } => *workspace_idx,

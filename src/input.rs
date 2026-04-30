@@ -1234,6 +1234,28 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.switch_view(crate::app::ActiveView::Evolog);
             Action::None
         }
+        AppAction::EvoLogRestore => {
+            let Some(entry) = app.selected_evolog_entry() else {
+                return Action::None;
+            };
+            if entry.is_current {
+                app.set_status("already on current version");
+                return Action::None;
+            }
+            let from = ChangeId::new(entry.commit_id.as_str());
+            let into = app
+                .evolog_entries
+                .iter()
+                .find(|e| e.is_current)
+                .map(|e| ChangeId::new(e.commit_id.as_str()));
+            Action::RunJj(JJCommand::Restore {
+                from: Some(from),
+                into,
+                changes_in: None,
+                selection: build_change_selection(app),
+                flags,
+            })
+        }
         AppAction::WsViewForget => {
             let Some(entry) = app.selected_workspace_entry() else {
                 return Action::None;

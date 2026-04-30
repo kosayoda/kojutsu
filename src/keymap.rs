@@ -164,6 +164,8 @@ pub enum AppAction {
     // Workspace view actions
     WsViewForget,
     WsViewJumpToCommit,
+    // Evolog view actions
+    EvoLogRestore,
     // Op log view actions
     OpLogRestore,
     OpLogRevert,
@@ -657,7 +659,8 @@ impl Default for Keymaps {
             ),
         ]);
 
-        let evolog_root = shared_bindings();
+        let mut evolog_root = shared_bindings();
+        evolog_root.extend(vec![bind("r", AppAction::EvoLogRestore, "restore from", C)]);
 
         Keymaps {
             dag: Keymap { root: dag_root },
