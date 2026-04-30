@@ -448,6 +448,7 @@ impl App {
                         change_id: Some(node.commit.change_id.clone()),
                         description: node.commit.description.clone(),
                         is_tracked: true,
+                        is_tracking: bm.is_tracking,
                         is_synced: !bm.is_dirty,
                         is_dirty: bm.is_dirty,
                         remote: None,
@@ -463,7 +464,8 @@ impl App {
                         commit_id: Some(node.commit.graph_id.clone()),
                         change_id: Some(node.commit.change_id.clone()),
                         description: node.commit.description.clone(),
-                        is_tracked: false,
+                        is_tracked: rb.is_tracked,
+                        is_tracking: false,
                         is_synced: rb.synced,
                         is_dirty: false,
                         remote: Some(rb.remote.clone()),
@@ -473,67 +475,42 @@ impl App {
             }
         }
 
-        // Tracked remote bookmarks not attached to any visible node
-        // (forgotten locally but still tracked on remote).
-        for raw in &self.tracked_bookmarks {
-            if let Some((name, remote)) = raw.rsplit_once('@') {
-                let key = BookmarkName::new(raw.as_str());
-                if seen.insert(key) {
-                    entries.push(BookmarkViewEntry {
-                        name: BookmarkName::new(name),
-                        commit_id: None,
-                        change_id: None,
-                        description: None,
-                        is_tracked: true,
-                        is_synced: false,
-                        is_dirty: false,
-                        remote: Some(RemoteName::new(remote)),
-                        is_conflicted: false,
-                    });
-                }
-            }
-        }
-
-        // Untracked remote bookmarks not attached to any visible node.
-        for raw in &self.untracked_bookmarks {
-            if let Some((name, remote)) = raw.rsplit_once('@') {
-                let key = BookmarkName::new(raw.as_str());
-                if seen.insert(key) {
-                    entries.push(BookmarkViewEntry {
-                        name: BookmarkName::new(name),
-                        commit_id: None,
-                        change_id: None,
-                        description: None,
-                        is_tracked: false,
-                        is_synced: false,
-                        is_dirty: false,
-                        remote: Some(RemoteName::new(remote)),
-                        is_conflicted: false,
-                    });
-                }
-            }
-        }
-
-        // Find the working copy commit ID for priority sorting.
-        let wc_commit_id: Option<CommitId> = self
-            .nodes
+        // Remote bookmarks not attached to any visible node (tracked + untracked).
+        for (raw, is_tracked) in self
+            .tracked_bookmarks
             .iter()
-            .find(|n| n.commit.is_working_copy())
-            .map(|n| n.commit.graph_id.clone());
+            .map(|r| (r, true))
+            .chain(self.untracked_bookmarks.iter().map(|r| (r, false)))
+        {
+            if let Some((name, remote)) = raw.rsplit_once('@') {
+                let key = BookmarkName::new(raw.as_str());
+                if seen.insert(key) {
+                    entries.push(BookmarkViewEntry {
+                        name: BookmarkName::new(name),
+                        commit_id: None,
+                        change_id: None,
+                        description: None,
+                        is_tracked,
+                        is_tracking: false,
+                        is_synced: false,
+                        is_dirty: false,
+                        remote: Some(RemoteName::new(remote)),
+                        is_conflicted: false,
+                    });
+                }
+            }
+        }
 
-        // Sort priority: bookmarks on working copy → forgotten-but-tracked →
-        // other locals → remotes. Within each group, alphabetical.
+        // Sort: pure local → local tracking remote → tracked remote → untracked remote.
+        // Within each group, alphabetical by name.
         entries.sort_by(|a, b| {
             let rank = |e: &BookmarkViewEntry| -> u8 {
-                let on_wc = wc_commit_id
-                    .as_ref()
-                    .is_some_and(|wc| e.commit_id.as_ref() == Some(wc));
-                if on_wc {
-                    0 // on working copy
-                } else if e.remote.is_some() && e.is_tracked {
-                    1 // forgotten locally, still tracked on remote
+                if e.remote.is_none() && !e.is_tracking {
+                    0 // pure local (no remote tracking)
                 } else if e.remote.is_none() {
-                    2 // normal local bookmark
+                    1 // local that tracks a remote
+                } else if e.is_tracked {
+                    2 // tracked remote
                 } else {
                     3 // untracked remote
                 }

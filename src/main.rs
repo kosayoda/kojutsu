@@ -136,6 +136,7 @@ fn main() -> Result<()> {
     let _ = event_tx.send(AppEvent::Init);
 
     let mut dirty = true;
+    let mut events: Vec<AppEvent> = Vec::new();
     loop {
         if dirty {
             terminal.draw(|frame| ui::draw(frame, &mut app, keymaps, config))?;
@@ -149,7 +150,8 @@ fn main() -> Result<()> {
         };
 
         // Drain all pending events so we can process them as a batch.
-        let mut events = vec![first];
+        events.clear();
+        events.push(first);
         while let Ok(ev) = event_rx.try_recv() {
             events.push(ev);
         }
@@ -158,7 +160,7 @@ fn main() -> Result<()> {
         let mut deferred = DeferredWork::default();
         let mut breaking_action: Option<Action> = None;
 
-        for event in events {
+        for event in events.drain(..) {
             let action = match event {
                 AppEvent::Init => Action::None,
                 AppEvent::Repo(result) => {

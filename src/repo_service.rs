@@ -606,21 +606,10 @@ impl RepoServiceState {
             return;
         }
         // Op log needs a repo; open one if not already loaded.
-        if self.repo.is_none() {
-            match JjRepo::open(&self.repo_path) {
-                Ok(repo) => self.repo = Some(repo),
-                Err(err) => {
-                    self.send_if_current(
-                        epoch,
-                        RepoResult::OperationsFailed {
-                            error: format!("{err:#}"),
-                        },
-                    );
-                    return;
-                }
-            }
-        }
-        let repo = self.repo.as_ref().unwrap();
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::OperationsFailed { error })
+        else {
+            return;
+        };
         match repo.operation_log(limit) {
             Ok((entries, has_more)) => {
                 self.send_if_current(epoch, RepoResult::OperationsLoaded { entries, has_more });
@@ -640,23 +629,13 @@ impl RepoServiceState {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
-        if self.repo.is_none() {
-            match JjRepo::open(&self.repo_path) {
-                Ok(repo) => self.repo = Some(repo),
-                Err(err) => {
-                    self.send_if_current(
-                        epoch,
-                        RepoResult::ConflictHunksFailed {
-                            commit_id,
-                            path,
-                            error: format!("{err:#}"),
-                        },
-                    );
-                    return;
-                }
-            }
-        }
-        let repo = self.repo.as_ref().unwrap();
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::ConflictHunksFailed {
+            commit_id: commit_id.clone(),
+            path: path.clone(),
+            error,
+        }) else {
+            return;
+        };
         match repo.conflict_hunks(&commit_id, &path) {
             Ok(hunks) => {
                 self.send_if_current(
@@ -685,22 +664,12 @@ impl RepoServiceState {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
-        if self.repo.is_none() {
-            match JjRepo::open(&self.repo_path) {
-                Ok(repo) => self.repo = Some(repo),
-                Err(err) => {
-                    self.send_if_current(
-                        epoch,
-                        RepoResult::OpDiffFailed {
-                            op_id,
-                            error: format!("{err:#}"),
-                        },
-                    );
-                    return;
-                }
-            }
-        }
-        let repo = self.repo.as_ref().unwrap();
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::OpDiffFailed {
+            op_id: op_id.clone(),
+            error,
+        }) else {
+            return;
+        };
         match repo.op_diff(&op_id) {
             Ok(lines) => {
                 self.send_if_current(epoch, RepoResult::OpDiffLoaded { op_id, lines });
@@ -715,6 +684,25 @@ impl RepoServiceState {
                 );
             }
         }
+    }
+
+    /// Ensure the repo is open, opening it if needed. On failure, sends the
+    /// error result produced by `on_error` and returns `None`.
+    fn ensure_repo(
+        &mut self,
+        epoch: u64,
+        on_error: impl FnOnce(String) -> RepoResult,
+    ) -> Option<&JjRepo> {
+        if self.repo.is_none() {
+            match JjRepo::open(&self.repo_path) {
+                Ok(repo) => self.repo = Some(repo),
+                Err(err) => {
+                    self.send_if_current(epoch, on_error(format!("{err:#}")));
+                    return None;
+                }
+            }
+        }
+        self.repo.as_ref()
     }
 
     fn send_if_current(&self, epoch: u64, result: RepoResult) {

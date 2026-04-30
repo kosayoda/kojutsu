@@ -131,6 +131,8 @@ pub struct BookmarkViewEntry {
     pub change_id: Option<crate::dag::ShortId>,
     pub description: Option<String>,
     pub is_tracked: bool,
+    /// Whether this local bookmark tracks a remote (e.g., `main` tracks `main@origin`).
+    pub is_tracking: bool,
     pub is_synced: bool,
     pub is_dirty: bool,
     pub remote: Option<RemoteName>,

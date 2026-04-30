@@ -20,7 +20,6 @@ use crate::types::ChangeId;
 use crate::types::{DisplayRow, FileSelectionState, SearchScopes};
 
 /// Push `+N -M` spans for line stats, skipping zeros.
-/// Push `+N -M` spans for line stats, skipping zeros.
 /// When `muted` is true, both counts use `theme.muted` instead of green/red.
 fn push_line_stats(out: &mut Vec<Span<'static>>, stats: LineStats, muted: bool, theme: &Theme) {
     if stats.added == 0 && stats.removed == 0 {
@@ -960,7 +959,6 @@ fn render_diff_line(
     vec![Line::from(spans)]
 }
 
-/// Factor out common directory prefix and suffix from a rename pair.
 fn render_tag_item(
     entry: &TagViewEntry,
     search: Option<&SearchRender<'_>>,

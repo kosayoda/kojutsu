@@ -107,6 +107,8 @@ pub struct BookmarkInfo {
     pub name: BookmarkName,
     /// Whether the local bookmark differs from its tracked remote counterpart.
     pub is_dirty: bool,
+    /// Whether the local bookmark tracks a remote (e.g., `main` tracks `main@origin`).
+    pub is_tracking: bool,
     /// Whether the bookmark has conflicting targets (divergent operations).
     pub is_conflicted: bool,
 }
@@ -136,6 +138,8 @@ pub struct RemoteBookmarkInfo {
     pub remote: RemoteName,
     /// Whether the remote target matches the local target.
     pub synced: bool,
+    /// Whether the remote ref is tracked locally.
+    pub is_tracked: bool,
 }
 
 // ---------------------------------------------------------------------------

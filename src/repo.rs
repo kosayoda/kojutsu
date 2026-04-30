@@ -67,6 +67,14 @@ pub struct JjRepo {
     workspace_root: PathBuf,
 }
 
+/// Pre-built lookup tables passed to `extract_commit_info` for each commit.
+struct CommitContext<'a> {
+    dirty_bookmarks: &'a HashSet<&'a RefName>,
+    tracking_bookmarks: &'a HashSet<&'a RefName>,
+    remote_bookmark_map: &'a HashMap<BackendCommitId, Vec<RemoteBookmarkInfo>>,
+    wc_commit_workspaces: &'a HashMap<&'a BackendCommitId, Vec<crate::dag::WorkspaceAnnotation>>,
+}
+
 struct CommitDetailInfo {
     change_id: ShortId,
     short_commit_id: ShortId,
@@ -344,17 +352,19 @@ impl JjRepo {
         // (see compute_prefix_lengths) to avoid evaluating a second revset
         // during the initial load. We use DISPLAY_ID_LEN as a placeholder.
 
-        // Pre-build the set of local bookmarks that differ from their tracked
-        // remote counterpart (O(M) once, then O(1) per bookmark lookup).
-        let dirty_bookmarks: HashSet<&RefName> = repo
-            .view()
-            .all_remote_bookmarks()
-            .filter(|(symbol, remote_ref)| {
-                remote_ref.is_tracked()
-                    && *repo.view().get_local_bookmark(symbol.name) != remote_ref.target
-            })
-            .map(|(symbol, _)| symbol.name)
-            .collect();
+        // Pre-build sets of local bookmarks that (a) have any tracked remote,
+        // and (b) differ from their tracked remote counterpart.
+        // O(M) once, then O(1) per bookmark lookup.
+        let mut tracking_bookmarks: HashSet<&RefName> = HashSet::new();
+        let mut dirty_bookmarks: HashSet<&RefName> = HashSet::new();
+        for (symbol, remote_ref) in repo.view().all_remote_bookmarks() {
+            if remote_ref.is_tracked() {
+                tracking_bookmarks.insert(symbol.name);
+                if *repo.view().get_local_bookmark(symbol.name) != remote_ref.target {
+                    dirty_bookmarks.insert(symbol.name);
+                }
+            }
+        }
 
         // Pre-build a map from commit ID to remote bookmarks pointing at it.
         // Each entry includes a `synced` flag indicating whether the remote
@@ -373,6 +383,7 @@ impl JjRepo {
                         name: BookmarkName::new(symbol.name.as_str()),
                         remote: RemoteName::new(symbol.remote.as_str()),
                         synced,
+                        is_tracked: remote_ref.is_tracked(),
                     });
             }
         }
@@ -391,6 +402,13 @@ impl JjRepo {
             );
         }
 
+        let ctx = CommitContext {
+            dirty_bookmarks: &dirty_bookmarks,
+            tracking_bookmarks: &tracking_bookmarks,
+            remote_bookmark_map: &remote_bookmark_map,
+            wc_commit_workspaces: &wc_commit_workspaces,
+        };
+
         // Iterate graph nodes
         let mut entries = Vec::new();
         for node_result in topo_iter {
@@ -406,13 +424,7 @@ impl JjRepo {
                 .and_then(|check| check(&commit_id).ok())
                 .unwrap_or(false);
 
-            let info = self.extract_commit_info(
-                &commit,
-                immutable,
-                &dirty_bookmarks,
-                &remote_bookmark_map,
-                &wc_commit_workspaces,
-            )?;
+            let info = self.extract_commit_info(&commit, immutable, &ctx)?;
             let dag_edges = edges
                 .into_iter()
                 .map(|e| Edge {
@@ -839,9 +851,7 @@ impl JjRepo {
         &self,
         commit: &Commit,
         is_immutable: bool,
-        dirty_bookmarks: &HashSet<&RefName>,
-        remote_bookmark_map: &HashMap<BackendCommitId, Vec<RemoteBookmarkInfo>>,
-        wc_commit_workspaces: &HashMap<&BackendCommitId, Vec<crate::dag::WorkspaceAnnotation>>,
+        ctx: &CommitContext<'_>,
     ) -> Result<CommitInfo> {
         let repo = self.repo.as_ref();
 
@@ -893,7 +903,7 @@ impl JjRepo {
         };
 
         // Workspaces (O(1) lookup from pre-built map)
-        let workspaces = wc_commit_workspaces
+        let workspaces = ctx.wc_commit_workspaces
             .get(commit.id())
             .cloned()
             .unwrap_or_default();
@@ -912,7 +922,8 @@ impl JjRepo {
             .local_bookmarks_for_commit(commit.id())
             .map(|(name, target)| BookmarkInfo {
                 name: BookmarkName::new(name.as_str()),
-                is_dirty: dirty_bookmarks.contains(name),
+                is_dirty: ctx.dirty_bookmarks.contains(name),
+                is_tracking: ctx.tracking_bookmarks.contains(name),
                 is_conflicted: target.has_conflict(),
             })
             .collect();
@@ -928,7 +939,7 @@ impl JjRepo {
         // Remote bookmarks pointing at this commit, excluding synced ones
         // (where the remote target matches the local target). Matches jj's
         // collect_distinct_refs behavior: show local + unsynced remote.
-        let remote_bookmarks: Vec<RemoteBookmarkInfo> = remote_bookmark_map
+        let remote_bookmarks: Vec<RemoteBookmarkInfo> = ctx.remote_bookmark_map
             .get(commit.id())
             .map(|rbs| rbs.iter().filter(|rb| !rb.synced).cloned().collect())
             .unwrap_or_default();
@@ -981,21 +992,7 @@ impl JjRepo {
         };
         let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
 
-        let id_prefix_context = {
-            let short_prefixes_str = self
-                .settings
-                .config()
-                .get::<String>("revsets.short-prefixes")
-                .unwrap_or_else(|_| self.default_revset());
-            let mut diag = RevsetDiagnostics::new();
-            let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
-            if let Ok(expression) = jj_lib::revset::parse(&mut diag, &short_prefixes_str, &context)
-            {
-                ctx.disambiguate_within(expression)
-            } else {
-                ctx
-            }
-        };
+        let id_prefix_context = self.build_id_prefix_context(&context);
         let id_prefix_index = id_prefix_context
             .populate(repo)
             .wrap_err("failed to populate ID prefix index")?;
@@ -1326,6 +1323,25 @@ impl JjRepo {
         result
     }
 
+    /// Build an `IdPrefixContext` using the `revsets.short-prefixes` config.
+    fn build_id_prefix_context(
+        &self,
+        context: &RevsetParseContext<'_>,
+    ) -> IdPrefixContext {
+        let short_prefixes_str = self
+            .settings
+            .config()
+            .get::<String>("revsets.short-prefixes")
+            .unwrap_or_else(|_| self.default_revset());
+        let mut diag = RevsetDiagnostics::new();
+        let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
+        if let Ok(expression) = jj_lib::revset::parse(&mut diag, &short_prefixes_str, context) {
+            ctx.disambiguate_within(expression)
+        } else {
+            ctx
+        }
+    }
+
     /// Shared commit metadata extraction for bookmark detail rows.
     fn commit_detail_info(&self, commit_id: &BackendCommitId) -> Option<CommitDetailInfo> {
         let repo = self.repo.as_ref();
@@ -1607,21 +1623,7 @@ impl JjRepo {
             base: self.workspace_root.clone(),
         };
         let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
-        let id_prefix_context = {
-            let short_prefixes_str = self
-                .settings
-                .config()
-                .get::<String>("revsets.short-prefixes")
-                .unwrap_or_else(|_| self.default_revset());
-            let mut diag = RevsetDiagnostics::new();
-            let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
-            if let Ok(expression) = jj_lib::revset::parse(&mut diag, &short_prefixes_str, &context)
-            {
-                ctx.disambiguate_within(expression)
-            } else {
-                ctx
-            }
-        };
+        let id_prefix_context = self.build_id_prefix_context(&context);
         let prefix_index = id_prefix_context
             .populate(self.repo.as_ref())
             .wrap_err("failed to populate ID prefix index")?;
