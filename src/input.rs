@@ -1101,7 +1101,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             };
             let name = entry.name.clone();
             app.mode = AppMode::text_input(
-                &format!("set {} to (change id): ", name),
+                format!("set {} to (change id): ", name),
                 "",
                 PendingCommand::BookmarkSetByName { name, flags },
             );
@@ -1156,7 +1156,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             };
             let name = entry.name.to_string();
             app.mode = AppMode::text_input(
-                &format!("set {name} to (change id): "),
+                format!("set {name} to (change id): "),
                 "",
                 PendingCommand::TagSetByName { name, flags },
             );

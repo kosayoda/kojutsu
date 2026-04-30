@@ -55,19 +55,21 @@ pub struct RepoRequest {
     kind: RepoRequestKind,
 }
 
+pub struct RevsetData {
+    pub revset: String,
+    pub repo_root: String,
+    pub entries: Vec<DagEntry>,
+    pub untracked_bookmarks: Vec<Str>,
+    pub tracked_bookmarks: Vec<Str>,
+    pub remotes: Vec<Str>,
+    pub all_tags: Vec<Str>,
+    pub tag_details: std::collections::HashMap<Str, crate::dag::TagDetails>,
+    pub bookmark_details: std::collections::HashMap<BookmarkName, crate::dag::BookmarkDetails>,
+    pub workspace_entries: Vec<crate::app::WorkspaceViewEntry>,
+}
+
 pub enum RepoResult {
-    RevsetLoaded {
-        revset: String,
-        repo_root: String,
-        entries: Vec<DagEntry>,
-        untracked_bookmarks: Vec<Str>,
-        tracked_bookmarks: Vec<Str>,
-        remotes: Vec<Str>,
-        all_tags: Vec<Str>,
-        tag_details: std::collections::HashMap<Str, crate::dag::TagDetails>,
-        bookmark_details: std::collections::HashMap<BookmarkName, crate::dag::BookmarkDetails>,
-        workspace_entries: Vec<crate::app::WorkspaceViewEntry>,
-    },
+    RevsetLoaded(Box<RevsetData>),
     RevsetFailed {
         revset: String,
         error: String,
@@ -393,7 +395,7 @@ impl RepoServiceState {
 
                 self.send_if_current(
                     epoch,
-                    RepoResult::RevsetLoaded {
+                    RepoResult::RevsetLoaded(Box::new(RevsetData {
                         revset: effective_revset,
                         repo_root: repo.workspace_root().display().to_string(),
                         entries,
@@ -404,7 +406,7 @@ impl RepoServiceState {
                         tag_details,
                         bookmark_details,
                         workspace_entries,
-                    },
+                    })),
                 );
 
                 // Spawn background thread to compute is_empty for all commits.

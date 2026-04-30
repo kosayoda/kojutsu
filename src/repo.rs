@@ -67,6 +67,14 @@ pub struct JjRepo {
     workspace_root: PathBuf,
 }
 
+struct CommitDetailInfo {
+    change_id: ShortId,
+    short_commit_id: ShortId,
+    description: Option<String>,
+    change_id_suffix: Option<usize>,
+    is_hidden: bool,
+}
+
 impl JjRepo {
     /// Trigger a working copy snapshot so the repo reflects the current
     /// filesystem state. Shells out to `jj status` which snapshots as a
@@ -1136,13 +1144,12 @@ impl JjRepo {
         for (name, target) in view.local_tags() {
             let tag_name = Str::from(name.as_str());
             let local_target = target.as_normal().and_then(|commit_id| {
-                let (change_id, short_commit_id, description, _, _) =
-                    self.commit_detail_info(commit_id)?;
+                let info = self.commit_detail_info(commit_id)?;
                 Some(TagLocalTarget {
                     commit_id: UiCommitId::new(commit_id.hex()),
-                    change_id,
-                    short_commit_id,
-                    description,
+                    change_id: info.change_id,
+                    short_commit_id: info.short_commit_id,
+                    description: info.description,
                 })
             });
 
@@ -1151,14 +1158,13 @@ impl JjRepo {
                 .map(|refs| {
                     refs.iter()
                         .filter_map(|(remote, commit_id)| {
-                            let (change_id, short_commit_id, description, _, _) =
-                                self.commit_detail_info(commit_id)?;
+                            let info = self.commit_detail_info(commit_id)?;
                             Some(TagRemoteTarget {
                                 remote: RemoteName::new(remote),
                                 commit_id: UiCommitId::new(commit_id.hex()),
-                                change_id,
-                                short_commit_id,
-                                description,
+                                change_id: info.change_id,
+                                short_commit_id: info.short_commit_id,
+                                description: info.description,
                             })
                         })
                         .collect()
@@ -1189,7 +1195,7 @@ impl JjRepo {
                     let hex = commit_id.hex();
                     let resolved = self.commit_detail_info(commit_id);
                     let (change_id, short_commit_id, description) = match resolved {
-                        Some((cid, scid, desc, _, _)) => (cid, scid, desc),
+                        Some(info) => (info.change_id, info.short_commit_id, info.description),
                         None => {
                             let display = hex.get(..DISPLAY_ID_LEN).unwrap_or(&hex).to_string();
                             (
@@ -1321,10 +1327,7 @@ impl JjRepo {
     }
 
     /// Shared commit metadata extraction for bookmark detail rows.
-    fn commit_detail_info(
-        &self,
-        commit_id: &BackendCommitId,
-    ) -> Option<(ShortId, ShortId, Option<String>, Option<usize>, bool)> {
+    fn commit_detail_info(&self, commit_id: &BackendCommitId) -> Option<CommitDetailInfo> {
         let repo = self.repo.as_ref();
         let commit = repo.store().get_commit(commit_id).ok()?;
         let is_hidden = commit.is_hidden(repo).unwrap_or(false);
@@ -1366,13 +1369,13 @@ impl JjRepo {
             raw_desc.lines().next().map(String::from)
         };
 
-        Some((
+        Some(CommitDetailInfo {
             change_id,
             short_commit_id,
             description,
             change_id_suffix,
             is_hidden,
-        ))
+        })
     }
 
     /// Build a `BookmarkConflictTarget` from a commit ID.
@@ -1381,16 +1384,15 @@ impl JjRepo {
         commit_id: &BackendCommitId,
         kind: crate::dag::ConflictTargetKind,
     ) -> Option<crate::dag::BookmarkConflictTarget> {
-        let (change_id, short_commit_id, description, change_id_suffix, is_hidden) =
-            self.commit_detail_info(commit_id)?;
+        let info = self.commit_detail_info(commit_id)?;
         Some(crate::dag::BookmarkConflictTarget {
             kind,
             commit_id: UiCommitId::new(commit_id.hex()),
-            change_id,
-            short_commit_id,
-            description,
-            is_hidden,
-            change_id_suffix,
+            change_id: info.change_id,
+            short_commit_id: info.short_commit_id,
+            description: info.description,
+            is_hidden: info.is_hidden,
+            change_id_suffix: info.change_id_suffix,
         })
     }
 
@@ -1403,25 +1405,28 @@ impl JjRepo {
         behind_count: Option<usize>,
         ahead_count: Option<usize>,
     ) -> Option<crate::dag::BookmarkRemoteTarget> {
-        let (change_id, short_commit_id, description, change_id_suffix, _is_hidden) =
-            self.commit_detail_info(commit_id)?;
+        let info = self.commit_detail_info(commit_id)?;
         Some(crate::dag::BookmarkRemoteTarget {
             remote,
             commit_id: UiCommitId::new(commit_id.hex()),
-            change_id,
-            short_commit_id,
-            description,
+            change_id: info.change_id,
+            short_commit_id: info.short_commit_id,
+            description: info.description,
             is_tracked,
             behind_count,
             ahead_count,
-            change_id_suffix,
+            change_id_suffix: info.change_id_suffix,
         })
     }
 
     /// Count commits reachable from `to` but not from `from`.
     fn count_revs_between(&self, from: &BackendCommitId, to: &BackendCommitId) -> Option<usize> {
-        let revset =
-            jj_lib::revset::walk_revs(self.repo.as_ref(), &[to.clone()], &[from.clone()]).ok()?;
+        let revset = jj_lib::revset::walk_revs(
+            self.repo.as_ref(),
+            std::slice::from_ref(to),
+            std::slice::from_ref(from),
+        )
+        .ok()?;
         Some(revset.iter().count())
     }
 
@@ -1707,8 +1712,8 @@ impl JjRepo {
                 lines.push(OpDetailLine::SectionHeader("Changed bookmarks:".into()));
                 bm_changed = true;
             }
-            let new_target = cur.and_then(|t| t.as_normal()).map(|id| short_hex(id));
-            let old_target = prev.and_then(|t| t.as_normal()).map(|id| short_hex(id));
+            let new_target = cur.and_then(|t| t.as_normal()).map(short_hex);
+            let old_target = prev.and_then(|t| t.as_normal()).map(short_hex);
             lines.push(OpDetailLine::Bookmark(OpDiffBookmark {
                 name: Str::from(name.as_str()),
                 new_target,

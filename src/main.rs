@@ -18,7 +18,7 @@ use kojutsu::ui;
 enum AppEvent {
     Init,
     Terminal(Event),
-    Repo(RepoResult),
+    Repo(Box<RepoResult>),
 }
 
 struct TerminalEvents {
@@ -101,7 +101,8 @@ fn main() -> Result<()> {
     let keymaps: &'static Keymaps = Box::leak(Box::new(Keymaps::default()));
     let (event_tx, event_rx) = mpsc::channel();
     let (repo_requests, repo_responses) = RepoService::spawn(repo_path.clone());
-    let _repo_forwarder = repo_responses.spawn_forwarder(event_tx.clone(), AppEvent::Repo);
+    let _repo_forwarder =
+        repo_responses.spawn_forwarder(event_tx.clone(), |r| AppEvent::Repo(Box::new(r)));
     let persisted = kojutsu::app::load_persisted_state();
     // Resolve active preset: persisted → first preset → None (jj default).
     let active_preset = persisted
@@ -161,7 +162,7 @@ fn main() -> Result<()> {
             let action = match event {
                 AppEvent::Init => Action::None,
                 AppEvent::Repo(result) => {
-                    deferred.merge(app.handle_repo_result_deferred(result));
+                    deferred.merge(app.handle_repo_result_deferred(*result));
                     dirty = true;
                     Action::None
                 }

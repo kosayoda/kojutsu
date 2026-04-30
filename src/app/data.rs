@@ -46,15 +46,13 @@ impl App {
         let entries = IndexVec::from_vec(entries);
         let new_commit_index = super::build_commit_index(&entries);
 
+        type NodeCache = (
+            Loadable<Vec<crate::dag::FileChange>>,
+            Loadable<crate::dag::LineStats>,
+            Vec<Loadable<Vec<crate::dag::DiffLine>>>,
+        );
         // Collect old caches keyed by CommitId before replacing nodes.
-        let old_caches: HashMap<
-            CommitId,
-            (
-                Loadable<Vec<crate::dag::FileChange>>,
-                Loadable<crate::dag::LineStats>,
-                Vec<Loadable<Vec<crate::dag::DiffLine>>>,
-            ),
-        > = std::mem::take(&mut self.nodes)
+        let old_caches: HashMap<CommitId, NodeCache> = std::mem::take(&mut self.nodes)
             .into_vec()
             .into_iter()
             .map(|n| (n.commit.graph_id.clone(), (n.files, n.stats, n.diffs)))
@@ -181,20 +179,9 @@ impl App {
     pub fn handle_repo_result_deferred(&mut self, result: RepoResult) -> DeferredWork {
         let mut deferred = DeferredWork::default();
         match result {
-            RepoResult::RevsetLoaded {
-                revset,
-                repo_root,
-                entries,
-                untracked_bookmarks,
-                tracked_bookmarks,
-                remotes,
-                all_tags,
-                tag_details,
-                bookmark_details,
-                workspace_entries,
-            } => {
+            RepoResult::RevsetLoaded(data) => {
                 self.status_message = None;
-                self.revset = revset;
+                self.revset = data.revset;
                 self.revset_draft = None;
                 self.pending_revset = None;
                 // Invalidate op log; re-request if currently viewing.
@@ -206,17 +193,17 @@ impl App {
                     self.pending_repo_requests
                         .push(RepoRequest::load_operations(self.op_log_limit));
                 }
-                self.repo_root = repo_root;
-                self.untracked_bookmarks = untracked_bookmarks;
-                self.tracked_bookmarks = tracked_bookmarks;
-                self.remotes = remotes;
-                self.all_tags = all_tags;
-                self.tag_details = tag_details;
-                self.bookmark_details = bookmark_details;
-                self.workspace_entries = workspace_entries;
+                self.repo_root = data.repo_root;
+                self.untracked_bookmarks = data.untracked_bookmarks;
+                self.tracked_bookmarks = data.tracked_bookmarks;
+                self.remotes = data.remotes;
+                self.all_tags = data.all_tags;
+                self.tag_details = data.tag_details;
+                self.bookmark_details = data.bookmark_details;
+                self.workspace_entries = data.workspace_entries;
                 self.revset_state = Loadable::Loaded(());
                 // apply_entries does its own rebuild_rows (needed for cursor restoration).
-                self.apply_entries(entries);
+                self.apply_entries(data.entries);
             }
             RepoResult::RevsetFailed { revset, error } => {
                 self.pending_revset = None;
