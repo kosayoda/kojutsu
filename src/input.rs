@@ -1234,6 +1234,24 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.switch_view(crate::app::ActiveView::Evolog);
             Action::None
         }
+        AppAction::EvoLogEdit => {
+            let Some(entry) = app.selected_evolog_entry() else {
+                return Action::None;
+            };
+            let change_id = ChangeId::new(entry.commit_id.as_str());
+            Action::RunJj(JJCommand::Edit { change_id, flags })
+        }
+        AppAction::EvoLogNew => {
+            let Some(entry) = app.selected_evolog_entry() else {
+                return Action::None;
+            };
+            let change_id = ChangeId::new(entry.commit_id.as_str());
+            Action::RunJj(JJCommand::New {
+                change_ids: smallvec![change_id],
+                insert: None,
+                flags,
+            })
+        }
         AppAction::EvoLogRestore => {
             let Some(entry) = app.selected_evolog_entry() else {
                 return Action::None;
