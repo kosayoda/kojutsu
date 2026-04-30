@@ -327,6 +327,87 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         vec![Line::raw(""), Line::raw("")]
                     }
                 }
+                DisplayRow::EvoLogFileChange {
+                    evolog_idx,
+                    file_idx,
+                } => {
+                    let file = app
+                        .evolog_entries
+                        .get(evolog_idx.raw())
+                        .and_then(|e| app.evolog_files.get(&e.commit_id))
+                        .and_then(|l| l.loaded())
+                        .and_then(|files| files.get(file_idx.raw()));
+                    if let Some(file) = file {
+                        let status_str = match file.status {
+                            FileStatus::Added => "A",
+                            FileStatus::Modified => "M",
+                            FileStatus::Deleted => "D",
+                            FileStatus::Renamed => "R",
+                            FileStatus::Copied => "C",
+                        };
+                        let status_color = match file.status {
+                            FileStatus::Added => theme.added,
+                            FileStatus::Modified => theme.change_id,
+                            FileStatus::Deleted => theme.error,
+                            FileStatus::Renamed | FileStatus::Copied => theme.accent,
+                        };
+                        let mut spans = vec![
+                            gutter_span(row_search.as_ref(), theme),
+                            Span::styled(
+                                format!("  {status_str} "),
+                                Style::default().fg(status_color),
+                            ),
+                            Span::styled(
+                                file.path.as_str().to_string(),
+                                Style::default().fg(theme.text),
+                            ),
+                        ];
+                        if file.stats.added > 0 || file.stats.removed > 0 {
+                            spans.push(Span::raw(" "));
+                            push_line_stats(&mut spans, file.stats, false, theme);
+                        }
+                        vec![Line::from(spans)]
+                    } else {
+                        vec![Line::raw("")]
+                    }
+                }
+                DisplayRow::EvoLogFileDiffLine {
+                    evolog_idx,
+                    file_idx,
+                    line_idx,
+                } => {
+                    let diff_line = app
+                        .evolog_entries
+                        .get(evolog_idx.raw())
+                        .and_then(|e| {
+                            let files = app.evolog_files.get(&e.commit_id)?.loaded()?;
+                            let file = files.get(file_idx.raw())?;
+                            let key = (e.commit_id.clone(), file.path.clone());
+                            app.evolog_file_diffs.get(&key)?.loaded()
+                        })
+                        .and_then(|lines| lines.get(line_idx.raw()));
+                    if let Some(diff_line) = diff_line {
+                        let (base_style, prefix) = match diff_line.kind {
+                            DiffLineKind::Added => (Style::default().fg(theme.added), "+"),
+                            DiffLineKind::Removed => (Style::default().fg(theme.error), "-"),
+                            DiffLineKind::Context => (Style::default().fg(theme.muted), " "),
+                            DiffLineKind::Header => (
+                                Style::default()
+                                    .fg(theme.accent)
+                                    .add_modifier(Modifier::BOLD),
+                                "@",
+                            ),
+                        };
+                        let mut spans = vec![
+                            gutter_span(row_search.as_ref(), theme),
+                            Span::styled(format!("    {prefix} "), base_style),
+                        ];
+                        push_diff_tokens(&mut spans, diff_line, base_style, row_search.as_ref());
+                        vec![Line::from(spans)]
+                    } else {
+                        vec![Line::raw("")]
+                    }
+                }
                 DisplayRow::EvoLogGraphLink {
                     evolog_idx,
                     line_idx,

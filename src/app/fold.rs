@@ -158,6 +158,36 @@ impl App {
         for idx in 0..self.evolog_entries.len() {
             let ei = EvoLogIdx::new(idx);
             self.rows.push(DisplayRow::EvoLogItem { evolog_idx: ei });
+
+            // Emit file change rows if this entry is unfolded.
+            let commit_id = &self.evolog_entries[idx].commit_id;
+            if self.unfolded_evolog.contains(commit_id) {
+                if let Some(Loadable::Loaded(files)) = self.evolog_files.get(commit_id) {
+                    for fi in 0..files.len() {
+                        let file_idx = FileIdx::new(fi);
+                        self.rows.push(DisplayRow::EvoLogFileChange {
+                            evolog_idx: ei,
+                            file_idx,
+                        });
+                        // Emit diff lines if this file is unfolded.
+                        let key = (commit_id.clone(), files[fi].path.clone());
+                        if self.unfolded_evolog_files.contains(&key) {
+                            if let Some(Loadable::Loaded(lines)) =
+                                self.evolog_file_diffs.get(&key)
+                            {
+                                for li in 0..lines.len() {
+                                    self.rows.push(DisplayRow::EvoLogFileDiffLine {
+                                        evolog_idx: ei,
+                                        file_idx,
+                                        line_idx: DiffLineIdx::new(li),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             for li in 0..self.evolog_entries[idx].graph.extra.len() {
                 self.rows.push(DisplayRow::EvoLogGraphLink {
                     evolog_idx: ei,
@@ -375,6 +405,22 @@ impl App {
             Some(DisplayRow::OpLogLoadMore) => {
                 self.request_op_log_load_more();
             }
+            Some(DisplayRow::EvoLogItem { evolog_idx }) => {
+                self.toggle_evolog_fold(*evolog_idx);
+            }
+            Some(DisplayRow::EvoLogFileChange {
+                evolog_idx,
+                file_idx,
+            }) => {
+                self.toggle_evolog_file_fold(*evolog_idx, *file_idx);
+            }
+            Some(DisplayRow::EvoLogFileDiffLine {
+                evolog_idx,
+                file_idx,
+                ..
+            }) => {
+                self.toggle_evolog_file_fold(*evolog_idx, *file_idx);
+            }
             _ => {}
         }
     }
@@ -464,6 +510,84 @@ impl App {
         self.rebuild_rows();
         if !currently_unfolded {
             // We just unfolded — scroll to show child rows.
+            self.scroll_to_show_children();
+        }
+    }
+
+    pub(crate) fn toggle_evolog_fold(&mut self, evolog_idx: EvoLogIdx) {
+        let Some(entry) = self.evolog_entries.get(evolog_idx.raw()) else {
+            return;
+        };
+        let commit_id = entry.commit_id.clone();
+
+        if self.unfolded_evolog.contains(&commit_id) {
+            self.unfolded_evolog.remove(&commit_id);
+        } else {
+            if self
+                .evolog_files
+                .get(&commit_id)
+                .is_none_or(Loadable::should_request)
+            {
+                if let Some(pred_id) = entry.predecessor_ids.first() {
+                    self.evolog_files
+                        .insert(commit_id.clone(), Loadable::Loading);
+                    self.pending_repo_requests
+                        .push(RepoRequest::load_evolog_details(
+                            pred_id.clone(),
+                            commit_id.clone(),
+                        ));
+                }
+            }
+            self.unfolded_evolog.insert(commit_id.clone());
+        }
+        self.rebuild_rows();
+        if self.unfolded_evolog.contains(&commit_id) {
+            self.scroll_to_show_children();
+        }
+    }
+
+    pub(crate) fn toggle_evolog_file_fold(
+        &mut self,
+        evolog_idx: EvoLogIdx,
+        file_idx: FileIdx,
+    ) {
+        let Some(entry) = self.evolog_entries.get(evolog_idx.raw()) else {
+            return;
+        };
+        let commit_id = entry.commit_id.clone();
+        let files = match self.evolog_files.get(&commit_id) {
+            Some(Loadable::Loaded(f)) => f,
+            _ => return,
+        };
+        let Some(file) = files.get(file_idx.raw()) else {
+            return;
+        };
+        let path = file.path.clone();
+        let key = (commit_id.clone(), path.clone());
+
+        if self.unfolded_evolog_files.contains(&key) {
+            self.unfolded_evolog_files.remove(&key);
+        } else {
+            if self
+                .evolog_file_diffs
+                .get(&key)
+                .is_none_or(Loadable::should_request)
+            {
+                if let Some(pred_id) = entry.predecessor_ids.first() {
+                    self.evolog_file_diffs
+                        .insert(key.clone(), Loadable::Loading);
+                    self.pending_repo_requests
+                        .push(RepoRequest::load_evolog_file_diff(
+                            pred_id.clone(),
+                            commit_id,
+                            path,
+                        ));
+                }
+            }
+            self.unfolded_evolog_files.insert(key.clone());
+        }
+        self.rebuild_rows();
+        if self.unfolded_evolog_files.contains(&key) {
             self.scroll_to_show_children();
         }
     }

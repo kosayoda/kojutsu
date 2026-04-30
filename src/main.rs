@@ -513,6 +513,10 @@ fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
     if result.success {
         app.jump_after_refresh = jump;
         app.clear_selection();
+        // Switch back to DAG view from non-DAG views after a command.
+        if app.active_view != kojutsu::app::ActiveView::Dag {
+            app.switch_view(kojutsu::app::ActiveView::Dag);
+        }
         refresh_app(app);
     }
 }

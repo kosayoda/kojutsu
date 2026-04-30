@@ -1829,6 +1829,7 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             | Some(DisplayRow::OpLogGraphLink { .. })
             | Some(DisplayRow::OpLogLoadMore)
             | Some(DisplayRow::EvoLogItem { .. })
+            | Some(DisplayRow::EvoLogFileChange { .. }) | Some(DisplayRow::EvoLogFileDiffLine { .. })
             | Some(DisplayRow::EvoLogGraphLink { .. })
             | Some(DisplayRow::WorkspaceItem { .. })
             | Some(DisplayRow::ConflictHeader { .. })

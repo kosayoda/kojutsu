@@ -418,6 +418,32 @@ impl App {
                     deferred.rebuild = true;
                 }
             }
+            RepoResult::EvoLogDetailsLoaded { commit_id, files } => {
+                self.evolog_files
+                    .insert(commit_id, super::Loadable::Loaded(files));
+                if self.active_view == super::ActiveView::Evolog {
+                    deferred.rebuild = true;
+                    deferred.scroll = true;
+                }
+            }
+            RepoResult::EvoLogDetailsFailed { error } => {
+                self.set_error(format!("failed to load evolog details: {error}"));
+            }
+            RepoResult::EvoLogFileDiffLoaded {
+                commit_id,
+                path,
+                lines,
+            } => {
+                self.evolog_file_diffs
+                    .insert((commit_id, path), super::Loadable::Loaded(lines));
+                if self.active_view == super::ActiveView::Evolog {
+                    deferred.rebuild = true;
+                    deferred.scroll = true;
+                }
+            }
+            RepoResult::EvoLogFileDiffFailed { error } => {
+                self.set_error(format!("failed to load evolog file diff: {error}"));
+            }
             RepoResult::EvoLogFailed { error } => {
                 self.evolog_loaded = false;
                 self.set_error(format!("failed to load evolog: {error}"));

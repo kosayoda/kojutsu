@@ -219,6 +219,8 @@ pub struct EvoLogEntry {
     pub op_description: Option<Str>,
     /// Whether this is the newest (current) version.
     pub is_current: bool,
+    /// Predecessor commit IDs (the version(s) this was rewritten from).
+    pub predecessor_ids: Vec<CommitId>,
     /// Pre-rendered graph lines.
     pub graph: crate::graph::GraphLines,
 }

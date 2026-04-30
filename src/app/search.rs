@@ -302,6 +302,7 @@ impl App {
             | DisplayRow::OpLogDetailLine { .. }
             | DisplayRow::OpLogGraphLink { .. }
             | DisplayRow::OpLogLoadMore
+            | DisplayRow::EvoLogFileChange { .. } | DisplayRow::EvoLogFileDiffLine { .. }
             | DisplayRow::EvoLogGraphLink { .. }
             | DisplayRow::ConflictHeader { .. }
             | DisplayRow::ConflictSide { .. }

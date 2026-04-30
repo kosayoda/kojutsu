@@ -22,6 +22,8 @@ pub enum RowKey {
     OpLogGraphLink(OpLogIdx, GraphLineIdx),
     OpLogLoadMore,
     EvoLogItem(EvoLogIdx),
+    EvoLogFileChange(EvoLogIdx, FileIdx),
+    EvoLogFileDiffLine(EvoLogIdx, FileIdx, DiffLineIdx),
     EvoLogGraphLink(EvoLogIdx, GraphLineIdx),
     WorkspaceItem(WorkspaceIdx),
     ConflictHeader(EntryIdx, FileIdx, ConflictHunkIdx),
@@ -95,6 +97,17 @@ pub enum DisplayRow {
     OpLogLoadMore,
     /// An evolution log entry.
     EvoLogItem { evolog_idx: EvoLogIdx },
+    /// A file change row within an unfolded evolog entry.
+    EvoLogFileChange {
+        evolog_idx: EvoLogIdx,
+        file_idx: FileIdx,
+    },
+    /// A diff line within an unfolded evolog file.
+    EvoLogFileDiffLine {
+        evolog_idx: EvoLogIdx,
+        file_idx: FileIdx,
+        line_idx: DiffLineIdx,
+    },
     /// A graph link/pad line between evolog entries.
     EvoLogGraphLink {
         evolog_idx: EvoLogIdx,
@@ -171,6 +184,15 @@ impl DisplayRow {
             } => RowKey::OpLogGraphLink(op_log_idx, line_idx),
             DisplayRow::OpLogLoadMore => RowKey::OpLogLoadMore,
             DisplayRow::EvoLogItem { evolog_idx } => RowKey::EvoLogItem(evolog_idx),
+            DisplayRow::EvoLogFileChange {
+                evolog_idx,
+                file_idx,
+            } => RowKey::EvoLogFileChange(evolog_idx, file_idx),
+            DisplayRow::EvoLogFileDiffLine {
+                evolog_idx,
+                file_idx,
+                line_idx,
+            } => RowKey::EvoLogFileDiffLine(evolog_idx, file_idx, line_idx),
             DisplayRow::EvoLogGraphLink {
                 evolog_idx,
                 line_idx,

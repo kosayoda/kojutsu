@@ -50,6 +50,15 @@ enum RepoRequestKind {
     EvolutionLog {
         commit_id: CommitId,
     },
+    EvoLogDetails {
+        from_commit_id: CommitId,
+        to_commit_id: CommitId,
+    },
+    EvoLogFileDiff {
+        from_commit_id: CommitId,
+        to_commit_id: CommitId,
+        path: RepoPath,
+    },
 }
 
 #[derive(Clone)]
@@ -145,6 +154,21 @@ pub enum RepoResult {
     EvoLogFailed {
         error: String,
     },
+    EvoLogDetailsLoaded {
+        commit_id: CommitId,
+        files: Vec<crate::dag::FileChange>,
+    },
+    EvoLogDetailsFailed {
+        error: String,
+    },
+    EvoLogFileDiffLoaded {
+        commit_id: CommitId,
+        path: RepoPath,
+        lines: Vec<crate::dag::DiffLine>,
+    },
+    EvoLogFileDiffFailed {
+        error: String,
+    },
     /// A background computation thread panicked or failed.
     BackgroundError {
         error: String,
@@ -198,6 +222,31 @@ impl RepoRequest {
         }
     }
 
+    pub fn load_evolog_details(from_commit_id: CommitId, to_commit_id: CommitId) -> Self {
+        Self {
+            epoch: 0,
+            kind: RepoRequestKind::EvoLogDetails {
+                from_commit_id,
+                to_commit_id,
+            },
+        }
+    }
+
+    pub fn load_evolog_file_diff(
+        from_commit_id: CommitId,
+        to_commit_id: CommitId,
+        path: RepoPath,
+    ) -> Self {
+        Self {
+            epoch: 0,
+            kind: RepoRequestKind::EvoLogFileDiff {
+                from_commit_id,
+                to_commit_id,
+                path,
+            },
+        }
+    }
+
     pub fn load_evolution_log(commit_id: CommitId) -> Self {
         Self {
             epoch: 0,
@@ -235,7 +284,9 @@ impl RepoRequestHandle {
             | RepoRequestKind::Operations { .. }
             | RepoRequestKind::ConflictHunks { .. }
             | RepoRequestKind::OpDiff { .. }
-            | RepoRequestKind::EvolutionLog { .. } => self.current_epoch.load(Ordering::SeqCst),
+            | RepoRequestKind::EvolutionLog { .. }
+            | RepoRequestKind::EvoLogDetails { .. }
+            | RepoRequestKind::EvoLogFileDiff { .. } => self.current_epoch.load(Ordering::SeqCst),
         };
         let _ = self.request_tx.send(request);
     }
@@ -321,6 +372,19 @@ impl RepoServiceState {
             }
             RepoRequestKind::EvolutionLog { commit_id } => {
                 self.handle_evolution_log(epoch, commit_id);
+            }
+            RepoRequestKind::EvoLogDetails {
+                from_commit_id,
+                to_commit_id,
+            } => {
+                self.handle_evolog_details(epoch, from_commit_id, to_commit_id);
+            }
+            RepoRequestKind::EvoLogFileDiff {
+                from_commit_id,
+                to_commit_id,
+                path,
+            } => {
+                self.handle_evolog_file_diff(epoch, from_commit_id, to_commit_id, path);
             }
         }
     }
@@ -699,6 +763,76 @@ impl RepoServiceState {
                     epoch,
                     RepoResult::OpDiffFailed {
                         op_id,
+                        error: format!("{err:#}"),
+                    },
+                );
+            }
+        }
+    }
+
+    fn handle_evolog_details(
+        &mut self,
+        epoch: u64,
+        from_commit_id: CommitId,
+        to_commit_id: CommitId,
+    ) {
+        let Some(repo) =
+            self.ensure_repo(epoch, |error| RepoResult::EvoLogDetailsFailed { error })
+        else {
+            return;
+        };
+        match repo.inter_commit_details(from_commit_id.as_str(), to_commit_id.as_str()) {
+            Ok(files) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::EvoLogDetailsLoaded {
+                        commit_id: to_commit_id,
+                        files,
+                    },
+                );
+            }
+            Err(err) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::EvoLogDetailsFailed {
+                        error: format!("{err:#}"),
+                    },
+                );
+            }
+        }
+    }
+
+    fn handle_evolog_file_diff(
+        &mut self,
+        epoch: u64,
+        from_commit_id: CommitId,
+        to_commit_id: CommitId,
+        path: RepoPath,
+    ) {
+        let Some(repo) =
+            self.ensure_repo(epoch, |error| RepoResult::EvoLogFileDiffFailed { error })
+        else {
+            return;
+        };
+        match repo.inter_commit_file_diff(
+            from_commit_id.as_str(),
+            to_commit_id.as_str(),
+            &path,
+        ) {
+            Ok(lines) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::EvoLogFileDiffLoaded {
+                        commit_id: to_commit_id,
+                        path,
+                        lines,
+                    },
+                );
+            }
+            Err(err) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::EvoLogFileDiffFailed {
                         error: format!("{err:#}"),
                     },
                 );

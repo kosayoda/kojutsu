@@ -694,72 +694,7 @@ impl JjRepo {
         );
 
         let mut lines = Vec::new();
-        for hunk in &hunks {
-            // Hunk header
-            lines.push(DiffLine {
-                kind: DiffLineKind::Header,
-                content: format!(
-                    "@@ -{},{} +{},{} @@",
-                    hunk.left_line_range.start + 1,
-                    hunk.left_line_range.len(),
-                    hunk.right_line_range.start + 1,
-                    hunk.right_line_range.len(),
-                ),
-                tokens: vec![],
-                old_line: None,
-                new_line: None,
-            });
-
-            // Track line numbers through the hunk (1-indexed).
-            let mut old_line = hunk.left_line_range.start as u32 + 1;
-            let mut new_line = hunk.right_line_range.start as u32 + 1;
-
-            for (line_type, tokens) in &hunk.lines {
-                // Build token spans preserving word-level diff info.
-                let mut diff_tokens = Vec::new();
-                let mut full_text = String::new();
-                for (tag, bytes) in tokens {
-                    let text = String::from_utf8_lossy(bytes).to_string();
-                    full_text.push_str(&text);
-                    diff_tokens.push(crate::dag::DiffToken {
-                        text,
-                        is_different: matches!(tag, DiffTokenType::Different),
-                    });
-                }
-                // Trim trailing newline from last token.
-                if let Some(last) = diff_tokens.last_mut() {
-                    last.text = last.text.trim_end_matches('\n').to_string();
-                }
-                let text = full_text.trim_end_matches('\n').to_string();
-
-                let (kind, ol, nl) = match line_type {
-                    DiffLineType::Context => {
-                        let result = (DiffLineKind::Context, Some(old_line), Some(new_line));
-                        old_line += 1;
-                        new_line += 1;
-                        result
-                    }
-                    DiffLineType::Removed => {
-                        let result = (DiffLineKind::Removed, Some(old_line), None);
-                        old_line += 1;
-                        result
-                    }
-                    DiffLineType::Added => {
-                        let result = (DiffLineKind::Added, None, Some(new_line));
-                        new_line += 1;
-                        result
-                    }
-                };
-                lines.push(DiffLine {
-                    kind,
-                    content: text,
-                    tokens: diff_tokens,
-                    old_line: ol,
-                    new_line: nl,
-                });
-            }
-        }
-
+        hunks_to_diff_lines(&hunks, &mut lines);
         Ok(lines)
     }
 
@@ -1567,6 +1502,7 @@ impl JjRepo {
             relative_time: Str,
             op_description: Option<Str>,
             is_current: bool,
+            predecessor_ids: Vec<UiCommitId>,
             edges: Vec<Edge>,
         }
 
@@ -1599,11 +1535,15 @@ impl JjRepo {
                 .map(|op| op.metadata().description.as_str().into());
 
             let full_id = commit.id().hex();
-            let edges: Vec<Edge> = entry
+            let pred_ids: Vec<UiCommitId> = entry
                 .predecessor_ids()
                 .iter()
+                .map(|pid| UiCommitId::new(pid.hex()))
+                .collect();
+            let edges: Vec<Edge> = pred_ids
+                .iter()
                 .map(|pid| Edge {
-                    target: UiCommitId::new(pid.hex()),
+                    target: pid.clone(),
                     kind: EdgeKind::Direct,
                 })
                 .collect();
@@ -1619,6 +1559,7 @@ impl JjRepo {
                 relative_time,
                 op_description,
                 is_current,
+                predecessor_ids: pred_ids,
                 edges,
             });
         }
@@ -1652,11 +1593,121 @@ impl JjRepo {
                 relative_time: raw.relative_time,
                 op_description: raw.op_description,
                 is_current: raw.is_current,
+                predecessor_ids: raw.predecessor_ids,
                 graph,
             })
             .collect();
 
         Ok(entries)
+    }
+
+    /// Compute file-level changes between two commits (for evolog level-1 unfold).
+    pub fn inter_commit_details(
+        &self,
+        from_id: &str,
+        to_id: &str,
+    ) -> Result<Vec<FileChange>> {
+        let repo = self.repo.as_ref();
+        let from_commit_id = BackendCommitId::try_from_hex(from_id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
+        let to_commit_id = BackendCommitId::try_from_hex(to_id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
+        let from_commit = repo.store().get_commit(&from_commit_id)?;
+        let to_commit = repo.store().get_commit(&to_commit_id)?;
+
+        let from_tree = from_commit.tree();
+        let to_tree = to_commit.tree();
+        let copy_records = jj_lib::copies::CopyRecords::default();
+
+        let mut changes = Vec::new();
+        let mut diff_stream =
+            from_tree.diff_stream_with_copies(&to_tree, &EverythingMatcher, &copy_records);
+
+        while let Some(entry) = diff_stream.next().block_on() {
+            let target_path = entry.path.target().as_internal_file_string().to_string();
+            let values = match entry.values {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let before_present = values.before.is_present();
+            let after_present = values.after.is_present();
+            let status = match (before_present, after_present) {
+                (false, true) => FileStatus::Added,
+                (true, false) => FileStatus::Deleted,
+                (true, true) => FileStatus::Modified,
+                (false, false) => continue,
+            };
+
+            changes.push(FileChange {
+                path: RepoPath::new(&target_path),
+                old_path: None,
+                status,
+                has_conflict: !values.after.is_resolved(),
+                stats: LineStats::default(),
+            });
+        }
+
+        Ok(changes)
+    }
+
+    /// Compute the diff for a single file between two commits (for evolog level-2 unfold).
+    pub fn inter_commit_file_diff(
+        &self,
+        from_id: &str,
+        to_id: &str,
+        path: &RepoPath,
+    ) -> Result<Vec<DiffLine>> {
+        let repo = self.repo.as_ref();
+        let from_commit_id = BackendCommitId::try_from_hex(from_id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
+        let to_commit_id = BackendCommitId::try_from_hex(to_id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
+        let from_commit = repo.store().get_commit(&from_commit_id)?;
+        let to_commit = repo.store().get_commit(&to_commit_id)?;
+
+        let from_tree = from_commit.tree();
+        let to_tree = to_commit.tree();
+
+        let repo_path = RepoPathBuf::from_internal_string(path.as_str())
+            .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
+        let labels = ConflictLabels::unlabeled();
+        let materialize_options = default_materialize_options();
+
+        let before_value = from_tree.path_value(&repo_path).block_on()?;
+        let after_value = to_tree.path_value(&repo_path).block_on()?;
+
+        let before_mat =
+            materialize_tree_value(repo.store(), &repo_path, before_value, &labels).block_on()?;
+        let after_mat =
+            materialize_tree_value(repo.store(), &repo_path, after_value, &labels).block_on()?;
+
+        let before_part = git_diff_part(&repo_path, before_mat, &materialize_options)
+            .block_on()
+            .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+        let after_part = git_diff_part(&repo_path, after_mat, &materialize_options)
+            .block_on()
+            .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+
+        if before_part.content.is_binary || after_part.content.is_binary {
+            return Ok(vec![DiffLine {
+                kind: DiffLineKind::Context,
+                content: "(binary file)".to_string(),
+                tokens: Vec::new(),
+                old_line: None,
+                new_line: None,
+            }]);
+        }
+
+        let contents = Diff::new(
+            before_part.content.contents.as_ref(),
+            after_part.content.contents.as_ref(),
+        );
+        let hunks = unified::unified_diff_hunks(contents, 3, Default::default());
+
+        let mut lines = Vec::new();
+        hunks_to_diff_lines(&hunks, &mut lines);
+        Ok(lines)
     }
 
     /// Compute the diff between an operation and its parent.
@@ -1904,6 +1955,74 @@ fn parse_first_line_description(raw: &str) -> Option<String> {
         None
     } else {
         trimmed.lines().next().map(String::from)
+    }
+}
+
+/// Convert unified diff hunks into `DiffLine` structs with token spans and line numbers.
+fn hunks_to_diff_lines(
+    hunks: &[unified::UnifiedDiffHunk<'_>],
+    out: &mut Vec<DiffLine>,
+) {
+    for hunk in hunks {
+        out.push(DiffLine {
+            kind: DiffLineKind::Header,
+            content: format!(
+                "@@ -{},{} +{},{} @@",
+                hunk.left_line_range.start + 1,
+                hunk.left_line_range.len(),
+                hunk.right_line_range.start + 1,
+                hunk.right_line_range.len(),
+            ),
+            tokens: vec![],
+            old_line: None,
+            new_line: None,
+        });
+
+        let mut old_line = hunk.left_line_range.start as u32 + 1;
+        let mut new_line = hunk.right_line_range.start as u32 + 1;
+
+        for (line_type, tokens) in &hunk.lines {
+            let mut diff_tokens = Vec::new();
+            let mut full_text = String::new();
+            for (tag, bytes) in tokens {
+                let text = String::from_utf8_lossy(bytes).to_string();
+                full_text.push_str(&text);
+                diff_tokens.push(crate::dag::DiffToken {
+                    text,
+                    is_different: matches!(tag, DiffTokenType::Different),
+                });
+            }
+            if let Some(last) = diff_tokens.last_mut() {
+                last.text = last.text.trim_end_matches('\n').to_string();
+            }
+            let text = full_text.trim_end_matches('\n').to_string();
+
+            let (kind, ol, nl) = match line_type {
+                DiffLineType::Context => {
+                    let r = (DiffLineKind::Context, Some(old_line), Some(new_line));
+                    old_line += 1;
+                    new_line += 1;
+                    r
+                }
+                DiffLineType::Removed => {
+                    let r = (DiffLineKind::Removed, Some(old_line), None);
+                    old_line += 1;
+                    r
+                }
+                DiffLineType::Added => {
+                    let r = (DiffLineKind::Added, None, Some(new_line));
+                    new_line += 1;
+                    r
+                }
+            };
+            out.push(DiffLine {
+                kind,
+                content: text,
+                tokens: diff_tokens,
+                old_line: ol,
+                new_line: nl,
+            });
+        }
     }
 }
 

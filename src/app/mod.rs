@@ -141,6 +141,14 @@ pub struct App {
     pub evolog_loaded: bool,
     /// Which commit ID the evolog is loaded for.
     pub evolog_commit_id: Option<CommitId>,
+    /// Evolog entries that are unfolded (showing files).
+    pub unfolded_evolog: HashSet<CommitId>,
+    /// Cached file changes per evolog entry commit ID.
+    pub evolog_files: HashMap<CommitId, Loadable<Vec<crate::dag::FileChange>>>,
+    /// Evolog files that are unfolded (showing diff lines).
+    pub unfolded_evolog_files: HashSet<(CommitId, crate::types::RepoPath)>,
+    /// Cached diff lines per (evolog commit ID, file path).
+    pub evolog_file_diffs: HashMap<(CommitId, crate::types::RepoPath), Loadable<Vec<crate::dag::DiffLine>>>,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
@@ -243,6 +251,10 @@ impl App {
             evolog_entries: Vec::new(),
             evolog_loaded: false,
             evolog_commit_id: None,
+            unfolded_evolog: HashSet::new(),
+            evolog_files: HashMap::new(),
+            unfolded_evolog_files: HashSet::new(),
+            evolog_file_diffs: HashMap::new(),
             rows: Vec::new(),
             cursor: 0,
             view_states: default_view_states(),
@@ -329,6 +341,10 @@ impl App {
                     self.evolog_commit_id = Some(commit_id.clone());
                     self.evolog_loaded = false;
                     self.evolog_entries.clear();
+                    self.unfolded_evolog.clear();
+                    self.evolog_files.clear();
+                    self.unfolded_evolog_files.clear();
+                    self.evolog_file_diffs.clear();
                     self.pending_repo_requests
                         .push(RepoRequest::load_evolution_log(commit_id));
                 }
@@ -540,6 +556,8 @@ impl App {
     pub fn selected_evolog_entry(&self) -> Option<&EvoLogEntry> {
         let evolog_idx = match self.rows.get(self.cursor)? {
             DisplayRow::EvoLogItem { evolog_idx }
+            | DisplayRow::EvoLogFileChange { evolog_idx, .. }
+            | DisplayRow::EvoLogFileDiffLine { evolog_idx, .. }
             | DisplayRow::EvoLogGraphLink { evolog_idx, .. } => *evolog_idx,
             _ => return None,
         };
@@ -572,6 +590,7 @@ impl App {
             | DisplayRow::OpLogGraphLink { .. }
             | DisplayRow::OpLogLoadMore
             | DisplayRow::EvoLogItem { .. }
+            | DisplayRow::EvoLogFileChange { .. } | DisplayRow::EvoLogFileDiffLine { .. }
             | DisplayRow::EvoLogGraphLink { .. }
             | DisplayRow::WorkspaceItem { .. }
             | DisplayRow::ConflictHeader { .. }
