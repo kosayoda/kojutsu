@@ -208,6 +208,9 @@ impl App {
                 self.views.bookmark_details = data.bookmark_details;
                 self.views.workspace_entries = data.workspace_entries;
                 self.revset.load_state = Loadable::Loaded(());
+                if !data.warnings.is_empty() {
+                    self.set_error(data.warnings.join("; "));
+                }
                 // apply_entries does its own rebuild_rows (needed for cursor restoration).
                 self.apply_entries(data.entries);
             }

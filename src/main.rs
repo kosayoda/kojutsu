@@ -60,6 +60,7 @@ struct Cli {
 
 fn main() -> Result<()> {
     color_eyre::install()?;
+    init_tracing();
     let cli = Cli::parse();
 
     if cli.print_default_config {
@@ -91,8 +92,11 @@ fn main() -> Result<()> {
         let _ = JjRepo::snapshot(&repo_path);
         let jj = JjRepo::open(&repo_path)?;
         let revset = cli.revisions.unwrap_or_else(|| jj.default_revset());
-        let entries = jj.evaluate_revset(&revset)?;
-        debug_print_graph(&entries);
+        let result = jj.evaluate_revset(&revset)?;
+        for w in &result.warnings {
+            eprintln!("warning: {w}");
+        }
+        debug_print_graph(&result.entries);
         return Ok(());
     }
 
@@ -524,6 +528,39 @@ fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
         }
         refresh_app(app);
     }
+}
+
+/// Initialize tracing subscriber writing to a log file.
+/// Best-effort: if file creation fails, tracing is silently disabled.
+fn init_tracing() {
+    use tracing_subscriber::EnvFilter;
+
+    let Some(cache_dir) = dirs::cache_dir() else {
+        return;
+    };
+    let log_dir = cache_dir.join("kojutsu");
+    if std::fs::create_dir_all(&log_dir).is_err() {
+        return;
+    }
+    let log_file = log_dir.join("kojutsu.log");
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_file)
+    else {
+        return;
+    };
+
+    let filter =
+        EnvFilter::try_from_env("KOJUTSU_LOG").unwrap_or_else(|_| EnvFilter::new("kojutsu=warn"));
+
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(file)
+        .with_ansi(false)
+        .with_target(false)
+        .finish();
+    let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
 /// Find the nearest ancestor directory containing a `.jj/` workspace.

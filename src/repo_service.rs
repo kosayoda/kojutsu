@@ -77,6 +77,8 @@ pub struct RevsetData {
     pub tag_details: std::collections::HashMap<Str, crate::dag::TagDetails>,
     pub bookmark_details: std::collections::HashMap<BookmarkName, crate::dag::BookmarkDetails>,
     pub workspace_entries: Vec<crate::app::WorkspaceViewEntry>,
+    /// Non-fatal warnings from revset evaluation (e.g. immutable() failed).
+    pub warnings: Vec<String>,
 }
 
 pub enum RepoResult {
@@ -437,7 +439,10 @@ impl RepoServiceState {
         };
         let effective_revset = revset.unwrap_or_else(|| repo.default_revset());
         match repo.evaluate_revset(&effective_revset) {
-            Ok(entries) => {
+            Ok(result) => {
+                let warnings = result.warnings;
+                let entries = result.entries;
+
                 // Collect all commit IDs for background is_empty computation.
                 // (Previously only merge commits were deferred; now all commits
                 // defer is_empty to keep the initial load fast.)
@@ -493,6 +498,7 @@ impl RepoServiceState {
                         tag_details,
                         bookmark_details,
                         workspace_entries,
+                        warnings,
                     })),
                 );
 
@@ -511,7 +517,12 @@ impl RepoServiceState {
                             let Ok(commit) = inner.store().get_commit(&backend_id) else {
                                 continue;
                             };
-                            if commit.is_empty(inner.as_ref()).block_on().unwrap_or(false) {
+                            if commit
+                                .is_empty(inner.as_ref())
+                                .block_on()
+                                .inspect_err(|e| tracing::warn!("is_empty check failed: {e}"))
+                                .unwrap_or(false)
+                            {
                                 let _ = tx.send(RepoResult::CommitEmpty {
                                     commit_id: id.clone(),
                                 });

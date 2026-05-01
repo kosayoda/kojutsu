@@ -37,7 +37,7 @@ use jj_lib::repo_path::RepoPathBuf;
 use crate::dag::{
     AuthorInfo, BookmarkInfo, CommitDetails, CommitInfo, DagEntry, DiffLine, DiffLineKind,
     DiffResult, DivergenceUpdate, Edge, EdgeKind, FileChange, FileStatus, LineStats,
-    PrefixLengthUpdate, RemoteBookmarkInfo, ShortId,
+    PrefixLengthUpdate, RemoteBookmarkInfo, RevsetResult, ShortId,
 };
 use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, RepoPath, Str};
 
@@ -286,7 +286,7 @@ impl JjRepo {
 
     /// Evaluate a revset string and return DAG entries in topological order
     /// with graph edges for rendering.
-    pub fn evaluate_revset(&self, revset_str: &str) -> Result<Vec<DagEntry>> {
+    pub fn evaluate_revset(&self, revset_str: &str) -> Result<RevsetResult> {
         let repo = self.repo.as_ref();
 
         // Shared context pieces
@@ -316,7 +316,8 @@ impl JjRepo {
 
         // Evaluate the immutable() revset for tagging commits.
         // The evaluated revset must stay alive for containing_fn() to borrow from.
-        let immutable_revset = self.evaluate_immutable(&context, &symbol_resolver);
+        let mut warnings = Vec::new();
+        let immutable_revset = self.evaluate_immutable(&context, &symbol_resolver, &mut warnings);
         let is_immutable = immutable_revset.as_ref().map(|r| r.containing_fn());
 
         // Wrap the graph iterator with TopoGroupedGraphIterator for proper
@@ -328,7 +329,7 @@ impl JjRepo {
 
         // Evaluate the log-graph-prioritize revset and call prioritize_branch()
         // only for commits that are actually in the log revset.
-        let prioritize_revset = self.evaluate_prioritize(&context, &symbol_resolver);
+        let prioritize_revset = self.evaluate_prioritize(&context, &symbol_resolver, &mut warnings);
         if let Some(ref prio) = prioritize_revset {
             // Collect log commit IDs only when needed for filtering.
             let log_commit_ids: std::collections::HashSet<BackendCommitId> =
@@ -413,7 +414,11 @@ impl JjRepo {
 
             let immutable = is_immutable
                 .as_ref()
-                .and_then(|check| check(&commit_id).ok())
+                .and_then(|check| {
+                    check(&commit_id)
+                        .inspect_err(|e| tracing::warn!("immutability check failed: {e}"))
+                        .ok()
+                })
                 .unwrap_or(false);
 
             let info = self.extract_commit_info(&commit, immutable, &ctx)?;
@@ -435,7 +440,7 @@ impl JjRepo {
             });
         }
 
-        Ok(entries)
+        Ok(RevsetResult { entries, warnings })
     }
 
     /// Return the `revsets.log-graph-prioritize` revset from config, falling
@@ -448,35 +453,84 @@ impl JjRepo {
     }
 
     /// Evaluate the graph-prioritize revset. Returns `None` if it can't be
-    /// evaluated.
+    /// evaluated; appends a warning on failure.
     fn evaluate_prioritize(
         &self,
         context: &RevsetParseContext<'_>,
         symbol_resolver: &SymbolResolver,
+        warnings: &mut Vec<String>,
     ) -> Option<Box<dyn jj_lib::revset::Revset + '_>> {
         let repo = self.repo.as_ref();
         let mut diagnostics = RevsetDiagnostics::new();
         let revset_str = self.prioritize_revset_str();
 
-        let parsed = jj_lib::revset::parse(&mut diagnostics, &revset_str, context).ok()?;
-        let resolved = parsed.resolve_user_expression(repo, symbol_resolver).ok()?;
-        resolved.evaluate(repo).ok()
+        let parsed = match jj_lib::revset::parse(&mut diagnostics, &revset_str, context) {
+            Ok(p) => p,
+            Err(e) => {
+                let msg = format!("failed to parse prioritize revset `{revset_str}`: {e}");
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+                return None;
+            }
+        };
+        let resolved = match parsed.resolve_user_expression(repo, symbol_resolver) {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("failed to resolve prioritize revset: {e}");
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+                return None;
+            }
+        };
+        match resolved.evaluate(repo) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                let msg = format!("failed to evaluate prioritize revset: {e}");
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+                None
+            }
+        }
     }
 
     /// Evaluate the `immutable()` revset. Returns `None` if it can't be
-    /// evaluated (e.g. alias not defined). The caller keeps the returned
-    /// `Box<dyn Revset>` alive and calls `.containing_fn()` on it.
+    /// evaluated (e.g. alias not defined); appends a warning on failure.
     fn evaluate_immutable(
         &self,
         context: &RevsetParseContext<'_>,
         symbol_resolver: &SymbolResolver,
+        warnings: &mut Vec<String>,
     ) -> Option<Box<dyn jj_lib::revset::Revset + '_>> {
         let repo = self.repo.as_ref();
         let mut diagnostics = RevsetDiagnostics::new();
 
-        let parsed = jj_lib::revset::parse(&mut diagnostics, "immutable()", context).ok()?;
-        let resolved = parsed.resolve_user_expression(repo, symbol_resolver).ok()?;
-        resolved.evaluate(repo).ok()
+        let parsed = match jj_lib::revset::parse(&mut diagnostics, "immutable()", context) {
+            Ok(p) => p,
+            Err(e) => {
+                let msg = format!("failed to parse immutable() revset: {e}");
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+                return None;
+            }
+        };
+        let resolved = match parsed.resolve_user_expression(repo, symbol_resolver) {
+            Ok(r) => r,
+            Err(e) => {
+                let msg = format!("failed to resolve immutable() revset: {e}");
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+                return None;
+            }
+        };
+        match resolved.evaluate(repo) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                let msg = format!("failed to evaluate immutable() revset: {e}");
+                tracing::warn!("{msg}");
+                warnings.push(msg);
+                None
+            }
+        }
     }
 
     /// Compute the file-level changes and line totals for a commit.
@@ -504,10 +558,19 @@ impl JjRepo {
         // Build copy records for rename/copy detection.
         let mut copy_records = jj_lib::copies::CopyRecords::default();
         for parent_id in commit.parent_ids() {
-            if let Ok(stream) = repo.store().get_copy_records(None, parent_id, commit.id()) {
-                use futures::TryStreamExt as _;
-                let records: Vec<_> = stream.try_collect().block_on().unwrap_or_default();
-                copy_records.add_records(records);
+            match repo.store().get_copy_records(None, parent_id, commit.id()) {
+                Ok(stream) => {
+                    use futures::TryStreamExt as _;
+                    let records: Vec<_> = stream
+                        .try_collect()
+                        .block_on()
+                        .inspect_err(|e| tracing::warn!("failed to collect copy records: {e}"))
+                        .unwrap_or_default();
+                    copy_records.add_records(records);
+                }
+                Err(e) => {
+                    tracing::warn!("failed to get copy records: {e}");
+                }
             }
         }
 
@@ -992,7 +1055,10 @@ impl JjRepo {
                 let is_divergent = resolved
                     .as_ref()
                     .is_some_and(|targets| targets.is_divergent());
-                let is_hidden = commit.is_hidden(repo.as_ref()).unwrap_or(false);
+                let is_hidden = commit
+                    .is_hidden(repo.as_ref())
+                    .inspect_err(|e| tracing::warn!("is_hidden check failed: {e}"))
+                    .unwrap_or(false);
                 if !is_divergent && !is_hidden {
                     return None;
                 }
@@ -1282,7 +1348,10 @@ impl JjRepo {
     fn commit_detail_info(&self, commit_id: &BackendCommitId) -> Option<CommitDetailInfo> {
         let repo = self.repo.as_ref();
         let commit = repo.store().get_commit(commit_id).ok()?;
-        let is_hidden = commit.is_hidden(repo).unwrap_or(false);
+        let is_hidden = commit
+            .is_hidden(repo)
+            .inspect_err(|e| tracing::warn!("is_hidden check failed: {e}"))
+            .unwrap_or(false);
 
         let resolved = repo.resolve_change_id(commit.change_id()).ok().flatten();
         let is_divergent = resolved
@@ -1507,8 +1576,7 @@ impl JjRepo {
             cwd: self.workspace_root.clone(),
             base: self.workspace_root.clone(),
         };
-        let context =
-            self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
+        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
         let id_prefix_context = self.build_id_prefix_context(&context);
         let prefix_index = id_prefix_context
             .populate(repo)
@@ -1835,11 +1903,29 @@ impl JjRepo {
         let old_heads: Vec<_> = parent_view.head_ids.iter().cloned().collect();
         let added_commits: Vec<BackendCommitId> =
             jj_lib::revset::walk_revs(self.repo.as_ref(), &new_heads, &old_heads)
-                .map(|revset| revset.iter().filter_map(|e| e.ok()).collect())
+                .inspect_err(|e| tracing::warn!("failed to walk added commits: {e}"))
+                .map(|revset| {
+                    revset
+                        .iter()
+                        .filter_map(|e| {
+                            e.inspect_err(|e| tracing::warn!("error iterating added commit: {e}"))
+                                .ok()
+                        })
+                        .collect()
+                })
                 .unwrap_or_default();
         let removed_commits: Vec<BackendCommitId> =
             jj_lib::revset::walk_revs(self.repo.as_ref(), &old_heads, &new_heads)
-                .map(|revset| revset.iter().filter_map(|e| e.ok()).collect())
+                .inspect_err(|e| tracing::warn!("failed to walk removed commits: {e}"))
+                .map(|revset| {
+                    revset
+                        .iter()
+                        .filter_map(|e| {
+                            e.inspect_err(|e| tracing::warn!("error iterating removed commit: {e}"))
+                                .ok()
+                        })
+                        .collect()
+                })
                 .unwrap_or_default();
 
         if !added_commits.is_empty() || !removed_commits.is_empty() {
@@ -1947,13 +2033,17 @@ impl JjRepo {
         prefix_index: &jj_lib::id_prefix::IdPrefixIndex,
     ) -> (ShortId, ShortId, Option<String>) {
         let repo = self.repo.as_ref();
-        let commit = store.get_commit(commit_id).ok();
+        let commit = store
+            .get_commit(commit_id)
+            .inspect_err(|e| tracing::warn!("failed to load commit for op diff: {e}"))
+            .ok();
 
         let change_prefix_len = commit
             .as_ref()
             .and_then(|c| {
                 prefix_index
                     .shortest_change_prefix_len(repo, c.change_id())
+                    .inspect_err(|e| tracing::warn!("change prefix computation failed: {e}"))
                     .ok()
             })
             .unwrap_or(DISPLAY_ID_LEN);
@@ -1974,6 +2064,7 @@ impl JjRepo {
 
         let commit_prefix_len = prefix_index
             .shortest_commit_prefix_len(repo, commit_id)
+            .inspect_err(|e| tracing::warn!("commit prefix computation failed: {e}"))
             .unwrap_or(DISPLAY_ID_LEN);
         let commit_hex = commit_id.hex();
         let commit_display_len = commit_prefix_len.max(DISPLAY_ID_LEN);
@@ -1986,7 +2077,11 @@ impl JjRepo {
         };
 
         let desc = commit.map(|c| {
-            let is_empty = c.is_empty(self.repo.as_ref()).block_on().unwrap_or(false);
+            let is_empty = c
+                .is_empty(self.repo.as_ref())
+                .block_on()
+                .inspect_err(|e| tracing::warn!("is_empty check failed: {e}"))
+                .unwrap_or(false);
             let raw = c.description().trim().to_string();
             let first_line = if raw.is_empty() {
                 "(no description set)".to_string()

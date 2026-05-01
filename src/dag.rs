@@ -334,6 +334,12 @@ pub struct DagEntry {
     pub edges: Vec<Edge>,
 }
 
+/// Result of evaluating a revset: entries plus any non-fatal warnings.
+pub struct RevsetResult {
+    pub entries: Vec<DagEntry>,
+    pub warnings: Vec<String>,
+}
+
 /// An edge from a commit to a parent in the DAG.
 pub struct Edge {
     /// The commit ID hex of the target (parent) commit.
