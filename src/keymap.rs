@@ -379,6 +379,7 @@ impl Default for Keymaps {
                 vec![
                     bind("o", AppAction::ResolveOurs, "take ours", C),
                     bind("t", AppAction::ResolveTheirs, "take theirs", C),
+                    bind("b", AppAction::ConflictPickBase, "take base", C),
                     bind("m", AppAction::ResolveMergeTool, "merge tool", C),
                 ],
             ),

@@ -611,7 +611,6 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::ConflictPickOurs
         | AppAction::ConflictPickTheirs
         | AppAction::ConflictPickBase => {
-            // Per-hunk conflict picking (also accessible via c→o/t on conflict rows).
             if let Some(DisplayRow::ConflictHeader {
                 entry_idx,
                 file_idx,
@@ -630,6 +629,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     _ => 2, // base
                 };
                 app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, side);
+            } else {
+                app.set_status("per-hunk only — use on a conflict hunk row");
             }
             Action::None
         }
