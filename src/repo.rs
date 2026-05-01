@@ -36,8 +36,8 @@ use jj_lib::repo_path::RepoPathBuf;
 
 use crate::dag::{
     AuthorInfo, BookmarkInfo, CommitDetails, CommitInfo, DagEntry, DiffLine, DiffLineKind,
-    DivergenceUpdate, Edge, EdgeKind, FileChange, FileStatus, LineStats, PrefixLengthUpdate,
-    RemoteBookmarkInfo, ShortId,
+    DiffResult, DivergenceUpdate, Edge, EdgeKind, FileChange, FileStatus, LineStats,
+    PrefixLengthUpdate, RemoteBookmarkInfo, ShortId,
 };
 use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, RepoPath, Str};
 
@@ -620,12 +620,13 @@ impl JjRepo {
 
     /// Compute the line-level diff for a single file in a commit.
     /// For renamed/copied files, `old_path` provides the source path to diff against.
+    /// Returns (git_diff_lines, color_words_lines).
     pub fn file_diff(
         &self,
         commit_id: &UiCommitId,
         path: &RepoPath,
         old_path: Option<&RepoPath>,
-    ) -> Result<Vec<DiffLine>> {
+    ) -> Result<DiffResult> {
         let repo = self.repo.as_ref();
         let commit_hex_id = commit_id.as_str();
         let commit_id = BackendCommitId::try_from_hex(commit_hex_id)
@@ -661,13 +662,17 @@ impl JjRepo {
             .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
 
         if before_part.content.is_binary || after_part.content.is_binary {
-            return Ok(vec![DiffLine {
+            let line = DiffLine {
                 kind: DiffLineKind::Header,
                 content: "(binary file)".to_string(),
                 tokens: vec![],
                 old_line: None,
                 new_line: None,
-            }]);
+            };
+            return Ok(DiffResult {
+                git: vec![line.clone()],
+                color_words: vec![line],
+            });
         }
 
         let contents = Diff::new(
@@ -680,9 +685,14 @@ impl JjRepo {
             Default::default(),
         );
 
-        let mut lines = Vec::new();
-        hunks_to_diff_lines(&hunks, &mut lines);
-        Ok(lines)
+        let mut git_lines = Vec::new();
+        hunks_to_diff_lines(&hunks, &mut git_lines);
+        let mut cw_lines = Vec::new();
+        hunks_to_color_words_lines(&hunks, &mut cw_lines);
+        Ok(DiffResult {
+            git: git_lines,
+            color_words: cw_lines,
+        })
     }
 
     /// Get the conflict hunks for a conflicted file, broken down by hunk.
@@ -1665,7 +1675,7 @@ impl JjRepo {
         from_id: &str,
         to_id: &str,
         path: &RepoPath,
-    ) -> Result<Vec<DiffLine>> {
+    ) -> Result<DiffResult> {
         let repo = self.repo.as_ref();
         let from_commit_id = BackendCommitId::try_from_hex(from_id)
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
@@ -1698,13 +1708,17 @@ impl JjRepo {
             .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
 
         if before_part.content.is_binary || after_part.content.is_binary {
-            return Ok(vec![DiffLine {
+            let line = DiffLine {
                 kind: DiffLineKind::Context,
                 content: "(binary file)".to_string(),
                 tokens: Vec::new(),
                 old_line: None,
                 new_line: None,
-            }]);
+            };
+            return Ok(DiffResult {
+                git: vec![line.clone()],
+                color_words: vec![line],
+            });
         }
 
         let contents = Diff::new(
@@ -1713,9 +1727,14 @@ impl JjRepo {
         );
         let hunks = unified::unified_diff_hunks(contents, 3, Default::default());
 
-        let mut lines = Vec::new();
-        hunks_to_diff_lines(&hunks, &mut lines);
-        Ok(lines)
+        let mut git_lines = Vec::new();
+        hunks_to_diff_lines(&hunks, &mut git_lines);
+        let mut cw_lines = Vec::new();
+        hunks_to_color_words_lines(&hunks, &mut cw_lines);
+        Ok(DiffResult {
+            git: git_lines,
+            color_words: cw_lines,
+        })
     }
 
     /// Compute the diff between an operation and its parent.
@@ -2047,6 +2066,290 @@ fn hunks_to_diff_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut Vec<Dif
                 new_line: nl,
             });
         }
+    }
+}
+
+/// Count how many times a word diff alternates between removed and added content.
+/// Used to decide whether to inline color-words or fall back to separate lines.
+fn count_alternations(diff: &jj_lib::diff::ContentDiff<'_>) -> usize {
+    let mut count: usize = 0;
+    let mut last_side: Option<u8> = None;
+    for h in diff.hunks() {
+        if h.kind == jj_lib::diff::DiffHunkKind::Matching {
+            continue;
+        }
+        if !h.contents[0].is_empty() && last_side != Some(0) {
+            count += 1;
+            last_side = Some(0);
+        }
+        if !h.contents[1].is_empty() && last_side != Some(1) {
+            count += 1;
+            last_side = Some(1);
+        }
+    }
+    count
+}
+
+/// Accumulator for building color-words diff lines from consecutive
+/// removed/added blocks.
+struct ColorWordBuilder {
+    removed_lines: Vec<String>,
+    added_lines: Vec<String>,
+    removed_count: u32,
+    added_count: u32,
+    old_line: u32,
+    new_line: u32,
+}
+
+impl ColorWordBuilder {
+    fn new(old_start: u32, new_start: u32) -> Self {
+        Self {
+            removed_lines: Vec::new(),
+            added_lines: Vec::new(),
+            removed_count: 0,
+            added_count: 0,
+            old_line: old_start,
+            new_line: new_start,
+        }
+    }
+
+    fn push_removed(&mut self, text: String) {
+        self.removed_lines.push(text);
+        self.removed_count += 1;
+    }
+
+    fn push_added(&mut self, text: String) {
+        self.added_lines.push(text);
+        self.added_count += 1;
+    }
+
+    fn has_pending_added_only(&self) -> bool {
+        !self.added_lines.is_empty() && self.removed_lines.is_empty()
+    }
+
+    /// Flush a collected removed+added block into output DiffLines.
+    fn flush(&mut self, out: &mut Vec<DiffLine>) {
+        use crate::dag::{DiffToken, DiffTokenKind};
+        const MAX_ALTERNATION: usize = 3;
+
+        if self.removed_lines.is_empty() && self.added_lines.is_empty() {
+            return;
+        }
+
+        let removed_block = self.removed_lines.join("\n");
+        let added_block = self.added_lines.join("\n");
+
+        // Word-diff once, use for both alternation check and rendering.
+        let can_inline = !self.removed_lines.is_empty() && !self.added_lines.is_empty();
+        let diff = if can_inline {
+            Some(jj_lib::diff::ContentDiff::by_word([
+                removed_block.as_bytes(),
+                added_block.as_bytes(),
+            ]))
+        } else {
+            None
+        };
+
+        let should_inline = diff
+            .as_ref()
+            .is_some_and(|d| count_alternations(d) <= MAX_ALTERNATION);
+
+        if should_inline {
+            let diff = diff.unwrap();
+            let mut tokens: Vec<DiffToken> = Vec::new();
+            let mut content = String::new();
+            let base_old = self.old_line;
+            let base_new = self.new_line;
+
+            for h in diff.hunks() {
+                match h.kind {
+                    jj_lib::diff::DiffHunkKind::Matching => {
+                        let text = String::from_utf8_lossy(h.contents[0]);
+                        for (i, part) in text.split('\n').enumerate() {
+                            if i > 0 {
+                                out.push(DiffLine {
+                                    kind: DiffLineKind::Context,
+                                    content: std::mem::take(&mut content),
+                                    tokens: std::mem::take(&mut tokens),
+                                    old_line: Some(self.old_line),
+                                    new_line: Some(self.new_line),
+                                });
+                                self.old_line += 1;
+                                self.new_line += 1;
+                            }
+                            if !part.is_empty() {
+                                content.push_str(part);
+                                tokens.push(DiffToken {
+                                    text: part.to_string(),
+                                    kind: DiffTokenKind::Unchanged,
+                                });
+                            }
+                        }
+                    }
+                    jj_lib::diff::DiffHunkKind::Different => {
+                        let removed = String::from_utf8_lossy(h.contents[0]);
+                        let added = String::from_utf8_lossy(h.contents[1]);
+
+                        for (i, part) in removed.split('\n').enumerate() {
+                            if i > 0 {
+                                out.push(DiffLine {
+                                    kind: DiffLineKind::Context,
+                                    content: std::mem::take(&mut content),
+                                    tokens: std::mem::take(&mut tokens),
+                                    old_line: Some(self.old_line),
+                                    new_line: None,
+                                });
+                                self.old_line += 1;
+                            }
+                            if !part.is_empty() {
+                                content.push_str(part);
+                                tokens.push(DiffToken {
+                                    text: part.to_string(),
+                                    kind: DiffTokenKind::Removed,
+                                });
+                            }
+                        }
+
+                        for (i, part) in added.split('\n').enumerate() {
+                            if i > 0 {
+                                out.push(DiffLine {
+                                    kind: DiffLineKind::Context,
+                                    content: std::mem::take(&mut content),
+                                    tokens: std::mem::take(&mut tokens),
+                                    old_line: None,
+                                    new_line: Some(self.new_line),
+                                });
+                                self.new_line += 1;
+                            }
+                            if !part.is_empty() {
+                                content.push_str(part);
+                                tokens.push(DiffToken {
+                                    text: part.to_string(),
+                                    kind: DiffTokenKind::Added,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !content.is_empty() || !tokens.is_empty() {
+                let has_removed = tokens.iter().any(|t| t.kind == DiffTokenKind::Removed);
+                let has_added = tokens.iter().any(|t| t.kind == DiffTokenKind::Added);
+                out.push(DiffLine {
+                    kind: DiffLineKind::Context,
+                    content,
+                    tokens,
+                    old_line: if self.old_line > base_old || has_removed || !has_added {
+                        Some(self.old_line)
+                    } else {
+                        None
+                    },
+                    new_line: if self.new_line > base_new || has_added || !has_removed {
+                        Some(self.new_line)
+                    } else {
+                        None
+                    },
+                });
+            }
+
+            self.old_line = base_old + self.removed_count;
+            self.new_line = base_new + self.added_count;
+        } else {
+            for line in self.removed_lines.drain(..) {
+                out.push(DiffLine {
+                    kind: DiffLineKind::Removed,
+                    content: line.clone(),
+                    tokens: vec![DiffToken {
+                        text: line,
+                        kind: DiffTokenKind::Removed,
+                    }],
+                    old_line: Some(self.old_line),
+                    new_line: None,
+                });
+                self.old_line += 1;
+            }
+            for line in self.added_lines.drain(..) {
+                out.push(DiffLine {
+                    kind: DiffLineKind::Added,
+                    content: line.clone(),
+                    tokens: vec![DiffToken {
+                        text: line,
+                        kind: DiffTokenKind::Added,
+                    }],
+                    old_line: None,
+                    new_line: Some(self.new_line),
+                });
+                self.new_line += 1;
+            }
+        }
+
+        self.removed_lines.clear();
+        self.added_lines.clear();
+        self.removed_count = 0;
+        self.added_count = 0;
+    }
+}
+
+/// Convert unified diff hunks into color-words `DiffLine` structs.
+fn hunks_to_color_words_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut Vec<DiffLine>) {
+    use crate::dag::{DiffToken, DiffTokenKind};
+
+    for hunk in hunks {
+        out.push(DiffLine {
+            kind: DiffLineKind::Header,
+            content: format!(
+                "@@ -{},{} +{},{} @@",
+                hunk.left_line_range.start + 1,
+                hunk.left_line_range.len(),
+                hunk.right_line_range.start + 1,
+                hunk.right_line_range.len(),
+            ),
+            tokens: vec![],
+            old_line: None,
+            new_line: None,
+        });
+
+        let mut builder = ColorWordBuilder::new(
+            hunk.left_line_range.start as u32 + 1,
+            hunk.right_line_range.start as u32 + 1,
+        );
+
+        for (line_type, tokens) in &hunk.lines {
+            let mut text = String::new();
+            for (_, bytes) in tokens {
+                text.push_str(&String::from_utf8_lossy(bytes));
+            }
+            let text = text.trim_end_matches('\n').to_string();
+
+            match line_type {
+                DiffLineType::Removed => {
+                    if builder.has_pending_added_only() {
+                        builder.flush(out);
+                    }
+                    builder.push_removed(text);
+                }
+                DiffLineType::Added => {
+                    builder.push_added(text);
+                }
+                DiffLineType::Context => {
+                    builder.flush(out);
+                    out.push(DiffLine {
+                        kind: DiffLineKind::Context,
+                        content: text.clone(),
+                        tokens: vec![DiffToken {
+                            text,
+                            kind: DiffTokenKind::Unchanged,
+                        }],
+                        old_line: Some(builder.old_line),
+                        new_line: Some(builder.new_line),
+                    });
+                    builder.old_line += 1;
+                    builder.new_line += 1;
+                }
+            }
+        }
+        builder.flush(out);
     }
 }
 

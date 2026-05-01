@@ -73,8 +73,10 @@ pub struct DagNode {
     pub files: Loadable<Vec<FileChange>>,
     /// Lazily loaded per-commit line stats.
     pub stats: Loadable<LineStats>,
-    /// Lazily loaded diff lines, parallel to `files` (indexed by FileIdx).
+    /// Lazily loaded diff lines (git format), parallel to `files` (indexed by FileIdx).
     pub diffs: Vec<Loadable<Vec<DiffLine>>>,
+    /// Lazily loaded diff lines (color-words format), parallel to `diffs`.
+    pub diffs_cw: Vec<Loadable<Vec<DiffLine>>>,
     /// Lazily loaded conflict hunks, parallel to `files` (for conflicted files).
     pub conflict_hunks: Vec<Loadable<Vec<crate::dag::ConflictHunk>>>,
 }
@@ -84,6 +86,9 @@ impl DagNode {
     pub fn ensure_diffs(&mut self, n: usize) {
         if self.diffs.len() < n {
             self.diffs.resize_with(n, || Loadable::NotRequested);
+        }
+        if self.diffs_cw.len() < n {
+            self.diffs_cw.resize_with(n, || Loadable::NotRequested);
         }
     }
 
@@ -598,7 +603,12 @@ impl App {
     }
 
     pub fn diff_lines(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<&Vec<DiffLine>> {
-        self.nodes[entry_idx].diffs.get(file_idx.raw())?.loaded()
+        let git_diff = self.toggles.contains(crate::keymap::CommandFlags::GIT_DIFF);
+        if git_diff {
+            self.nodes[entry_idx].diffs.get(file_idx.raw())?.loaded()
+        } else {
+            self.nodes[entry_idx].diffs_cw.get(file_idx.raw())?.loaded()
+        }
     }
 
     pub fn commit_stats(&self, entry_idx: EntryIdx) -> Option<LineStats> {
@@ -728,6 +738,7 @@ fn build_nodes(
                 files: Loadable::NotRequested,
                 stats: Loadable::NotRequested,
                 diffs: Vec::new(),
+                diffs_cw: Vec::new(),
                 conflict_hunks: Vec::new(),
             }
         })

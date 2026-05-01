@@ -8,7 +8,7 @@ use std::thread;
 use jj_lib::repo::Repo as _;
 use pollster::FutureExt as _;
 
-use crate::dag::{CommitDetails, DagEntry, DiffLine, DivergenceUpdate, PrefixLengthUpdate};
+use crate::dag::{CommitDetails, DagEntry, DivergenceUpdate, PrefixLengthUpdate};
 use crate::repo::JjRepo;
 use crate::types::{BookmarkName, CommitId, RepoPath, Str};
 
@@ -111,7 +111,7 @@ pub enum RepoResult {
     FileDiffLoaded {
         commit_id: CommitId,
         path: RepoPath,
-        lines: Vec<DiffLine>,
+        result: crate::dag::DiffResult,
     },
     FileDiffFailed {
         commit_id: CommitId,
@@ -164,7 +164,7 @@ pub enum RepoResult {
     EvoLogFileDiffLoaded {
         commit_id: CommitId,
         path: RepoPath,
-        lines: Vec<crate::dag::DiffLine>,
+        result: crate::dag::DiffResult,
     },
     EvoLogFileDiffFailed {
         error: String,
@@ -665,12 +665,12 @@ impl RepoServiceState {
         };
 
         match repo.file_diff(&commit_id, &path, old_path.as_ref()) {
-            Ok(lines) => self.send_if_current(
+            Ok(result) => self.send_if_current(
                 epoch,
                 RepoResult::FileDiffLoaded {
                     commit_id: commit_id.clone(),
                     path: path.clone(),
-                    lines,
+                    result,
                 },
             ),
             Err(err) => self.send_if_current(
@@ -776,8 +776,7 @@ impl RepoServiceState {
         from_commit_id: CommitId,
         to_commit_id: CommitId,
     ) {
-        let Some(repo) =
-            self.ensure_repo(epoch, |error| RepoResult::EvoLogDetailsFailed { error })
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::EvoLogDetailsFailed { error })
         else {
             return;
         };
@@ -814,18 +813,14 @@ impl RepoServiceState {
         else {
             return;
         };
-        match repo.inter_commit_file_diff(
-            from_commit_id.as_str(),
-            to_commit_id.as_str(),
-            &path,
-        ) {
-            Ok(lines) => {
+        match repo.inter_commit_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path) {
+            Ok(result) => {
                 self.send_if_current(
                     epoch,
                     RepoResult::EvoLogFileDiffLoaded {
                         commit_id: to_commit_id,
                         path,
-                        lines,
+                        result,
                     },
                 );
             }

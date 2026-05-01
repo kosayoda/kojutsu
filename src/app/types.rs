@@ -122,6 +122,7 @@ pub struct EvoLogState {
     pub files: HashMap<CommitId, Loadable<Vec<crate::dag::FileChange>>>,
     pub unfolded_files: HashSet<(CommitId, RepoPath)>,
     pub file_diffs: HashMap<(CommitId, RepoPath), Loadable<Vec<crate::dag::DiffLine>>>,
+    pub file_diffs_cw: HashMap<(CommitId, RepoPath), Loadable<Vec<crate::dag::DiffLine>>>,
 }
 
 impl EvoLogState {
@@ -134,6 +135,7 @@ impl EvoLogState {
             files: HashMap::new(),
             unfolded_files: HashSet::new(),
             file_diffs: HashMap::new(),
+            file_diffs_cw: HashMap::new(),
         }
     }
 
@@ -144,6 +146,7 @@ impl EvoLogState {
         self.files.clear();
         self.unfolded_files.clear();
         self.file_diffs.clear();
+        self.file_diffs_cw.clear();
     }
 }
 

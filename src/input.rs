@@ -147,7 +147,7 @@ fn handle_normal_key(app: &mut App, keymap: &'static Keymap, node: &keymap_parse
         LookupResult::Prefix { label, children } => {
             app.status_message = None;
             // Block conflict prefix when cursor isn't on a conflict row.
-            if label == "conflict"
+            if label == keymap::CONFLICT_PREFIX
                 && !matches!(
                     app.rows.get(app.cursor),
                     Some(DisplayRow::ConflictHeader { .. } | DisplayRow::ConflictSide { .. })

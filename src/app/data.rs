@@ -50,19 +50,25 @@ impl App {
             Loadable<Vec<crate::dag::FileChange>>,
             Loadable<crate::dag::LineStats>,
             Vec<Loadable<Vec<crate::dag::DiffLine>>>,
+            Vec<Loadable<Vec<crate::dag::DiffLine>>>,
         );
         // Collect old caches keyed by CommitId before replacing nodes.
         let old_caches: HashMap<CommitId, NodeCache> = std::mem::take(&mut self.nodes)
             .into_vec()
             .into_iter()
-            .map(|n| (n.commit.graph_id.clone(), (n.files, n.stats, n.diffs)))
+            .map(|n| {
+                (
+                    n.commit.graph_id.clone(),
+                    (n.files, n.stats, n.diffs, n.diffs_cw),
+                )
+            })
             .collect();
 
         let mut nodes = super::build_nodes(entries, &new_commit_index, self.glyphs);
 
         // Restore cached data for commits that survived the refresh.
         for node in nodes.iter_mut() {
-            if let Some((files, stats, diffs)) = old_caches.get(&node.commit.graph_id) {
+            if let Some((files, stats, diffs, diffs_cw)) = old_caches.get(&node.commit.graph_id) {
                 if !files.should_request() {
                     node.files = files.clone();
                 }
@@ -71,6 +77,7 @@ impl App {
                 }
                 if !diffs.is_empty() {
                     node.diffs = diffs.clone();
+                    node.diffs_cw = diffs_cw.clone();
                 }
             }
         }
@@ -268,14 +275,15 @@ impl App {
             RepoResult::FileDiffLoaded {
                 commit_id,
                 path,
-                lines,
+                result,
             } => {
                 self.status_message = None;
                 if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                     if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
                         let fi = file_idx.raw();
                         self.nodes[idx].ensure_diffs(fi + 1);
-                        self.nodes[idx].diffs[fi] = Loadable::Loaded(lines);
+                        self.nodes[idx].diffs[fi] = Loadable::Loaded(result.git);
+                        self.nodes[idx].diffs_cw[fi] = Loadable::Loaded(result.color_words);
                     }
                 }
                 deferred.rebuild = true;
@@ -435,11 +443,15 @@ impl App {
             RepoResult::EvoLogFileDiffLoaded {
                 commit_id,
                 path,
-                lines,
+                result,
             } => {
+                let key = (commit_id, path);
                 self.evolog
                     .file_diffs
-                    .insert((commit_id, path), super::Loadable::Loaded(lines));
+                    .insert(key.clone(), super::Loadable::Loaded(result.git));
+                self.evolog
+                    .file_diffs_cw
+                    .insert(key, super::Loadable::Loaded(result.color_words));
                 if self.active_view == super::ActiveView::Evolog {
                     deferred.rebuild = true;
                     deferred.scroll = true;

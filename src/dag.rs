@@ -424,6 +424,15 @@ pub enum DiffLineKind {
     Header,
 }
 
+/// Both diff formats for a single file, computed at load time.
+#[derive(Clone)]
+pub struct DiffResult {
+    /// Traditional unified diff with `+`/`-` lines.
+    pub git: Vec<DiffLine>,
+    /// Color-words format with inline removed/added tokens.
+    pub color_words: Vec<DiffLine>,
+}
+
 impl DiffLineKind {
     /// Whether this line kind can be individually selected (added or removed).
     pub fn is_selectable(self) -> bool {

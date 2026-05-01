@@ -180,22 +180,15 @@ impl App {
                         // Emit diff lines if this file is unfolded.
                         let key = (commit_id.clone(), files[fi].path.clone());
                         if self.evolog.unfolded_files.contains(&key) {
-                            if let Some(Loadable::Loaded(lines)) = self.evolog.file_diffs.get(&key)
-                            {
-                                let color_words = !self
-                                    .toggles
-                                    .contains(crate::keymap::CommandFlags::GIT_DIFF);
-                                let line_kinds: Vec<_> =
-                                    lines.iter().map(|l| l.kind).collect();
-                                for (li, kind) in line_kinds.iter().enumerate() {
-                                    if color_words
-                                        && *kind == crate::dag::DiffLineKind::Added
-                                        && li > 0
-                                        && line_kinds[li - 1]
-                                            == crate::dag::DiffLineKind::Removed
-                                    {
-                                        continue;
-                                    }
+                            let git_diff =
+                                self.toggles.contains(crate::keymap::CommandFlags::GIT_DIFF);
+                            let diffs = if git_diff {
+                                &self.evolog.file_diffs
+                            } else {
+                                &self.evolog.file_diffs_cw
+                            };
+                            if let Some(Loadable::Loaded(lines)) = diffs.get(&key) {
+                                for li in 0..lines.len() {
                                     self.rows.push(DisplayRow::EvoLogFileDiffLine {
                                         evolog_idx: ei,
                                         file_idx,
@@ -299,26 +292,8 @@ impl App {
                                 }
                                 let _ = conflict_num;
                             } else if let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) {
-                                let color_words = !self
-                                    .toggles
-                                    .contains(crate::keymap::CommandFlags::GIT_DIFF);
-                                // Collect which lines to emit (avoids borrow conflict
-                                // between diff_lines ref and self.rows push).
-                                let line_kinds: Vec<_> = diff_lines
-                                    .iter()
-                                    .map(|l| l.kind)
-                                    .collect();
-                                for (line_idx_raw, kind) in line_kinds.iter().enumerate() {
-                                    // In color-words mode, skip Added lines that
-                                    // follow a Removed line (they're merged).
-                                    if color_words
-                                        && *kind == crate::dag::DiffLineKind::Added
-                                        && line_idx_raw > 0
-                                        && line_kinds[line_idx_raw - 1]
-                                            == crate::dag::DiffLineKind::Removed
-                                    {
-                                        continue;
-                                    }
+                                let n = diff_lines.len();
+                                for line_idx_raw in 0..n {
                                     self.rows.push(DisplayRow::DiffLine {
                                         entry_idx,
                                         file_idx,

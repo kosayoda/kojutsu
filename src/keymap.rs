@@ -23,6 +23,9 @@ impl SelectionKindSet {
 // CommandFlags -- toggleable flags that modify command behavior.
 // ---------------------------------------------------------------------------
 
+/// Label used for the conflict prefix submenu.
+pub const CONFLICT_PREFIX: &str = "conflict";
+
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct CommandFlags: u16 {
@@ -371,7 +374,7 @@ impl Default for Keymaps {
             bind("+", AppAction::ExpandAncestors, "expand ancestors", C),
             prefix(
                 "shift-c",
-                "conflict",
+                CONFLICT_PREFIX,
                 C,
                 vec![
                     bind("o", AppAction::ResolveOurs, "take ours", C),
@@ -1018,7 +1021,7 @@ pub fn help_entries(
                             _ => acc,
                         },
                     ),
-                    requires_conflict: *label == "conflict",
+                    requires_conflict: *label == CONFLICT_PREFIX,
                 });
             }
             KeymapNode::Toggle { .. } => {} // toggles don't appear at root

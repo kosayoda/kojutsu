@@ -105,21 +105,22 @@ fn render_help_column(
             Cell::from(""),
         ]));
         let desc_width = area.width.saturating_sub(20) as usize;
+        let required = app.selection_kind().as_bitset();
+        let selection_active = app.selection_active();
+        let on_conflict = matches!(
+            app.rows.get(app.cursor),
+            Some(
+                crate::types::DisplayRow::ConflictHeader { .. }
+                    | crate::types::DisplayRow::ConflictSide { .. }
+            )
+        );
         for entry in entries.iter() {
             let desc = if entry.description.len() > desc_width && desc_width > 1 {
                 format!("{}…", &entry.description[..desc_width - 1])
             } else {
                 entry.description.clone()
             };
-            let required = app.selection_kind().as_bitset();
-            let on_conflict = matches!(
-                app.rows.get(app.cursor),
-                Some(
-                    crate::types::DisplayRow::ConflictHeader { .. }
-                        | crate::types::DisplayRow::ConflictSide { .. }
-                )
-            );
-            let blocked = (app.selection_active() && !entry.selection_support.contains(required))
+            let blocked = (selection_active && !entry.selection_support.contains(required))
                 || (entry.requires_conflict && !on_conflict);
             let key_style = if blocked {
                 key_style
