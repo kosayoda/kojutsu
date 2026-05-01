@@ -241,7 +241,8 @@ impl App {
     }
 
     pub fn switch_view(&mut self, view: ActiveView) {
-        if self.active_view == view {
+        // Allow evolog → evolog (reload with different commit).
+        if self.active_view == view && view != ActiveView::Evolog {
             return;
         }
         // Save current view state.
@@ -260,10 +261,13 @@ impl App {
         }
         // Trigger lazy load of evolog data.
         if view == ActiveView::Evolog {
-            if let Some(commit_id) = self
+            // Get the commit ID from the DAG (if switching from DAG) or from
+            // the selected evolog entry (if switching from within evolog).
+            let commit_id = self
                 .selected_entry_idx()
                 .map(|idx| self.nodes[idx].commit.graph_id.clone())
-            {
+                .or_else(|| self.selected_evolog_entry().map(|e| e.commit_id.clone()));
+            if let Some(commit_id) = commit_id {
                 let changed = self.evolog.commit_id.as_ref() != Some(&commit_id);
                 if changed || !self.evolog.loaded {
                     self.evolog.clear();

@@ -665,6 +665,7 @@ impl Default for Keymaps {
 
         let mut evolog_root = shared_bindings();
         evolog_root.extend(vec![
+            bind("shift-e", AppAction::SwitchToEvoLogView, "evolog", C),
             bind("r", AppAction::EvoLogRestore, "restore from", C),
             bind("e", AppAction::EvoLogEdit, "edit (checkout)", C),
             bind("n", AppAction::EvoLogNew, "new from", C),
