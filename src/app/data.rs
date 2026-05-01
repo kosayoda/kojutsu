@@ -201,8 +201,7 @@ impl App {
                         .push(RepoRequest::load_operations(self.op_log.limit));
                 }
                 self.repo_root = data.repo_root;
-                self.views.untracked_bookmarks = data.untracked_bookmarks;
-                self.views.tracked_bookmarks = data.tracked_bookmarks;
+                self.views.remote_bookmarks = data.remote_bookmarks;
                 self.views.remotes = data.remotes;
                 self.views.all_tags = data.all_tags;
                 self.views.tag_details = data.tag_details;
@@ -363,6 +362,16 @@ impl App {
                         }
                     }
                 }
+                for ws in &mut self.views.workspace_entries {
+                    if let (Some(ref cid), Some(ref mut change_id)) =
+                        (&ws.commit_id, &mut ws.change_id)
+                    {
+                        if let Some(u) = update_map.get(cid) {
+                            change_id.display.clone_from(&u.change_display);
+                            change_id.prefix_len = u.change_prefix_len;
+                        }
+                    }
+                }
                 self.rebuild_tag_entries();
             }
             RepoResult::OperationsLoaded { entries, has_more } => {
@@ -485,7 +494,7 @@ impl App {
     /// Aggregate bookmark data from DAG nodes into a flat list for the bookmark view.
     pub fn rebuild_bookmark_entries(&mut self) {
         use super::BookmarkViewEntry;
-        use crate::types::{BookmarkName, RemoteName};
+        use crate::types::BookmarkName;
         use std::collections::HashSet as HS;
 
         let mut entries: Vec<BookmarkViewEntry> = Vec::new();
@@ -528,30 +537,22 @@ impl App {
             }
         }
 
-        // Remote bookmarks not attached to any visible node (tracked + untracked).
-        for (raw, is_tracked) in self
-            .views
-            .tracked_bookmarks
-            .iter()
-            .map(|r| (r, true))
-            .chain(self.views.untracked_bookmarks.iter().map(|r| (r, false)))
-        {
-            if let Some((name, remote)) = raw.rsplit_once('@') {
-                let key = BookmarkName::new(raw.as_str());
-                if seen.insert(key) {
-                    entries.push(BookmarkViewEntry {
-                        name: BookmarkName::new(name),
-                        commit_id: None,
-                        change_id: None,
-                        description: None,
-                        is_tracked,
-                        is_tracking: false,
-                        is_synced: false,
-                        is_dirty: false,
-                        remote: Some(RemoteName::new(remote)),
-                        is_conflicted: false,
-                    });
-                }
+        // Remote bookmarks not attached to any visible DAG node.
+        for rb in &self.views.remote_bookmarks {
+            let key = BookmarkName::new(format!("{}@{}", rb.name, rb.remote));
+            if seen.insert(key) {
+                entries.push(BookmarkViewEntry {
+                    name: rb.name.clone(),
+                    commit_id: rb.commit_id.clone(),
+                    change_id: None,
+                    description: None,
+                    is_tracked: rb.is_tracked,
+                    is_tracking: false,
+                    is_synced: false,
+                    is_dirty: false,
+                    remote: Some(rb.remote.clone()),
+                    is_conflicted: false,
+                });
             }
         }
 

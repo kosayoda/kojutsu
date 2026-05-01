@@ -142,6 +142,15 @@ pub struct RemoteBookmarkInfo {
     pub is_tracked: bool,
 }
 
+/// A remote bookmark reference with full metadata (for off-DAG bookmarks).
+#[derive(Clone)]
+pub struct RemoteBookmarkRef {
+    pub name: BookmarkName,
+    pub remote: RemoteName,
+    pub commit_id: Option<crate::types::CommitId>,
+    pub is_tracked: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Rich bookmark detail types (for bookmark view child rows)
 // ---------------------------------------------------------------------------

@@ -48,10 +48,8 @@ pub struct ViewData {
     pub tag_details: HashMap<Str, crate::dag::TagDetails>,
     /// Aggregated workspace data for the workspace view.
     pub workspace_entries: Vec<WorkspaceViewEntry>,
-    /// Remote bookmarks not yet tracked.
-    pub untracked_bookmarks: Vec<Str>,
-    /// Remote bookmarks that are tracked.
-    pub tracked_bookmarks: Vec<Str>,
+    /// All remote bookmarks (tracked and untracked, including off-DAG).
+    pub remote_bookmarks: Vec<crate::dag::RemoteBookmarkRef>,
     /// Available git remote names.
     pub remotes: Vec<Str>,
 }
@@ -65,8 +63,7 @@ impl ViewData {
             tag_entries: Vec::new(),
             tag_details: HashMap::new(),
             workspace_entries: Vec::new(),
-            untracked_bookmarks: Vec::new(),
-            tracked_bookmarks: Vec::new(),
+            remote_bookmarks: Vec::new(),
             remotes: Vec::new(),
         }
     }
@@ -317,14 +314,14 @@ pub struct OpDiffCommit {
 
 pub struct OpDiffWorkingCopy {
     pub workspace: Str,
-    pub new_commit: Option<Str>,
-    pub old_commit: Option<Str>,
+    pub new_commit: Option<crate::dag::ShortId>,
+    pub old_commit: Option<crate::dag::ShortId>,
 }
 
 pub struct OpDiffBookmark {
     pub name: Str,
-    pub new_target: Option<Str>,
-    pub old_target: Option<Str>,
+    pub new_target: Option<crate::dag::ShortId>,
+    pub old_target: Option<crate::dag::ShortId>,
 }
 
 pub enum OpDetailLine {
@@ -358,8 +355,8 @@ pub struct OpLogEntry {
 pub struct EvoLogEntry {
     /// Full hex commit ID.
     pub commit_id: CommitId,
-    /// Short change ID for display.
-    pub change_id: Str,
+    /// Short change ID with unique prefix length.
+    pub change_id: crate::dag::ShortId,
     /// First line of commit description.
     pub description: Option<String>,
     /// Author name/email.

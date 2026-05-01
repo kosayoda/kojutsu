@@ -803,9 +803,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::BookmarkTrack => {
             let bookmarks: Vec<String> = app
                 .views
-                .untracked_bookmarks
+                .remote_bookmarks
                 .iter()
-                .map(|s| s.to_string())
+                .filter(|rb| !rb.is_tracked)
+                .map(|rb| format!("{}@{}", rb.name, rb.remote))
                 .collect();
             enter_remote_bookmark_select(
                 app,
@@ -818,9 +819,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::BookmarkUntrack => {
             let bookmarks: Vec<String> = app
                 .views
-                .tracked_bookmarks
+                .remote_bookmarks
                 .iter()
-                .map(|s| s.to_string())
+                .filter(|rb| rb.is_tracked)
+                .map(|rb| format!("{}@{}", rb.name, rb.remote))
                 .collect();
             enter_remote_bookmark_select(
                 app,

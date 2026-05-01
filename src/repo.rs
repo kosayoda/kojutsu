@@ -44,10 +44,6 @@ use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, RepoPath, S
 /// Number of hex characters to show for change/commit IDs.
 const DISPLAY_ID_LEN: usize = 8;
 
-/// Default unique-prefix length for bookmark detail IDs (not in DAG, so
-/// no background disambiguation). Matches jj's typical shortest prefix.
-const DETAIL_PREFIX_LEN: usize = 4;
-
 /// Vendored jj-cli default revset configuration.
 /// Contains `[revsets]` (default log revset, etc.) and `[revset-aliases]`
 /// (trunk(), immutable_heads(), immutable(), mutable(), etc.).
@@ -173,20 +169,16 @@ impl JjRepo {
             .filter(|(symbol, _)| symbol.remote.as_str() != "git")
     }
 
-    /// Remote bookmarks that are not yet tracked locally.
-    pub fn untracked_remote_bookmarks(&self) -> Vec<Str> {
-        self.filtered_remote_bookmarks(false)
-    }
-
-    /// Remote bookmarks that are tracked locally.
-    pub fn tracked_remote_bookmarks(&self) -> Vec<Str> {
-        self.filtered_remote_bookmarks(true)
-    }
-
-    fn filtered_remote_bookmarks(&self, tracked: bool) -> Vec<Str> {
+    /// All remote bookmarks (tracked and untracked) with structured data.
+    pub fn all_remote_bookmark_refs(&self) -> Vec<crate::dag::RemoteBookmarkRef> {
+        use crate::types::CommitId as UiCommitId;
         self.remote_bookmarks()
-            .filter(move |(_, r)| r.is_tracked() == tracked)
-            .map(|(s, _)| Str::from(format!("{}@{}", s.name.as_str(), s.remote.as_str())))
+            .map(|(s, r)| crate::dag::RemoteBookmarkRef {
+                name: BookmarkName::new(s.name.as_str()),
+                remote: RemoteName::new(s.remote.as_str()),
+                commit_id: r.target.as_normal().map(|id| UiCommitId::new(id.hex())),
+                is_tracked: r.is_tracked(),
+            })
             .collect()
     }
 
@@ -1145,11 +1137,11 @@ impl JjRepo {
                             (
                                 ShortId {
                                     display: display.clone(),
-                                    prefix_len: DETAIL_PREFIX_LEN,
+                                    prefix_len: DISPLAY_ID_LEN,
                                 },
                                 ShortId {
                                     display,
-                                    prefix_len: DETAIL_PREFIX_LEN,
+                                    prefix_len: DISPLAY_ID_LEN,
                                 },
                                 None,
                             )
@@ -1310,7 +1302,7 @@ impl JjRepo {
                 .get(..DISPLAY_ID_LEN)
                 .unwrap_or(&change_id_full)
                 .to_string(),
-            prefix_len: DETAIL_PREFIX_LEN,
+            prefix_len: DISPLAY_ID_LEN,
         };
 
         let commit_id_hex = commit_id.hex();
@@ -1319,7 +1311,7 @@ impl JjRepo {
                 .get(..DISPLAY_ID_LEN)
                 .unwrap_or(&commit_id_hex)
                 .to_string(),
-            prefix_len: DETAIL_PREFIX_LEN,
+            prefix_len: DISPLAY_ID_LEN,
         };
 
         let description = parse_first_line_description(commit.description());
@@ -1508,9 +1500,23 @@ impl JjRepo {
         let commit_id = BackendCommitId::try_from_hex(commit_id_hex)
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit id hex"))?;
 
+        // Build ID prefix context for disambiguation.
+        let extensions = RevsetExtensions::default();
+        let fileset_aliases_map = FilesetAliasesMap::new();
+        let path_converter = RepoPathUiConverter::Fs {
+            cwd: self.workspace_root.clone(),
+            base: self.workspace_root.clone(),
+        };
+        let context =
+            self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
+        let id_prefix_context = self.build_id_prefix_context(&context);
+        let prefix_index = id_prefix_context
+            .populate(repo)
+            .wrap_err("failed to populate ID prefix index for evolog")?;
+
         struct RawEntry {
             full_id: String,
-            change_id: Str,
+            change_id: ShortId,
             description: Option<String>,
             author: Str,
             relative_time: Str,
@@ -1526,11 +1532,18 @@ impl JjRepo {
             let entry = result.wrap_err("failed to walk predecessors")?;
             let commit = &entry.commit;
 
+            let change_prefix_len = prefix_index
+                .shortest_change_prefix_len(repo, commit.change_id())
+                .unwrap_or(DISPLAY_ID_LEN);
             let change_id_hex = commit.change_id().reverse_hex();
-            let change_id: Str = change_id_hex
-                .get(..DISPLAY_ID_LEN)
-                .unwrap_or(&change_id_hex)
-                .into();
+            let change_display_len = change_prefix_len.max(DISPLAY_ID_LEN);
+            let change_id = ShortId {
+                display: change_id_hex
+                    .get(..change_display_len)
+                    .unwrap_or(&change_id_hex)
+                    .to_string(),
+                prefix_len: change_prefix_len,
+            };
 
             let description = parse_first_line_description(commit.description());
 
@@ -1853,6 +1866,19 @@ impl JjRepo {
             }
         }
 
+        // Helper: build a ShortId for a commit ID using the prefix index.
+        let short_commit_id = |id: &BackendCommitId| -> ShortId {
+            let prefix_len = prefix_index
+                .shortest_commit_prefix_len(self.repo.as_ref(), id)
+                .unwrap_or(DISPLAY_ID_LEN);
+            let hex = id.hex();
+            let display_len = prefix_len.max(DISPLAY_ID_LEN);
+            ShortId {
+                display: hex.get(..display_len).unwrap_or(&hex).to_string(),
+                prefix_len,
+            }
+        };
+
         // --- Changed working copies ---
         let mut wc_changed = false;
         for (ws, new_id) in &current_view.wc_commit_ids {
@@ -1864,8 +1890,8 @@ impl JjRepo {
                 }
                 lines.push(OpDetailLine::WorkingCopy(OpDiffWorkingCopy {
                     workspace: Str::from(ws.as_str()),
-                    new_commit: Some(short_hex(new_id)),
-                    old_commit: old_id.map(short_hex),
+                    new_commit: Some(short_commit_id(new_id)),
+                    old_commit: old_id.map(&short_commit_id),
                 }));
             }
         }
@@ -1879,7 +1905,7 @@ impl JjRepo {
                 lines.push(OpDetailLine::WorkingCopy(OpDiffWorkingCopy {
                     workspace: Str::from(ws.as_str()),
                     new_commit: None,
-                    old_commit: Some(short_hex(old_id)),
+                    old_commit: Some(short_commit_id(old_id)),
                 }));
             }
         }
@@ -1901,8 +1927,8 @@ impl JjRepo {
                 lines.push(OpDetailLine::SectionHeader("Changed bookmarks:".into()));
                 bm_changed = true;
             }
-            let new_target = cur.and_then(|t| t.as_normal()).map(short_hex);
-            let old_target = prev.and_then(|t| t.as_normal()).map(short_hex);
+            let new_target = cur.and_then(|t| t.as_normal()).map(&short_commit_id);
+            let old_target = prev.and_then(|t| t.as_normal()).map(&short_commit_id);
             lines.push(OpDetailLine::Bookmark(OpDiffBookmark {
                 name: Str::from(name.as_str()),
                 new_target,
@@ -1975,11 +2001,6 @@ impl JjRepo {
         });
         (change_id, short_commit, desc)
     }
-}
-
-fn short_hex(id: &BackendCommitId) -> Str {
-    let hex = id.hex();
-    Str::from(&hex[..hex.len().min(8)])
 }
 
 /// Convert a millisecond timestamp to a relative time string (e.g. "5 hours ago").

@@ -71,8 +71,7 @@ pub struct RevsetData {
     pub revset: String,
     pub repo_root: String,
     pub entries: Vec<DagEntry>,
-    pub untracked_bookmarks: Vec<Str>,
-    pub tracked_bookmarks: Vec<Str>,
+    pub remote_bookmarks: Vec<crate::dag::RemoteBookmarkRef>,
     pub remotes: Vec<Str>,
     pub all_tags: Vec<Str>,
     pub tag_details: std::collections::HashMap<Str, crate::dag::TagDetails>,
@@ -447,15 +446,15 @@ impl RepoServiceState {
                 let all_ids: Vec<CommitId> =
                     entries.iter().map(|e| e.commit.graph_id.clone()).collect();
 
-                let untracked_bookmarks = repo.untracked_remote_bookmarks();
-                let tracked_bookmarks = repo.tracked_remote_bookmarks();
+                let remote_bookmarks = repo.all_remote_bookmark_refs();
                 let remotes = repo.git_remotes();
                 let all_tags = repo.all_local_tags();
                 let tag_details = repo.extract_tag_details();
                 let bookmark_details = repo.extract_bookmark_details();
                 let workspace_entries = repo.workspace_entries();
 
-                // Collect unique commit IDs from bookmark + tag details for prefix computation.
+                // Collect unique commit IDs from bookmark + tag details + workspaces
+                // for prefix computation.
                 let detail_commit_ids: Vec<CommitId> = {
                     let mut ids = std::collections::HashSet::new();
                     for details in bookmark_details.values() {
@@ -474,6 +473,11 @@ impl RepoServiceState {
                             ids.insert(rt.commit_id.clone());
                         }
                     }
+                    for ws in &workspace_entries {
+                        if let Some(ref cid) = ws.commit_id {
+                            ids.insert(cid.clone());
+                        }
+                    }
                     ids.into_iter().collect()
                 };
 
@@ -483,8 +487,7 @@ impl RepoServiceState {
                         revset: effective_revset,
                         repo_root: repo.workspace_root().display().to_string(),
                         entries,
-                        untracked_bookmarks,
-                        tracked_bookmarks,
+                        remote_bookmarks,
                         remotes,
                         all_tags,
                         tag_details,

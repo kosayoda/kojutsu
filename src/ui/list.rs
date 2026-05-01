@@ -1018,11 +1018,10 @@ fn push_diff_tokens(
     theme: &Theme,
     tab_str: &str,
 ) {
-    let has_tokens = diff_line.tokens.len() > 1
-        && diff_line
-            .tokens
-            .iter()
-            .any(|t| t.kind != DiffTokenKind::Unchanged);
+    let has_tokens = diff_line
+        .tokens
+        .iter()
+        .any(|t| t.kind != DiffTokenKind::Unchanged);
 
     if !has_tokens || search.is_some_and(|s| s.row_state != SearchRowState::None) {
         let content = diff_line.content.replace('\t', tab_str);
@@ -1319,14 +1318,11 @@ fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> Vec<Li
             ));
             spans.push(Span::styled(": ", muted));
             if let Some(ref new) = wc.new_commit {
-                spans.push(Span::styled(
-                    new.to_string(),
-                    Style::default().fg(theme.commit_id),
-                ));
+                push_short_id(&mut spans, new, theme.commit_id, theme);
             }
             if let Some(ref old) = wc.old_commit {
                 spans.push(Span::styled(" ← ", muted));
-                spans.push(Span::styled(old.to_string(), muted));
+                push_short_id(&mut spans, old, theme.muted, theme);
             }
             vec![Line::from(spans)]
         }
@@ -1340,16 +1336,13 @@ fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> Vec<Li
             ));
             spans.push(Span::styled(": ", muted));
             if let Some(ref new) = bm.new_target {
-                spans.push(Span::styled(
-                    new.to_string(),
-                    Style::default().fg(theme.commit_id),
-                ));
+                push_short_id(&mut spans, new, theme.commit_id, theme);
             } else {
                 spans.push(Span::styled("(deleted)", muted));
             }
             if let Some(ref old) = bm.old_target {
                 spans.push(Span::styled(" ← ", muted));
-                spans.push(Span::styled(old.to_string(), muted));
+                push_short_id(&mut spans, old, theme.muted, theme);
             }
             vec![Line::from(spans)]
         }
@@ -1374,14 +1367,30 @@ fn render_evolog_item(
     };
     push_graph_node_spans(&mut spans, &entry.graph.node, graph_style, config);
 
-    // Change ID.
-    push_searchable(
-        &mut spans,
-        &entry.change_id,
-        SearchScopes::CHANGE_ID,
-        Style::default().fg(theme.change_id),
-        search,
-    );
+    // Change ID (prefix bright, rest dimmed).
+    if let Some(search) = search {
+        if search.scopes.contains(SearchScopes::CHANGE_ID)
+            && contains_query(
+                &entry.change_id.display,
+                search.query_lower,
+                search.case_sensitive,
+            )
+        {
+            push_highlighted_short_id(
+                &mut spans,
+                &entry.change_id,
+                None,
+                theme.change_id,
+                search.query_lower,
+                search.case_sensitive,
+                theme,
+            );
+        } else {
+            push_short_id(&mut spans, &entry.change_id, theme.change_id, theme);
+        }
+    } else {
+        push_short_id(&mut spans, &entry.change_id, theme.change_id, theme);
+    }
 
     // Description.
     spans.push(dot(theme));

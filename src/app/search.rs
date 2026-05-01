@@ -312,7 +312,7 @@ impl App {
                 let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) else {
                     return false;
                 };
-                (scopes.contains(SearchScopes::CHANGE_ID) && contains(entry.change_id.as_str()))
+                (scopes.contains(SearchScopes::CHANGE_ID) && contains(&entry.change_id.display))
                     || (scopes.contains(SearchScopes::DESCRIPTION)
                         && entry.description.as_deref().is_some_and(contains))
             }
