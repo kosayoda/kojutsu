@@ -518,12 +518,17 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         1 => "[theirs]",
                         _ => "[base]  ",
                     };
+                    let side_color = match si {
+                        0 => theme.added,     // ours = green
+                        1 => theme.change_id, // theirs = magenta
+                        _ => theme.accent,    // base = cyan
+                    };
                     let style = if is_selected {
                         Style::default()
-                            .fg(theme.added)
-                            .add_modifier(Modifier::BOLD)
+                            .fg(side_color)
+                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
                     } else {
-                        Style::default().fg(theme.muted)
+                        Style::default().fg(side_color)
                     };
                     vec![Line::from(vec![
                         Span::raw("          "),
