@@ -54,9 +54,19 @@ struct RenderFlags {
     in_visual: bool,
 }
 
+/// Expand tab characters to spaces.
+fn expand_tabs(s: &str, tab_spaces: &str) -> String {
+    if s.contains('\t') {
+        s.replace('\t', tab_spaces)
+    } else {
+        s.to_string()
+    }
+}
+
 pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &Config) {
     let theme = &config.theme;
     let git_diff = app.toggles.contains(crate::keymap::CommandFlags::GIT_DIFF);
+    let tab_spaces: String = " ".repeat(config.tab_width as usize);
     // If in target selection mode, get the source change_id for highlighting
     // and the set of marked targets (multi-select).
     let (target_select_source, target_marks): (Option<&str>, Option<&HashSet<ChangeId>>) =
@@ -256,6 +266,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         &flags,
                         row_search.as_ref(),
                         theme,
+                        &tab_spaces,
                     )
                 }
                 DisplayRow::BookmarkItem { bookmark_idx } => render_bookmark_item(
@@ -398,22 +409,16 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     file_idx,
                     line_idx,
                 } => {
-                    let diff_data = app
-                        .evolog
-                        .entries
-                        .get(evolog_idx.raw())
-                        .and_then(|e| {
-                            let files = app.evolog.files.get(&e.commit_id)?.loaded()?;
-                            let file = files.get(file_idx.raw())?;
-                            let key = (e.commit_id.clone(), file.path.clone());
-                            let lines = app.evolog.file_diffs.get(&key)?.loaded()?;
-                            Some((lines.get(line_idx.raw())?, lines))
-                        });
+                    let diff_data = app.evolog.entries.get(evolog_idx.raw()).and_then(|e| {
+                        let files = app.evolog.files.get(&e.commit_id)?.loaded()?;
+                        let file = files.get(file_idx.raw())?;
+                        let key = (e.commit_id.clone(), file.path.clone());
+                        let lines = app.evolog.file_diffs.get(&key)?.loaded()?;
+                        Some((lines.get(line_idx.raw())?, lines))
+                    });
                     if let Some((diff_line, all_lines)) = diff_data {
                         // Color-words merge for evolog diffs.
-                        let next_added = if !git_diff
-                            && diff_line.kind == DiffLineKind::Removed
-                        {
+                        let next_added = if !git_diff && diff_line.kind == DiffLineKind::Removed {
                             all_lines
                                 .get(line_idx.raw() + 1)
                                 .filter(|n| n.kind == DiffLineKind::Added)
@@ -434,23 +439,20 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             for hunk in diff.hunks() {
                                 match hunk.kind {
                                     jj_lib::diff::DiffHunkKind::Matching => {
-                                        let text =
-                                            String::from_utf8_lossy(hunk.contents[0]);
+                                        let text = String::from_utf8_lossy(hunk.contents[0]);
                                         if !text.is_empty() {
                                             spans.push(Span::styled(
-                                                text.to_string(),
+                                                expand_tabs(&text, &tab_spaces),
                                                 base_style,
                                             ));
                                         }
                                     }
                                     jj_lib::diff::DiffHunkKind::Different => {
-                                        let removed =
-                                            String::from_utf8_lossy(hunk.contents[0]);
-                                        let added_text =
-                                            String::from_utf8_lossy(hunk.contents[1]);
+                                        let removed = String::from_utf8_lossy(hunk.contents[0]);
+                                        let added_text = String::from_utf8_lossy(hunk.contents[1]);
                                         if !removed.is_empty() {
                                             spans.push(Span::styled(
-                                                removed.to_string(),
+                                                expand_tabs(&removed, &tab_spaces),
                                                 Style::default()
                                                     .fg(theme.error)
                                                     .add_modifier(Modifier::BOLD),
@@ -458,7 +460,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                                         }
                                         if !added_text.is_empty() {
                                             spans.push(Span::styled(
-                                                added_text.to_string(),
+                                                expand_tabs(&added_text, &tab_spaces),
                                                 Style::default()
                                                     .fg(theme.added)
                                                     .add_modifier(Modifier::BOLD),
@@ -470,15 +472,9 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             vec![Line::from(spans)]
                         } else {
                             let (base_style, prefix) = match diff_line.kind {
-                                DiffLineKind::Added => {
-                                    (Style::default().fg(theme.added), "+")
-                                }
-                                DiffLineKind::Removed => {
-                                    (Style::default().fg(theme.error), "-")
-                                }
-                                DiffLineKind::Context => {
-                                    (Style::default().fg(theme.muted), " ")
-                                }
+                                DiffLineKind::Added => (Style::default().fg(theme.added), "+"),
+                                DiffLineKind::Removed => (Style::default().fg(theme.error), "-"),
+                                DiffLineKind::Context => (Style::default().fg(theme.muted), " "),
                                 DiffLineKind::Header => (
                                     Style::default()
                                         .fg(theme.accent)
@@ -497,6 +493,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                                 row_search.as_ref(),
                                 git_diff,
                                 theme,
+                                &tab_spaces,
                             );
                             vec![Line::from(spans)]
                         }
@@ -1071,6 +1068,7 @@ fn push_diff_tokens(
     search: Option<&SearchRender<'_>>,
     git_diff: bool,
     theme: &Theme,
+    tab_str: &str,
 ) {
     let has_tokens = !git_diff
         && diff_line.tokens.len() > 1
@@ -1080,13 +1078,8 @@ fn push_diff_tokens(
             .any(|t| t.kind != DiffTokenKind::Unchanged);
 
     if !has_tokens || search.is_some_and(|s| s.row_state != SearchRowState::None) {
-        push_searchable(
-            spans,
-            &diff_line.content,
-            SearchScopes::LINE,
-            base_style,
-            search,
-        );
+        let content = diff_line.content.replace('\t', tab_str);
+        push_searchable(spans, &content, SearchScopes::LINE, base_style, search);
         return;
     }
 
@@ -1103,7 +1096,7 @@ fn push_diff_tokens(
                 .fg(theme.added)
                 .add_modifier(Modifier::BOLD),
         };
-        spans.push(Span::styled(token.text.clone(), style));
+        spans.push(Span::styled(expand_tabs(&token.text, tab_str), style));
     }
 }
 
@@ -1115,6 +1108,7 @@ fn render_diff_line(
     flags: &RenderFlags,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
+    tab_str: &str,
 ) -> Vec<Line<'static>> {
     // Shared gutter + visual/selection margin.
     let mut spans = vec![gutter_span(search, theme)];
@@ -1139,27 +1133,26 @@ fn render_diff_line(
             .add_modifier(Modifier::BOLD);
 
         spans.push(Span::styled("       ", base_style));
-        let diff =
-            jj_lib::diff::ContentDiff::by_word([
-                diff_line.content.as_bytes(),
-                added.content.as_bytes(),
-            ]);
+        let diff = jj_lib::diff::ContentDiff::by_word([
+            diff_line.content.as_bytes(),
+            added.content.as_bytes(),
+        ]);
         for hunk in diff.hunks() {
             match hunk.kind {
                 jj_lib::diff::DiffHunkKind::Matching => {
                     let text = String::from_utf8_lossy(hunk.contents[0]);
                     if !text.is_empty() {
-                        spans.push(Span::styled(text.to_string(), base_style));
+                        spans.push(Span::styled(expand_tabs(&text, tab_str), base_style));
                     }
                 }
                 jj_lib::diff::DiffHunkKind::Different => {
                     let removed = String::from_utf8_lossy(hunk.contents[0]);
                     let added_text = String::from_utf8_lossy(hunk.contents[1]);
                     if !removed.is_empty() {
-                        spans.push(Span::styled(removed.to_string(), removed_style));
+                        spans.push(Span::styled(expand_tabs(&removed, tab_str), removed_style));
                     }
                     if !added_text.is_empty() {
-                        spans.push(Span::styled(added_text.to_string(), added_style));
+                        spans.push(Span::styled(expand_tabs(&added_text, tab_str), added_style));
                     }
                 }
             }
@@ -1191,7 +1184,9 @@ fn render_diff_line(
         write!(nums, " ").unwrap();
         spans.push(Span::styled(nums, line_num_style));
         spans.push(Span::styled(marker, style));
-        push_diff_tokens(&mut spans, diff_line, style, search, git_diff, theme);
+        push_diff_tokens(
+            &mut spans, diff_line, style, search, git_diff, theme, tab_str,
+        );
     } else {
         let prefix = match diff_line.kind {
             DiffLineKind::Header => "      ",
@@ -1200,7 +1195,9 @@ fn render_diff_line(
             DiffLineKind::Removed => "      -",
         };
         spans.push(Span::styled(prefix, style));
-        push_diff_tokens(&mut spans, diff_line, style, search, git_diff, theme);
+        push_diff_tokens(
+            &mut spans, diff_line, style, search, git_diff, theme, tab_str,
+        );
     }
 
     vec![Line::from(spans)]

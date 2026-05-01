@@ -13,7 +13,7 @@ pub struct Preset {
 }
 
 /// Top-level config file structure (`~/.config/kojutsu/config.toml`).
-#[derive(Deserialize, Default)]
+#[derive(Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub theme: Theme,
@@ -28,6 +28,26 @@ pub struct Config {
     /// Search scopes enabled by default when starting a new search.
     #[serde(default)]
     pub default_search_scopes: DefaultSearchScopes,
+    /// Tab width for diff rendering (default: 4).
+    #[serde(default = "default_tab_width")]
+    pub tab_width: u8,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            theme: Theme::default(),
+            presets: Vec::new(),
+            date_format: default_date_format(),
+            glyphs: GlyphChars::default(),
+            default_search_scopes: DefaultSearchScopes::default(),
+            tab_width: default_tab_width(),
+        }
+    }
+}
+
+fn default_tab_width() -> u8 {
+    4
 }
 
 fn default_date_format() -> String {
