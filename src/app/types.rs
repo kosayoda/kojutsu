@@ -150,6 +150,14 @@ impl EvoLogState {
     }
 }
 
+/// Result of picking a conflict side for a hunk.
+pub enum ConflictPickResult {
+    /// Hunk picked, but other hunks in the file are still unresolved.
+    Pending,
+    /// All hunks resolved — file was written to disk, needs refresh.
+    FileResolved,
+}
+
 /// Whether the target-select picker allows one or many targets.
 #[derive(Debug, Clone)]
 pub enum TargetMode {

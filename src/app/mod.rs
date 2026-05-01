@@ -397,14 +397,15 @@ impl App {
         self.views.tag_entries.get(tag_idx.raw())
     }
 
-    /// Pick a side for a conflict hunk. If all hunks are resolved, write the file back.
+    /// Pick a conflict side for a hunk. Returns whether the file was fully
+    /// resolved (all hunks picked) and written to disk.
     pub fn pick_conflict_side(
         &mut self,
         entry_idx: EntryIdx,
         file_idx: FileIdx,
         hunk_idx: crate::idx::ConflictHunkIdx,
         side: usize,
-    ) {
+    ) -> ConflictPickResult {
         let fi = file_idx.raw();
         let hi = hunk_idx.raw();
         let Some(hunks) = self.nodes[entry_idx]
@@ -415,10 +416,10 @@ impl App {
                 _ => None,
             })
         else {
-            return;
+            return ConflictPickResult::Pending;
         };
         let Some(hunk) = hunks.get_mut(hi) else {
-            return;
+            return ConflictPickResult::Pending;
         };
         if let crate::dag::ConflictHunkKind::Conflict {
             sides, selected, ..
@@ -435,7 +436,7 @@ impl App {
             crate::dag::ConflictHunkKind::Conflict { selected, .. } => selected.is_some(),
         });
 
-        if all_resolved {
+        let result = if all_resolved {
             // Assemble resolved content.
             let mut content = String::new();
             for h in hunks.iter() {
@@ -473,9 +474,13 @@ impl App {
                     self.set_error(format!("failed to write {}", file_path));
                 }
             }
-        }
+            ConflictPickResult::FileResolved
+        } else {
+            ConflictPickResult::Pending
+        };
 
         self.rebuild_rows();
+        result
     }
 
     pub fn selected_op_log_entry(&self) -> Option<&OpLogEntry> {

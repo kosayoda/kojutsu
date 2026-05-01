@@ -559,8 +559,12 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                         return Action::None;
                     }
                 };
-                app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, side);
-                return Action::None;
+                let result = app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, side);
+                return if matches!(result, crate::app::ConflictPickResult::FileResolved) {
+                    Action::Refresh
+                } else {
+                    Action::None
+                };
             }
 
             // Whole-file resolution from FileChange/DiffLine rows.
@@ -628,7 +632,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     AppAction::ConflictPickTheirs => 1,
                     _ => 2, // base
                 };
-                app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, side);
+                let result = app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, side);
+                if matches!(result, crate::app::ConflictPickResult::FileResolved) {
+                    return Action::Refresh;
+                }
             } else {
                 app.set_status("per-hunk only — use on a conflict hunk row");
             }
