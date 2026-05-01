@@ -112,6 +112,8 @@ fn render_help_column(
             Some(
                 crate::types::DisplayRow::ConflictHeader { .. }
                     | crate::types::DisplayRow::ConflictSide { .. }
+                    | crate::types::DisplayRow::FileChange { .. }
+                    | crate::types::DisplayRow::DiffLine { .. }
             )
         );
         for entry in entries.iter() {

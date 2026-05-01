@@ -610,18 +610,20 @@ impl JjRepo {
             }
         }
 
-        // For merge commits with no diff changes, enumerate conflicted files
-        // from the tree directly (conflicts exist in the merge, not in a diff).
-        if changes.is_empty() && commit.has_conflict() {
-            for conflict in commit_tree.conflicts() {
-                let (path, _) = conflict;
-                changes.push(FileChange {
-                    path: RepoPath::new(path.as_internal_file_string()),
-                    old_path: None,
-                    status: FileStatus::Modified,
-                    has_conflict: true,
-                    stats: LineStats::default(),
-                });
+        // Add any conflicted files not already found by the diff pass.
+        if commit.has_conflict() {
+            let existing: HashSet<RepoPath> = changes.iter().map(|c| c.path.clone()).collect();
+            for (path, _) in commit_tree.conflicts() {
+                let repo_path = RepoPath::new(path.as_internal_file_string());
+                if !existing.contains(&repo_path) {
+                    changes.push(FileChange {
+                        path: repo_path,
+                        old_path: None,
+                        status: FileStatus::Modified,
+                        has_conflict: true,
+                        stats: LineStats::default(),
+                    });
+                }
             }
         }
 
