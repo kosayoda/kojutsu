@@ -610,6 +610,21 @@ impl JjRepo {
             }
         }
 
+        // For merge commits with no diff changes, enumerate conflicted files
+        // from the tree directly (conflicts exist in the merge, not in a diff).
+        if changes.is_empty() && commit.has_conflict() {
+            for conflict in commit_tree.conflicts() {
+                let (path, _) = conflict;
+                changes.push(FileChange {
+                    path: RepoPath::new(path.as_internal_file_string()),
+                    old_path: None,
+                    status: FileStatus::Modified,
+                    has_conflict: true,
+                    stats: LineStats::default(),
+                });
+            }
+        }
+
         let is_empty = changes.is_empty();
         Ok(CommitDetails {
             files: changes,
