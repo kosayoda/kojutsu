@@ -1531,9 +1531,16 @@ fn render_command_log_item(
 
     let mut spans = vec![
         Span::styled("  ", Style::default()),
-        Span::styled(icon, Style::default().fg(icon_color).add_modifier(Modifier::BOLD)),
-        Span::styled(entry.summary.clone(), summary_style),
+        Span::styled(
+            icon,
+            Style::default().fg(icon_color).add_modifier(Modifier::BOLD),
+        ),
     ];
+    if let Some(ref parts) = entry.command_parts {
+        spans.extend(command_parts_to_spans(parts, theme));
+    } else {
+        spans.push(Span::styled(entry.summary.clone(), summary_style));
+    }
     spans.push(Span::styled(
         format!(" · {relative_time}"),
         Style::default().fg(theme.muted),

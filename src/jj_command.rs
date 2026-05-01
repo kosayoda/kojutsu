@@ -263,10 +263,30 @@ pub enum ResolveTool {
     Default,
 }
 
+/// What role a token plays in a jj command line.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CommandPartKind {
+    Prompt,
+    Binary,
+    Subcommand,
+    Flag,
+    Revision,
+    String,
+}
+
+/// A single token in a syntax-highlighted jj command line.
+#[derive(Clone)]
+pub struct CommandPart {
+    pub text: String,
+    pub kind: CommandPartKind,
+}
+
 /// The result of running a jj command.
 pub struct JJCommandResult {
     /// The command that was displayed to the user.
     pub display: String,
+    /// Structured, syntax-highlightable command parts.
+    pub display_parts: Vec<CommandPart>,
     /// Raw stdout+stderr bytes (with ANSI color codes).
     pub output: Vec<u8>,
     /// Whether the command exited successfully.
@@ -855,10 +875,42 @@ impl JJCommand {
     /// Arguments containing spaces or special characters are quoted so the
     /// display looks like a valid shell command the user could copy-paste.
     pub fn display(&self) -> String {
+        let parts = self.display_parts();
+        parts
+            .iter()
+            .map(|p| {
+                // Only quote user-provided values (strings); structural parts
+                // (prompt, binary, subcommand, flag, revision) are always safe.
+                if p.kind == CommandPartKind::String
+                    && p.text
+                        .contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c))
+                {
+                    shlex::try_quote(&p.text)
+                        .map(|q| q.into_owned())
+                        .unwrap_or_else(|_| p.text.clone())
+                } else {
+                    p.text.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// Structured command parts for syntax-highlighted display.
+    pub fn display_parts(&self) -> Vec<CommandPart> {
         let args = self.args();
-        let joined = shlex::try_join(args.iter().map(|s| s.as_str()))
-            .expect("jj arguments should not contain NUL bytes");
-        format!("$ jj {joined}")
+        let mut parts = vec![
+            CommandPart {
+                text: "$".into(),
+                kind: CommandPartKind::Prompt,
+            },
+            CommandPart {
+                text: "jj".into(),
+                kind: CommandPartKind::Binary,
+            },
+        ];
+        tag_args(&args, &mut parts);
+        parts
     }
 
     /// Whether this command needs an interactive terminal (editor/diff tool).
@@ -904,6 +956,7 @@ impl JJCommand {
     pub fn run_interactive(&self, repo_path: &Path) -> JJCommandResult {
         let args = self.args();
         let display = self.display();
+        let display_parts = self.display_parts();
 
         let (result, was_interrupted) = with_sigint_suppressed(|| {
             Command::new("jj")
@@ -923,16 +976,18 @@ impl JJCommand {
             Ok(Output { status, .. }) if was_interrupted || status.code().is_none() => {
                 JJCommandResult {
                     display,
+                    display_parts,
                     output: b"interrupted".to_vec(),
                     success: false,
                 }
             }
             Ok(Output { stderr, status, .. }) => JJCommandResult {
                 display,
+                display_parts,
                 output: stderr,
                 success: status.success(),
             },
-            Err(e) => jj_error(display, e),
+            Err(e) => jj_error(display, display_parts, e),
         }
     }
 
@@ -944,6 +999,7 @@ impl JJCommand {
     pub fn run_suspend_captured(&self, repo_path: &Path) -> JJCommandResult {
         let args = self.args();
         let display = self.display();
+        let display_parts = self.display_parts();
 
         let (result, was_interrupted) = with_sigint_suppressed(|| {
             Command::new("jj")
@@ -962,6 +1018,7 @@ impl JJCommand {
             Ok(Output { status, .. }) if was_interrupted || status.code().is_none() => {
                 JJCommandResult {
                     display,
+                    display_parts,
                     output: b"interrupted".to_vec(),
                     success: false,
                 }
@@ -972,10 +1029,11 @@ impl JJCommand {
                 status,
             }) => JJCommandResult {
                 display,
+                display_parts,
                 output: merge_captured_output(stdout, stderr),
                 success: status.success(),
             },
-            Err(e) => jj_error(display, e),
+            Err(e) => jj_error(display, display_parts, e),
         }
     }
 
@@ -983,6 +1041,7 @@ impl JJCommand {
     pub fn run(&self, repo_path: &Path) -> JJCommandResult {
         let args = self.args();
         let display = self.display();
+        let display_parts = self.display_parts();
 
         let result = Command::new("jj")
             .args(&args)
@@ -1002,10 +1061,11 @@ impl JJCommand {
                 status,
             }) => JJCommandResult {
                 display,
+                display_parts,
                 output: merge_captured_output(stdout, stderr),
                 success: status.success(),
             },
-            Err(e) => jj_error(display, e),
+            Err(e) => jj_error(display, display_parts, e),
         }
     }
 }
@@ -1022,9 +1082,14 @@ fn merge_captured_output(mut stdout: Vec<u8>, stderr: Vec<u8>) -> Vec<u8> {
 }
 
 /// Build a `JJCommandResult` for a failed jj invocation.
-fn jj_error(display: String, err: std::io::Error) -> JJCommandResult {
+fn jj_error(
+    display: String,
+    display_parts: Vec<CommandPart>,
+    err: std::io::Error,
+) -> JJCommandResult {
     JJCommandResult {
         display,
+        display_parts,
         output: format!("failed to run jj: {err}").into_bytes(),
         success: false,
     }
@@ -1100,4 +1165,87 @@ fn push_global_flags(args: &mut Vec<Str>, flags: CommandFlags) {
             args.push(Str::from(toggle.cli_flag));
         }
     }
+}
+
+/// Two-word jj subcommands (first word → second word is also a subcommand).
+const COMPOUND_SUBCOMMANDS: &[&str] = &["git", "bookmark", "workspace", "tag", "op", "file"];
+
+/// Flags whose next argument is a revision/change ID.
+const REVISION_FLAGS: &[&str] = &[
+    "-r", "-s", "-b", "-c", "--from", "--into", "--to", "--onto", "-d",
+];
+
+/// Tag a flat argument list with `CommandPartKind`.
+fn tag_args(args: &[Str], parts: &mut Vec<CommandPart>) {
+    if args.is_empty() {
+        return;
+    }
+
+    let mut i = 0;
+
+    // First arg is always a subcommand.
+    parts.push(CommandPart {
+        text: args[0].to_string(),
+        kind: CommandPartKind::Subcommand,
+    });
+    i += 1;
+
+    // If it's a compound subcommand, the second arg is also a subcommand.
+    if COMPOUND_SUBCOMMANDS.contains(&args[0].as_str()) {
+        if let Some(arg) = args.get(i) {
+            if !arg.starts_with('-') {
+                parts.push(CommandPart {
+                    text: arg.to_string(),
+                    kind: CommandPartKind::Subcommand,
+                });
+                i += 1;
+            }
+        }
+    }
+
+    // Tag remaining args.
+    let mut next_is_revision = false;
+    while i < args.len() {
+        let arg = &args[i];
+        if next_is_revision {
+            parts.push(CommandPart {
+                text: arg.to_string(),
+                kind: CommandPartKind::Revision,
+            });
+            next_is_revision = false;
+        } else if arg.starts_with('-') {
+            parts.push(CommandPart {
+                text: arg.to_string(),
+                kind: CommandPartKind::Flag,
+            });
+            if REVISION_FLAGS.contains(&arg.as_str()) {
+                next_is_revision = true;
+            }
+        } else {
+            // Bare positional arg — could be a revision or a string.
+            // For commands that take bare revisions (abandon, edit, new, parallelize,
+            // duplicate, fix), these are revisions. Heuristic: if it looks like a
+            // hex/reverse-hex ID (only [a-z0-9/] and short), treat as revision.
+            let kind = if looks_like_revision(arg) {
+                CommandPartKind::Revision
+            } else {
+                CommandPartKind::String
+            };
+            parts.push(CommandPart {
+                text: arg.to_string(),
+                kind,
+            });
+        }
+        i += 1;
+    }
+}
+
+/// Heuristic: does this look like a jj change ID or commit ID?
+fn looks_like_revision(s: &str) -> bool {
+    // Change IDs are reverse-hex [a-z], commit IDs are hex [0-9a-f].
+    // Allow `/` for divergence suffix (e.g. "xvzw/2").
+    !s.is_empty()
+        && s.len() <= 64
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '/')
 }

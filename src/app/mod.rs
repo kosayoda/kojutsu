@@ -242,12 +242,14 @@ impl App {
         &mut self,
         kind: CommandLogKind,
         summary: impl Into<String>,
+        command_parts: Option<Vec<crate::jj_command::CommandPart>>,
         output: Vec<u8>,
         success: bool,
     ) {
         self.command_log.entries.push(CommandLogEntry {
             kind,
             summary: summary.into(),
+            command_parts,
             output,
             success,
             timestamp: jiff::Timestamp::now(),
@@ -508,9 +510,8 @@ impl App {
                     self.nodes[entry_idx].conflict_hunks.get_mut(fi)
                 {
                     if let Some(hunk) = hunks.get_mut(hi) {
-                        if let crate::dag::ConflictHunkKind::Conflict {
-                            selected, ..
-                        } = &mut hunk.kind
+                        if let crate::dag::ConflictHunkKind::Conflict { selected, .. } =
+                            &mut hunk.kind
                         {
                             *selected = None;
                         }

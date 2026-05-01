@@ -590,6 +590,7 @@ pub(super) fn draw_command_output(
     frame: &mut Frame,
     area: Rect,
     command: &str,
+    command_parts: Option<&[crate::jj_command::CommandPart]>,
     output: &[u8],
     success: bool,
     theme: &Theme,
@@ -597,12 +598,17 @@ pub(super) fn draw_command_output(
     use ansi_to_tui::IntoText;
     use ratatui::widgets::Padding;
 
-    let mut lines = vec![Line::from(Span::styled(
-        command,
-        Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD),
-    ))];
+    let command_line = if let Some(parts) = command_parts {
+        Line::from(super::spans::command_parts_to_spans(parts, theme))
+    } else {
+        Line::from(Span::styled(
+            command,
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ))
+    };
+    let mut lines = vec![command_line];
 
     // Convert ANSI-colored output to ratatui styled text.
     if let Ok(styled) = output.into_text() {

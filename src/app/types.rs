@@ -172,6 +172,8 @@ pub enum CommandLogKind {
 pub struct CommandLogEntry {
     pub kind: CommandLogKind,
     pub summary: String,
+    /// Structured command parts for syntax highlighting (None for non-command entries).
+    pub command_parts: Option<Vec<crate::jj_command::CommandPart>>,
     pub output: Vec<u8>,
     pub success: bool,
     pub timestamp: jiff::Timestamp,
@@ -486,6 +488,8 @@ pub enum AppMode {
     CommandOutput {
         /// The command that was run, e.g. `"$ jj abandon xvzwolmw"`.
         command: String,
+        /// Structured command parts for syntax highlighting.
+        command_parts: Option<Vec<crate::jj_command::CommandPart>>,
         /// Raw stdout+stderr bytes (may contain ANSI color codes).
         output: Vec<u8>,
         /// Whether the command succeeded.

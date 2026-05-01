@@ -98,6 +98,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
         }
         AppMode::CommandOutput {
             command,
+            command_parts,
             output,
             success,
         } => {
@@ -107,7 +108,15 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
                 .max(3);
             let area = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_command_output(frame, area, command, output, *success, theme);
+            overlay::draw_command_output(
+                frame,
+                area,
+                command,
+                command_parts.as_deref(),
+                output,
+                *success,
+                theme,
+            );
         }
         AppMode::Help { scroll } => {
             let groups = match &app.pre_overlay_mode {

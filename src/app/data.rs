@@ -212,6 +212,7 @@ impl App {
                     self.push_command_log(
                         super::CommandLogKind::Warning,
                         w,
+                        None,
                         Vec::new(),
                         false,
                     );
@@ -230,10 +231,12 @@ impl App {
                 self.push_command_log(
                     super::CommandLogKind::Background,
                     "revset error",
+                    None,
                     error.as_bytes().to_vec(),
                     false,
                 );
                 self.mode = AppMode::CommandOutput {
+                    command_parts: None,
                     command: "revset error".to_string(),
                     output: error.into_bytes(),
                     success: false,
@@ -285,10 +288,12 @@ impl App {
                 self.push_command_log(
                     super::CommandLogKind::Background,
                     &summary,
+                    None,
                     error.as_bytes().to_vec(),
                     false,
                 );
                 self.mode = AppMode::CommandOutput {
+                    command_parts: None,
                     command: summary,
                     output: error.into_bytes(),
                     success: false,
@@ -328,10 +333,12 @@ impl App {
                 self.push_command_log(
                     super::CommandLogKind::Background,
                     &summary,
+                    None,
                     error.as_bytes().to_vec(),
                     false,
                 );
                 self.mode = AppMode::CommandOutput {
+                    command_parts: None,
                     command: summary,
                     output: error.into_bytes(),
                     success: false,
@@ -416,7 +423,13 @@ impl App {
             RepoResult::OperationsFailed { error } => {
                 self.op_log.loaded = false;
                 let msg = format!("failed to load operation log: {error}");
-                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.push_command_log(
+                    super::CommandLogKind::Background,
+                    &msg,
+                    None,
+                    Vec::new(),
+                    false,
+                );
                 self.set_error(msg);
             }
             RepoResult::OpDiffLoaded { op_id, lines } => {
@@ -433,7 +446,13 @@ impl App {
                     .details
                     .insert(op_id, super::Loadable::Failed(error.clone()));
                 let msg = format!("failed to load op diff: {error}");
-                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.push_command_log(
+                    super::CommandLogKind::Background,
+                    &msg,
+                    None,
+                    Vec::new(),
+                    false,
+                );
                 self.set_error(msg);
             }
             RepoResult::ConflictHunksLoaded {
@@ -464,7 +483,13 @@ impl App {
                     }
                 }
                 let msg = format!("failed to load conflict hunks for {path}: {error}");
-                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.push_command_log(
+                    super::CommandLogKind::Background,
+                    &msg,
+                    None,
+                    Vec::new(),
+                    false,
+                );
                 self.set_error(msg);
             }
             RepoResult::EvoLogLoaded { entries } => {
@@ -485,7 +510,13 @@ impl App {
             }
             RepoResult::EvoLogDetailsFailed { error } => {
                 let msg = format!("failed to load evolog details: {error}");
-                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.push_command_log(
+                    super::CommandLogKind::Background,
+                    &msg,
+                    None,
+                    Vec::new(),
+                    false,
+                );
                 self.set_error(msg);
             }
             RepoResult::EvoLogFileDiffLoaded {
@@ -507,18 +538,36 @@ impl App {
             }
             RepoResult::EvoLogFileDiffFailed { error } => {
                 let msg = format!("failed to load evolog file diff: {error}");
-                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.push_command_log(
+                    super::CommandLogKind::Background,
+                    &msg,
+                    None,
+                    Vec::new(),
+                    false,
+                );
                 self.set_error(msg);
             }
             RepoResult::EvoLogFailed { error } => {
                 self.evolog.loaded = false;
                 let msg = format!("failed to load evolog: {error}");
-                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.push_command_log(
+                    super::CommandLogKind::Background,
+                    &msg,
+                    None,
+                    Vec::new(),
+                    false,
+                );
                 self.set_error(msg);
             }
             RepoResult::BackgroundError { error } => {
                 let msg = format!("background task failed: {error}");
-                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.push_command_log(
+                    super::CommandLogKind::Background,
+                    &msg,
+                    None,
+                    Vec::new(),
+                    false,
+                );
                 self.set_error(msg);
             }
         }

@@ -369,6 +369,7 @@ fn suspend_and_run(
     app.push_command_log(
         kojutsu::app::CommandLogKind::Command,
         &result.display,
+        Some(result.display_parts.clone()),
         result.output.clone(),
         result.success,
     );
@@ -384,6 +385,7 @@ fn suspend_and_run(
     if !result.success || !result.output.is_empty() {
         app.mode = AppMode::CommandOutput {
             command: result.display,
+            command_parts: Some(result.display_parts),
             output: result.output,
             success: result.success,
         };
@@ -406,6 +408,7 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
         Err(e) => {
             app.mode = AppMode::CommandOutput {
                 command: "revset editor".to_string(),
+                command_parts: None,
                 output: format!("failed to create temp file: {e}").into_bytes(),
                 success: false,
             };
@@ -433,6 +436,7 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
                 Err(e) => {
                     app.mode = AppMode::CommandOutput {
                         command: "revset editor".to_string(),
+                        command_parts: None,
                         output: format!("failed to read temp file: {e}").into_bytes(),
                         success: false,
                     };
@@ -445,6 +449,7 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
         Err(e) => {
             app.mode = AppMode::CommandOutput {
                 command: "revset editor".to_string(),
+                command_parts: None,
                 output: format!("failed to run {editor}: {e}").into_bytes(),
                 success: false,
             };
@@ -517,11 +522,13 @@ fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
     app.push_command_log(
         kojutsu::app::CommandLogKind::Command,
         &result.display,
+        Some(result.display_parts.clone()),
         result.output.clone(),
         result.success,
     );
     app.mode = AppMode::CommandOutput {
         command: result.display,
+        command_parts: Some(result.display_parts),
         output: result.output,
         success: result.success,
     };

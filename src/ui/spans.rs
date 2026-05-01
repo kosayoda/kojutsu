@@ -164,3 +164,34 @@ pub(super) fn push_highlighted_short_id(
     pos += suffix.len();
     push_part(&extra, extra_style, pos);
 }
+
+/// Render structured command parts as syntax-highlighted spans.
+pub(super) fn command_parts_to_spans(
+    parts: &[crate::jj_command::CommandPart],
+    theme: &Theme,
+) -> Vec<Span<'static>> {
+    use crate::jj_command::CommandPartKind;
+
+    let mut spans = Vec::with_capacity(parts.len() * 2);
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::raw(" "));
+        }
+        let style = match part.kind {
+            CommandPartKind::Prompt => Style::default().fg(theme.muted),
+            CommandPartKind::Binary => Style::default()
+                .fg(theme.warning)
+                .add_modifier(Modifier::BOLD),
+            CommandPartKind::Subcommand => Style::default()
+                .fg(theme.text)
+                .add_modifier(Modifier::BOLD),
+            CommandPartKind::Flag => Style::default().fg(theme.text),
+            CommandPartKind::Revision => Style::default()
+                .fg(theme.change_id)
+                .add_modifier(Modifier::BOLD),
+            CommandPartKind::String => Style::default().fg(theme.text),
+        };
+        spans.push(Span::styled(part.text.clone(), style));
+    }
+    spans
+}
