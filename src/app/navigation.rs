@@ -181,6 +181,21 @@ impl App {
     }
 
     pub fn jump_to_bookmark(&mut self, name: &crate::types::BookmarkName) {
+        // If in the bookmark view, find the entry by name.
+        if self.active_view == super::ActiveView::Bookmarks {
+            for (idx, entry) in self.views.bookmark_entries.iter().enumerate() {
+                if entry.name == *name {
+                    if let Some(pos) = self.rows.iter().position(|r| {
+                        r.key()
+                            == crate::types::RowKey::BookmarkItem(crate::idx::BookmarkIdx::new(idx))
+                    }) {
+                        self.cursor = pos;
+                        return;
+                    }
+                }
+            }
+        }
+        // In DAG view, find the commit with this bookmark.
         for (idx, node) in self.nodes.iter_enumerated() {
             if node.commit.bookmarks.iter().any(|b| b.name == *name) {
                 if let Some(pos) = self.row_of_commit(idx) {
@@ -194,7 +209,9 @@ impl App {
 
     pub fn jump_to_change_id(&mut self, prefix: &str) {
         for (idx, node) in self.nodes.iter_enumerated() {
-            if node.commit.change_id.display.starts_with(prefix) {
+            if node.commit.change_id.display.starts_with(prefix)
+                || node.commit.graph_id.as_str().starts_with(prefix)
+            {
                 if let Some(pos) = self.row_of_commit(idx) {
                     self.cursor = pos;
                     return;

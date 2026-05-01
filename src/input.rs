@@ -1362,26 +1362,26 @@ fn jump_to_commit_in_dag(
             app.cursor = row;
         }
     } else {
-        offer_widen_revset(app, change_id);
+        // Use change ID if available, otherwise fall back to commit ID.
+        let id_for_revset = change_id
+            .map(|c| c.display.clone())
+            .unwrap_or_else(|| cid.as_str().into());
+        offer_widen_revset(app, &id_for_revset);
     }
 }
 
-/// Show a FollowUp prompt offering to widen the revset to include a change.
-fn offer_widen_revset(app: &mut App, change_id: Option<&crate::dag::ShortId>) {
-    if let Some(cid) = change_id {
-        app.mode = AppMode::FollowUp {
-            prompt: "commit not in current revset".into(),
-            options: vec![FollowUpOption {
-                key: 'w',
-                label: "widen revset",
-                action: FollowUpAction::WidenRevset {
-                    change_id: cid.display.clone(),
-                },
-            }],
-        };
-    } else {
-        app.set_status("commit not in current revset");
-    }
+/// Show a FollowUp prompt offering to widen the revset to include a commit.
+fn offer_widen_revset(app: &mut App, id: &str) {
+    app.mode = AppMode::FollowUp {
+        prompt: "commit not in current revset".into(),
+        options: vec![FollowUpOption {
+            key: 'w',
+            label: "widen revset",
+            action: FollowUpAction::WidenRevset {
+                change_id: id.into(),
+            },
+        }],
+    };
 }
 
 fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action {

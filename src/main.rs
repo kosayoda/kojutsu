@@ -7,7 +7,7 @@ use clap::Parser;
 use color_eyre::Result;
 use crossterm::event::{self, Event, KeyEventKind};
 
-use kojutsu::app::{App, AppMode, DeferredWork, Loadable};
+use kojutsu::app::{App, AppMode, DeferredWork, JumpTarget, Loadable};
 use kojutsu::input::{self, Action};
 use kojutsu::jj_command::JJCommand;
 use kojutsu::keymap::Keymaps;
@@ -511,10 +511,15 @@ fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
     };
 
     if result.success {
+        // Decide whether to switch to DAG before moving jump into app state.
+        let switch_to_dag = match &jump {
+            Some(JumpTarget::WorkingCopy | JumpTarget::ChangeId(_)) => true,
+            Some(JumpTarget::Bookmark(_)) => false,
+            None => app.active_view == kojutsu::app::ActiveView::Evolog,
+        };
         app.jump_after_refresh = jump;
         app.clear_selection();
-        // Switch back to DAG view from non-DAG views after a command.
-        if app.active_view != kojutsu::app::ActiveView::Dag {
+        if switch_to_dag && app.active_view != kojutsu::app::ActiveView::Dag {
             app.switch_view(kojutsu::app::ActiveView::Dag);
         }
         refresh_app(app);

@@ -339,10 +339,19 @@ impl JJCommand {
             | JJCommand::Parallelize { .. }
             | JJCommand::SimplifyParents { .. }
             | JJCommand::Revert { .. } => Some(JumpTarget::WorkingCopy),
-            // Track: jump to the first tracked bookmark's commit.
+            // Bookmark operations: jump to the affected bookmark.
             JJCommand::BookmarkTrack { bookmarks, .. } => bookmarks
                 .first()
                 .map(|br| JumpTarget::Bookmark(br.name.clone())),
+            JJCommand::BookmarkUntrack { bookmarks, .. } => bookmarks
+                .first()
+                .map(|br| JumpTarget::Bookmark(br.name.clone())),
+            JJCommand::BookmarkCreate { name, .. }
+            | JJCommand::BookmarkSet { name, .. }
+            | JJCommand::BookmarkMove { name, .. } => Some(JumpTarget::Bookmark(name.clone())),
+            JJCommand::BookmarkRename { new_name, .. } => {
+                Some(JumpTarget::Bookmark(new_name.clone()))
+            }
             // Everything else: use normal ChangeId restoration.
             _ => None,
         }
