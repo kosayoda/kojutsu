@@ -459,21 +459,30 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     file_idx,
                     hunk_idx,
                 } => {
-                    let total = app
+                    let hunks = app
                         .nodes
                         .get(*entry_idx)
                         .and_then(|n| n.conflict_hunks.get(file_idx.raw()))
-                        .and_then(|l| l.loaded())
-                        .map(|hunks| {
-                            hunks
-                                .iter()
+                        .and_then(|l| l.loaded());
+                    let total = hunks
+                        .map(|h| {
+                            h.iter()
                                 .filter(|h| {
-                                    matches!(h.kind, crate::dag::ConflictHunkKind::Conflict { .. })
+                                    matches!(h, crate::dag::ConflictHunkKind::Conflict { .. })
                                 })
                                 .count()
                         })
                         .unwrap_or(0);
-                    let num = hunk_idx.raw() + 1;
+                    let num = hunks
+                        .map(|h| {
+                            h.iter()
+                                .take(hunk_idx.raw() + 1)
+                                .filter(|h| {
+                                    matches!(h, crate::dag::ConflictHunkKind::Conflict { .. })
+                                })
+                                .count()
+                        })
+                        .unwrap_or(0);
                     vec![Line::from(vec![
                         Span::raw("        "),
                         Span::styled(
