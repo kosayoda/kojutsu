@@ -112,7 +112,15 @@ fn render_help_column(
                 entry.description.clone()
             };
             let required = app.selection_kind().as_bitset();
-            let blocked = app.selection_active() && !entry.selection_support.contains(required);
+            let on_conflict = matches!(
+                app.rows.get(app.cursor),
+                Some(
+                    crate::types::DisplayRow::ConflictHeader { .. }
+                        | crate::types::DisplayRow::ConflictSide { .. }
+                )
+            );
+            let blocked = (app.selection_active() && !entry.selection_support.contains(required))
+                || (entry.requires_conflict && !on_conflict);
             let key_style = if blocked {
                 key_style
                     .fg(theme.muted)

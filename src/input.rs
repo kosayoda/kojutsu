@@ -146,6 +146,15 @@ fn handle_normal_key(app: &mut App, keymap: &'static Keymap, node: &keymap_parse
         }
         LookupResult::Prefix { label, children } => {
             app.status_message = None;
+            // Block conflict prefix when cursor isn't on a conflict row.
+            if label == "conflict"
+                && !matches!(
+                    app.rows.get(app.cursor),
+                    Some(DisplayRow::ConflictHeader { .. } | DisplayRow::ConflictSide { .. })
+                )
+            {
+                return Action::None;
+            }
             if app.selection_active() {
                 let kind = app.selection_kind();
                 let has_supported_action = children.iter().any(|(_, node)| match node {

@@ -827,6 +827,8 @@ pub struct HelpEntry {
     pub description: String,
     pub group: HelpGroup,
     pub selection_support: SelectionKindSet,
+    /// Only show/activate when cursor is on a conflict row.
+    pub requires_conflict: bool,
 }
 
 pub fn action_supported_selection_kinds(action: AppAction) -> &'static [SelectionKind] {
@@ -1016,6 +1018,7 @@ pub fn help_entries(
                             _ => acc,
                         },
                     ),
+                    requires_conflict: *label == "conflict",
                 });
             }
             KeymapNode::Toggle { .. } => {} // toggles don't appear at root
@@ -1040,6 +1043,7 @@ pub fn help_entries(
                 description,
                 group,
                 selection_support: selection_kind_set_for_action(action),
+                requires_conflict: false,
             }
         })
         .collect();
@@ -1079,6 +1083,7 @@ pub fn select_mode_help_entries() -> Vec<(HelpGroup, Vec<HelpEntry>)> {
             description: desc.into(),
             group,
             selection_support: SelectionKindSet::ALL,
+            requires_conflict: false,
         }
     }
 
