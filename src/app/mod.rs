@@ -101,7 +101,7 @@ impl DagNode {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct FileFoldKey {
     pub change_id: ChangeId,
     pub path: RepoPath,
@@ -198,7 +198,7 @@ impl App {
             last_list_height: 0,
             h_scroll: 0,
             revset: RevsetConfig {
-                current: revset,
+                current: revset.into(),
                 draft: None,
                 load_state: Loadable::NotRequested,
                 pending: None,
@@ -306,7 +306,7 @@ impl App {
         );
         self.jump_after_refresh = Some(JumpTarget::ChangeId(change_id.to_string()));
         self.revset.load_state = Loadable::Loading;
-        self.revset.pending = Some(new_revset.clone());
+        self.revset.pending = Some(new_revset.clone().into());
         self.pending_repo_requests
             .push(RepoRequest::load_revset(Some(new_revset)));
     }
@@ -466,15 +466,36 @@ impl App {
                 .files_for_entry(entry_idx)
                 .and_then(|f| f.get(fi))
                 .map(|f| f.path.clone());
-            if let Some(file_path) = path {
+            let written = if let Some(file_path) = path {
                 let full_path = std::path::Path::new(&self.repo_root).join(file_path.as_str());
                 if std::fs::write(&full_path, &content).is_ok() {
                     self.set_status(format!("resolved {}", file_path));
+                    true
                 } else {
                     self.set_error(format!("failed to write {}", file_path));
+                    false
                 }
+            } else {
+                false
+            };
+            if written {
+                ConflictPickResult::FileResolved
+            } else {
+                // Revert the selection since the file wasn't written.
+                if let Some(Loadable::Loaded(hunks)) =
+                    self.nodes[entry_idx].conflict_hunks.get_mut(fi)
+                {
+                    if let Some(hunk) = hunks.get_mut(hi) {
+                        if let crate::dag::ConflictHunkKind::Conflict {
+                            selected, ..
+                        } = &mut hunk.kind
+                        {
+                            *selected = None;
+                        }
+                    }
+                }
+                ConflictPickResult::Pending
             }
-            ConflictPickResult::FileResolved
         } else {
             ConflictPickResult::Pending
         };

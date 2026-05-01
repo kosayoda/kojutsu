@@ -333,8 +333,8 @@ impl TerminalEvents {
 
 fn refresh_app(app: &mut App) {
     let revset = match &app.revset.load_state {
-        Loadable::Loading => app.revset.pending.clone(),
-        _ => Some(app.revset.current.clone()),
+        Loadable::Loading => app.revset.pending.as_ref().map(|s| s.to_string()),
+        _ => Some(app.revset.current.to_string()),
     };
     app.request_revset_load(revset);
 }

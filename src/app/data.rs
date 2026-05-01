@@ -9,7 +9,7 @@ use crate::types::{ChangeId, CommitId, DisplayRow};
 impl App {
     pub fn request_revset_load(&mut self, revset: Option<String>) {
         self.revset.load_state = Loadable::Loading;
-        self.revset.pending = revset.clone();
+        self.revset.pending = revset.clone().map(Into::into);
         self.status_message = None;
         self.pending_repo_requests
             .push(RepoRequest::load_revset(revset));
@@ -188,7 +188,7 @@ impl App {
         match result {
             RepoResult::RevsetLoaded(data) => {
                 self.status_message = None;
-                self.revset.current = data.revset;
+                self.revset.current = data.revset.into();
                 self.revset.draft = None;
                 self.revset.pending = None;
                 // Invalidate op log; re-request if currently viewing.
@@ -214,7 +214,7 @@ impl App {
             }
             RepoResult::RevsetFailed { revset, error } => {
                 self.revset.pending = None;
-                self.revset.draft = Some(revset);
+                self.revset.draft = Some(revset.into());
                 self.revset.load_state = Loadable::Failed(error.clone());
                 self.set_error("failed to load revset");
                 self.mode = AppMode::CommandOutput {

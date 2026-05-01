@@ -277,7 +277,7 @@ impl TargetOperation {
             TargetOperation::Squash(kind) => squash_follow_up(
                 source,
                 Some(SquashTarget {
-                    target: targets.into_iter().next().unwrap(),
+                    target: targets.into_iter().next().expect("target required"),
                     kind,
                 }),
                 selection,
@@ -288,7 +288,7 @@ impl TargetOperation {
                 JJCommand::Split {
                     change_id: source,
                     target: Some(SplitTarget {
-                        target: targets.into_iter().next().unwrap(),
+                        target: targets.into_iter().next().expect("target required"),
                         kind,
                     }),
                     selection,
@@ -323,7 +323,7 @@ impl TargetOperation {
                 "move",
                 JJCommand::BookmarkMove {
                     name: bookmark_name.clone(),
-                    target: targets.into_iter().next().unwrap(),
+                    target: targets.into_iter().next().expect("target required"),
                     flags,
                 },
             ),

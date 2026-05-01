@@ -7,6 +7,21 @@ use crate::idx::{
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
 
+/// Restore cursor position after a row rebuild. Tries each fallback key in
+/// order, returning the first matching row index. Falls back to clamping the
+/// current cursor within bounds.
+fn restore_cursor(
+    rows: &[DisplayRow],
+    cursor: usize,
+    fallbacks: &[Option<RowKey>],
+) -> usize {
+    fallbacks
+        .iter()
+        .flatten()
+        .find_map(|key| rows.iter().position(|r| r.key() == *key))
+        .unwrap_or(cursor.min(rows.len().saturating_sub(1)))
+}
+
 impl App {
     /// Rebuild the flattened row list from current fold state.
     pub fn rebuild_rows(&mut self) {
@@ -49,18 +64,13 @@ impl App {
             }
         }
 
-        // Cursor restore: try exact match, then fall back to parent bookmark.
-        let fallback: Option<RowKey> = match prev_cursor {
+        let fallback = match prev_cursor {
             Some(RowKey::BookmarkConflictTarget(bi, _) | RowKey::BookmarkRemoteTarget(bi, _)) => {
                 Some(RowKey::BookmarkItem(bi))
             }
             _ => None,
         };
-
-        self.cursor = prev_cursor
-            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
-            .or_else(|| fallback.and_then(|key| self.rows.iter().position(|r| r.key() == key)))
-            .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
+        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor, fallback]);
     }
 
     fn rebuild_tag_rows(&mut self) {
@@ -89,9 +99,7 @@ impl App {
                 }
             }
         }
-        self.cursor = prev_cursor
-            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
-            .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
+        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
     }
 
     fn rebuild_workspace_rows(&mut self) {
@@ -102,9 +110,7 @@ impl App {
                 workspace_idx: WorkspaceIdx::new(idx),
             });
         }
-        self.cursor = prev_cursor
-            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
-            .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
+        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
     }
 
     fn rebuild_op_log_rows(&mut self) {
@@ -149,15 +155,11 @@ impl App {
         // Don't follow the LoadMore sentinel — keep the numeric position so
         // the cursor lands on the first newly loaded entry.
         let prev_cursor = prev_cursor.filter(|k| *k != RowKey::OpLogLoadMore);
-        // Detail lines fall back to their parent OpLogItem.
         let fallback = match prev_cursor {
             Some(RowKey::OpLogDetailLine(oi, _)) => Some(RowKey::OpLogItem(oi)),
             _ => None,
         };
-        self.cursor = prev_cursor
-            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
-            .or_else(|| fallback.and_then(|key| self.rows.iter().position(|r| r.key() == key)))
-            .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
+        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor, fallback]);
     }
 
     fn rebuild_evolog_rows(&mut self) {
@@ -208,9 +210,7 @@ impl App {
                 });
             }
         }
-        self.cursor = prev_cursor
-            .and_then(|key| self.rows.iter().position(|r| r.key() == key))
-            .unwrap_or(self.cursor.min(self.rows.len().saturating_sub(1)));
+        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
     }
 
     fn rebuild_dag_rows(&mut self) {
@@ -243,18 +243,12 @@ impl App {
 
                         // If this file is unfolded, show diff lines or conflict hunks.
                         if self.is_file_unfolded(entry_idx, file_idx) {
-                            let has_conflict_hunks = self.nodes[entry_idx]
+                            if let Some(hunks) = self.nodes[entry_idx]
                                 .conflict_hunks
                                 .get(file_idx_raw)
                                 .and_then(|l| l.loaded())
-                                .is_some();
-
-                            if has_conflict_hunks {
+                            {
                                 // Show conflict hunks instead of diff.
-                                let hunks = self.nodes[entry_idx].conflict_hunks[file_idx_raw]
-                                    .loaded()
-                                    .unwrap();
-                                let mut conflict_num = 0;
                                 for (hi, hunk) in hunks.iter().enumerate() {
                                     match &hunk.kind {
                                         crate::dag::ConflictHunkKind::Resolved { lines } => {
@@ -286,11 +280,9 @@ impl App {
                                                     });
                                                 }
                                             }
-                                            conflict_num += 1;
                                         }
                                     }
                                 }
-                                let _ = conflict_num;
                             } else if let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) {
                                 let n = diff_lines.len();
                                 for line_idx_raw in 0..n {
@@ -346,12 +338,7 @@ impl App {
             Some(key) => [Some(key), None, None],
             None => [None, None, None],
         };
-
-        self.cursor = fallbacks
-            .iter()
-            .flatten()
-            .find_map(|key| self.rows.iter().position(|r| r.key() == *key))
-            .unwrap_or(0);
+        self.cursor = restore_cursor(&self.rows, self.cursor, &fallbacks);
     }
 
     /// After unfolding, scroll just enough to make the last child row visible.

@@ -75,13 +75,13 @@ impl ViewData {
 /// Revset configuration and loading state.
 pub struct RevsetConfig {
     /// The current revset expression.
-    pub current: String,
+    pub current: Str,
     /// Last failed revset attempt (pre-fills the input on retry).
-    pub draft: Option<String>,
+    pub draft: Option<Str>,
     /// Current revset load status.
     pub load_state: Loadable<()>,
     /// Revset currently being requested, if any.
-    pub pending: Option<String>,
+    pub pending: Option<Str>,
     /// Active preset index (into `presets`), or `None` for jj default / manual revset.
     pub active_preset: Option<usize>,
     /// Named revset presets from config.
@@ -151,6 +151,7 @@ impl EvoLogState {
 }
 
 /// Result of picking a conflict side for a hunk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictPickResult {
     /// Hunk picked, but other hunks in the file are still unresolved.
     Pending,
@@ -208,6 +209,7 @@ pub fn save_persisted_state(state: &PersistedState) {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusLevel {
     Info,
     Error,
