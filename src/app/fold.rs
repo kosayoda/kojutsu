@@ -331,6 +331,18 @@ impl App {
                 Some(RowKey::CommitNode(e)),
                 None,
             ],
+            Some(RowKey::ConflictSide(e, f, h, _, _))
+            | Some(RowKey::ConflictContext(e, f, h, _)) => [
+                Some(RowKey::ConflictHeader(e, f, h)),
+                Some(RowKey::FileChange(e, f)),
+                Some(RowKey::CommitNode(e)),
+            ],
+            Some(RowKey::ConflictHeader(e, f, _)) => [
+                Some(RowKey::FileChange(e, f)),
+                Some(RowKey::CommitNode(e)),
+                None,
+            ],
+            Some(RowKey::GraphLink(e, _)) => [Some(RowKey::CommitNode(e)), None, None],
             Some(key) => [Some(key), None, None],
             None => [None, None, None],
         };
