@@ -601,23 +601,10 @@ impl JjRepo {
                 before_part.content.contents.as_ref(),
                 after_part.content.contents.as_ref(),
             );
-            let hunks = unified::unified_diff_hunks(contents, 3, Default::default());
-            let mut file_stats = LineStats::default();
-            for hunk in &hunks {
-                for (line_type, _) in &hunk.lines {
-                    match line_type {
-                        DiffLineType::Added => {
-                            stats.added = stats.added.saturating_add(1);
-                            file_stats.added = file_stats.added.saturating_add(1);
-                        }
-                        DiffLineType::Removed => {
-                            stats.removed = stats.removed.saturating_add(1);
-                            file_stats.removed = file_stats.removed.saturating_add(1);
-                        }
-                        DiffLineType::Context => {}
-                    }
-                }
-            }
+            let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
+            let file_stats = count_line_stats(&hunks);
+            stats.added = stats.added.saturating_add(file_stats.added);
+            stats.removed = stats.removed.saturating_add(file_stats.removed);
             if let Some(fc) = changes.last_mut() {
                 fc.stats = file_stats;
             }
@@ -1614,13 +1601,16 @@ impl JjRepo {
         let from_tree = from_commit.tree();
         let to_tree = to_commit.tree();
         let copy_records = jj_lib::copies::CopyRecords::default();
+        let labels = ConflictLabels::unlabeled();
+        let materialize_options = default_materialize_options();
 
         let mut changes = Vec::new();
         let mut diff_stream =
             from_tree.diff_stream_with_copies(&to_tree, &EverythingMatcher, &copy_records);
 
         while let Some(entry) = diff_stream.next().block_on() {
-            let target_path = entry.path.target().as_internal_file_string().to_string();
+            let path = entry.path.target();
+            let target_path = path.as_internal_file_string().to_string();
             let values = match entry.values {
                 Ok(v) => v,
                 Err(_) => continue,
@@ -1634,13 +1624,35 @@ impl JjRepo {
                 (true, true) => FileStatus::Modified,
                 (false, false) => continue,
             };
+            let has_conflict = !values.after.is_resolved();
+
+            // Compute line stats by materializing + diffing.
+            let mut file_stats = LineStats::default();
+            let before_mat =
+                materialize_tree_value(repo.store(), path, values.before, &labels).block_on()?;
+            let after_mat =
+                materialize_tree_value(repo.store(), path, values.after, &labels).block_on()?;
+            let before_part = git_diff_part(path, before_mat, &materialize_options)
+                .block_on()
+                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+            let after_part = git_diff_part(path, after_mat, &materialize_options)
+                .block_on()
+                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+            if !before_part.content.is_binary && !after_part.content.is_binary {
+                let contents = Diff::new(
+                    before_part.content.contents.as_ref(),
+                    after_part.content.contents.as_ref(),
+                );
+                let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
+                file_stats = count_line_stats(&hunks);
+            }
 
             changes.push(FileChange {
                 path: RepoPath::new(&target_path),
                 old_path: None,
                 status,
-                has_conflict: !values.after.is_resolved(),
-                stats: LineStats::default(),
+                has_conflict,
+                stats: file_stats,
             });
         }
 
@@ -1955,6 +1967,21 @@ fn parse_first_line_description(raw: &str) -> Option<String> {
 }
 
 /// Convert unified diff hunks into `DiffLine` structs with token spans and line numbers.
+/// Count added/removed lines from unified diff hunks.
+fn count_line_stats(hunks: &[unified::UnifiedDiffHunk<'_>]) -> LineStats {
+    let mut stats = LineStats::default();
+    for hunk in hunks {
+        for (line_type, _) in &hunk.lines {
+            match line_type {
+                DiffLineType::Added => stats.added = stats.added.saturating_add(1),
+                DiffLineType::Removed => stats.removed = stats.removed.saturating_add(1),
+                DiffLineType::Context => {}
+            }
+        }
+    }
+    stats
+}
+
 fn hunks_to_diff_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut Vec<DiffLine>) {
     for hunk in hunks {
         out.push(DiffLine {
