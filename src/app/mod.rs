@@ -119,6 +119,8 @@ pub struct App {
     pub op_log: OpLogState,
     /// Evolution log view state.
     pub evolog: EvoLogState,
+    /// Command log view state.
+    pub command_log: CommandLogState,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
@@ -190,6 +192,7 @@ impl App {
             views: ViewData::new(),
             op_log: OpLogState::new(),
             evolog: EvoLogState::new(),
+            command_log: CommandLogState::new(),
             rows: Vec::new(),
             cursor: 0,
             view_states: default_view_states(),
@@ -233,6 +236,25 @@ impl App {
 
     pub fn set_error(&mut self, msg: impl Into<String>) {
         self.status_message = Some((msg.into(), StatusLevel::Error));
+    }
+
+    pub fn push_command_log(
+        &mut self,
+        kind: CommandLogKind,
+        summary: impl Into<String>,
+        output: Vec<u8>,
+        success: bool,
+    ) {
+        self.command_log.entries.push(CommandLogEntry {
+            kind,
+            summary: summary.into(),
+            output,
+            success,
+            timestamp: jiff::Timestamp::now(),
+        });
+        if self.active_view == ActiveView::CommandLog {
+            self.rebuild_rows();
+        }
     }
 
     /// Whether the working copy (`@`) is visible in the current entries.
@@ -554,6 +576,8 @@ impl App {
             | DisplayRow::EvoLogFileDiffLine { .. }
             | DisplayRow::EvoLogGraphLink { .. }
             | DisplayRow::WorkspaceItem { .. }
+            | DisplayRow::CommandLogItem { .. }
+            | DisplayRow::CommandLogDetail { .. }
             | DisplayRow::ConflictHeader { .. }
             | DisplayRow::ConflictSide { .. }
             | DisplayRow::ConflictContext { .. } => return None,

@@ -147,6 +147,36 @@ impl EvoLogState {
     }
 }
 
+/// State for the command log view.
+pub struct CommandLogState {
+    pub entries: Vec<CommandLogEntry>,
+    pub unfolded: HashSet<usize>,
+}
+
+impl CommandLogState {
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            unfolded: HashSet::new(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CommandLogKind {
+    Command,
+    Background,
+    Warning,
+}
+
+pub struct CommandLogEntry {
+    pub kind: CommandLogKind,
+    pub summary: String,
+    pub output: Vec<u8>,
+    pub success: bool,
+    pub timestamp: jiff::Timestamp,
+}
+
 /// Result of picking a conflict side for a hunk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictPickResult {
@@ -226,6 +256,7 @@ pub enum ActiveView {
     Operations,
     Workspaces,
     Evolog,
+    CommandLog,
 }
 
 impl ActiveView {
@@ -241,6 +272,7 @@ impl ActiveView {
             Self::Operations => SearchScopes::DEFAULT_OP_LOG,
             Self::Workspaces => SearchScopes::DEFAULT,
             Self::Evolog => SearchScopes::DEFAULT,
+            Self::CommandLog => SearchScopes::DEFAULT,
         }
     }
 }
@@ -273,6 +305,7 @@ pub(super) fn default_view_states() -> [ViewState; <ActiveView as strum::EnumCou
         ViewState::new(ActiveView::Operations.default_scopes()),
         ViewState::new(ActiveView::Workspaces.default_scopes()),
         ViewState::new(ActiveView::Evolog.default_scopes()),
+        ViewState::new(ActiveView::CommandLog.default_scopes()),
     ]
 }
 

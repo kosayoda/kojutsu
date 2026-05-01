@@ -165,6 +165,7 @@ pub enum AppAction {
     SwitchToOpLogView,
     SwitchToWorkspaceView,
     SwitchToEvoLogView,
+    SwitchToCommandLogView,
     // Workspace view actions
     WsViewForget,
     WsViewJumpToCommit,
@@ -255,6 +256,7 @@ pub struct Keymaps {
     pub operations: Keymap,
     pub workspaces: Keymap,
     pub evolog: Keymap,
+    pub command_log: Keymap,
 }
 
 impl Keymaps {
@@ -266,6 +268,7 @@ impl Keymaps {
             crate::app::ActiveView::Operations => &self.operations,
             crate::app::ActiveView::Evolog => &self.evolog,
             crate::app::ActiveView::Workspaces => &self.workspaces,
+            crate::app::ActiveView::CommandLog => &self.command_log,
         }
     }
 }
@@ -312,6 +315,7 @@ fn shared_bindings() -> Vec<(Node, KeymapNode)> {
         bind("4", AppAction::SwitchToWorkspaceView, "workspaces view", G),
         bind("5", AppAction::SwitchToOpLogView, "operations view", G),
         bind("6", AppAction::SwitchToEvoLogView, "evolog view", G),
+        bind("7", AppAction::SwitchToCommandLogView, "command log", G),
         // Fold / Select
         bind("tab", AppAction::ToggleFold, "toggle fold", N),
         bind("space", AppAction::ToggleSelect, "toggle select", N),
@@ -675,6 +679,8 @@ impl Default for Keymaps {
             bind("n", AppAction::EvoLogNew, "new from", C),
         ]);
 
+        let cmd_log_root = shared_bindings();
+
         Keymaps {
             dag: Keymap { root: dag_root },
             bookmarks: Keymap { root: bm_root },
@@ -682,6 +688,9 @@ impl Default for Keymaps {
             operations: Keymap { root: op_root },
             workspaces: Keymap { root: ws_root },
             evolog: Keymap { root: evolog_root },
+            command_log: Keymap {
+                root: cmd_log_root,
+            },
         }
     }
 }

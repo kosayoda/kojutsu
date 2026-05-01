@@ -1267,6 +1267,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.switch_view(crate::app::ActiveView::Evolog);
             Action::None
         }
+        AppAction::SwitchToCommandLogView => {
+            app.switch_view(crate::app::ActiveView::CommandLog);
+            Action::None
+        }
         AppAction::EvoLogEdit => {
             let Some(entry) = app.selected_evolog_entry() else {
                 return Action::None;
@@ -1867,6 +1871,8 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
             | Some(DisplayRow::EvoLogFileDiffLine { .. })
             | Some(DisplayRow::EvoLogGraphLink { .. })
             | Some(DisplayRow::WorkspaceItem { .. })
+            | Some(DisplayRow::CommandLogItem { .. })
+            | Some(DisplayRow::CommandLogDetail { .. })
             | Some(DisplayRow::ConflictHeader { .. })
             | Some(DisplayRow::ConflictSide { .. })
             | Some(DisplayRow::ConflictContext { .. })

@@ -2099,7 +2099,7 @@ impl JjRepo {
 }
 
 /// Convert a millisecond timestamp to a relative time string (e.g. "5 hours ago").
-fn millis_to_relative_time(millis: i64) -> Str {
+pub fn millis_to_relative_time(millis: i64) -> Str {
     let secs = millis / 1000;
     let nanos = ((millis % 1000) * 1_000_000) as u32;
     match chrono::DateTime::from_timestamp(secs, nanos) {

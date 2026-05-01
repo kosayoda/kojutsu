@@ -1,7 +1,7 @@
 use crate::idx::{
-    BookmarkDetailIdx, BookmarkIdx, ConflictHunkIdx, ConflictLineIdx, ConflictSideIdx,
-    DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx, FileIdx, GraphLineIdx, OpLogDetailIdx,
-    OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
+    BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, CommandLogIdx, ConflictHunkIdx,
+    ConflictLineIdx, ConflictSideIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx,
+    FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 
 /// Identifies a display row for cursor restore after rebuild.
@@ -26,6 +26,8 @@ pub enum RowKey {
     EvoLogFileDiffLine(EvoLogIdx, FileIdx, DiffLineIdx),
     EvoLogGraphLink(EvoLogIdx, GraphLineIdx),
     WorkspaceItem(WorkspaceIdx),
+    CommandLogItem(CommandLogIdx),
+    CommandLogDetail(CommandLogIdx, CommandLogDetailIdx),
     ConflictHeader(EntryIdx, FileIdx, ConflictHunkIdx),
     ConflictSide(
         EntryIdx,
@@ -115,6 +117,13 @@ pub enum DisplayRow {
     },
     /// A workspace row in the workspace view.
     WorkspaceItem { workspace_idx: WorkspaceIdx },
+    /// A command log entry row.
+    CommandLogItem { log_idx: CommandLogIdx },
+    /// A detail line under an unfolded command log entry.
+    CommandLogDetail {
+        log_idx: CommandLogIdx,
+        line_idx: CommandLogDetailIdx,
+    },
     /// Header for a conflict hunk (e.g. "── conflict 1 of 2 ──").
     ConflictHeader {
         entry_idx: EntryIdx,
@@ -198,6 +207,10 @@ impl DisplayRow {
                 line_idx,
             } => RowKey::EvoLogGraphLink(evolog_idx, line_idx),
             DisplayRow::WorkspaceItem { workspace_idx } => RowKey::WorkspaceItem(workspace_idx),
+            DisplayRow::CommandLogItem { log_idx } => RowKey::CommandLogItem(log_idx),
+            DisplayRow::CommandLogDetail { log_idx, line_idx } => {
+                RowKey::CommandLogDetail(log_idx, line_idx)
+            }
             DisplayRow::ConflictHeader {
                 entry_idx,
                 file_idx,

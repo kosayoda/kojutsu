@@ -104,6 +104,14 @@ define_idx!(
     /// Index into lines within a conflict side or context.
     pub ConflictLineIdx
 );
+define_idx!(
+    /// Index into command log entries.
+    pub CommandLogIdx
+);
+define_idx!(
+    /// Index into detail lines within a command log entry.
+    pub CommandLogDetailIdx
+);
 
 // ---------------------------------------------------------------------------
 // IndexVec<I, T> -- a Vec<T> indexed by a typed index I.

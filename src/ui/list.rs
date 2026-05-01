@@ -454,6 +454,20 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         vec![Line::raw("")]
                     }
                 }
+                DisplayRow::CommandLogItem { log_idx } => {
+                    if let Some(entry) = app.command_log.entries.get(log_idx.raw()) {
+                        render_command_log_item(entry, theme)
+                    } else {
+                        vec![Line::raw("")]
+                    }
+                }
+                DisplayRow::CommandLogDetail { log_idx, line_idx } => {
+                    if let Some(entry) = app.command_log.entries.get(log_idx.raw()) {
+                        render_command_log_detail(entry, line_idx.raw(), theme)
+                    } else {
+                        vec![Line::raw("")]
+                    }
+                }
                 DisplayRow::ConflictHeader {
                     entry_idx,
                     file_idx,
@@ -1493,6 +1507,63 @@ fn render_workspace_item(
     }
 
     vec![Line::from(spans)]
+}
+
+fn render_command_log_item(
+    entry: &crate::app::CommandLogEntry,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    use crate::app::CommandLogKind;
+
+    let (icon, icon_color) = match (entry.kind, entry.success) {
+        (CommandLogKind::Warning, _) => ("⚠  ", theme.warning),
+        (_, true) => ("✓  ", theme.added),
+        (_, false) => ("✗  ", theme.error),
+    };
+
+    let summary_style = if entry.success {
+        Style::default().fg(theme.text)
+    } else {
+        Style::default().fg(theme.error)
+    };
+
+    let relative_time = crate::repo::millis_to_relative_time(entry.timestamp.as_millisecond());
+
+    let mut spans = vec![
+        Span::styled("  ", Style::default()),
+        Span::styled(icon, Style::default().fg(icon_color).add_modifier(Modifier::BOLD)),
+        Span::styled(entry.summary.clone(), summary_style),
+    ];
+    spans.push(Span::styled(
+        format!(" · {relative_time}"),
+        Style::default().fg(theme.muted),
+    ));
+
+    vec![Line::from(spans)]
+}
+
+fn render_command_log_detail(
+    entry: &crate::app::CommandLogEntry,
+    line_idx: usize,
+    _theme: &Theme,
+) -> Vec<Line<'static>> {
+    use ansi_to_tui::IntoText as _;
+
+    // Parse ANSI output into ratatui styled text, then pick the requested line.
+    if let Ok(styled) = entry.output.as_slice().into_text() {
+        if let Some(line) = styled.lines.into_iter().nth(line_idx) {
+            let mut spans: Vec<Span<'static>> = vec![Span::raw("      ")];
+            spans.extend(line.spans);
+            return vec![Line::from(spans)];
+        }
+    }
+    // Fallback: plain text.
+    let text = String::from_utf8_lossy(&entry.output);
+    let line_text = text.lines().nth(line_idx).unwrap_or("");
+    vec![Line::from(vec![
+        Span::raw("      "),
+        Span::raw(line_text.to_string()),
+    ])]
 }
 
 fn render_bookmark_item(

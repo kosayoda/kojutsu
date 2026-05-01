@@ -323,6 +323,13 @@ impl App {
                 scopes.contains(SearchScopes::DESCRIPTION)
                     && entry.description.as_deref().is_some_and(contains)
             }
+            DisplayRow::CommandLogItem { log_idx } => {
+                let Some(entry) = self.command_log.entries.get(log_idx.raw()) else {
+                    return false;
+                };
+                scopes.contains(SearchScopes::DESCRIPTION) && contains(&entry.summary)
+            }
+            DisplayRow::CommandLogDetail { .. } => false,
         }
     }
 }

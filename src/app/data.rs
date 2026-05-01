@@ -208,6 +208,14 @@ impl App {
                 self.views.bookmark_details = data.bookmark_details;
                 self.views.workspace_entries = data.workspace_entries;
                 self.revset.load_state = Loadable::Loaded(());
+                for w in &data.warnings {
+                    self.push_command_log(
+                        super::CommandLogKind::Warning,
+                        w,
+                        Vec::new(),
+                        false,
+                    );
+                }
                 if !data.warnings.is_empty() {
                     self.set_error(data.warnings.join("; "));
                 }
@@ -219,6 +227,12 @@ impl App {
                 self.revset.draft = Some(revset.into());
                 self.revset.load_state = Loadable::Failed(error.clone());
                 self.set_error("failed to load revset");
+                self.push_command_log(
+                    super::CommandLogKind::Background,
+                    "revset error",
+                    error.as_bytes().to_vec(),
+                    false,
+                );
                 self.mode = AppMode::CommandOutput {
                     command: "revset error".to_string(),
                     output: error.into_bytes(),
@@ -267,8 +281,15 @@ impl App {
                     self.nodes[idx].files = Loadable::Failed(error.clone());
                     self.nodes[idx].stats = Loadable::Failed(error.clone());
                 }
+                let summary = format!("load files for {commit_id}");
+                self.push_command_log(
+                    super::CommandLogKind::Background,
+                    &summary,
+                    error.as_bytes().to_vec(),
+                    false,
+                );
                 self.mode = AppMode::CommandOutput {
-                    command: format!("load files for {commit_id}"),
+                    command: summary,
                     output: error.into_bytes(),
                     success: false,
                 };
@@ -303,8 +324,15 @@ impl App {
                         self.nodes[idx].diffs[fi] = Loadable::Failed(error.clone());
                     }
                 }
+                let summary = format!("load diff for {path}");
+                self.push_command_log(
+                    super::CommandLogKind::Background,
+                    &summary,
+                    error.as_bytes().to_vec(),
+                    false,
+                );
                 self.mode = AppMode::CommandOutput {
-                    command: format!("load diff for {path}"),
+                    command: summary,
                     output: error.into_bytes(),
                     success: false,
                 };
@@ -387,7 +415,9 @@ impl App {
             }
             RepoResult::OperationsFailed { error } => {
                 self.op_log.loaded = false;
-                self.set_error(format!("failed to load operation log: {error}"));
+                let msg = format!("failed to load operation log: {error}");
+                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.set_error(msg);
             }
             RepoResult::OpDiffLoaded { op_id, lines } => {
                 self.op_log
@@ -402,7 +432,9 @@ impl App {
                 self.op_log
                     .details
                     .insert(op_id, super::Loadable::Failed(error.clone()));
-                self.set_error(format!("failed to load op diff: {error}"));
+                let msg = format!("failed to load op diff: {error}");
+                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.set_error(msg);
             }
             RepoResult::ConflictHunksLoaded {
                 commit_id,
@@ -431,7 +463,9 @@ impl App {
                         self.nodes[idx].conflict_hunks[fi] = super::Loadable::Failed(error.clone());
                     }
                 }
-                self.set_error(format!("failed to load conflict hunks for {path}: {error}"));
+                let msg = format!("failed to load conflict hunks for {path}: {error}");
+                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.set_error(msg);
             }
             RepoResult::EvoLogLoaded { entries } => {
                 self.evolog.entries = entries;
@@ -450,7 +484,9 @@ impl App {
                 }
             }
             RepoResult::EvoLogDetailsFailed { error } => {
-                self.set_error(format!("failed to load evolog details: {error}"));
+                let msg = format!("failed to load evolog details: {error}");
+                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.set_error(msg);
             }
             RepoResult::EvoLogFileDiffLoaded {
                 commit_id,
@@ -470,14 +506,20 @@ impl App {
                 }
             }
             RepoResult::EvoLogFileDiffFailed { error } => {
-                self.set_error(format!("failed to load evolog file diff: {error}"));
+                let msg = format!("failed to load evolog file diff: {error}");
+                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.set_error(msg);
             }
             RepoResult::EvoLogFailed { error } => {
                 self.evolog.loaded = false;
-                self.set_error(format!("failed to load evolog: {error}"));
+                let msg = format!("failed to load evolog: {error}");
+                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.set_error(msg);
             }
             RepoResult::BackgroundError { error } => {
-                self.set_error(format!("background task failed: {error}"));
+                let msg = format!("background task failed: {error}");
+                self.push_command_log(super::CommandLogKind::Background, &msg, Vec::new(), false);
+                self.set_error(msg);
             }
         }
         deferred

@@ -1,8 +1,8 @@
 use super::{ActiveView, App, Loadable};
 use crate::idx::{
-    BookmarkDetailIdx, BookmarkIdx, ConflictHunkIdx, ConflictLineIdx, ConflictSideIdx,
-    DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx, FileIdx, GraphLineIdx, OpLogDetailIdx,
-    OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
+    BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, CommandLogIdx, ConflictHunkIdx,
+    ConflictLineIdx, ConflictSideIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx,
+    FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
@@ -32,6 +32,7 @@ impl App {
             ActiveView::Operations => self.rebuild_op_log_rows(),
             ActiveView::Evolog => self.rebuild_evolog_rows(),
             ActiveView::Workspaces => self.rebuild_workspace_rows(),
+            ActiveView::CommandLog => self.rebuild_command_log_rows(),
         }
     }
 
@@ -109,6 +110,30 @@ impl App {
             self.rows.push(DisplayRow::WorkspaceItem {
                 workspace_idx: WorkspaceIdx::new(idx),
             });
+        }
+        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
+    }
+
+    fn rebuild_command_log_rows(&mut self) {
+        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        self.rows.clear();
+        // Show entries in reverse chronological order (newest first).
+        for idx in (0..self.command_log.entries.len()).rev() {
+            let li = CommandLogIdx::new(idx);
+            self.rows.push(DisplayRow::CommandLogItem { log_idx: li });
+            if self.command_log.unfolded.contains(&idx) {
+                let output = &self.command_log.entries[idx].output;
+                if !output.is_empty() {
+                    let text = String::from_utf8_lossy(output);
+                    let line_count = text.lines().count().max(1);
+                    for line_i in 0..line_count {
+                        self.rows.push(DisplayRow::CommandLogDetail {
+                            log_idx: li,
+                            line_idx: CommandLogDetailIdx::new(line_i),
+                        });
+                    }
+                }
+            }
         }
         self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
     }
@@ -433,6 +458,20 @@ impl App {
                 ..
             }) => {
                 self.toggle_evolog_file_fold(*evolog_idx, *file_idx);
+            }
+            Some(DisplayRow::CommandLogItem { log_idx }) => {
+                let idx = log_idx.raw();
+                if self.command_log.unfolded.contains(&idx) {
+                    self.command_log.unfolded.remove(&idx);
+                } else {
+                    self.command_log.unfolded.insert(idx);
+                }
+                self.rebuild_rows();
+            }
+            Some(DisplayRow::CommandLogDetail { log_idx, .. }) => {
+                let idx = log_idx.raw();
+                self.command_log.unfolded.remove(&idx);
+                self.rebuild_rows();
             }
             _ => {}
         }
