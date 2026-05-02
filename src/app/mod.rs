@@ -152,8 +152,6 @@ pub struct App {
     pending_repo_requests: Vec<RepoRequest>,
     /// Global toggles that persist across commands.
     pub toggles: CommandFlags,
-    /// Display string of the last command executed (shown in status bar).
-    pub last_command: Option<String>,
     /// Transient status notice shown in the status bar.
     pub status_message: Option<(String, StatusLevel)>,
     /// Mode to restore after an overlay (search/help) is dismissed.
@@ -216,7 +214,6 @@ impl App {
             unfolded_files: HashSet::new(),
             pending_repo_requests: Vec::new(),
             toggles: CommandFlags::empty(),
-            last_command: None,
             status_message: None,
             pre_overlay_mode: None,
             show_line_numbers: false,

@@ -172,7 +172,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         };
         (status.clone(), c)
     } else {
-        (app.last_command.clone().unwrap_or_default(), theme.text)
+        (String::new(), theme.text)
     };
     let line = Line::from(Span::styled(content, Style::default().fg(color)));
     frame.render_widget(Paragraph::new(line), inner);

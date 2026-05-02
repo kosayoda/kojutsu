@@ -182,9 +182,7 @@ pub(super) fn command_parts_to_spans(
             CommandPartKind::Binary => Style::default()
                 .fg(theme.warning)
                 .add_modifier(Modifier::BOLD),
-            CommandPartKind::Subcommand => Style::default()
-                .fg(theme.text)
-                .add_modifier(Modifier::BOLD),
+            CommandPartKind::Subcommand => Style::default().fg(theme.text),
             CommandPartKind::Flag => Style::default().fg(theme.text),
             CommandPartKind::Revision => Style::default()
                 .fg(theme.change_id)

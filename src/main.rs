@@ -349,8 +349,7 @@ fn suspend_and_run(
     terminal: &mut kojutsu::terminal::Term,
     cmd: JJCommand,
 ) {
-    // Store the display string and jump target before running (cmd is consumed).
-    let display = cmd.display();
+    // Store the jump target before running (cmd is consumed).
     let jump = cmd.jump_target();
 
     // Leave the alternate screen so the child can use the terminal.
@@ -365,7 +364,6 @@ fn suspend_and_run(
     // Re-enter the TUI.
     *terminal = kojutsu::terminal::init().expect("failed to re-init terminal");
 
-    app.last_command = Some(display);
     app.push_command_log(
         kojutsu::app::CommandLogKind::Command,
         &result.display,
@@ -518,7 +516,6 @@ fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
     let jump = cmd.jump_target();
     let result = cmd.run(repo_path);
 
-    app.last_command = Some(result.display.clone());
     app.push_command_log(
         kojutsu::app::CommandLogKind::Command,
         &result.display,

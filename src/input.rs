@@ -243,7 +243,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             SelectionKind::File => "file",
             SelectionKind::Line => "line",
         };
-        app.last_command = Some(format!(
+        app.set_error(format!(
             "{} does not support {} selection",
             action_label(action),
             kind_label
