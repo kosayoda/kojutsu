@@ -313,6 +313,27 @@ impl RepoResponseHandle {
     }
 }
 
+/// A token that background threads check to bail out early when their
+/// work is no longer needed (e.g. a new revset was requested).
+#[derive(Clone)]
+pub struct CancellationToken(Arc<std::sync::atomic::AtomicBool>);
+
+impl CancellationToken {
+    fn new() -> Self {
+        Self(Arc::new(std::sync::atomic::AtomicBool::new(false)))
+    }
+
+    /// Signal all holders of this token to stop.
+    fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    /// Check whether cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
 struct RepoServiceState {
     repo_path: PathBuf,
     repo: Option<JjRepo>,
@@ -320,6 +341,8 @@ struct RepoServiceState {
     current_epoch: Arc<AtomicU64>,
     in_flight_commit_details: HashSet<CommitId>,
     in_flight_file_diffs: HashSet<(CommitId, RepoPath)>,
+    /// Cancellation token for background threads spawned by the current revset.
+    bg_cancel: CancellationToken,
 }
 
 impl RepoServiceState {
@@ -335,6 +358,7 @@ impl RepoServiceState {
             current_epoch,
             in_flight_commit_details: HashSet::new(),
             in_flight_file_diffs: HashSet::new(),
+            bg_cancel: CancellationToken::new(),
         }
     }
 
@@ -348,6 +372,8 @@ impl RepoServiceState {
         let RepoRequest { epoch, kind } = request;
         match kind {
             RepoRequestKind::Revset { revset } => {
+                self.bg_cancel.cancel();
+                self.bg_cancel = CancellationToken::new();
                 self.in_flight_commit_details.clear();
                 self.in_flight_file_diffs.clear();
                 self.handle_revset(epoch, revset);
@@ -507,8 +533,13 @@ impl RepoServiceState {
                     let empty_ids = all_ids.clone();
                     let inner = repo.inner_repo();
                     let tx = self.result_tx.clone();
+                    let cancel = self.bg_cancel.clone();
                     spawn_background(self.result_tx.clone(), move || {
                         for id in &empty_ids {
+                            // is_empty involves tree diffs (I/O) — check every iteration.
+                            if cancel.is_cancelled() {
+                                return;
+                            }
                             let Some(backend_id) =
                                 jj_lib::backend::CommitId::try_from_hex(id.as_str())
                             else {
@@ -536,8 +567,9 @@ impl RepoServiceState {
                     let inner = repo.inner_repo();
                     let div_ids = all_ids.clone();
                     let tx = self.result_tx.clone();
+                    let cancel = self.bg_cancel.clone();
                     spawn_background(self.result_tx.clone(), move || {
-                        let updates = JjRepo::compute_divergence_info(&inner, &div_ids);
+                        let updates = JjRepo::compute_divergence_info(&inner, &div_ids, &cancel);
                         if !updates.is_empty() {
                             let _ = tx.send(RepoResult::DivergenceInfo { updates });
                         }
@@ -548,7 +580,11 @@ impl RepoServiceState {
                 {
                     let tx = self.result_tx.clone();
                     let repo_path = self.repo_path.clone();
+                    let cancel = self.bg_cancel.clone();
                     spawn_background(self.result_tx.clone(), move || {
+                        if cancel.is_cancelled() {
+                            return;
+                        }
                         let bg_repo = match JjRepo::open(&repo_path) {
                             Ok(r) => r,
                             Err(e) => {
@@ -558,7 +594,7 @@ impl RepoServiceState {
                                 return;
                             }
                         };
-                        match bg_repo.compute_prefix_lengths(&all_ids) {
+                        match bg_repo.compute_prefix_lengths(&all_ids, &cancel) {
                             Ok(updates) if !updates.is_empty() => {
                                 let _ = tx.send(RepoResult::PrefixLengths { updates });
                             }
@@ -576,7 +612,11 @@ impl RepoServiceState {
                 if !detail_commit_ids.is_empty() {
                     let tx = self.result_tx.clone();
                     let repo_path = self.repo_path.clone();
+                    let cancel = self.bg_cancel.clone();
                     spawn_background(self.result_tx.clone(), move || {
+                        if cancel.is_cancelled() {
+                            return;
+                        }
                         let bg_repo = match JjRepo::open(&repo_path) {
                             Ok(r) => r,
                             Err(e) => {
@@ -586,7 +626,7 @@ impl RepoServiceState {
                                 return;
                             }
                         };
-                        match bg_repo.compute_prefix_lengths(&detail_commit_ids) {
+                        match bg_repo.compute_prefix_lengths(&detail_commit_ids, &cancel) {
                             Ok(updates) if !updates.is_empty() => {
                                 let _ =
                                     tx.send(RepoResult::BookmarkDetailPrefixLengths { updates });

@@ -422,6 +422,9 @@ impl App {
             }
             RepoResult::OperationsFailed { error } => {
                 self.op_log.loaded = false;
+                self.op_log.entries.clear();
+                self.op_log.details.clear();
+                self.op_log.unfolded.clear();
                 let msg = format!("failed to load operation log: {error}");
                 self.push_command_log(
                     super::CommandLogKind::Background,
@@ -548,7 +551,7 @@ impl App {
                 self.set_error(msg);
             }
             RepoResult::EvoLogFailed { error } => {
-                self.evolog.loaded = false;
+                self.evolog.clear();
                 let msg = format!("failed to load evolog: {error}");
                 self.push_command_log(
                     super::CommandLogKind::Background,

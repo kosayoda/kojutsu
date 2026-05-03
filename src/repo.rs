@@ -984,6 +984,7 @@ impl JjRepo {
     pub fn compute_prefix_lengths(
         &self,
         commit_ids: &[UiCommitId],
+        cancel: &crate::repo_service::CancellationToken,
     ) -> Result<Vec<(UiCommitId, PrefixLengthUpdate)>> {
         let repo = self.repo.as_ref();
         let extensions = RevsetExtensions::default();
@@ -999,43 +1000,48 @@ impl JjRepo {
             .populate(repo)
             .wrap_err("failed to populate ID prefix index")?;
 
-        let results = commit_ids
-            .iter()
-            .filter_map(|id| {
-                let commit_id = BackendCommitId::try_from_hex(id.as_str())?;
-                let commit = repo.store().get_commit(&commit_id).ok()?;
+        let mut results = Vec::new();
+        for (i, id) in commit_ids.iter().enumerate() {
+            if i % 100 == 0 && cancel.is_cancelled() {
+                break;
+            }
+            let Some(commit_id) = BackendCommitId::try_from_hex(id.as_str()) else {
+                continue;
+            };
+            let Ok(commit) = repo.store().get_commit(&commit_id) else {
+                continue;
+            };
 
-                let change_prefix_len = id_prefix_index
-                    .shortest_change_prefix_len(repo, commit.change_id())
-                    .unwrap_or(DISPLAY_ID_LEN);
-                let change_id_full = commit.change_id().reverse_hex();
-                let change_display_len = change_prefix_len.max(DISPLAY_ID_LEN);
-                let change_display = change_id_full
-                    .get(..change_display_len)
-                    .unwrap_or(&change_id_full)
-                    .to_string();
+            let change_prefix_len = id_prefix_index
+                .shortest_change_prefix_len(repo, commit.change_id())
+                .unwrap_or(DISPLAY_ID_LEN);
+            let change_id_full = commit.change_id().reverse_hex();
+            let change_display_len = change_prefix_len.max(DISPLAY_ID_LEN);
+            let change_display = change_id_full
+                .get(..change_display_len)
+                .unwrap_or(&change_id_full)
+                .to_string();
 
-                let commit_prefix_len = id_prefix_index
-                    .shortest_commit_prefix_len(repo, &commit_id)
-                    .unwrap_or(DISPLAY_ID_LEN);
-                let commit_id_full = commit_id.hex();
-                let commit_display_len = commit_prefix_len.max(DISPLAY_ID_LEN);
-                let commit_display = commit_id_full
-                    .get(..commit_display_len)
-                    .unwrap_or(&commit_id_full)
-                    .to_string();
+            let commit_prefix_len = id_prefix_index
+                .shortest_commit_prefix_len(repo, &commit_id)
+                .unwrap_or(DISPLAY_ID_LEN);
+            let commit_id_full = commit_id.hex();
+            let commit_display_len = commit_prefix_len.max(DISPLAY_ID_LEN);
+            let commit_display = commit_id_full
+                .get(..commit_display_len)
+                .unwrap_or(&commit_id_full)
+                .to_string();
 
-                Some((
-                    id.clone(),
-                    PrefixLengthUpdate {
-                        change_display,
-                        change_prefix_len,
-                        commit_display,
-                        commit_prefix_len,
-                    },
-                ))
-            })
-            .collect();
+            results.push((
+                id.clone(),
+                PrefixLengthUpdate {
+                    change_display,
+                    change_prefix_len,
+                    commit_display,
+                    commit_prefix_len,
+                },
+            ));
+        }
 
         Ok(results)
     }
@@ -1045,36 +1051,43 @@ impl JjRepo {
     pub fn compute_divergence_info(
         repo: &Arc<ReadonlyRepo>,
         commit_ids: &[UiCommitId],
+        cancel: &crate::repo_service::CancellationToken,
     ) -> Vec<(UiCommitId, DivergenceUpdate)> {
-        commit_ids
-            .iter()
-            .filter_map(|id| {
-                let commit_id = BackendCommitId::try_from_hex(id.as_str())?;
-                let commit = repo.store().get_commit(&commit_id).ok()?;
-                let resolved = repo.resolve_change_id(commit.change_id()).ok().flatten();
-                let is_divergent = resolved
-                    .as_ref()
-                    .is_some_and(|targets| targets.is_divergent());
-                let is_hidden = commit
-                    .is_hidden(repo.as_ref())
-                    .inspect_err(|e| tracing::warn!("is_hidden check failed: {e}"))
-                    .unwrap_or(false);
-                if !is_divergent && !is_hidden {
-                    return None;
-                }
-                let change_id_suffix = resolved
-                    .as_ref()
-                    .and_then(|targets| targets.find_offset(commit.id()));
-                Some((
-                    id.clone(),
-                    DivergenceUpdate {
-                        is_divergent,
-                        is_hidden,
-                        change_id_suffix,
-                    },
-                ))
-            })
-            .collect()
+        let mut results = Vec::new();
+        for (i, id) in commit_ids.iter().enumerate() {
+            if i % 100 == 0 && cancel.is_cancelled() {
+                return results;
+            }
+            let Some(commit_id) = BackendCommitId::try_from_hex(id.as_str()) else {
+                continue;
+            };
+            let Ok(commit) = repo.store().get_commit(&commit_id) else {
+                continue;
+            };
+            let resolved = repo.resolve_change_id(commit.change_id()).ok().flatten();
+            let is_divergent = resolved
+                .as_ref()
+                .is_some_and(|targets| targets.is_divergent());
+            let is_hidden = commit
+                .is_hidden(repo.as_ref())
+                .inspect_err(|e| tracing::warn!("is_hidden check failed: {e}"))
+                .unwrap_or(false);
+            if !is_divergent && !is_hidden {
+                continue;
+            }
+            let change_id_suffix = resolved
+                .as_ref()
+                .and_then(|targets| targets.find_offset(commit.id()));
+            results.push((
+                id.clone(),
+                DivergenceUpdate {
+                    is_divergent,
+                    is_hidden,
+                    change_id_suffix,
+                },
+            ));
+        }
+        results
     }
 
     /// All local tag names (including those outside the current revset).
