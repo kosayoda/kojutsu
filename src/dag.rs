@@ -1,7 +1,7 @@
 use compact_str::format_compact;
 use jiff::Timestamp;
 
-use crate::types::{BookmarkName, ChangeId, CommitId, RemoteName, RepoPath, Str};
+use crate::types::{BookmarkName, ChangeId, CommitId, RemoteName, RepoPath, TagName};
 
 /// A short display ID with a unique prefix highlighted.
 ///
@@ -60,7 +60,7 @@ pub struct CommitInfo {
     /// represented by a local bookmark with the same name).
     pub remote_bookmarks: Vec<RemoteBookmarkInfo>,
     /// Tags pointing at this commit.
-    pub tags: Vec<Str>,
+    pub tags: Vec<TagName>,
 }
 
 #[derive(Clone, Copy, Default)]

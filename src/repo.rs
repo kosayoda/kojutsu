@@ -39,7 +39,7 @@ use crate::dag::{
     DiffResult, DivergenceUpdate, Edge, EdgeKind, FileChange, FileStatus, LineStats,
     PrefixLengthUpdate, RemoteBookmarkInfo, RevsetResult, ShortId,
 };
-use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, RepoPath, Str};
+use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, RepoPath, Str, TagName};
 
 /// Number of hex characters to show for change/commit IDs.
 const DISPLAY_ID_LEN: usize = 8;
@@ -930,11 +930,11 @@ impl JjRepo {
             .collect();
 
         // Tags pointing at this commit.
-        let tags: Vec<crate::types::Str> = repo
+        let tags: Vec<TagName> = repo
             .view()
             .local_tags()
             .filter(|(_, target)| target.added_ids().any(|id| id == commit.id()))
-            .map(|(name, _)| crate::types::Str::from(name.as_str()))
+            .map(|(name, _)| TagName::new(name.as_str()))
             .collect();
 
         // Remote bookmarks pointing at this commit, excluding synced ones
@@ -1113,22 +1113,22 @@ impl JjRepo {
         entries
     }
 
-    pub fn all_local_tags(&self) -> Vec<Str> {
+    pub fn all_local_tags(&self) -> Vec<TagName> {
         self.repo
             .as_ref()
             .view()
             .local_tags()
-            .map(|(name, _)| Str::from(name.as_str()))
+            .map(|(name, _)| TagName::new(name.as_str()))
             .collect()
     }
 
     /// Extract rich tag details: local target + remote tracking info.
-    pub fn extract_tag_details(&self) -> HashMap<Str, crate::dag::TagDetails> {
+    pub fn extract_tag_details(&self) -> HashMap<TagName, crate::dag::TagDetails> {
         use crate::dag::{TagDetails, TagLocalTarget, TagRemoteTarget};
 
         let repo = self.repo.as_ref();
         let view = repo.view();
-        let mut result: HashMap<Str, TagDetails> = HashMap::new();
+        let mut result: HashMap<TagName, TagDetails> = HashMap::new();
 
         // Pre-index remote tags by name.
         let mut remotes_by_name: HashMap<String, Vec<(String, jj_lib::backend::CommitId)>> =
@@ -1144,7 +1144,7 @@ impl JjRepo {
 
         // Process local tags.
         for (name, target) in view.local_tags() {
-            let tag_name = Str::from(name.as_str());
+            let tag_name = TagName::new(name.as_str());
             let local_target = target.as_normal().and_then(|commit_id| {
                 let info = self.commit_detail_info(commit_id)?;
                 Some(TagLocalTarget {
@@ -1187,7 +1187,7 @@ impl JjRepo {
 
         // Remote-only tags (deleted locally).
         for (name, refs) in &remotes_by_name {
-            let tag_name = Str::from(name.as_str());
+            let tag_name = TagName::new(name.as_str());
             if result.contains_key(&tag_name) {
                 continue;
             }

@@ -7,7 +7,7 @@ use crate::idx::EntryIdx;
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::types::{
     BookmarkName, ChangeId, CommitId, FollowUpOption, GlobalToggle, PendingCommand,
-    PendingCommitSelect, PendingSelection, RemoteName, RepoPath, SearchScopes, Str,
+    PendingCommitSelect, PendingSelection, RemoteName, RepoPath, SearchScopes, Str, TagName,
     TargetOperation, VisualRange,
 };
 
@@ -40,12 +40,16 @@ pub struct ViewData {
     pub bookmark_entries: Vec<BookmarkViewEntry>,
     /// Rich detail data per bookmark (conflict targets, remote tracking).
     pub bookmark_details: HashMap<BookmarkName, crate::dag::BookmarkDetails>,
+    /// Bookmarks whose detail rows are collapsed (empty = all expanded).
+    pub folded_bookmarks: HashSet<BookmarkName>,
     /// All local tag names (including those outside the current revset).
-    pub all_tags: Vec<Str>,
+    pub all_tags: Vec<TagName>,
     /// Aggregated tag data for the tag view.
     pub tag_entries: Vec<TagViewEntry>,
     /// Rich detail data per tag (remote tracking).
-    pub tag_details: HashMap<Str, crate::dag::TagDetails>,
+    pub tag_details: HashMap<TagName, crate::dag::TagDetails>,
+    /// Tags whose detail rows are collapsed (empty = all expanded).
+    pub folded_tags: HashSet<TagName>,
     /// Aggregated workspace data for the workspace view.
     pub workspace_entries: Vec<WorkspaceViewEntry>,
     /// All remote bookmarks (tracked and untracked, including off-DAG).
@@ -59,9 +63,11 @@ impl ViewData {
         Self {
             bookmark_entries: Vec::new(),
             bookmark_details: HashMap::new(),
+            folded_bookmarks: HashSet::new(),
             all_tags: Vec::new(),
             tag_entries: Vec::new(),
             tag_details: HashMap::new(),
+            folded_tags: HashSet::new(),
             workspace_entries: Vec::new(),
             remote_bookmarks: Vec::new(),
             remotes: Vec::new(),
@@ -327,7 +333,7 @@ pub struct BookmarkViewEntry {
 }
 
 pub struct TagViewEntry {
-    pub name: Str,
+    pub name: TagName,
     pub commit_id: Option<CommitId>,
     pub change_id: Option<crate::dag::ShortId>,
     pub description: Option<String>,

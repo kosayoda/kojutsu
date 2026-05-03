@@ -27,6 +27,7 @@ macro_rules! define_str_newtype {
 define_str_newtype!(pub ChangeId);
 define_str_newtype!(pub CommitId);
 define_str_newtype!(pub BookmarkName);
+define_str_newtype!(pub TagName);
 define_str_newtype!(pub RemoteName);
 define_str_newtype!(pub RepoPath);
 

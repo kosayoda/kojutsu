@@ -10,11 +10,7 @@ use crate::types::{DisplayRow, RowKey};
 /// Restore cursor position after a row rebuild. Tries each fallback key in
 /// order, returning the first matching row index. Falls back to clamping the
 /// current cursor within bounds.
-fn restore_cursor(
-    rows: &[DisplayRow],
-    cursor: usize,
-    fallbacks: &[Option<RowKey>],
-) -> usize {
+fn restore_cursor(rows: &[DisplayRow], cursor: usize, fallbacks: &[Option<RowKey>]) -> usize {
     fallbacks
         .iter()
         .flatten()
@@ -44,23 +40,22 @@ impl App {
             self.rows
                 .push(DisplayRow::BookmarkItem { bookmark_idx: bi });
 
-            // Always emit detail rows (conflict targets + remote tracking).
-            if let Some(details) = self
-                .views
-                .bookmark_details
-                .get(&self.views.bookmark_entries[idx].name)
-            {
-                for ti in 0..details.conflict_targets.len() {
-                    self.rows.push(DisplayRow::BookmarkConflictTarget {
-                        bookmark_idx: bi,
-                        target_idx: BookmarkDetailIdx::new(ti),
-                    });
-                }
-                for ti in 0..details.remote_targets.len() {
-                    self.rows.push(DisplayRow::BookmarkRemoteTarget {
-                        bookmark_idx: bi,
-                        target_idx: BookmarkDetailIdx::new(ti),
-                    });
+            // Emit detail rows unless this bookmark is folded.
+            let name = &self.views.bookmark_entries[idx].name;
+            if !self.views.folded_bookmarks.contains(name) {
+                if let Some(details) = self.views.bookmark_details.get(name) {
+                    for ti in 0..details.conflict_targets.len() {
+                        self.rows.push(DisplayRow::BookmarkConflictTarget {
+                            bookmark_idx: bi,
+                            target_idx: BookmarkDetailIdx::new(ti),
+                        });
+                    }
+                    for ti in 0..details.remote_targets.len() {
+                        self.rows.push(DisplayRow::BookmarkRemoteTarget {
+                            bookmark_idx: bi,
+                            target_idx: BookmarkDetailIdx::new(ti),
+                        });
+                    }
                 }
             }
         }
@@ -81,22 +76,21 @@ impl App {
             let ti = TagIdx::new(idx);
             self.rows.push(DisplayRow::TagItem { tag_idx: ti });
 
-            // Emit remote target child rows (skip if same commit as local).
-            if let Some(details) = self
-                .views
-                .tag_details
-                .get(&self.views.tag_entries[idx].name)
-            {
-                let local_commit = details.local_target.as_ref().map(|lt| &lt.commit_id);
-                for ri in 0..details.remote_targets.len() {
-                    let rt = &details.remote_targets[ri];
-                    if local_commit == Some(&rt.commit_id) {
-                        continue;
+            // Emit remote target child rows unless this tag is folded.
+            let name = &self.views.tag_entries[idx].name;
+            if !self.views.folded_tags.contains(name) {
+                if let Some(details) = self.views.tag_details.get(name) {
+                    let local_commit = details.local_target.as_ref().map(|lt| &lt.commit_id);
+                    for ri in 0..details.remote_targets.len() {
+                        let rt = &details.remote_targets[ri];
+                        if local_commit == Some(&rt.commit_id) {
+                            continue;
+                        }
+                        self.rows.push(DisplayRow::TagRemoteTarget {
+                            tag_idx: ti,
+                            target_idx: TagDetailIdx::new(ri),
+                        });
                     }
-                    self.rows.push(DisplayRow::TagRemoteTarget {
-                        tag_idx: ti,
-                        target_idx: TagDetailIdx::new(ri),
-                    });
                 }
             }
         }
@@ -472,6 +466,43 @@ impl App {
                 let idx = log_idx.raw();
                 self.command_log.unfolded.remove(&idx);
                 self.rebuild_rows();
+            }
+            Some(DisplayRow::BookmarkItem { bookmark_idx }) => {
+                if let Some(entry) = self.views.bookmark_entries.get(bookmark_idx.raw()) {
+                    let name = entry.name.clone();
+                    if self.views.folded_bookmarks.contains(&name) {
+                        self.views.folded_bookmarks.remove(&name);
+                    } else {
+                        self.views.folded_bookmarks.insert(name);
+                    }
+                    self.rebuild_rows();
+                }
+            }
+            Some(
+                DisplayRow::BookmarkConflictTarget { bookmark_idx, .. }
+                | DisplayRow::BookmarkRemoteTarget { bookmark_idx, .. },
+            ) => {
+                if let Some(entry) = self.views.bookmark_entries.get(bookmark_idx.raw()) {
+                    self.views.folded_bookmarks.insert(entry.name.clone());
+                    self.rebuild_rows();
+                }
+            }
+            Some(DisplayRow::TagItem { tag_idx }) => {
+                if let Some(entry) = self.views.tag_entries.get(tag_idx.raw()) {
+                    let name = entry.name.clone();
+                    if self.views.folded_tags.contains(&name) {
+                        self.views.folded_tags.remove(&name);
+                    } else {
+                        self.views.folded_tags.insert(name);
+                    }
+                    self.rebuild_rows();
+                }
+            }
+            Some(DisplayRow::TagRemoteTarget { tag_idx, .. }) => {
+                if let Some(entry) = self.views.tag_entries.get(tag_idx.raw()) {
+                    self.views.folded_tags.insert(entry.name.clone());
+                    self.rebuild_rows();
+                }
             }
             _ => {}
         }

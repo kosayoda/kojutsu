@@ -10,7 +10,7 @@ use pollster::FutureExt as _;
 
 use crate::dag::{CommitDetails, DagEntry, DivergenceUpdate, PrefixLengthUpdate};
 use crate::repo::JjRepo;
-use crate::types::{BookmarkName, CommitId, RepoPath, Str};
+use crate::types::{BookmarkName, CommitId, RepoPath, Str, TagName};
 
 pub struct RepoService;
 
@@ -73,8 +73,8 @@ pub struct RevsetData {
     pub entries: Vec<DagEntry>,
     pub remote_bookmarks: Vec<crate::dag::RemoteBookmarkRef>,
     pub remotes: Vec<Str>,
-    pub all_tags: Vec<Str>,
-    pub tag_details: std::collections::HashMap<Str, crate::dag::TagDetails>,
+    pub all_tags: Vec<TagName>,
+    pub tag_details: std::collections::HashMap<TagName, crate::dag::TagDetails>,
     pub bookmark_details: std::collections::HashMap<BookmarkName, crate::dag::BookmarkDetails>,
     pub workspace_entries: Vec<crate::app::WorkspaceViewEntry>,
     /// Non-fatal warnings from revset evaluation (e.g. immutable() failed).

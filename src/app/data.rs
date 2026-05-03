@@ -673,11 +673,10 @@ impl App {
     /// Aggregate tag data from DAG nodes + tag_details into a flat list for the tag view.
     pub fn rebuild_tag_entries(&mut self) {
         use super::TagViewEntry;
-        use crate::types::Str;
         use std::collections::HashSet;
 
         let mut entries: Vec<TagViewEntry> = Vec::new();
-        let mut seen: HashSet<Str> = HashSet::new();
+        let mut seen: HashSet<crate::types::TagName> = HashSet::new();
 
         // Tags on visible commits (have full commit info).
         for node in self.nodes.iter() {
@@ -686,7 +685,7 @@ impl App {
                     let is_deleted = self
                         .views
                         .tag_details
-                        .get(tag.as_str())
+                        .get(tag)
                         .is_some_and(|d| d.is_deleted);
                     entries.push(TagViewEntry {
                         name: tag.clone(),
@@ -702,7 +701,7 @@ impl App {
         // Tags not attached to any visible commit (from all_tags or remote-only from tag_details).
         for tag in &self.views.all_tags {
             if seen.insert(tag.clone()) {
-                let details = self.views.tag_details.get(tag.as_str());
+                let details = self.views.tag_details.get(tag);
                 // Use local target info from tag_details if available.
                 let (commit_id, change_id, description) =
                     if let Some(lt) = details.and_then(|d| d.local_target.as_ref()) {

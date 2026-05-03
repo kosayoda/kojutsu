@@ -602,7 +602,7 @@ impl App {
     }
 
     /// Get the tags of the commit the cursor is on.
-    pub fn selected_tags(&self) -> Option<&[crate::types::Str]> {
+    pub fn selected_tags(&self) -> Option<&[crate::types::TagName]> {
         let entry_idx = self.selected_entry_idx()?;
         Some(&self.nodes[entry_idx].commit.tags)
     }
