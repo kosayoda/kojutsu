@@ -240,6 +240,7 @@ impl App {
                     command: "revset error".to_string(),
                     output: error.into_bytes(),
                     success: false,
+                    retry: vec![],
                 };
             }
             RepoResult::CommitDetailsLoaded { commit_id, details } => {
@@ -297,6 +298,7 @@ impl App {
                     command: summary,
                     output: error.into_bytes(),
                     success: false,
+                    retry: vec![],
                 };
                 deferred.rebuild = true;
             }
@@ -342,6 +344,7 @@ impl App {
                     command: summary,
                     output: error.into_bytes(),
                     success: false,
+                    retry: vec![],
                 };
                 deferred.rebuild = true;
             }

@@ -13,6 +13,7 @@ use kojutsu::jj_command::JJCommand;
 use kojutsu::keymap::Keymaps;
 use kojutsu::repo::JjRepo;
 use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService};
+use kojutsu::terminal::spawn_terminal_events;
 use kojutsu::ui;
 
 enum AppEvent {
@@ -381,11 +382,13 @@ fn suspend_and_run(
     // Show output if there is any, or if the command failed (so failures are
     // always visible even when interactive commands print to inherited stdio).
     if !result.success || !result.output.is_empty() {
+        let retry = cmd.retry_options(&result.output);
         app.mode = AppMode::CommandOutput {
             command: result.display,
             command_parts: Some(result.display_parts),
             output: result.output,
             success: result.success,
+            retry,
         };
     }
 }
@@ -409,6 +412,7 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
                 command_parts: None,
                 output: format!("failed to create temp file: {e}").into_bytes(),
                 success: false,
+                retry: vec![],
             };
             return;
         }
@@ -437,6 +441,7 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
                         command_parts: None,
                         output: format!("failed to read temp file: {e}").into_bytes(),
                         success: false,
+                        retry: vec![],
                     };
                 }
             }
@@ -450,6 +455,7 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
                 command_parts: None,
                 output: format!("failed to run {editor}: {e}").into_bytes(),
                 success: false,
+                retry: vec![],
             };
         }
     }
@@ -523,11 +529,13 @@ fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
         result.output.clone(),
         result.success,
     );
+    let retry = cmd.retry_options(&result.output);
     app.mode = AppMode::CommandOutput {
         command: result.display,
         command_parts: Some(result.display_parts),
         output: result.output,
         success: result.success,
+        retry,
     };
 
     if result.success {

@@ -500,6 +500,9 @@ pub enum AppMode {
         output: Vec<u8>,
         /// Whether the command succeeded.
         success: bool,
+        /// Follow-up options offered when the overlay is dismissed (e.g. retry
+        /// with `--ignore-immutable`). Empty means no retry available.
+        retry: Vec<crate::types::FollowUpOption>,
     },
     /// Help overlay showing all keybindings.
     Help { scroll: u16 },

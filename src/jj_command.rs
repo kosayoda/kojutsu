@@ -345,6 +345,90 @@ impl JJCommand {
         }
     }
 
+    /// Mutable reference to the flags in any variant.
+    fn flags_mut(&mut self) -> &mut CommandFlags {
+        match self {
+            JJCommand::Abandon { flags, .. }
+            | JJCommand::Describe { flags, .. }
+            | JJCommand::DescribeInEditor { flags, .. }
+            | JJCommand::Edit { flags, .. }
+            | JJCommand::New { flags, .. }
+            | JJCommand::Rebase { flags, .. }
+            | JJCommand::Restore { flags, .. }
+            | JJCommand::Split { flags, .. }
+            | JJCommand::BookmarkCreate { flags, .. }
+            | JJCommand::BookmarkSet { flags, .. }
+            | JJCommand::BookmarkDelete { flags, .. }
+            | JJCommand::BookmarkForget { flags, .. }
+            | JJCommand::BookmarkMove { flags, .. }
+            | JJCommand::BookmarkRename { flags, .. }
+            | JJCommand::BookmarkAdvance { flags, .. }
+            | JJCommand::BookmarkTrack { flags, .. }
+            | JJCommand::BookmarkUntrack { flags, .. }
+            | JJCommand::Undo { flags, .. }
+            | JJCommand::Redo { flags, .. }
+            | JJCommand::GitFetch { flags, .. }
+            | JJCommand::GitPush { flags, .. }
+            | JJCommand::GitPushChange { flags, .. }
+            | JJCommand::GitPushBookmark { flags, .. }
+            | JJCommand::GitFetchBookmark { flags, .. }
+            | JJCommand::GitExport { flags, .. }
+            | JJCommand::GitImport { flags, .. }
+            | JJCommand::Absorb { flags, .. }
+            | JJCommand::Commit { flags, .. }
+            | JJCommand::Duplicate { flags, .. }
+            | JJCommand::Parallelize { flags, .. }
+            | JJCommand::SimplifyParents { flags, .. }
+            | JJCommand::Revert { flags, .. }
+            | JJCommand::Squash { flags, .. }
+            | JJCommand::WorkspaceAdd { flags, .. }
+            | JJCommand::WorkspaceForget { flags, .. }
+            | JJCommand::WorkspaceList { flags, .. }
+            | JJCommand::WorkspaceRename { flags, .. }
+            | JJCommand::TagSet { flags, .. }
+            | JJCommand::TagDelete { flags, .. }
+            | JJCommand::OpRestore { flags, .. }
+            | JJCommand::OpRevert { flags, .. }
+            | JJCommand::OpAbandon { flags, .. }
+            | JJCommand::Fix { flags, .. }
+            | JJCommand::FileUntrack { flags, .. }
+            | JJCommand::Resolve { flags, .. } => flags,
+        }
+    }
+
+    /// Return a clone of this command with an additional flag set.
+    pub fn with_flag(mut self, flag: CommandFlags) -> Self {
+        *self.flags_mut() |= flag;
+        self
+    }
+
+    /// Build follow-up retry options for a failed jj command based on its error
+    /// output. Returns an empty vec when no retry is applicable.
+    pub fn retry_options(&self, output: &[u8]) -> Vec<FollowUpOption> {
+        let mut options = Vec::new();
+        let text = String::from_utf8_lossy(output);
+
+        if text.contains("immutable") {
+            options.push(FollowUpOption {
+                key: 'r',
+                label: "retry with --ignore-immutable",
+                action: FollowUpAction::Execute(
+                    self.clone().with_flag(CommandFlags::IGNORE_IMMUTABLE),
+                ),
+            });
+        } else if text.contains("stale") && text.contains("working copy") {
+            options.push(FollowUpOption {
+                key: 'r',
+                label: "retry with --ignore-working-copy",
+                action: FollowUpAction::Execute(
+                    self.clone().with_flag(CommandFlags::IGNORE_WORKING_COPY),
+                ),
+            });
+        }
+
+        options
+    }
+
     /// Where to jump the cursor after this command succeeds.
     pub fn jump_target(&self) -> Option<JumpTarget> {
         match self {

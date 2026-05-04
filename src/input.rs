@@ -82,8 +82,19 @@ pub fn handle_key(app: &mut App, keymaps: &'static Keymaps, key: KeyEvent) -> Ac
             handle_submenu_key(app, children, flags, &node)
         }
         AppMode::CommandOutput { .. } => {
-            app.mode = AppMode::Normal;
+            // Take ownership so we can inspect retry options.
+            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+            let retry = match mode {
+                AppMode::CommandOutput { retry, .. } => retry,
+                _ => unreachable!(),
+            };
             if node.key == keymap_parser::Key::Esc {
+                Action::None
+            } else if !retry.is_empty() {
+                app.mode = AppMode::FollowUp {
+                    prompt: "Retry?".into(),
+                    options: retry,
+                };
                 Action::None
             } else {
                 handle_normal_key(app, keymap, &node)

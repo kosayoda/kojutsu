@@ -101,6 +101,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
             command_parts,
             output,
             success,
+            ..
         } => {
             let output_lines = output.iter().filter(|&&b| b == b'\n').count().max(1);
             let height = (output_lines as u16 + 3)
