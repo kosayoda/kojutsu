@@ -7,8 +7,8 @@ use crate::app::{JumpTarget, GLOBAL_TOGGLES};
 use crate::dag::BookmarkRef;
 use crate::keymap::CommandFlags;
 use crate::types::{
-    BookmarkName, ChangeId, MessageMode, RebaseSource, RebaseTarget, SmallVec, SplitTarget,
-    SquashTarget, Str,
+    BookmarkName, ChangeId, MessageMode, OperationId, RebaseSource, RebaseTarget, RemoteName,
+    SmallVec, SplitTarget, SquashTarget, Str, TagName, WorkspaceName,
 };
 
 /// Where to insert a new commit relative to its parent.
@@ -140,27 +140,27 @@ pub enum JJCommand {
     },
     GitFetch {
         all_remotes: bool,
-        remote: Option<Str>,
+        remote: Option<RemoteName>,
         flags: CommandFlags,
     },
     GitPush {
         all: bool,
-        remote: Option<Str>,
+        remote: Option<RemoteName>,
         flags: CommandFlags,
     },
     GitPushChange {
         change_id: ChangeId,
-        remote: Option<Str>,
+        remote: Option<RemoteName>,
         flags: CommandFlags,
     },
     GitPushBookmark {
         bookmarks: SmallVec<BookmarkName>,
-        remote: Option<Str>,
+        remote: Option<RemoteName>,
         flags: CommandFlags,
     },
     GitFetchBookmark {
         bookmark: BookmarkName,
-        remote: Str,
+        remote: RemoteName,
         flags: CommandFlags,
     },
     GitExport {
@@ -204,40 +204,40 @@ pub enum JJCommand {
     },
     WorkspaceAdd {
         path: String,
-        name: Option<String>,
+        name: Option<WorkspaceName>,
         revision: ChangeId,
         flags: CommandFlags,
     },
     WorkspaceForget {
-        names: SmallVec<String>,
+        names: SmallVec<WorkspaceName>,
         flags: CommandFlags,
     },
     WorkspaceList {
         flags: CommandFlags,
     },
     WorkspaceRename {
-        new_name: String,
+        new_name: WorkspaceName,
         flags: CommandFlags,
     },
     TagSet {
-        name: String,
+        name: TagName,
         change_id: ChangeId,
         flags: CommandFlags,
     },
     TagDelete {
-        names: SmallVec<String>,
+        names: SmallVec<TagName>,
         flags: CommandFlags,
     },
     OpRestore {
-        op_id: String,
+        op_id: OperationId,
         flags: CommandFlags,
     },
     OpRevert {
-        op_id: String,
+        op_id: OperationId,
         flags: CommandFlags,
     },
     OpAbandon {
-        op_id: String,
+        op_id: OperationId,
         flags: CommandFlags,
     },
     Fix {

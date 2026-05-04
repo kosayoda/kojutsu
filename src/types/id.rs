@@ -30,6 +30,8 @@ define_str_newtype!(pub BookmarkName);
 define_str_newtype!(pub TagName);
 define_str_newtype!(pub RemoteName);
 define_str_newtype!(pub RepoPath);
+define_str_newtype!(pub OperationId);
+define_str_newtype!(pub WorkspaceName);
 
 // Extra PartialEq impls for ID types used in comparisons with raw strings.
 impl PartialEq<String> for CommitId {
