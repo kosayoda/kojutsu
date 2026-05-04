@@ -320,8 +320,14 @@ impl App {
                 let Some(entry) = self.views.workspace_entries.get(workspace_idx.raw()) else {
                     return false;
                 };
-                scopes.contains(SearchScopes::DESCRIPTION)
-                    && entry.description.as_deref().is_some_and(contains)
+                (scopes.contains(SearchScopes::DESCRIPTION)
+                    && (contains(&entry.name)
+                        || entry.description.as_deref().is_some_and(contains)))
+                    || (scopes.contains(SearchScopes::CHANGE_ID)
+                        && entry
+                            .change_id
+                            .as_ref()
+                            .is_some_and(|c| contains(&c.display)))
             }
             DisplayRow::CommandLogItem { log_idx } => {
                 let Some(entry) = self.command_log.entries.get(log_idx.raw()) else {

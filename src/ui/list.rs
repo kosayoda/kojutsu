@@ -456,7 +456,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                 }
                 DisplayRow::CommandLogItem { log_idx } => {
                     if let Some(entry) = app.command_log.entries.get(log_idx.raw()) {
-                        render_command_log_item(entry, theme)
+                        render_command_log_item(entry, row_search.as_ref(), theme)
                     } else {
                         vec![Line::raw("")]
                     }
@@ -1152,7 +1152,13 @@ fn render_tag_item(
     // Description.
     if let Some(ref desc) = entry.description {
         spans.push(dot(theme));
-        spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
+        push_searchable(
+            &mut spans,
+            desc,
+            SearchScopes::DESCRIPTION,
+            Style::default().fg(theme.text),
+            search,
+        );
     }
 
     vec![Line::from(spans)]
@@ -1483,7 +1489,13 @@ fn render_workspace_item(
     } else {
         Style::default().fg(theme.workspace)
     };
-    spans.push(Span::styled(entry.name.to_string(), name_style));
+    push_searchable(
+        &mut spans,
+        &entry.name,
+        SearchScopes::DESCRIPTION,
+        name_style,
+        search,
+    );
     if entry.is_current {
         spans.push(Span::styled(" (current)", Style::default().fg(theme.muted)));
     }
@@ -1511,6 +1523,7 @@ fn render_workspace_item(
 
 fn render_command_log_item(
     entry: &crate::app::CommandLogEntry,
+    search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     use crate::app::CommandLogKind;
@@ -1530,7 +1543,7 @@ fn render_command_log_item(
     let relative_time = crate::repo::millis_to_relative_time(entry.timestamp.as_millisecond());
 
     let mut spans = vec![
-        Span::styled("  ", Style::default()),
+        gutter_span(search, theme),
         Span::styled(
             icon,
             Style::default().fg(icon_color).add_modifier(Modifier::BOLD),
@@ -1539,7 +1552,13 @@ fn render_command_log_item(
     if let Some(ref parts) = entry.command_parts {
         spans.extend(command_parts_to_spans(parts, theme));
     } else {
-        spans.push(Span::styled(entry.summary.clone(), summary_style));
+        push_searchable(
+            &mut spans,
+            &entry.summary,
+            SearchScopes::DESCRIPTION,
+            summary_style,
+            search,
+        );
     }
     spans.push(Span::styled(
         format!(" · {relative_time}"),
@@ -1633,7 +1652,13 @@ fn render_bookmark_item(
     // Description.
     if let Some(ref desc) = entry.description {
         spans.push(dot(theme));
-        spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
+        push_searchable(
+            &mut spans,
+            desc,
+            SearchScopes::DESCRIPTION,
+            Style::default().fg(theme.text),
+            search,
+        );
     }
 
     vec![Line::from(spans)]

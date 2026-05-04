@@ -127,11 +127,24 @@ pub fn scope_specs_for_view(view: crate::app::ActiveView) -> &'static [SearchSco
         crate::app::ActiveView::Operations => OP_LOG_VIEW_SCOPE_SPECS,
         crate::app::ActiveView::Evolog => SEARCH_SCOPE_SPECS,
         crate::app::ActiveView::Workspaces => WORKSPACE_VIEW_SCOPE_SPECS,
-        crate::app::ActiveView::CommandLog => SEARCH_SCOPE_SPECS,
+        crate::app::ActiveView::CommandLog => COMMAND_LOG_VIEW_SCOPE_SPECS,
     }
 }
 
-pub const WORKSPACE_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[SearchScopeSpec {
+pub const WORKSPACE_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
+    SearchScopeSpec {
+        flag: SearchScopes::DESCRIPTION,
+        hint: "d",
+        label: "description",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::CHANGE_ID,
+        hint: "c",
+        label: "change-id",
+    },
+];
+
+pub const COMMAND_LOG_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[SearchScopeSpec {
     flag: SearchScopes::DESCRIPTION,
     hint: "d",
     label: "description",
