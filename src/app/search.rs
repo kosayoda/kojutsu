@@ -1,6 +1,7 @@
 use tui_input::Input;
 
 use super::{App, AppMode};
+use crate::idx::RowIdx;
 use crate::types::{DisplayRow, SearchFocus, SearchScopes, SearchState};
 
 impl App {
@@ -96,7 +97,7 @@ impl App {
         self.cursor = search.matches[prev];
     }
 
-    pub fn is_match(&self, row_idx: usize) -> bool {
+    pub fn is_match(&self, row_idx: RowIdx) -> bool {
         self.search
             .as_ref()
             .is_some_and(|search| search.matches.contains(&row_idx))
@@ -143,8 +144,14 @@ impl App {
         let preferred = self
             .search
             .as_ref()
-            .map(|s| s.restore_cursor.min(self.rows.len().saturating_sub(1)))
-            .unwrap_or(0);
+            .map(|s| {
+                RowIdx::new(
+                    s.restore_cursor
+                        .raw()
+                        .min(self.rows.len().saturating_sub(1)),
+                )
+            })
+            .unwrap_or(RowIdx::new(0));
         self.recompute_search_matches_at(preferred, true);
     }
 
@@ -154,7 +161,7 @@ impl App {
         self.recompute_search_matches_at(self.cursor, false);
     }
 
-    fn recompute_search_matches_at(&mut self, preferred: usize, move_cursor: bool) {
+    fn recompute_search_matches_at(&mut self, preferred: RowIdx, move_cursor: bool) {
         let Some(search) = &self.search else {
             return;
         };
@@ -165,7 +172,7 @@ impl App {
         if !query.is_empty() && !scopes.is_empty() {
             for row_idx in 0..self.rows.len() {
                 if self.row_matches(row_idx, &query, scopes) {
-                    matches.push(row_idx);
+                    matches.push(RowIdx::new(row_idx));
                 }
             }
         }

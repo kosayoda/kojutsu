@@ -1,5 +1,7 @@
 use tui_input::Input;
 
+use crate::idx::RowIdx;
+
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct SearchScopes: u8 {
@@ -158,15 +160,15 @@ pub enum SearchFocus {
 
 pub struct SearchState {
     pub input: Input,
-    pub matches: Vec<usize>,
+    pub matches: Vec<RowIdx>,
     pub current_match: Option<usize>,
-    pub restore_cursor: usize,
+    pub restore_cursor: RowIdx,
     pub scopes: SearchScopes,
     pub focus: SearchFocus,
 }
 
 impl SearchState {
-    pub fn new(restore_cursor: usize) -> Self {
+    pub fn new(restore_cursor: RowIdx) -> Self {
         Self {
             input: Input::new(String::new()),
             matches: Vec::new(),

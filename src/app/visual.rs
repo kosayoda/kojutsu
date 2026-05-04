@@ -1,6 +1,6 @@
 use super::{App, PersistentVisualRange, VisualMode};
 use crate::dag::DiffLineKind;
-use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
+use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, RowIdx};
 use crate::types::{
     ChangeId, DisplayRow, FileRef, RepoPath, Selection, SelectionKind, VisualRange,
 };
@@ -26,7 +26,7 @@ impl App {
     /// Enter visual mode based on the current cursor row type.
     /// CommitNode → commit visual mode, DiffLine → line visual mode.
     pub fn enter_visual_mode(&mut self) {
-        match self.rows.get(self.cursor) {
+        match self.rows.get(self.cursor.raw()) {
             Some(DisplayRow::CommitNode { entry_idx }) => {
                 let entry_idx = *entry_idx;
                 self.visual.mode = Some(VisualMode::Commits {
@@ -98,7 +98,7 @@ impl App {
                     entry_idx,
                     file_idx,
                     line_idx,
-                }) = self.rows.get(self.cursor)
+                }) = self.rows.get(self.cursor.raw())
                 {
                     let cid = self.nodes[*entry_idx].commit.unique_change_id();
                     if let Some(file) = self
@@ -113,7 +113,7 @@ impl App {
                 }
                 false
             }
-            Some(PersistentVisualRange::Commits(range)) => match self.rows.get(self.cursor) {
+            Some(PersistentVisualRange::Commits(range)) => match self.rows.get(self.cursor.raw()) {
                 Some(DisplayRow::CommitNode { entry_idx }) => range.contains(entry_idx),
                 _ => false,
             },
@@ -167,8 +167,8 @@ impl App {
     ) -> bool {
         // Check active line visual range.
         if let Some(VisualMode::Lines { anchor }) = &self.visual.mode {
-            let lo = (*anchor).min(self.cursor);
-            let hi = (*anchor).max(self.cursor);
+            let lo = (*anchor).min(self.cursor).raw();
+            let hi = (*anchor).max(self.cursor).raw();
             if let Some(row_idx) = self.rows.iter().position(|r| {
                 matches!(r, DisplayRow::DiffLine { entry_idx: e, file_idx: f, line_idx: l }
                     if *e == entry_idx && *f == file_idx && *l == line_idx)
@@ -219,7 +219,7 @@ impl App {
         let Some(VisualMode::Lines { anchor }) = &self.visual.mode else {
             return None;
         };
-        match self.rows.get(*anchor) {
+        match self.rows.get(anchor.raw()) {
             Some(DisplayRow::DiffLine {
                 entry_idx,
                 file_idx,
@@ -233,7 +233,7 @@ impl App {
         let Some((anchor_entry, anchor_file)) = self.visual_line_file() else {
             return;
         };
-        for j in (self.cursor + 1)..self.rows.len() {
+        for j in (self.cursor.raw() + 1)..self.rows.len() {
             match &self.rows[j] {
                 DisplayRow::GraphLink { .. } => continue,
                 DisplayRow::DiffLine {
@@ -249,7 +249,7 @@ impl App {
                     {
                         continue;
                     }
-                    self.cursor = j;
+                    self.cursor = RowIdx::new(j);
                     return;
                 }
                 _ => return,
@@ -261,7 +261,7 @@ impl App {
         let Some((anchor_entry, anchor_file)) = self.visual_line_file() else {
             return;
         };
-        for j in (0..self.cursor).rev() {
+        for j in (0..self.cursor.raw()).rev() {
             match &self.rows[j] {
                 DisplayRow::GraphLink { .. } => continue,
                 DisplayRow::DiffLine {
@@ -277,7 +277,7 @@ impl App {
                     {
                         continue;
                     }
-                    self.cursor = j;
+                    self.cursor = RowIdx::new(j);
                     return;
                 }
                 _ => return,
@@ -286,9 +286,9 @@ impl App {
     }
 
     /// Compute the persistent line range from the given anchor and current cursor.
-    fn compute_line_range(&self, anchor: usize) -> Option<PersistentVisualRange> {
-        let lo = anchor.min(self.cursor);
-        let hi = anchor.max(self.cursor);
+    fn compute_line_range(&self, anchor: RowIdx) -> Option<PersistentVisualRange> {
+        let lo = anchor.min(self.cursor).raw();
+        let hi = anchor.max(self.cursor).raw();
 
         let mut start_line = None;
         let mut end_line = None;
@@ -538,7 +538,7 @@ impl App {
             .iter()
             .position(|r| matches!(r, DisplayRow::CommitNode { entry_idx: e } if *e == entry_idx))
         {
-            self.cursor = pos;
+            self.cursor = RowIdx::new(pos);
         }
     }
 }

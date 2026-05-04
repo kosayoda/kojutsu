@@ -2,7 +2,7 @@ use super::{ActiveView, App, Loadable};
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, CommandLogIdx, ConflictHunkIdx,
     ConflictLineIdx, ConflictSideIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx,
-    FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
+    FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, RowIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
 use crate::types::{DisplayRow, RowKey};
@@ -10,12 +10,13 @@ use crate::types::{DisplayRow, RowKey};
 /// Restore cursor position after a row rebuild. Tries each fallback key in
 /// order, returning the first matching row index. Falls back to clamping the
 /// current cursor within bounds.
-fn restore_cursor(rows: &[DisplayRow], cursor: usize, fallbacks: &[Option<RowKey>]) -> usize {
+fn restore_cursor(rows: &[DisplayRow], cursor: RowIdx, fallbacks: &[Option<RowKey>]) -> RowIdx {
     fallbacks
         .iter()
         .flatten()
         .find_map(|key| rows.iter().position(|r| r.key() == *key))
-        .unwrap_or(cursor.min(rows.len().saturating_sub(1)))
+        .map(RowIdx::new)
+        .unwrap_or(RowIdx::new(cursor.raw().min(rows.len().saturating_sub(1))))
 }
 
 impl App {
@@ -33,7 +34,7 @@ impl App {
     }
 
     fn rebuild_bookmark_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
         self.rows.clear();
         for idx in 0..self.views.bookmark_entries.len() {
             let bi = BookmarkIdx::new(idx);
@@ -70,7 +71,7 @@ impl App {
     }
 
     fn rebuild_tag_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
         self.rows.clear();
         for idx in 0..self.views.tag_entries.len() {
             let ti = TagIdx::new(idx);
@@ -98,7 +99,7 @@ impl App {
     }
 
     fn rebuild_workspace_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
         self.rows.clear();
         for idx in 0..self.views.workspace_entries.len() {
             self.rows.push(DisplayRow::WorkspaceItem {
@@ -109,7 +110,7 @@ impl App {
     }
 
     fn rebuild_command_log_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
         self.rows.clear();
         // Show entries in reverse chronological order (newest first).
         for idx in (0..self.command_log.entries.len()).rev() {
@@ -133,7 +134,7 @@ impl App {
     }
 
     fn rebuild_op_log_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
         self.rows.clear();
         for idx in 0..self.op_log.entries.len() {
             // Apply workspace filter (operations with no workspace always pass).
@@ -182,7 +183,7 @@ impl App {
     }
 
     fn rebuild_evolog_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
         self.rows.clear();
         for idx in 0..self.evolog.entries.len() {
             let ei = EvoLogIdx::new(idx);
@@ -234,7 +235,7 @@ impl App {
 
     fn rebuild_dag_rows(&mut self) {
         // Remember what the cursor was pointing at so we can restore it.
-        let prev_cursor = self.rows.get(self.cursor).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
 
         self.rows.clear();
         for idx_raw in 0..self.nodes.len() {
@@ -369,8 +370,8 @@ impl App {
         }
 
         // Find the last child row index below cursor.
-        let mut last_child = self.cursor;
-        for idx in (self.cursor + 1)..self.rows.len() {
+        let mut last_child = self.cursor.raw();
+        for idx in (self.cursor.raw() + 1)..self.rows.len() {
             match self.rows[idx] {
                 DisplayRow::CommitNode { .. }
                 | DisplayRow::GraphLink { .. }
@@ -380,7 +381,7 @@ impl App {
                 _ => last_child = idx,
             }
         }
-        if last_child == self.cursor {
+        if last_child == self.cursor.raw() {
             return; // Nothing unfolded (data not loaded yet)
         }
 
@@ -410,7 +411,7 @@ impl App {
     /// - On a commit row: toggle showing file changes.
     /// - On a file row: toggle showing diff hunks.
     pub fn toggle_fold(&mut self) {
-        match self.rows.get(self.cursor) {
+        match self.rows.get(self.cursor.raw()) {
             Some(DisplayRow::CommitNode { entry_idx }) => {
                 self.toggle_commit_fold(*entry_idx);
             }

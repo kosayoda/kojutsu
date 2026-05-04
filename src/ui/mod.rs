@@ -48,7 +48,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
     };
 
     match &mut app.mode {
-        AppMode::Normal => {}
+        AppMode::Normal | AppMode::Jump { .. } => {}
         AppMode::Submenu {
             key,
             label,

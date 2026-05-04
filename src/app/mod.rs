@@ -28,7 +28,7 @@ use ratatui::widgets::ListState;
 
 use crate::dag::{DagEntry, DiffLine, EdgeKind, FileChange, LineStats};
 use crate::graph;
-use crate::idx::{EntryIdx, FileIdx, IndexVec};
+use crate::idx::{EntryIdx, EvoLogIdx, FileIdx, IndexVec, RowIdx};
 use crate::types::SmallVec;
 
 use crate::keymap::CommandFlags;
@@ -124,7 +124,7 @@ pub struct App {
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
-    pub cursor: usize,
+    pub cursor: RowIdx,
     /// Saved per-view state (cursor, scroll, h_scroll, search scopes).
     view_states: [ViewState; <ActiveView as strum::EnumCount>::COUNT],
     /// Persisted list widget state (preserves scroll offset across frames).
@@ -192,7 +192,7 @@ impl App {
             evolog: EvoLogState::new(),
             command_log: CommandLogState::new(),
             rows: Vec::new(),
-            cursor: 0,
+            cursor: RowIdx::new(0),
             view_states: default_view_states(),
             list_state: ListState::default(),
             last_header_height: 2,
@@ -262,8 +262,8 @@ impl App {
     }
 
     /// Row index of a commit's `CommitNode` in the display rows.
-    pub fn row_of_commit(&self, entry_idx: EntryIdx) -> Option<usize> {
-        Some(self.nodes.get(entry_idx)?.row)
+    pub fn row_of_commit(&self, entry_idx: EntryIdx) -> Option<RowIdx> {
+        Some(RowIdx::new(self.nodes.get(entry_idx)?.row))
     }
 
     pub fn switch_view(&mut self, view: ActiveView) {
@@ -307,7 +307,7 @@ impl App {
 
         // Restore saved state for new view.
         let vs = &self.view_states[view.idx()];
-        self.cursor = vs.cursor.min(self.rows.len().saturating_sub(1));
+        self.cursor = RowIdx::new(vs.cursor.raw().min(self.rows.len().saturating_sub(1)));
         *self.list_state.offset_mut() = vs.scroll_offset;
         self.search_scopes = vs.search_scopes;
         self.h_scroll = vs.h_scroll;
@@ -340,7 +340,7 @@ impl App {
     }
 
     pub fn selected_bookmark_entry(&self) -> Option<&BookmarkViewEntry> {
-        let bookmark_idx = match self.rows.get(self.cursor)? {
+        let bookmark_idx = match self.rows.get(self.cursor.raw())? {
             DisplayRow::BookmarkItem { bookmark_idx }
             | DisplayRow::BookmarkConflictTarget { bookmark_idx, .. }
             | DisplayRow::BookmarkRemoteTarget { bookmark_idx, .. } => *bookmark_idx,
@@ -353,7 +353,7 @@ impl App {
     pub fn selected_conflict_target(
         &self,
     ) -> Option<(&BookmarkViewEntry, &crate::dag::BookmarkConflictTarget)> {
-        let (bookmark_idx, target_idx) = match self.rows.get(self.cursor)? {
+        let (bookmark_idx, target_idx) = match self.rows.get(self.cursor.raw())? {
             DisplayRow::BookmarkConflictTarget {
                 bookmark_idx,
                 target_idx,
@@ -374,7 +374,7 @@ impl App {
     pub fn selected_remote_target(
         &self,
     ) -> Option<(&BookmarkViewEntry, &crate::dag::BookmarkRemoteTarget)> {
-        let (bookmark_idx, target_idx) = match self.rows.get(self.cursor)? {
+        let (bookmark_idx, target_idx) = match self.rows.get(self.cursor.raw())? {
             DisplayRow::BookmarkRemoteTarget {
                 bookmark_idx,
                 target_idx,
@@ -409,7 +409,7 @@ impl App {
     }
 
     pub fn selected_tag_entry(&self) -> Option<&TagViewEntry> {
-        let tag_idx = match self.rows.get(self.cursor)? {
+        let tag_idx = match self.rows.get(self.cursor.raw())? {
             DisplayRow::TagItem { tag_idx } | DisplayRow::TagRemoteTarget { tag_idx, .. } => {
                 *tag_idx
             }
@@ -525,7 +525,7 @@ impl App {
     }
 
     pub fn selected_op_log_entry(&self) -> Option<&OpLogEntry> {
-        let op_log_idx = match self.rows.get(self.cursor)? {
+        let op_log_idx = match self.rows.get(self.cursor.raw())? {
             DisplayRow::OpLogItem { op_log_idx }
             | DisplayRow::OpLogDetailLine { op_log_idx, .. } => *op_log_idx,
             _ => return None,
@@ -534,7 +534,7 @@ impl App {
     }
 
     pub fn selected_evolog_entry(&self) -> Option<&EvoLogEntry> {
-        let evolog_idx = match self.rows.get(self.cursor)? {
+        let evolog_idx = match self.rows.get(self.cursor.raw())? {
             DisplayRow::EvoLogItem { evolog_idx }
             | DisplayRow::EvoLogFileChange { evolog_idx, .. }
             | DisplayRow::EvoLogFileDiffLine { evolog_idx, .. }
@@ -545,7 +545,7 @@ impl App {
     }
 
     pub fn selected_workspace_entry(&self) -> Option<&WorkspaceViewEntry> {
-        let workspace_idx = match self.rows.get(self.cursor)? {
+        let workspace_idx = match self.rows.get(self.cursor.raw())? {
             DisplayRow::WorkspaceItem { workspace_idx } => *workspace_idx,
             _ => return None,
         };
@@ -554,7 +554,7 @@ impl App {
 
     /// Get the entry idx the cursor is on.
     pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
-        let entry_idx = match self.rows.get(self.cursor)? {
+        let entry_idx = match self.rows.get(self.cursor.raw())? {
             DisplayRow::CommitNode { entry_idx }
             | DisplayRow::DescriptionLine { entry_idx, .. }
             | DisplayRow::GraphLink { entry_idx, .. }
@@ -659,6 +659,24 @@ impl App {
         }
     }
 
+    pub fn evolog_diff_lines(
+        &self,
+        evolog_idx: EvoLogIdx,
+        file_idx: FileIdx,
+    ) -> Option<&Vec<DiffLine>> {
+        let entry = self.evolog.entries.get(evolog_idx.raw())?;
+        let files = self.evolog.files.get(&entry.commit_id)?.loaded()?;
+        let file = files.get(file_idx.raw())?;
+        let key = (entry.commit_id.clone(), file.path.clone());
+        let git_diff = self.toggles.contains(crate::keymap::CommandFlags::GIT_DIFF);
+        let diffs = if git_diff {
+            &self.evolog.file_diffs
+        } else {
+            &self.evolog.file_diffs_cw
+        };
+        diffs.get(&key)?.loaded()
+    }
+
     pub fn commit_stats(&self, entry_idx: EntryIdx) -> Option<LineStats> {
         self.nodes[entry_idx].stats.loaded().copied()
     }
@@ -667,6 +685,142 @@ impl App {
     pub fn file_idx_by_path(&self, entry_idx: EntryIdx, path: &RepoPath) -> Option<FileIdx> {
         let files = self.files_for_entry(entry_idx)?;
         files.iter().position(|f| f.path == *path).map(FileIdx::new)
+    }
+
+    /// Enter jump mode: assign labels to visible jumpable rows.
+    ///
+    /// Navigation-aware keys (`j`, `k`, `J`, `K`, `0`, `$`, `@`) label the
+    /// rows those keys would navigate to.  Remaining targets get single-char
+    /// labels by proximity; overflow targets get two-char labels.
+    pub fn enter_jump(&mut self) {
+        const KEYS: &[char] = &[
+            'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i',
+            'o', 'p', 'z', 'x', 'c', 'v', 'b', 'n', 'm',
+        ];
+
+        let offset = self.list_state.offset();
+        let height = self.last_list_height as usize;
+        let end = (offset + height).min(self.rows.len());
+        let cursor = self.cursor.raw();
+        let visible = |idx: RowIdx| idx.raw() >= offset && idx.raw() < end;
+        let dist = |i: usize| if i >= cursor { i - cursor } else { cursor - i };
+
+        let nav_candidates: &[(&str, Option<RowIdx>)] = &[
+            ("j", self.peek_down()),
+            ("k", self.peek_up()),
+            ("J", self.peek_down_section()),
+            ("K", self.peek_up_section()),
+            ("0", self.peek_top()),
+            ("$", self.peek_bottom()),
+            ("@", self.peek_working_copy()),
+        ];
+
+        let mut labels: Vec<(String, RowIdx)> = Vec::new();
+        let mut nav_rows: HashSet<RowIdx> = HashSet::new();
+        let mut used_chars: HashSet<char> = HashSet::new();
+
+        for &(key, target) in nav_candidates {
+            if let Some(idx) = target {
+                if visible(idx) && idx != self.cursor && !nav_rows.contains(&idx) {
+                    labels.push((key.to_string(), idx));
+                    nav_rows.insert(idx);
+                    for c in key.chars() {
+                        used_chars.insert(c);
+                    }
+                }
+            }
+        }
+
+        let pool: Vec<char> = KEYS
+            .iter()
+            .copied()
+            .filter(|c| !used_chars.contains(c))
+            .collect();
+
+        let mut targets: Vec<RowIdx> = (offset..end)
+            .filter_map(|i| {
+                let idx = RowIdx::new(i);
+                if idx == self.cursor || nav_rows.contains(&idx) {
+                    return None;
+                }
+                match &self.rows[i] {
+                    DisplayRow::CommitNode { .. }
+                    | DisplayRow::BookmarkItem { .. }
+                    | DisplayRow::TagItem { .. }
+                    | DisplayRow::OpLogItem { .. }
+                    | DisplayRow::EvoLogItem { .. }
+                    | DisplayRow::WorkspaceItem { .. }
+                    | DisplayRow::CommandLogItem { .. }
+                    | DisplayRow::FileChange { .. }
+                    | DisplayRow::EvoLogFileChange { .. } => Some(idx),
+                    _ if self.is_hunk_header(idx) => Some(idx),
+                    _ => None,
+                }
+            })
+            .collect();
+        targets.sort_by_key(|idx| dist(idx.raw()));
+
+        if !pool.is_empty() {
+            let overflow = targets.len().saturating_sub(pool.len());
+            let n_groups = if overflow == 0 {
+                0
+            } else {
+                (overflow + pool.len() - 1) / pool.len()
+            };
+            let n_single = pool.len().saturating_sub(n_groups);
+
+            // Single-char labels for the closest targets.
+            for (i, &idx) in targets.iter().take(n_single).enumerate() {
+                labels.push((String::from(pool[i]), idx));
+            }
+
+            // Two-char labels for overflow. Suffix pool excludes group prefix
+            // keys to avoid ambiguity with single-char labels.
+            if n_groups > 0 {
+                let group_keys = &pool[n_single..n_single + n_groups];
+                let suffix_pool: Vec<char> = pool[..n_single].to_vec();
+                if !suffix_pool.is_empty() {
+                    for (i, &idx) in targets.iter().skip(n_single).enumerate() {
+                        let gi = i / suffix_pool.len();
+                        let si = i % suffix_pool.len();
+                        if gi >= group_keys.len() {
+                            break;
+                        }
+                        labels.push((format!("{}{}", group_keys[gi], suffix_pool[si]), idx));
+                    }
+                }
+            }
+        }
+
+        if !labels.is_empty() {
+            self.mode = AppMode::Jump {
+                labels,
+                input: String::new(),
+            };
+        }
+    }
+
+    /// Whether a row is a diff hunk header (`@@` line).
+    fn is_hunk_header(&self, row_idx: RowIdx) -> bool {
+        match &self.rows[row_idx.raw()] {
+            DisplayRow::DiffLine {
+                entry_idx,
+                file_idx,
+                line_idx,
+            } => self
+                .diff_lines(*entry_idx, *file_idx)
+                .and_then(|lines| lines.get(line_idx.raw()))
+                .is_some_and(|dl| dl.kind == crate::dag::DiffLineKind::Header),
+            DisplayRow::EvoLogFileDiffLine {
+                evolog_idx,
+                file_idx,
+                line_idx,
+            } => self
+                .evolog_diff_lines(*evolog_idx, *file_idx)
+                .and_then(|lines| lines.get(line_idx.raw()))
+                .is_some_and(|dl| dl.kind == crate::dag::DiffLineKind::Header),
+            _ => false,
+        }
     }
 
     pub fn take_repo_requests(&mut self) -> Vec<RepoRequest> {

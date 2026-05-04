@@ -108,7 +108,7 @@ fn render_help_column(
         let required = app.selection_kind().as_bitset();
         let selection_active = app.selection_active();
         let on_conflict = matches!(
-            app.rows.get(app.cursor),
+            app.rows.get(app.cursor.raw()),
             Some(
                 crate::types::DisplayRow::ConflictHeader { .. }
                     | crate::types::DisplayRow::ConflictSide { .. }

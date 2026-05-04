@@ -141,6 +141,7 @@ pub fn handle_key(app: &mut App, keymaps: &'static Keymaps, key: KeyEvent) -> Ac
         AppMode::CommitSelect { .. } => handle_commit_select(app, key),
         AppMode::FollowUp { .. } => handle_follow_up(app, key),
         AppMode::SelectFromList { .. } => handle_select_from_list(app, key),
+        AppMode::Jump { .. } => handle_jump(app, key),
     }
 }
 
@@ -160,7 +161,7 @@ fn handle_normal_key(app: &mut App, keymap: &'static Keymap, node: &keymap_parse
             // Block conflict prefix when not on a conflict-relevant row.
             if label == keymap::CONFLICT_PREFIX {
                 let on_conflict_row = matches!(
-                    app.rows.get(app.cursor),
+                    app.rows.get(app.cursor.raw()),
                     Some(
                         DisplayRow::ConflictHeader { .. }
                             | DisplayRow::ConflictSide { .. }
@@ -375,7 +376,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 File(EntryIdx, FileIdx),
                 DiffLine(EntryIdx, FileIdx, DiffLineIdx, DiffLineKind),
             }
-            let target = match app.rows.get(app.cursor) {
+            let target = match app.rows.get(app.cursor.raw()) {
                 Some(DisplayRow::CommitNode { entry_idx }) => {
                     Some(SelectTarget::Commit(*entry_idx))
                 }
@@ -560,7 +561,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 file_idx,
                 hunk_idx,
                 ..
-            }) = app.rows.get(app.cursor)
+            }) = app.rows.get(app.cursor.raw())
             {
                 let side = match action {
                     AppAction::ResolveOurs => 0,
@@ -580,7 +581,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             }
 
             // Whole-file resolution from FileChange/DiffLine rows.
-            let (entry_idx, file_idx) = match app.rows.get(app.cursor) {
+            let (entry_idx, file_idx) = match app.rows.get(app.cursor.raw()) {
                 Some(DisplayRow::FileChange {
                     entry_idx,
                     file_idx,
@@ -637,7 +638,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 file_idx,
                 hunk_idx,
                 ..
-            }) = app.rows.get(app.cursor)
+            }) = app.rows.get(app.cursor.raw())
             {
                 let side = match action {
                     AppAction::ConflictPickOurs => 0,
@@ -1283,6 +1284,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.switch_view(crate::app::ActiveView::CommandLog);
             Action::None
         }
+        AppAction::Jump => {
+            app.enter_jump();
+            Action::None
+        }
         AppAction::EvoLogEdit => {
             let Some(entry) = app.selected_evolog_entry() else {
                 return Action::None;
@@ -1778,6 +1783,37 @@ fn handle_commit_select(app: &mut App, key: KeyEvent) -> Action {
     }
 }
 
+fn handle_jump(app: &mut App, key: KeyEvent) -> Action {
+    let (mut labels, mut input) = match std::mem::replace(&mut app.mode, AppMode::Normal) {
+        AppMode::Jump { labels, input } => (labels, input),
+        _ => unreachable!(),
+    };
+
+    let KeyCode::Char(c) = key.code else {
+        // Esc or non-char key cancels.
+        return Action::None;
+    };
+
+    input.push(c);
+
+    // Find labels that start with the accumulated input.
+    labels.retain(|(label, _)| label.starts_with(&input));
+
+    if labels.is_empty() {
+        return Action::None;
+    }
+
+    // Exact match → jump.
+    if let Some((_, row_idx)) = labels.iter().find(|(label, _)| *label == input) {
+        app.cursor = *row_idx;
+    } else {
+        // Input is a prefix of remaining labels — stay in jump mode.
+        app.mode = AppMode::Jump { labels, input };
+    }
+
+    Action::None
+}
+
 fn handle_follow_up(app: &mut App, key: KeyEvent) -> Action {
     if key.code == KeyCode::Esc {
         app.mode = AppMode::Normal;
@@ -1867,7 +1903,7 @@ fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
     // Check if the selected commit is the working copy.
     let is_wc = app.selected_bookmarks().is_some_and(|_| {
         // Check via the entries
-        let entry_idx = match app.rows.get(app.cursor) {
+        let entry_idx = match app.rows.get(app.cursor.raw()) {
             Some(DisplayRow::CommitNode { entry_idx })
             | Some(DisplayRow::DescriptionLine { entry_idx, .. })
             | Some(DisplayRow::GraphLink { entry_idx, .. })

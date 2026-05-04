@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::{App, AppMode, DeferredWork, JumpTarget, Loadable};
 use crate::dag::DagEntry;
-use crate::idx::{EntryIdx, IndexVec};
+use crate::idx::{EntryIdx, IndexVec, RowIdx};
 use crate::repo_service::{RepoRequest, RepoResult};
 use crate::types::{ChangeId, CommitId, DisplayRow};
 
@@ -19,7 +19,7 @@ impl App {
         // Capture cursor context using stable ChangeId for restore after rebuild.
         let cursor_context = self.selected_entry_idx().map(|entry_idx| {
             let change_id = self.change_id(entry_idx);
-            let row = self.rows.get(self.cursor);
+            let row = self.rows.get(self.cursor.raw());
             let file_path = row.and_then(|r| match r {
                 DisplayRow::FileChange {
                     entry_idx: ei,
@@ -164,7 +164,7 @@ impl App {
                     });
 
                 if let Some(row_idx) = restored {
-                    self.cursor = row_idx;
+                    self.cursor = RowIdx::new(row_idx);
                 }
             }
         }

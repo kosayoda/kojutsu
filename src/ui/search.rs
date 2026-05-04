@@ -2,6 +2,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
 
 use crate::app::App;
+use crate::idx::RowIdx;
 use crate::theme::Theme;
 use crate::types::SearchScopes;
 
@@ -21,7 +22,7 @@ pub(super) struct SearchRender<'a> {
     pub row_state: SearchRowState,
 }
 
-pub(super) fn search_row_state(app: &App, row_idx: usize) -> SearchRowState {
+pub(super) fn search_row_state(app: &App, row_idx: RowIdx) -> SearchRowState {
     let Some(search) = &app.search else {
         return SearchRowState::None;
     };

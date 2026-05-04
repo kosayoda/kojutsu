@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use tui_input::Input;
 
-use crate::idx::EntryIdx;
+use crate::idx::{EntryIdx, RowIdx};
 
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::types::{
@@ -288,7 +288,7 @@ impl ActiveView {
 /// Saved per-view state (cursor position, scroll, horizontal scroll, search scopes).
 #[derive(Clone)]
 pub struct ViewState {
-    pub cursor: usize,
+    pub cursor: RowIdx,
     pub scroll_offset: usize,
     pub h_scroll: usize,
     pub search_scopes: SearchScopes,
@@ -297,7 +297,7 @@ pub struct ViewState {
 impl ViewState {
     const fn new(scopes: SearchScopes) -> Self {
         Self {
-            cursor: 0,
+            cursor: RowIdx::new(0),
             scroll_offset: 0,
             h_scroll: 0,
             search_scopes: scopes,
@@ -450,7 +450,7 @@ pub enum VisualMode {
     /// Visual selection of diff lines within one file.
     Lines {
         /// Row index where `v` was pressed.
-        anchor: usize,
+        anchor: RowIdx,
     },
     /// Visual selection of commits along a branch.
     Commits {
@@ -518,14 +518,14 @@ pub enum AppMode {
     TargetSelect {
         prompt: &'static str,
         source: ChangeId,
-        restore_cursor: usize,
+        restore_cursor: RowIdx,
         operation: TargetOperation,
         flags: CommandFlags,
         target_mode: TargetMode,
     },
     /// Navigating to select a single commit (e.g. for workspace revision).
     CommitSelect {
-        restore_cursor: usize,
+        restore_cursor: RowIdx,
         pending: PendingCommitSelect,
         flags: CommandFlags,
     },
@@ -533,6 +533,13 @@ pub enum AppMode {
     FollowUp {
         prompt: String,
         options: Vec<FollowUpOption>,
+    },
+    /// Jump mode: labels visible on jumpable rows, type label chars to jump.
+    Jump {
+        /// (label_string, row_index) for each visible jumpable row.
+        labels: Vec<(String, RowIdx)>,
+        /// Characters typed so far (for multi-char label matching).
+        input: String,
     },
     /// Selecting an item from a list (e.g. picking a bookmark).
     SelectFromList {

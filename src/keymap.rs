@@ -166,6 +166,7 @@ pub enum AppAction {
     SwitchToWorkspaceView,
     SwitchToEvoLogView,
     SwitchToCommandLogView,
+    Jump,
     // Workspace view actions
     WsViewForget,
     WsViewJumpToCommit,
@@ -316,6 +317,7 @@ fn shared_bindings() -> Vec<(Node, KeymapNode)> {
         bind("5", AppAction::SwitchToOpLogView, "operations view", G),
         bind("6", AppAction::SwitchToEvoLogView, "evolog view", G),
         bind("7", AppAction::SwitchToCommandLogView, "command log", G),
+        bind("'", AppAction::Jump, "jump", N),
         // Fold / Select
         bind("tab", AppAction::ToggleFold, "toggle fold", N),
         bind("space", AppAction::ToggleSelect, "toggle select", N),
@@ -688,9 +690,7 @@ impl Default for Keymaps {
             operations: Keymap { root: op_root },
             workspaces: Keymap { root: ws_root },
             evolog: Keymap { root: evolog_root },
-            command_log: Keymap {
-                root: cmd_log_root,
-            },
+            command_log: Keymap { root: cmd_log_root },
         }
     }
 }

@@ -7,7 +7,8 @@ use ratatui::Frame;
 
 use super::search::*;
 use super::spans::*;
-use std::collections::HashSet;
+use crate::idx::RowIdx;
+use std::collections::{HashMap, HashSet};
 
 use crate::app::{
     App, AppMode, BookmarkViewEntry, EvoLogEntry, OpDetailLine, OpDiffKind, OpLogEntry,
@@ -65,7 +66,6 @@ fn expand_tabs(s: &str, tab_spaces: &str) -> String {
 
 pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &Config) {
     let theme = &config.theme;
-    let git_diff = app.toggles.contains(crate::keymap::CommandFlags::GIT_DIFF);
     let tab_spaces: String = " ".repeat(config.tab_width as usize);
     // If in target selection mode, get the source change_id for highlighting
     // and the set of marked targets (multi-select).
@@ -105,15 +105,24 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         row_state: SearchRowState::None,
     });
 
+    // Jump labels: row_index → (full label, chars already typed).
+    let (jump_labels, jump_input_len): (HashMap<RowIdx, &str>, usize) = match &app.mode {
+        AppMode::Jump { labels, input } => (
+            labels.iter().map(|(s, idx)| (*idx, s.as_str())).collect(),
+            input.len(),
+        ),
+        _ => (HashMap::new(), 0),
+    };
+
     // Only build full ListItems for rows near the visible window.
     // Off-screen rows get a cheap placeholder — ratatui's List still sees
     // the correct total item count for scroll math.
     let offset = app.list_state.offset();
-    let vis_start = offset.min(app.cursor).saturating_sub(20);
-    let vis_end = (offset.max(app.cursor) + area.height as usize + 20).min(app.rows.len());
+    let vis_start = offset.min(app.cursor.raw()).saturating_sub(20);
+    let vis_end = (offset.max(app.cursor.raw()) + area.height as usize + 20).min(app.rows.len());
 
     let max_w = area.width as usize;
-    let raw_items: Vec<Vec<Line>> = app
+    let mut raw_items: Vec<Vec<Line>> = app
         .rows
         .iter()
         .enumerate()
@@ -129,7 +138,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                 };
             }
             let row_search = search_ctx.as_ref().map(|ctx| SearchRender {
-                row_state: search_row_state(app, row_idx),
+                row_state: search_row_state(app, RowIdx::new(row_idx)),
                 ..*ctx
             });
             match row {
@@ -396,17 +405,9 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     file_idx,
                     line_idx,
                 } => {
-                    let diff_line = app.evolog.entries.get(evolog_idx.raw()).and_then(|e| {
-                        let files = app.evolog.files.get(&e.commit_id)?.loaded()?;
-                        let file = files.get(file_idx.raw())?;
-                        let key = (e.commit_id.clone(), file.path.clone());
-                        let diffs = if git_diff {
-                            &app.evolog.file_diffs
-                        } else {
-                            &app.evolog.file_diffs_cw
-                        };
-                        diffs.get(&key)?.loaded()?.get(line_idx.raw())
-                    });
+                    let diff_line = app
+                        .evolog_diff_lines(*evolog_idx, *file_idx)
+                        .and_then(|lines| lines.get(line_idx.raw()));
                     if let Some(diff_line) = diff_line {
                         let (base_style, prefix) = match diff_line.kind {
                             DiffLineKind::Added => (Style::default().fg(theme.added), "+"),
@@ -588,6 +589,31 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         })
         .collect();
 
+    // Inject jump labels into the gutter of labeled rows.
+    // The gutter is always 2 chars wide. We replace the first span with
+    // the remaining (untyped) portion of the label, padded to 2 chars.
+    if !jump_labels.is_empty() {
+        let label_style = Style::default()
+            .fg(theme.warning)
+            .add_modifier(Modifier::BOLD);
+        for (row_idx, label) in &jump_labels {
+            if let Some(lines) = raw_items.get_mut(row_idx.raw()) {
+                if let Some(first_line) = lines.first_mut() {
+                    if let Some(first_span) = first_line.spans.first_mut() {
+                        let remaining = &label[jump_input_len..];
+                        // Pad to 2 chars so gutter width stays constant.
+                        let display = if remaining.len() >= 2 {
+                            remaining.to_string()
+                        } else {
+                            format!("{remaining} ")
+                        };
+                        *first_span = Span::styled(display, label_style);
+                    }
+                }
+            }
+        }
+    }
+
     // Compute max content width across all visible lines, then clamp h_scroll.
     let max_content_width: usize = raw_items
         .iter()
@@ -626,7 +652,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                 .add_modifier(Modifier::BOLD),
         );
 
-    app.list_state.select(Some(app.cursor));
+    app.list_state.select(Some(app.cursor.raw()));
     frame.render_stateful_widget(list, area, &mut app.list_state);
 }
 

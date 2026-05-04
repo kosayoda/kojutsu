@@ -112,6 +112,10 @@ define_idx!(
     /// Index into detail lines within a command log entry.
     pub CommandLogDetailIdx
 );
+define_idx!(
+    /// Index into `App::rows` (flattened display row list).
+    pub RowIdx
+);
 
 // ---------------------------------------------------------------------------
 // IndexVec<I, T> -- a Vec<T> indexed by a typed index I.
