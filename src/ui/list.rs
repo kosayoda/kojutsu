@@ -847,9 +847,7 @@ fn render_commit_item<'a>(
     }
 
     // Tags
-    let tag_style = Style::default()
-        .fg(theme.accent)
-        .add_modifier(Modifier::BOLD);
+    let tag_style = Style::default().fg(theme.tag).add_modifier(Modifier::BOLD);
     for tag in &c.tags {
         line1.push(Span::raw(" "));
         push_searchable(
@@ -868,7 +866,7 @@ fn render_commit_item<'a>(
             line1.push(Span::styled(
                 format!("{}@", ws.name),
                 Style::default()
-                    .fg(theme.added)
+                    .fg(theme.workspace)
                     .add_modifier(Modifier::BOLD),
             ));
         }
@@ -1080,7 +1078,7 @@ fn render_diff_line(
     }
 
     let (marker, style) = match diff_line.kind {
-        DiffLineKind::Header => (" ", Style::default().fg(theme.change_id)),
+        DiffLineKind::Header => (" ", Style::default().fg(theme.accent)),
         DiffLineKind::Context => (" ", Style::default().fg(theme.muted)),
         DiffLineKind::Added => ("+", Style::default().fg(theme.added)),
         DiffLineKind::Removed => ("-", Style::default().fg(theme.error)),
@@ -1240,7 +1238,7 @@ fn render_op_log_item(
     let time_color = if entry.is_snapshot {
         theme.muted
     } else {
-        Color::Cyan
+        theme.accent
     };
     spans.push(Span::styled(
         entry.relative_time.to_string(),
@@ -1447,7 +1445,7 @@ fn render_evolog_item(
     spans2.push(dot(theme));
     spans2.push(Span::styled(
         entry.relative_time.to_string(),
-        Style::default().fg(Color::Cyan),
+        Style::default().fg(theme.accent),
     ));
 
     if let Some(ref op) = entry.op_description {
