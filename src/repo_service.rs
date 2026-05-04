@@ -10,7 +10,7 @@ use pollster::FutureExt as _;
 
 use crate::dag::{CommitDetails, DagEntry, DivergenceUpdate, PrefixLengthUpdate};
 use crate::repo::JjRepo;
-use crate::types::{BookmarkName, CommitId, RepoPath, Str, TagName};
+use crate::types::{BookmarkName, CommitId, OperationId, RemoteName, RepoPath, TagName};
 
 pub struct RepoService;
 
@@ -45,7 +45,7 @@ enum RepoRequestKind {
         path: RepoPath,
     },
     OpDiff {
-        op_id: Str,
+        op_id: OperationId,
     },
     EvolutionLog {
         commit_id: CommitId,
@@ -72,7 +72,7 @@ pub struct RevsetData {
     pub repo_root: String,
     pub entries: Vec<DagEntry>,
     pub remote_bookmarks: Vec<crate::dag::RemoteBookmarkRef>,
-    pub remotes: Vec<Str>,
+    pub remotes: Vec<RemoteName>,
     pub all_tags: Vec<TagName>,
     pub tag_details: std::collections::HashMap<TagName, crate::dag::TagDetails>,
     pub bookmark_details: std::collections::HashMap<BookmarkName, crate::dag::BookmarkDetails>,
@@ -142,11 +142,11 @@ pub enum RepoResult {
         error: String,
     },
     OpDiffLoaded {
-        op_id: Str,
+        op_id: OperationId,
         lines: Vec<crate::app::OpDetailLine>,
     },
     OpDiffFailed {
-        op_id: Str,
+        op_id: OperationId,
         error: String,
     },
     EvoLogLoaded {
@@ -216,7 +216,7 @@ impl RepoRequest {
         }
     }
 
-    pub fn load_op_diff(op_id: Str) -> Self {
+    pub fn load_op_diff(op_id: OperationId) -> Self {
         Self {
             epoch: 0,
             kind: RepoRequestKind::OpDiff { op_id },
@@ -798,7 +798,7 @@ impl RepoServiceState {
         }
     }
 
-    fn handle_op_diff(&mut self, epoch: u64, op_id: Str) {
+    fn handle_op_diff(&mut self, epoch: u64, op_id: OperationId) {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
@@ -808,7 +808,7 @@ impl RepoServiceState {
         }) else {
             return;
         };
-        match repo.op_diff(&op_id) {
+        match repo.op_diff(op_id.as_str()) {
             Ok(lines) => {
                 self.send_if_current(epoch, RepoResult::OpDiffLoaded { op_id, lines });
             }

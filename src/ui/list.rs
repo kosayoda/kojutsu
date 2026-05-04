@@ -1489,7 +1489,7 @@ fn render_workspace_item(
     };
     push_searchable(
         &mut spans,
-        &entry.name,
+        entry.name.as_str(),
         SearchScopes::DESCRIPTION,
         name_style,
         search,

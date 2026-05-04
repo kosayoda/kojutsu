@@ -1,7 +1,9 @@
 use compact_str::format_compact;
 use jiff::Timestamp;
 
-use crate::types::{BookmarkName, ChangeId, CommitId, RemoteName, RepoPath, TagName};
+use crate::types::{
+    BookmarkName, ChangeId, CommitId, RemoteName, RepoPath, TagName, WorkspaceName,
+};
 
 /// A short display ID with a unique prefix highlighted.
 ///
@@ -117,7 +119,7 @@ pub struct BookmarkInfo {
 #[derive(Clone)]
 pub struct WorkspaceAnnotation {
     /// Workspace name (e.g., "default", "feature").
-    pub name: String,
+    pub name: WorkspaceName,
     /// Whether this is the workspace kojutsu is running in.
     pub is_current: bool,
 }

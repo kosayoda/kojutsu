@@ -683,7 +683,7 @@ impl JJCommand {
                 }
                 if let Some(r) = remote {
                     args.push("--remote".into());
-                    args.push(r.clone());
+                    args.push(Str::from(r.as_str()));
                 }
                 args
             }
@@ -694,7 +694,7 @@ impl JJCommand {
                 }
                 if let Some(r) = remote {
                     args.push("--remote".into());
-                    args.push(r.clone());
+                    args.push(Str::from(r.as_str()));
                 }
                 push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
@@ -707,7 +707,7 @@ impl JJCommand {
                 args.push(format_compact!("{change_id}"));
                 if let Some(r) = remote {
                     args.push("--remote".into());
-                    args.push(r.clone());
+                    args.push(Str::from(r.as_str()));
                 }
                 push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
@@ -722,7 +722,7 @@ impl JJCommand {
                 }
                 if let Some(r) = remote {
                     args.push("--remote".into());
-                    args.push(r.clone());
+                    args.push(Str::from(r.as_str()));
                 }
                 push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
@@ -736,7 +736,7 @@ impl JJCommand {
                     "-b".into(),
                     Str::from(bookmark.as_str()),
                     "--remote".into(),
-                    remote.clone(),
+                    Str::from(remote.as_str()),
                 ]
             }
             JJCommand::GitExport { .. } => vec!["git".into(), "export".into()],

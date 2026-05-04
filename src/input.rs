@@ -17,8 +17,8 @@ use smallvec::smallvec;
 
 use crate::types::{
     BookmarkName, ChangeId, CommitId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode,
-    PendingCommand, PendingCommitSelect, PendingSelection, RebaseSource, SelectionKind, SmallVec,
-    SplitKind, SquashKind, Str, TargetOperation,
+    PendingCommand, PendingCommitSelect, PendingSelection, RebaseSource, RemoteName, SelectionKind,
+    SmallVec, SplitKind, SquashKind, Str, TagName, TargetOperation, WorkspaceName,
 };
 
 /// Number of rows to jump for page-up/page-down style navigation.
@@ -484,7 +484,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::WorkspaceForget => {
             let entry_idx = app.selected_entry_idx();
-            let workspaces: Vec<String> = entry_idx
+            let workspaces: Vec<WorkspaceName> = entry_idx
                 .map(|idx| {
                     app.nodes[idx]
                         .commit
@@ -501,9 +501,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     flags,
                 })
             } else if workspaces.len() > 1 {
+                let items: Vec<String> = workspaces.iter().map(|w| w.to_string()).collect();
                 app.mode = AppMode::select_from_list(
                     "forget workspace",
-                    workspaces,
+                    items,
                     true,
                     PendingSelection::WorkspaceForget { flags },
                     false,
@@ -1039,7 +1040,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             // On a remote target row: push to that specific remote.
             if let Some((entry, target)) = app.selected_remote_target() {
                 let name = entry.name.clone();
-                let remote = Str::from(target.remote.as_str());
+                let remote = RemoteName::new(target.remote.as_str());
                 return Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
                     bookmarks: smallvec![name],
                     remote: Some(remote),
@@ -1155,7 +1156,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             if let Some((entry, target)) = app.selected_remote_target() {
                 return Action::SuspendAndRunJj(JJCommand::GitFetchBookmark {
                     bookmark: entry.name.clone(),
-                    remote: Str::from(target.remote.as_str()),
+                    remote: RemoteName::new(target.remote.as_str()),
                     flags,
                 });
             }
@@ -1167,7 +1168,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 // Remote bookmark row — fetch from that remote.
                 return Action::SuspendAndRunJj(JJCommand::GitFetchBookmark {
                     bookmark: entry.name.clone(),
-                    remote: Str::from(remote.as_str()),
+                    remote: RemoteName::new(remote.as_str()),
                     flags,
                 });
             }
@@ -1187,7 +1188,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             let Some(entry) = app.selected_tag_entry() else {
                 return Action::None;
             };
-            let name = entry.name.to_string();
+            let name = entry.name.clone();
             Action::RunJj(JJCommand::TagDelete {
                 names: smallvec![name],
                 flags,
@@ -1197,7 +1198,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             let Some(entry) = app.selected_tag_entry() else {
                 return Action::None;
             };
-            let name = entry.name.to_string();
+            let name = entry.name.clone();
             app.mode = AppMode::text_input(
                 format!("set {name} to (change id): "),
                 "",
@@ -1252,21 +1253,21 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             let Some(entry) = app.selected_op_log_entry() else {
                 return Action::None;
             };
-            let op_id = entry.id.to_string();
+            let op_id = entry.id.clone();
             Action::RunJj(JJCommand::OpRestore { op_id, flags })
         }
         AppAction::OpLogRevert => {
             let Some(entry) = app.selected_op_log_entry() else {
                 return Action::None;
             };
-            let op_id = entry.id.to_string();
+            let op_id = entry.id.clone();
             Action::RunJj(JJCommand::OpRevert { op_id, flags })
         }
         AppAction::OpLogAbandon => {
             let Some(entry) = app.selected_op_log_entry() else {
                 return Action::None;
             };
-            let op_id = entry.id.to_string();
+            let op_id = entry.id.clone();
             Action::RunJj(JJCommand::OpAbandon { op_id, flags })
         }
         // Workspace view actions
@@ -1327,7 +1328,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             let Some(entry) = app.selected_workspace_entry() else {
                 return Action::None;
             };
-            let name = entry.name.to_string();
+            let name = entry.name.clone();
             Action::RunJj(JJCommand::WorkspaceForget {
                 names: smallvec![name],
                 flags,
@@ -1486,7 +1487,11 @@ fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
                         Action::None
                     }
                     PendingCommand::WorkspaceAddName { path, flags } => {
-                        let name = if text.is_empty() { None } else { Some(text) };
+                        let name = if text.is_empty() {
+                            None
+                        } else {
+                            Some(WorkspaceName::new(text))
+                        };
                         // CommitSelect needs the DAG view to navigate commits.
                         if app.active_view != crate::app::ActiveView::Dag {
                             app.switch_view(crate::app::ActiveView::Dag);
@@ -1974,7 +1979,7 @@ fn enter_tag_delete(app: &mut App, flags: CommandFlags) -> Action {
     let items: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
     if items.len() == 1 {
         return Action::RunJj(JJCommand::TagDelete {
-            names: items.into(),
+            names: items.into_iter().map(TagName::new).collect(),
             flags,
         });
     }
@@ -2224,6 +2229,7 @@ fn resolve_selection(
             Action::RunJj(JJCommand::BookmarkForget { names, flags })
         }
         PendingSelection::WorkspaceForget { flags } => {
+            let names = names.into_iter().map(WorkspaceName::new).collect();
             Action::RunJj(JJCommand::WorkspaceForget { names, flags })
         }
         PendingSelection::BookmarkTrack { flags } => Action::RunJj(JJCommand::BookmarkTrack {
@@ -2256,7 +2262,7 @@ fn resolve_selection(
             }
         }
         PendingSelection::GitRemoteForFetch { all_remotes, flags } => {
-            let remote = names.into_iter().next().map(Str::from);
+            let remote = names.into_iter().next().map(RemoteName::new);
             Action::SuspendAndRunJj(JJCommand::GitFetch {
                 all_remotes,
                 remote,
@@ -2264,11 +2270,11 @@ fn resolve_selection(
             })
         }
         PendingSelection::GitRemoteForPush { all, flags } => {
-            let remote = names.into_iter().next().map(Str::from);
+            let remote = names.into_iter().next().map(RemoteName::new);
             Action::SuspendAndRunJj(JJCommand::GitPush { all, remote, flags })
         }
         PendingSelection::GitRemoteForPushBookmark { bookmarks, flags } => {
-            let remote = names.into_iter().next().map(Str::from);
+            let remote = names.into_iter().next().map(RemoteName::new);
             Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
                 bookmarks,
                 remote,
@@ -2276,6 +2282,7 @@ fn resolve_selection(
             })
         }
         PendingSelection::TagDelete { flags } => {
+            let names = names.into_iter().map(TagName::new).collect();
             Action::RunJj(JJCommand::TagDelete { names, flags })
         }
         // Single-item operations: take the first name.
@@ -2318,7 +2325,7 @@ fn resolve_selection(
             }
         }
         PendingSelection::OpLogWorkspaceFilter => {
-            app.op_log.workspace_filter = names.into_iter().map(Str::from).collect();
+            app.op_log.workspace_filter = names.into_iter().map(WorkspaceName::new).collect();
             app.rebuild_rows();
             Action::None
         }

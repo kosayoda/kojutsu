@@ -1,6 +1,6 @@
 use strum::IntoEnumIterator as _;
 
-use super::id::{BookmarkName, ChangeId, SmallVec};
+use super::id::{BookmarkName, ChangeId, SmallVec, TagName, WorkspaceName};
 use super::operations::{
     MessageMode, RebaseKind, RebaseSource, RebaseTarget, SplitKind, SplitTarget, SquashKind,
     SquashTarget,
@@ -60,7 +60,10 @@ pub enum PendingSelection {
 
 /// What to do after selecting a single commit in CommitSelect mode.
 pub enum PendingCommitSelect {
-    WorkspaceAdd { path: String, name: Option<String> },
+    WorkspaceAdd {
+        path: String,
+        name: Option<WorkspaceName>,
+    },
 }
 
 impl PendingCommitSelect {
@@ -145,7 +148,7 @@ pub enum PendingCommand {
         flags: CommandFlags,
     },
     /// Set tag to a change ID (name already known, text is change ID).
-    TagSetByName { name: String, flags: CommandFlags },
+    TagSetByName { name: TagName, flags: CommandFlags },
     /// Workspace add step 1: collecting path. Text = path.
     WorkspaceAddPath { flags: CommandFlags },
     /// Workspace add step 2: path collected, collecting name. Text = name.
@@ -188,7 +191,7 @@ impl PendingCommand {
                 flags,
             },
             PendingCommand::TagSet { change_id, flags } => JJCommand::TagSet {
-                name: text,
+                name: TagName::new(text),
                 change_id,
                 flags,
             },
@@ -203,7 +206,7 @@ impl PendingCommand {
                 flags,
             },
             PendingCommand::WorkspaceRename { flags } => JJCommand::WorkspaceRename {
-                new_name: text,
+                new_name: WorkspaceName::new(text),
                 flags,
             },
             PendingCommand::WorkspaceAddPath { .. } | PendingCommand::WorkspaceAddName { .. } => {

@@ -39,7 +39,10 @@ use crate::dag::{
     DiffResult, DivergenceUpdate, Edge, EdgeKind, FileChange, FileStatus, LineStats,
     PrefixLengthUpdate, RemoteBookmarkInfo, RevsetResult, ShortId,
 };
-use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, RepoPath, Str, TagName};
+use crate::types::{
+    BookmarkName, CommitId as UiCommitId, OperationId, RemoteName, RepoPath, Str, TagName,
+    WorkspaceName,
+};
 
 /// Number of hex characters to show for change/commit IDs.
 const DISPLAY_ID_LEN: usize = 8;
@@ -183,10 +186,10 @@ impl JjRepo {
     }
 
     /// Unique git remote names, sorted alphabetically.
-    pub fn git_remotes(&self) -> Vec<crate::types::Str> {
+    pub fn git_remotes(&self) -> Vec<RemoteName> {
         use std::collections::BTreeSet;
         self.remote_bookmarks()
-            .map(|(s, _)| crate::types::Str::from(s.remote.as_str()))
+            .map(|(s, _)| RemoteName::new(s.remote.as_str()))
             .collect::<BTreeSet<_>>()
             .into_iter()
             .collect()
@@ -389,7 +392,7 @@ impl JjRepo {
         for (ws_name, commit_id) in repo.view().wc_commit_ids() {
             wc_commit_workspaces.entry(commit_id).or_default().push(
                 crate::dag::WorkspaceAnnotation {
-                    name: ws_name.as_str().to_string(),
+                    name: crate::types::WorkspaceName::new(ws_name.as_str()),
                     is_current: *ws_name == self.workspace_name,
                 },
             );
@@ -1113,7 +1116,7 @@ impl JjRepo {
             });
             let commit_hex = commit_id.hex();
             entries.push(crate::app::WorkspaceViewEntry {
-                name: Str::from(ws_name.as_str()),
+                name: WorkspaceName::new(ws_name.as_str()),
                 commit_id: Some(UiCommitId::new(
                     commit_hex.get(..DISPLAY_ID_LEN).unwrap_or(&commit_hex),
                 )),
@@ -1559,10 +1562,10 @@ impl JjRepo {
             .into_iter()
             .zip(graph_lines)
             .map(|(raw, graph)| crate::app::OpLogEntry {
-                id: raw.display_id,
+                id: OperationId::new(raw.display_id),
                 description: raw.description,
                 relative_time: raw.relative_time,
-                workspace: raw.workspace,
+                workspace: raw.workspace.map(WorkspaceName::new),
                 user: raw.user,
                 args: raw.args,
                 is_snapshot: raw.is_snapshot,
@@ -1988,7 +1991,7 @@ impl JjRepo {
                     wc_changed = true;
                 }
                 lines.push(OpDetailLine::WorkingCopy(OpDiffWorkingCopy {
-                    workspace: Str::from(ws.as_str()),
+                    workspace: WorkspaceName::new(ws.as_str()),
                     new_commit: Some(short_commit_id(new_id)),
                     old_commit: old_id.map(&short_commit_id),
                 }));
@@ -2002,7 +2005,7 @@ impl JjRepo {
                     wc_changed = true;
                 }
                 lines.push(OpDetailLine::WorkingCopy(OpDiffWorkingCopy {
-                    workspace: Str::from(ws.as_str()),
+                    workspace: WorkspaceName::new(ws.as_str()),
                     new_commit: None,
                     old_commit: Some(short_commit_id(old_id)),
                 }));

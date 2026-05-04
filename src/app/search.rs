@@ -321,7 +321,7 @@ impl App {
                     return false;
                 };
                 (scopes.contains(SearchScopes::DESCRIPTION)
-                    && (contains(&entry.name)
+                    && (contains(entry.name.as_str())
                         || entry.description.as_deref().is_some_and(contains)))
                     || (scopes.contains(SearchScopes::CHANGE_ID)
                         && entry

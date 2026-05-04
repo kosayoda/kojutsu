@@ -6,9 +6,9 @@ use crate::idx::EntryIdx;
 
 use crate::keymap::{CommandFlags, KeymapNode};
 use crate::types::{
-    BookmarkName, ChangeId, CommitId, FollowUpOption, GlobalToggle, PendingCommand,
+    BookmarkName, ChangeId, CommitId, FollowUpOption, GlobalToggle, OperationId, PendingCommand,
     PendingCommitSelect, PendingSelection, RemoteName, RepoPath, SearchScopes, Str, TagName,
-    TargetOperation, VisualRange,
+    TargetOperation, VisualRange, WorkspaceName,
 };
 
 use super::Loadable;
@@ -55,7 +55,7 @@ pub struct ViewData {
     /// All remote bookmarks (tracked and untracked, including off-DAG).
     pub remote_bookmarks: Vec<crate::dag::RemoteBookmarkRef>,
     /// Available git remote names.
-    pub remotes: Vec<Str>,
+    pub remotes: Vec<RemoteName>,
 }
 
 impl ViewData {
@@ -97,9 +97,9 @@ pub struct OpLogState {
     pub loaded: bool,
     pub has_more: bool,
     pub limit: usize,
-    pub workspace_filter: HashSet<Str>,
-    pub unfolded: HashSet<Str>,
-    pub details: HashMap<Str, Loadable<Vec<OpDetailLine>>>,
+    pub workspace_filter: HashSet<WorkspaceName>,
+    pub unfolded: HashSet<OperationId>,
+    pub details: HashMap<OperationId, Loadable<Vec<OpDetailLine>>>,
 }
 
 impl OpLogState {
@@ -109,7 +109,7 @@ impl OpLogState {
             loaded: false,
             has_more: false,
             limit: super::OP_LOG_BATCH_SIZE,
-            workspace_filter: HashSet::from([Str::from("default")]),
+            workspace_filter: HashSet::from([WorkspaceName::new("default")]),
             unfolded: HashSet::new(),
             details: HashMap::new(),
         }
@@ -354,7 +354,7 @@ pub struct OpDiffCommit {
 }
 
 pub struct OpDiffWorkingCopy {
-    pub workspace: Str,
+    pub workspace: WorkspaceName,
     pub new_commit: Option<crate::dag::ShortId>,
     pub old_commit: Option<crate::dag::ShortId>,
 }
@@ -374,13 +374,13 @@ pub enum OpDetailLine {
 
 pub struct OpLogEntry {
     /// Hex operation ID (truncated for display).
-    pub id: Str,
+    pub id: OperationId,
     /// Human-readable operation description.
     pub description: Str,
     /// Relative time string (e.g. "5 hours ago").
     pub relative_time: Str,
     /// Workspace name that ran this operation.
-    pub workspace: Option<Str>,
+    pub workspace: Option<WorkspaceName>,
     /// "user@host" who performed the operation.
     pub user: Str,
     /// The CLI args that produced this operation (from metadata tags).
@@ -415,7 +415,7 @@ pub struct EvoLogEntry {
 }
 
 pub struct WorkspaceViewEntry {
-    pub name: Str,
+    pub name: WorkspaceName,
     pub commit_id: Option<CommitId>,
     pub change_id: Option<crate::dag::ShortId>,
     pub description: Option<String>,
