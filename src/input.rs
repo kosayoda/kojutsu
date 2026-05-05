@@ -1689,6 +1689,10 @@ fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<Action> {
             app.toggle_fold();
             Some(Action::None)
         }
+        (Key::Char('\''), _, _) => {
+            app.enter_jump();
+            Some(Action::None)
+        }
         (Key::Char('/'), _, _) => {
             app.begin_search();
             Some(Action::None)
@@ -1796,31 +1800,44 @@ fn handle_commit_select(app: &mut App, key: KeyEvent) -> Action {
 }
 
 fn handle_jump(app: &mut App, key: KeyEvent) -> Action {
-    let (mut labels, mut input) = match std::mem::replace(&mut app.mode, AppMode::Normal) {
-        AppMode::Jump { labels, input } => (labels, input),
-        _ => unreachable!(),
+    let (mut labels, mut input, restore_mode) =
+        match std::mem::replace(&mut app.mode, AppMode::Normal) {
+            AppMode::Jump {
+                labels,
+                input,
+                restore_mode,
+            } => (labels, input, restore_mode),
+            _ => unreachable!(),
+        };
+
+    let exit = |app: &mut App, restore: Option<Box<AppMode>>| {
+        app.mode = restore.map_or(AppMode::Normal, |m| *m);
     };
 
     let KeyCode::Char(c) = key.code else {
-        // Esc or non-char key cancels.
+        exit(app, restore_mode);
         return Action::None;
     };
 
     input.push(c);
-
-    // Find labels that start with the accumulated input.
     labels.retain(|(label, _)| label.starts_with(&input));
 
     if labels.is_empty() {
+        exit(app, restore_mode);
         return Action::None;
     }
 
-    // Exact match → jump.
+    // Exact match → jump and exit.
     if let Some((_, row_idx)) = labels.iter().find(|(label, _)| *label == input) {
         app.cursor = *row_idx;
+        exit(app, restore_mode);
     } else {
         // Input is a prefix of remaining labels — stay in jump mode.
-        app.mode = AppMode::Jump { labels, input };
+        app.mode = AppMode::Jump {
+            labels,
+            input,
+            restore_mode,
+        };
     }
 
     Action::None

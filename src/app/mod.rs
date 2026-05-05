@@ -794,9 +794,16 @@ impl App {
         }
 
         if !labels.is_empty() {
+            let restore_mode = match &self.mode {
+                AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. } => {
+                    Some(Box::new(std::mem::replace(&mut self.mode, AppMode::Normal)))
+                }
+                _ => None,
+            };
             self.mode = AppMode::Jump {
                 labels,
                 input: String::new(),
+                restore_mode,
             };
         }
     }

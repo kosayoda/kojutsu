@@ -107,7 +107,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
 
     // Jump labels: row_index → (full label, chars already typed).
     let (jump_labels, jump_input_len): (HashMap<RowIdx, &str>, usize) = match &app.mode {
-        AppMode::Jump { labels, input } => (
+        AppMode::Jump { labels, input, .. } => (
             labels.iter().map(|(s, idx)| (*idx, s.as_str())).collect(),
             input.len(),
         ),

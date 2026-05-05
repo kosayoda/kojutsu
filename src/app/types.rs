@@ -540,6 +540,8 @@ pub enum AppMode {
         labels: Vec<(String, RowIdx)>,
         /// Characters typed so far (for multi-char label matching).
         input: String,
+        /// Mode to restore on exit (e.g. TargetSelect). None → Normal.
+        restore_mode: Option<Box<AppMode>>,
     },
     /// Selecting an item from a list (e.g. picking a bookmark).
     SelectFromList {
