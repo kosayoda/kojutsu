@@ -698,9 +698,7 @@ impl App {
             'o', 'p', 'z', 'x', 'c', 'v', 'b', 'n', 'm',
         ];
 
-        let offset = self.list_state.offset();
-        let height = self.last_list_height as usize;
-        let end = (offset + height).min(self.rows.len());
+        let (offset, end) = self.visible_row_range();
         let cursor = self.cursor.raw();
         let visible = |idx: RowIdx| idx.raw() >= offset && idx.raw() < end;
         let dist = |i: usize| if i >= cursor { i - cursor } else { cursor - i };
@@ -710,6 +708,9 @@ impl App {
             ("k", self.peek_up()),
             ("J", self.peek_down_section()),
             ("K", self.peek_up_section()),
+            ("H", self.peek_screen_top()),
+            ("M", self.peek_screen_middle()),
+            ("L", self.peek_screen_bottom()),
             ("0", self.peek_top()),
             ("$", self.peek_bottom()),
             ("@", self.peek_working_copy()),

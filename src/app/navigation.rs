@@ -77,6 +77,104 @@ impl App {
         }
     }
 
+    /// Number of display lines a row occupies.
+    fn row_display_lines(&self, row_idx: usize) -> usize {
+        match &self.rows[row_idx] {
+            DisplayRow::CommitNode { .. }
+            | DisplayRow::OpLogItem { .. }
+            | DisplayRow::EvoLogItem { .. } => 2,
+            _ => 1,
+        }
+    }
+
+    /// Compute the visible row range accounting for multi-line rows.
+    /// Returns (start_row, end_row) where rows in start..end fit in the viewport.
+    pub(super) fn visible_row_range(&self) -> (usize, usize) {
+        let offset = self.list_state.offset();
+        let height = self.last_list_height as usize;
+        let mut lines = 0;
+        let mut end = offset;
+        while end < self.rows.len() && lines < height {
+            lines += self.row_display_lines(end);
+            end += 1;
+        }
+        (offset, end)
+    }
+
+    /// First non-skippable row in the visible viewport.
+    pub fn peek_screen_top(&self) -> Option<RowIdx> {
+        let (start, end) = self.visible_row_range();
+        (start..end)
+            .map(RowIdx::new)
+            .find(|&j| !self.is_row_skippable(j))
+    }
+
+    /// Non-skippable row nearest the middle of the visible viewport.
+    pub fn peek_screen_middle(&self) -> Option<RowIdx> {
+        let (start, end) = self.visible_row_range();
+        // Find the row at the middle display line.
+        let height = self.last_list_height as usize;
+        let mid_line = height / 2;
+        let mut lines = 0;
+        let mut mid_row = start;
+        for i in start..end {
+            lines += self.row_display_lines(i);
+            if lines > mid_line {
+                mid_row = i;
+                break;
+            }
+        }
+        // Search outward from mid_row for a non-skippable row.
+        let mut lo = mid_row;
+        let mut hi = mid_row + 1;
+        loop {
+            if lo >= start {
+                let j = RowIdx::new(lo);
+                if !self.is_row_skippable(j) {
+                    return Some(j);
+                }
+            }
+            if hi < end {
+                let j = RowIdx::new(hi);
+                if !self.is_row_skippable(j) {
+                    return Some(j);
+                }
+            }
+            if lo <= start && hi >= end {
+                return None;
+            }
+            lo = lo.saturating_sub(1);
+            hi += 1;
+        }
+    }
+
+    /// Last non-skippable row in the visible viewport.
+    pub fn peek_screen_bottom(&self) -> Option<RowIdx> {
+        let (start, end) = self.visible_row_range();
+        (start..end)
+            .rev()
+            .map(RowIdx::new)
+            .find(|&j| !self.is_row_skippable(j))
+    }
+
+    pub fn move_to_screen_top(&mut self) {
+        if let Some(j) = self.peek_screen_top() {
+            self.cursor = j;
+        }
+    }
+
+    pub fn move_to_screen_middle(&mut self) {
+        if let Some(j) = self.peek_screen_middle() {
+            self.cursor = j;
+        }
+    }
+
+    pub fn move_to_screen_bottom(&mut self) {
+        if let Some(j) = self.peek_screen_bottom() {
+            self.cursor = j;
+        }
+    }
+
     /// Row index of the first parent commit in the DAG (for J on commit rows).
     fn parent_commit_row(&self, entry_idx: EntryIdx) -> Option<RowIdx> {
         let parent_idx = *self.nodes[entry_idx].parents.first()?;

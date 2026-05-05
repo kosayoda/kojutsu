@@ -338,6 +338,18 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.move_to_bottom();
             Action::None
         }
+        AppAction::MoveToScreenTop => {
+            app.move_to_screen_top();
+            Action::None
+        }
+        AppAction::MoveToScreenMiddle => {
+            app.move_to_screen_middle();
+            Action::None
+        }
+        AppAction::MoveToScreenBottom => {
+            app.move_to_screen_bottom();
+            Action::None
+        }
         AppAction::ToggleFold => {
             app.toggle_fold();
             Action::None
