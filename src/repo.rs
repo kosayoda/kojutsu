@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use color_eyre::eyre::Context;
 use color_eyre::Result;
-use futures::StreamExt as _;
+use futures::{StreamExt as _, TryStreamExt as _};
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::commit::Commit;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
 use jj_lib::fileset::FilesetAliasesMap;
-use jj_lib::graph::{GraphEdgeType, GraphNode, TopoGroupedGraphIterator};
+use jj_lib::graph::{GraphEdgeType, GraphNode, TopoGroupedGraph};
 use jj_lib::id_prefix::IdPrefixContext;
 use jj_lib::matchers::EverythingMatcher;
 use jj_lib::object_id::ObjectId;
@@ -323,21 +323,25 @@ impl JjRepo {
         let immutable_revset = self.evaluate_immutable(&context, &symbol_resolver, &mut warnings);
         let is_immutable = immutable_revset.as_ref().map(|r| r.containing_fn());
 
-        // Wrap the graph iterator with TopoGroupedGraphIterator for proper
+        // Wrap the graph stream with TopoGroupedGraph for proper
         // branch grouping, then prioritize branches matching the config
         // (default: present(@)) so they appear on the leftmost column.
-        let graph_iter = revset.iter_graph();
-        let mut topo_iter: TopoGroupedGraphIterator<BackendCommitId, BackendCommitId, _, _> =
-            TopoGroupedGraphIterator::new(graph_iter, |id| id);
+        let graph_stream = revset.stream_graph();
+        let mut topo_iter = TopoGroupedGraph::new(graph_stream, |id: &BackendCommitId| id);
 
         // Evaluate the log-graph-prioritize revset and call prioritize_branch()
         // only for commits that are actually in the log revset.
         let prioritize_revset = self.evaluate_prioritize(&context, &symbol_resolver, &mut warnings);
         if let Some(ref prio) = prioritize_revset {
             // Collect log commit IDs only when needed for filtering.
-            let log_commit_ids: std::collections::HashSet<BackendCommitId> =
-                revset.iter().flatten().collect();
-            for commit_id in prio.iter().flatten() {
+            let log_commit_ids: std::collections::HashSet<BackendCommitId> = revset
+                .stream()
+                .try_collect::<Vec<_>>()
+                .block_on()?
+                .into_iter()
+                .collect();
+            let prio_ids: Vec<BackendCommitId> = prio.stream().try_collect().block_on()?;
+            for commit_id in prio_ids {
                 if log_commit_ids.contains(&commit_id) {
                     topo_iter.prioritize_branch(commit_id);
                 }
@@ -407,9 +411,9 @@ impl JjRepo {
 
         // Iterate graph nodes
         let mut entries = Vec::new();
-        for node_result in topo_iter {
-            let (commit_id, edges): GraphNode<BackendCommitId> =
-                node_result.wrap_err("error iterating revset graph")?;
+        let topo_nodes: Vec<GraphNode<BackendCommitId>> =
+            topo_iter.stream().try_collect().block_on()?;
+        for (commit_id, edges) in topo_nodes {
             let commit = repo
                 .store()
                 .get_commit(&commit_id)
@@ -425,7 +429,7 @@ impl JjRepo {
                 .unwrap_or(false);
 
             let info = self.extract_commit_info(&commit, immutable, &ctx)?;
-            let dag_edges = edges
+            let dag_edges: Vec<Edge> = edges
                 .into_iter()
                 .map(|e| Edge {
                     target: UiCommitId::new(e.target.hex()),
@@ -1459,7 +1463,14 @@ impl JjRepo {
             std::slice::from_ref(from),
         )
         .ok()?;
-        Some(revset.iter().count())
+        Some(
+            revset
+                .stream()
+                .try_collect::<Vec<_>>()
+                .block_on()
+                .ok()?
+                .len(),
+        )
     }
 
     /// Walk the operation log and return entries in reverse chronological order.
@@ -1505,7 +1516,7 @@ impl JjRepo {
                 format!("{}@{}", meta.username, meta.hostname).into()
             };
             let display_id: Str = id_hex[..id_hex.len().min(12)].into();
-            let args: Option<Str> = meta.tags.get("args").map(|s| s.as_str().into());
+            let args: Option<Str> = meta.attributes.get("args").map(|s| s.as_str().into());
 
             // Build edges from parent operation IDs.
             let edges: Vec<Edge> = op
@@ -1612,8 +1623,10 @@ impl JjRepo {
 
         let mut raw_entries = Vec::new();
         let mut is_first = true;
-        for result in jj_lib::evolution::walk_predecessors(repo, &[commit_id]) {
-            let entry = result.wrap_err("failed to walk predecessors")?;
+        let predecessor_entries: Vec<_> = jj_lib::evolution::walk_predecessors(repo, &[commit_id])
+            .try_collect()
+            .block_on()?;
+        for entry in predecessor_entries {
             let commit = &entry.commit;
 
             let change_prefix_len = prefix_index
@@ -1920,28 +1933,12 @@ impl JjRepo {
         let added_commits: Vec<BackendCommitId> =
             jj_lib::revset::walk_revs(self.repo.as_ref(), &new_heads, &old_heads)
                 .inspect_err(|e| tracing::warn!("failed to walk added commits: {e}"))
-                .map(|revset| {
-                    revset
-                        .iter()
-                        .filter_map(|e| {
-                            e.inspect_err(|e| tracing::warn!("error iterating added commit: {e}"))
-                                .ok()
-                        })
-                        .collect()
-                })
+                .and_then(|revset| revset.stream().try_collect::<Vec<_>>().block_on())
                 .unwrap_or_default();
         let removed_commits: Vec<BackendCommitId> =
             jj_lib::revset::walk_revs(self.repo.as_ref(), &old_heads, &new_heads)
                 .inspect_err(|e| tracing::warn!("failed to walk removed commits: {e}"))
-                .map(|revset| {
-                    revset
-                        .iter()
-                        .filter_map(|e| {
-                            e.inspect_err(|e| tracing::warn!("error iterating removed commit: {e}"))
-                                .ok()
-                        })
-                        .collect()
-                })
+                .and_then(|revset| revset.stream().try_collect::<Vec<_>>().block_on())
                 .unwrap_or_default();
 
         if !added_commits.is_empty() || !removed_commits.is_empty() {
