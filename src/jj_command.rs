@@ -1086,7 +1086,7 @@ impl JJCommand {
         let display_parts = self.display_parts();
 
         let (result, was_interrupted) = with_sigint_suppressed(|| {
-            Command::new("jj")
+            let mut child = Command::new("jj")
                 .args(&args)
                 .arg("-R")
                 .arg(repo_path)
@@ -1095,7 +1095,26 @@ impl JJCommand {
                 .stdin(std::process::Stdio::inherit())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
-                .output()
+                .spawn()?;
+
+            // Tee stdout and stderr: forward each chunk to the real
+            // terminal in real-time (so progress bars are visible) while
+            // also accumulating the bytes for the post-command overlay.
+            let child_stdout = child.stdout.take().unwrap();
+            let child_stderr = child.stderr.take().unwrap();
+
+            let stdout_thread = std::thread::spawn(move || tee_pipe(child_stdout));
+            let stderr_thread = std::thread::spawn(move || tee_pipe(child_stderr));
+
+            let status = child.wait()?;
+            let stdout = stdout_thread.join().unwrap_or_default();
+            let stderr = stderr_thread.join().unwrap_or_default();
+
+            Ok(Output {
+                status,
+                stdout,
+                stderr,
+            })
         });
 
         match result {
@@ -1152,6 +1171,31 @@ impl JJCommand {
             Err(e) => jj_error(display, display_parts, e),
         }
     }
+}
+
+/// Read from a child process pipe, writing each chunk to the terminal in
+/// real-time (so progress bars are visible) while accumulating the full output.
+fn tee_pipe(mut pipe: impl std::io::Read + Send + 'static) -> Vec<u8> {
+    use std::io::Write;
+    let mut buf = [0u8; 4096];
+    let mut captured = Vec::new();
+    // Always write to stderr so progress bars and output appear on the
+    // terminal without interfering with any stdout redirection.
+    let mut out = std::io::stderr();
+    loop {
+        match pipe.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let chunk = &buf[..n];
+                captured.extend_from_slice(chunk);
+                let _ = out.write_all(chunk);
+                let _ = out.flush();
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
+        }
+    }
+    captured
 }
 
 /// Merge stdout and stderr into a single output buffer with a newline separator.
