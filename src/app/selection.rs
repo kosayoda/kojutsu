@@ -316,7 +316,7 @@ impl App {
         let mut paths: Vec<crate::types::Str> = self
             .selection
             .iter()
-            .map(|s| crate::types::Str::from(s.path()))
+            .filter_map(|s| s.path().map(crate::types::Str::from))
             .collect();
         paths.sort();
         paths.dedup();

@@ -214,11 +214,9 @@ pub struct PersistedState {
     pub ignore_immutable: bool,
     pub ignore_working_copy: bool,
     pub debug: bool,
-    pub search_scopes: u8,
-    pub bookmark_search_scopes: u8,
-    pub tag_search_scopes: u8,
-    pub op_log_search_scopes: u8,
-    pub workspace_search_scopes: u8,
+    /// Per-view search scope bitflags, indexed by `ActiveView::idx()`.
+    #[serde(default, alias = "search_scopes")]
+    pub view_search_scopes: [u8; <ActiveView as strum::EnumCount>::COUNT],
     pub active_preset: Option<usize>,
     #[serde(default)]
     pub git_diff: bool,

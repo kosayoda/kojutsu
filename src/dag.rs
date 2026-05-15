@@ -241,54 +241,13 @@ pub struct TagLocalTarget {
     pub description: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Glyph {
-    WorkingCopy,
-    Conflict,
-    Immutable,
-    Merge,
-    Normal,
-}
-
-impl std::fmt::Display for Glyph {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", char::from(*self))
-    }
-}
-
-impl From<Glyph> for char {
-    fn from(value: Glyph) -> Self {
-        match value {
-            Glyph::WorkingCopy => '@',
-            Glyph::Conflict => '×',
-            Glyph::Immutable => '◆',
-            Glyph::Merge => '⊕',
-            Glyph::Normal => '○',
-        }
-    }
-}
-
-impl TryFrom<char> for Glyph {
-    type Error = ();
-
-    fn try_from(value: char) -> Result<Self, Self::Error> {
-        match value {
-            '@' => Ok(Self::WorkingCopy),
-            '×' => Ok(Self::Conflict),
-            '◆' => Ok(Self::Immutable),
-            '⊕' => Ok(Self::Merge),
-            '○' => Ok(Self::Normal),
-            _ => Err(()),
-        }
-    }
-}
-
 impl CommitInfo {
     pub fn is_working_copy(&self) -> bool {
         self.workspaces.iter().any(|ws| ws.is_current)
     }
 
-    pub fn glyph(&self) -> Glyph {
+    pub fn glyph(&self) -> crate::theme::Glyph {
+        use crate::theme::Glyph;
         if self.is_working_copy() {
             Glyph::WorkingCopy
         } else if self.has_conflict {

@@ -900,27 +900,23 @@ impl App {
         std::mem::take(&mut self.pending_repo_requests)
     }
 
-    /// Get effective search scopes for a view (live value for active view,
-    /// saved value for others).
-    fn effective_scopes(&self, view: ActiveView) -> SearchScopes {
-        if self.active_view == view {
-            self.search_scopes
-        } else {
-            self.view_states[view.idx()].search_scopes
-        }
-    }
-
     pub fn to_persisted_state(&self) -> PersistedState {
+        use strum::EnumCount;
+        let mut view_search_scopes = [0u8; ActiveView::COUNT];
+        for (i, scopes) in view_search_scopes.iter_mut().enumerate() {
+            // Safety: ActiveView variants are 0..COUNT by repr.
+            // We read effective_scopes for each view via its index in view_states.
+            *scopes = self.view_states[i].search_scopes.bits();
+        }
+        // The active view's scopes live in self.search_scopes, not view_states.
+        view_search_scopes[self.active_view.idx()] = self.search_scopes.bits();
+
         PersistedState {
             show_line_numbers: self.show_line_numbers,
             ignore_immutable: self.toggles.contains(CommandFlags::IGNORE_IMMUTABLE),
             ignore_working_copy: self.toggles.contains(CommandFlags::IGNORE_WORKING_COPY),
             debug: self.toggles.contains(CommandFlags::DEBUG),
-            search_scopes: self.effective_scopes(ActiveView::Dag).bits(),
-            bookmark_search_scopes: self.effective_scopes(ActiveView::Bookmarks).bits(),
-            tag_search_scopes: self.effective_scopes(ActiveView::Tags).bits(),
-            op_log_search_scopes: self.effective_scopes(ActiveView::Operations).bits(),
-            workspace_search_scopes: self.effective_scopes(ActiveView::Workspaces).bits(),
+            view_search_scopes,
             active_preset: self.revset.active_preset,
             git_diff: self.diff_format == DiffFormat::Git,
         }
@@ -938,26 +934,15 @@ impl App {
         } else {
             DiffFormat::ColorWords
         };
-        if state.search_scopes != 0 {
-            let scopes = SearchScopes::from_bits_truncate(state.search_scopes);
-            self.view_states[ActiveView::Dag.idx()].search_scopes = scopes;
-            self.search_scopes = scopes; // DAG is default active view
-        }
-        if state.bookmark_search_scopes != 0 {
-            self.view_states[ActiveView::Bookmarks.idx()].search_scopes =
-                SearchScopes::from_bits_truncate(state.bookmark_search_scopes);
-        }
-        if state.tag_search_scopes != 0 {
-            self.view_states[ActiveView::Tags.idx()].search_scopes =
-                SearchScopes::from_bits_truncate(state.tag_search_scopes);
-        }
-        if state.op_log_search_scopes != 0 {
-            self.view_states[ActiveView::Operations.idx()].search_scopes =
-                SearchScopes::from_bits_truncate(state.op_log_search_scopes);
-        }
-        if state.workspace_search_scopes != 0 {
-            self.view_states[ActiveView::Workspaces.idx()].search_scopes =
-                SearchScopes::from_bits_truncate(state.workspace_search_scopes);
+        for (i, &bits) in state.view_search_scopes.iter().enumerate() {
+            if bits != 0 {
+                let scopes = SearchScopes::from_bits_truncate(bits);
+                self.view_states[i].search_scopes = scopes;
+                // DAG is default active view — sync to live search_scopes.
+                if i == ActiveView::Dag.idx() {
+                    self.search_scopes = scopes;
+                }
+            }
         }
         self.revset.active_preset = state
             .active_preset

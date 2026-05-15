@@ -1,4 +1,6 @@
-use super::id::{ChangeId, SmallVec};
+use std::path::PathBuf;
+
+use super::id::{ChangeId, SmallVec, Str};
 
 #[derive(Debug, Clone)]
 pub struct SquashTarget {
@@ -105,4 +107,15 @@ pub enum MessageMode {
     Inline(String),
     /// Use --use-destination-message.
     UseDestination,
+}
+
+/// How to filter changes for squash/commit operations.
+#[derive(Debug, Clone)]
+pub enum ChangeSelection {
+    /// Include all changes (no filtering).
+    All,
+    /// Include only these files (maps to [FILESETS] positional args).
+    Files(Vec<Str>),
+    /// Line-level selection (maps to --interactive --tool with selection JSON).
+    Lines(PathBuf),
 }

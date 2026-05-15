@@ -54,6 +54,49 @@ fn default_date_format() -> String {
     "%Y-%m-%d %H:%M:%S".to_string()
 }
 
+/// The semantic glyph type for a commit node in the DAG.
+#[derive(Debug, Clone, Copy)]
+pub enum Glyph {
+    WorkingCopy,
+    Conflict,
+    Immutable,
+    Merge,
+    Normal,
+}
+
+impl std::fmt::Display for Glyph {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", char::from(*self))
+    }
+}
+
+impl From<Glyph> for char {
+    fn from(value: Glyph) -> Self {
+        match value {
+            Glyph::WorkingCopy => '@',
+            Glyph::Conflict => '×',
+            Glyph::Immutable => '◆',
+            Glyph::Merge => '⊕',
+            Glyph::Normal => '○',
+        }
+    }
+}
+
+impl TryFrom<char> for Glyph {
+    type Error = ();
+
+    fn try_from(value: char) -> Result<Self, Self::Error> {
+        match value {
+            '@' => Ok(Self::WorkingCopy),
+            '×' => Ok(Self::Conflict),
+            '◆' => Ok(Self::Immutable),
+            '⊕' => Ok(Self::Merge),
+            '○' => Ok(Self::Normal),
+            _ => Err(()),
+        }
+    }
+}
+
 /// Configurable characters for commit glyphs in the DAG graph.
 #[derive(Deserialize, Clone)]
 pub struct GlyphChars {
@@ -99,8 +142,7 @@ fn default_glyph_normal() -> char {
 
 impl GlyphChars {
     /// Get the character for a glyph variant.
-    pub fn char_for(&self, glyph: crate::dag::Glyph) -> char {
-        use crate::dag::Glyph;
+    pub fn char_for(&self, glyph: Glyph) -> char {
         match glyph {
             Glyph::WorkingCopy => self.working_copy,
             Glyph::Conflict => self.conflict,

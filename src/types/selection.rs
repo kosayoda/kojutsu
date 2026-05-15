@@ -248,15 +248,16 @@ impl Default for SelectionContext {
 
 impl Selection {
     /// Get the file reference from any selection variant.
-    pub fn file_ref(&self) -> &FileRef {
+    /// Returns `None` for `Selection::Commit`.
+    pub fn file_ref(&self) -> Option<&FileRef> {
         match self {
-            Selection::Commit(_) => panic!("commit selection has no file_ref"),
-            Selection::File(file_ref) => file_ref,
+            Selection::Commit(_) => None,
+            Selection::File(file_ref) => Some(file_ref),
             Selection::Line {
                 file_ref,
                 old_line: _,
                 new_line: _,
-            } => file_ref,
+            } => Some(file_ref),
         }
     }
 
@@ -264,13 +265,14 @@ impl Selection {
     pub fn change_id(&self) -> &ChangeId {
         match self {
             Selection::Commit(change_id) => change_id,
-            _ => &self.file_ref().change_id,
+            Selection::File(file_ref) | Selection::Line { file_ref, .. } => &file_ref.change_id,
         }
     }
 
     /// Get the file path from any selection variant.
-    pub fn path(&self) -> &str {
-        self.file_ref().path.as_str()
+    /// Returns `None` for `Selection::Commit`.
+    pub fn path(&self) -> Option<&str> {
+        self.file_ref().map(|f| f.path.as_str())
     }
 }
 

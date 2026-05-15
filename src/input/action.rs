@@ -5,11 +5,12 @@ use smallvec::smallvec;
 use crate::app::{App, AppMode, TargetMode};
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
-use crate::jj_command::{ChangeSelection, InsertPosition, JJCommand, JJCommandKind};
+use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind};
 use crate::keymap::{
     self, action_label, action_supported_selection_kinds, AppAction, CommandFlags, Keymap,
     LookupResult,
 };
+use crate::types::ChangeSelection;
 use crate::types::{
     BookmarkName, ChangeId, CommitId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode,
     PendingCommand, PendingSelection, RebaseSource, RemoteName, SelectionKind, SmallVec, SplitKind,

@@ -708,10 +708,10 @@ fn render_commit_item<'a>(
         theme.error
     } else {
         match c.glyph() {
-            crate::dag::Glyph::WorkingCopy => theme.added,
-            crate::dag::Glyph::Conflict => theme.error,
-            crate::dag::Glyph::Immutable | crate::dag::Glyph::Merge => theme.accent,
-            crate::dag::Glyph::Normal => theme.accent,
+            crate::theme::Glyph::WorkingCopy => theme.added,
+            crate::theme::Glyph::Conflict => theme.error,
+            crate::theme::Glyph::Immutable | crate::theme::Glyph::Merge => theme.accent,
+            crate::theme::Glyph::Normal => theme.accent,
         }
     };
 
