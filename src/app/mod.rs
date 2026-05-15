@@ -492,7 +492,7 @@ impl App {
             });
         }
         let entry = self.selected_bookmark_entry()?;
-        let remote = entry.remote.clone()?;
+        let remote = entry.kind.remote()?.clone();
         Some(crate::dag::BookmarkRef {
             name: entry.name.clone(),
             remote,

@@ -487,18 +487,18 @@ impl RepoServiceState {
                     let mut ids = std::collections::HashSet::new();
                     for details in bookmark_details.values() {
                         for ct in &details.conflict_targets {
-                            ids.insert(ct.commit_id.clone());
+                            ids.insert(ct.summary.commit_id.clone());
                         }
                         for rt in &details.remote_targets {
-                            ids.insert(rt.commit_id.clone());
+                            ids.insert(rt.summary.commit_id.clone());
                         }
                     }
                     for details in tag_details.values() {
                         if let Some(lt) = &details.local_target {
-                            ids.insert(lt.commit_id.clone());
+                            ids.insert(lt.summary.commit_id.clone());
                         }
                         for rt in &details.remote_targets {
-                            ids.insert(rt.commit_id.clone());
+                            ids.insert(rt.summary.commit_id.clone());
                         }
                     }
                     for ws in &workspace_entries {

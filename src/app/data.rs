@@ -380,25 +380,25 @@ impl App {
                 let update_map: std::collections::HashMap<_, _> = updates.into_iter().collect();
                 for details in self.views.bookmark_details.values_mut() {
                     for ct in &mut details.conflict_targets {
-                        if let Some(u) = update_map.get(&ct.commit_id) {
-                            u.apply(&mut ct.change_id, &mut ct.short_commit_id);
+                        if let Some(u) = update_map.get(&ct.summary.commit_id) {
+                            u.apply(&mut ct.summary);
                         }
                     }
                     for rt in &mut details.remote_targets {
-                        if let Some(u) = update_map.get(&rt.commit_id) {
-                            u.apply(&mut rt.change_id, &mut rt.short_commit_id);
+                        if let Some(u) = update_map.get(&rt.summary.commit_id) {
+                            u.apply(&mut rt.summary);
                         }
                     }
                 }
                 for details in self.views.tag_details.values_mut() {
                     if let Some(lt) = &mut details.local_target {
-                        if let Some(u) = update_map.get(&lt.commit_id) {
-                            u.apply(&mut lt.change_id, &mut lt.short_commit_id);
+                        if let Some(u) = update_map.get(&lt.summary.commit_id) {
+                            u.apply(&mut lt.summary);
                         }
                     }
                     for rt in &mut details.remote_targets {
-                        if let Some(u) = update_map.get(&rt.commit_id) {
-                            u.apply(&mut rt.change_id, &mut rt.short_commit_id);
+                        if let Some(u) = update_map.get(&rt.summary.commit_id) {
+                            u.apply(&mut rt.summary);
                         }
                     }
                 }
@@ -599,7 +599,7 @@ impl App {
 
     /// Aggregate bookmark data from DAG nodes into a flat list for the bookmark view.
     pub fn rebuild_bookmark_entries(&mut self) {
-        use super::BookmarkViewEntry;
+        use super::{BookmarkKind, BookmarkViewEntry};
         use crate::types::BookmarkName;
         use std::collections::HashSet as HS;
 
@@ -610,34 +610,44 @@ impl App {
         for node in self.nodes.iter() {
             for bm in &node.commit.bookmarks {
                 if seen.insert(bm.name.clone()) {
+                    let kind = if bm.is_tracking {
+                        BookmarkKind::Tracking {
+                            is_dirty: bm.is_dirty,
+                            is_conflicted: bm.is_conflicted,
+                        }
+                    } else {
+                        BookmarkKind::Local {
+                            is_dirty: bm.is_dirty,
+                            is_conflicted: bm.is_conflicted,
+                        }
+                    };
                     entries.push(BookmarkViewEntry {
                         name: bm.name.clone(),
                         commit_id: Some(node.commit.graph_id.clone()),
                         change_id: Some(node.commit.change_id.clone()),
                         description: node.commit.description.clone(),
-                        is_tracked: true,
-                        is_tracking: bm.is_tracking,
-                        is_synced: !bm.is_dirty,
-                        is_dirty: bm.is_dirty,
-                        remote: None,
-                        is_conflicted: bm.is_conflicted,
+                        kind,
                     });
                 }
             }
             for rb in &node.commit.remote_bookmarks {
                 let key = BookmarkName::new(format!("{}@{}", rb.name, rb.remote));
                 if seen.insert(key) {
+                    let kind = if rb.is_tracked {
+                        BookmarkKind::TrackedRemote {
+                            remote: rb.remote.clone(),
+                        }
+                    } else {
+                        BookmarkKind::UntrackedRemote {
+                            remote: rb.remote.clone(),
+                        }
+                    };
                     entries.push(BookmarkViewEntry {
                         name: rb.name.clone(),
                         commit_id: Some(node.commit.graph_id.clone()),
                         change_id: Some(node.commit.change_id.clone()),
                         description: node.commit.description.clone(),
-                        is_tracked: rb.is_tracked,
-                        is_tracking: false,
-                        is_synced: rb.synced,
-                        is_dirty: false,
-                        remote: Some(rb.remote.clone()),
-                        is_conflicted: false,
+                        kind,
                     });
                 }
             }
@@ -647,37 +657,28 @@ impl App {
         for rb in &self.views.remote_bookmarks {
             let key = BookmarkName::new(format!("{}@{}", rb.name, rb.remote));
             if seen.insert(key) {
+                let kind = if rb.is_tracked {
+                    BookmarkKind::TrackedRemote {
+                        remote: rb.remote.clone(),
+                    }
+                } else {
+                    BookmarkKind::UntrackedRemote {
+                        remote: rb.remote.clone(),
+                    }
+                };
                 entries.push(BookmarkViewEntry {
                     name: rb.name.clone(),
                     commit_id: rb.commit_id.clone(),
                     change_id: None,
                     description: None,
-                    is_tracked: rb.is_tracked,
-                    is_tracking: false,
-                    is_synced: false,
-                    is_dirty: false,
-                    remote: Some(rb.remote.clone()),
-                    is_conflicted: false,
+                    kind,
                 });
             }
         }
 
         // Sort: pure local → local tracking remote → tracked remote → untracked remote.
         // Within each group, alphabetical by name.
-        entries.sort_by(|a, b| {
-            let rank = |e: &BookmarkViewEntry| -> u8 {
-                if e.remote.is_none() && !e.is_tracking {
-                    0 // pure local (no remote tracking)
-                } else if e.remote.is_none() {
-                    1 // local that tracks a remote
-                } else if e.is_tracked {
-                    2 // tracked remote
-                } else {
-                    3 // untracked remote
-                }
-            };
-            rank(a).cmp(&rank(b)).then(a.name.cmp(&b.name))
-        });
+        entries.sort_by(|a, b| a.kind.rank().cmp(&b.kind.rank()).then(a.name.cmp(&b.name)));
 
         self.views.bookmark_entries = entries;
     }
@@ -718,9 +719,9 @@ impl App {
                 let (commit_id, change_id, description) =
                     if let Some(lt) = details.and_then(|d| d.local_target.as_ref()) {
                         (
-                            Some(lt.commit_id.clone()),
-                            Some(lt.change_id.clone()),
-                            lt.description.clone(),
+                            Some(lt.summary.commit_id.clone()),
+                            Some(lt.summary.change_id.clone()),
+                            lt.summary.description.clone(),
                         )
                     } else {
                         (None, None, None)

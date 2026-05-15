@@ -1177,10 +1177,12 @@ impl JjRepo {
             let local_target = target.as_normal().and_then(|commit_id| {
                 let info = self.commit_detail_info(commit_id)?;
                 Some(TagLocalTarget {
-                    commit_id: UiCommitId::new(commit_id.hex()),
-                    change_id: info.change_id,
-                    short_commit_id: info.short_commit_id,
-                    description: info.description,
+                    summary: crate::dag::CommitSummary {
+                        commit_id: UiCommitId::new(commit_id.hex()),
+                        change_id: info.change_id,
+                        short_commit_id: info.short_commit_id,
+                        description: info.description,
+                    },
                 })
             });
 
@@ -1192,10 +1194,12 @@ impl JjRepo {
                             let info = self.commit_detail_info(commit_id)?;
                             Some(TagRemoteTarget {
                                 remote: RemoteName::new(remote),
-                                commit_id: UiCommitId::new(commit_id.hex()),
-                                change_id: info.change_id,
-                                short_commit_id: info.short_commit_id,
-                                description: info.description,
+                                summary: crate::dag::CommitSummary {
+                                    commit_id: UiCommitId::new(commit_id.hex()),
+                                    change_id: info.change_id,
+                                    short_commit_id: info.short_commit_id,
+                                    description: info.description,
+                                },
                             })
                         })
                         .collect()
@@ -1244,10 +1248,12 @@ impl JjRepo {
                     };
                     TagRemoteTarget {
                         remote: RemoteName::new(remote),
-                        commit_id: UiCommitId::new(hex),
-                        change_id,
-                        short_commit_id,
-                        description,
+                        summary: crate::dag::CommitSummary {
+                            commit_id: UiCommitId::new(hex),
+                            change_id,
+                            short_commit_id,
+                            description,
+                        },
                     }
                 })
                 .collect();
@@ -1432,10 +1438,12 @@ impl JjRepo {
         let info = self.commit_detail_info(commit_id)?;
         Some(crate::dag::BookmarkConflictTarget {
             kind,
-            commit_id: UiCommitId::new(commit_id.hex()),
-            change_id: info.change_id,
-            short_commit_id: info.short_commit_id,
-            description: info.description,
+            summary: crate::dag::CommitSummary {
+                commit_id: UiCommitId::new(commit_id.hex()),
+                change_id: info.change_id,
+                short_commit_id: info.short_commit_id,
+                description: info.description,
+            },
             is_hidden: info.is_hidden,
             change_id_suffix: info.change_id_suffix,
         })
@@ -1453,10 +1461,12 @@ impl JjRepo {
         let info = self.commit_detail_info(commit_id)?;
         Some(crate::dag::BookmarkRemoteTarget {
             remote,
-            commit_id: UiCommitId::new(commit_id.hex()),
-            change_id: info.change_id,
-            short_commit_id: info.short_commit_id,
-            description: info.description,
+            summary: crate::dag::CommitSummary {
+                commit_id: UiCommitId::new(commit_id.hex()),
+                change_id: info.change_id,
+                short_commit_id: info.short_commit_id,
+                description: info.description,
+            },
             is_tracked,
             behind_count,
             ahead_count,

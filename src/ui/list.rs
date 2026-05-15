@@ -1206,12 +1206,22 @@ fn render_tag_remote_target(
     spans.push(Span::styled(": ", Style::default().fg(theme.muted)));
 
     // Change ID + commit ID.
-    push_short_id(&mut spans, &target.change_id, theme.change_id, theme);
+    push_short_id(
+        &mut spans,
+        &target.summary.change_id,
+        theme.change_id,
+        theme,
+    );
     spans.push(Span::raw(" "));
-    push_short_id(&mut spans, &target.short_commit_id, theme.commit_id, theme);
+    push_short_id(
+        &mut spans,
+        &target.summary.short_commit_id,
+        theme.commit_id,
+        theme,
+    );
 
     // Description.
-    if let Some(ref desc) = target.description {
+    if let Some(ref desc) = target.summary.description {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }
@@ -1624,12 +1634,12 @@ fn render_bookmark_item(
     let mut spans = vec![gutter_span(search, theme)];
 
     // Conflict indicator for bookmark conflicts (divergent operations).
-    if entry.is_conflicted {
+    if entry.kind.is_conflicted() {
         spans.push(Span::styled("! ", Style::default().fg(theme.error)));
     } else {
         spans.push(Span::raw("  "));
     }
-    if let Some(remote) = &entry.remote {
+    if let Some(remote) = entry.kind.remote() {
         let name_style = Style::default().fg(theme.text);
         push_searchable(
             &mut spans,
@@ -1642,7 +1652,7 @@ fn render_bookmark_item(
             format!("@{remote}"),
             Style::default().fg(theme.muted),
         ));
-    } else if entry.is_dirty {
+    } else if entry.kind.is_dirty() {
         let name_display = format!("{}*", entry.name);
         let style = Style::default()
             .fg(theme.warning)
@@ -1721,20 +1731,25 @@ fn render_bookmark_conflict_target(
 
     push_short_id_with_suffix(
         &mut spans,
-        &target.change_id,
+        &target.summary.change_id,
         theme.change_id,
         target.change_id_suffix,
         theme,
     );
     spans.push(Span::raw(" "));
-    push_short_id(&mut spans, &target.short_commit_id, theme.commit_id, theme);
+    push_short_id(
+        &mut spans,
+        &target.summary.short_commit_id,
+        theme.commit_id,
+        theme,
+    );
 
     if target.is_hidden {
         spans.push(Span::styled(" (hidden)", Style::default().fg(theme.muted)));
     }
 
     // Description.
-    if let Some(ref desc) = target.description {
+    if let Some(ref desc) = target.summary.description {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }
@@ -1792,15 +1807,20 @@ fn render_bookmark_remote_target(
 
     push_short_id_with_suffix(
         &mut spans,
-        &target.change_id,
+        &target.summary.change_id,
         theme.change_id,
         target.change_id_suffix,
         theme,
     );
     spans.push(Span::raw(" "));
-    push_short_id(&mut spans, &target.short_commit_id, theme.commit_id, theme);
+    push_short_id(
+        &mut spans,
+        &target.summary.short_commit_id,
+        theme.commit_id,
+        theme,
+    );
 
-    if let Some(ref desc) = target.description {
+    if let Some(ref desc) = target.summary.description {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(desc.clone(), Style::default().fg(theme.text)));
     }

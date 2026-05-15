@@ -1043,10 +1043,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             // On a conflict target row: resolve conflict by picking this side.
             if let Some((entry, target)) = app.selected_conflict_target() {
                 let name = entry.name.clone();
-                let prefix = &target.change_id.display[..target
+                let prefix = &target.summary.change_id.display[..target
+                    .summary
                     .change_id
                     .prefix_len
-                    .min(target.change_id.display.len())];
+                    .min(target.summary.change_id.display.len())];
                 let change_id = match target.change_id_suffix {
                     Some(suffix) => ChangeId::new(format!("{prefix}/{suffix}")),
                     None => ChangeId::new(prefix),
@@ -1059,7 +1060,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             // On a remote target row: jump to that specific commit in DAG.
             if let Some(ids) = app
                 .selected_remote_target()
-                .map(|(_, t)| (t.commit_id.clone(), t.change_id.clone()))
+                .map(|(_, t)| (t.summary.commit_id.clone(), t.summary.change_id.clone()))
             {
                 jump_to_commit_in_dag(app, Some(&ids.0), Some(&ids.1), "");
                 return Action::None;
@@ -1152,7 +1153,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
-            if let Some(remote) = &entry.remote {
+            if let Some(remote) = entry.kind.remote() {
                 // Remote bookmark row — fetch from that remote.
                 return Action::SuspendAndRunJj(JJCommand {
                     kind: JJCommandKind::GitFetchBookmark {

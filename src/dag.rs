@@ -87,12 +87,15 @@ pub struct PrefixLengthUpdate {
 }
 
 impl PrefixLengthUpdate {
-    /// Apply this update to a (change_id, short_commit_id) pair.
-    pub fn apply(&self, change_id: &mut ShortId, short_commit_id: &mut ShortId) {
-        change_id.display.clone_from(&self.change_display);
-        change_id.prefix_len = self.change_prefix_len;
-        short_commit_id.display.clone_from(&self.commit_display);
-        short_commit_id.prefix_len = self.commit_prefix_len;
+    /// Apply this update to a `CommitSummary`.
+    pub fn apply(&self, summary: &mut CommitSummary) {
+        summary.change_id.display.clone_from(&self.change_display);
+        summary.change_id.prefix_len = self.change_prefix_len;
+        summary
+            .short_commit_id
+            .display
+            .clone_from(&self.commit_display);
+        summary.short_commit_id.prefix_len = self.commit_prefix_len;
     }
 }
 
@@ -154,6 +157,23 @@ pub struct RemoteBookmarkRef {
 }
 
 // ---------------------------------------------------------------------------
+// Shared commit summary for bookmark/tag detail rows
+// ---------------------------------------------------------------------------
+
+/// Core commit fields shared across bookmark conflict targets, remote targets,
+/// and tag targets.
+pub struct CommitSummary {
+    /// Full commit ID hex.
+    pub commit_id: CommitId,
+    /// Short change ID with unique prefix length.
+    pub change_id: ShortId,
+    /// Short commit ID with unique prefix length.
+    pub short_commit_id: ShortId,
+    /// First line of description.
+    pub description: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // Rich bookmark detail types (for bookmark view child rows)
 // ---------------------------------------------------------------------------
 
@@ -167,14 +187,8 @@ pub enum ConflictTargetKind {
 /// A single conflict target for a conflicted bookmark.
 pub struct BookmarkConflictTarget {
     pub kind: ConflictTargetKind,
-    /// Full commit ID hex.
-    pub commit_id: CommitId,
-    /// Short change ID with unique prefix length.
-    pub change_id: ShortId,
-    /// Short commit ID with unique prefix length.
-    pub short_commit_id: ShortId,
-    /// First line of description.
-    pub description: Option<String>,
+    /// Commit metadata.
+    pub summary: CommitSummary,
     /// Whether the commit is hidden (superseded).
     pub is_hidden: bool,
     /// Divergence suffix (e.g., `Some(2)` → `/2`).
@@ -185,14 +199,8 @@ pub struct BookmarkConflictTarget {
 pub struct BookmarkRemoteTarget {
     /// Remote name (e.g., "origin", "git").
     pub remote: RemoteName,
-    /// Full commit ID hex of the remote's target.
-    pub commit_id: CommitId,
-    /// Short change ID of the remote's target commit.
-    pub change_id: ShortId,
-    /// Short commit ID of the remote's target commit.
-    pub short_commit_id: ShortId,
-    /// First line of description.
-    pub description: Option<String>,
+    /// Commit metadata.
+    pub summary: CommitSummary,
     /// Whether the remote ref is tracked locally.
     pub is_tracked: bool,
     /// Commits the local is behind the remote (None = unknown/conflicted).
@@ -213,14 +221,8 @@ pub struct BookmarkDetails {
 pub struct TagRemoteTarget {
     /// Remote name (e.g., "origin", "git").
     pub remote: RemoteName,
-    /// Full commit ID hex (for comparison with local target).
-    pub commit_id: CommitId,
-    /// Short change ID of the remote's target commit.
-    pub change_id: ShortId,
-    /// Short commit ID of the remote's target commit.
-    pub short_commit_id: ShortId,
-    /// First line of description.
-    pub description: Option<String>,
+    /// Commit metadata.
+    pub summary: CommitSummary,
 }
 
 /// Rich data for a single tag (local target + remote tracking).
@@ -235,10 +237,8 @@ pub struct TagDetails {
 
 /// Local target info for a tag.
 pub struct TagLocalTarget {
-    pub commit_id: CommitId,
-    pub change_id: ShortId,
-    pub short_commit_id: ShortId,
-    pub description: Option<String>,
+    /// Commit metadata.
+    pub summary: CommitSummary,
 }
 
 impl CommitInfo {

@@ -317,19 +317,60 @@ pub(super) fn default_view_states() -> [ViewState; <ActiveView as strum::EnumCou
     ]
 }
 
+/// Discriminant for the 4 mutually exclusive bookmark states.
+pub enum BookmarkKind {
+    /// Pure local bookmark (no remote tracking).
+    Local { is_dirty: bool, is_conflicted: bool },
+    /// Local bookmark that tracks a remote.
+    Tracking { is_dirty: bool, is_conflicted: bool },
+    /// Tracked remote-only bookmark.
+    TrackedRemote { remote: RemoteName },
+    /// Untracked remote-only bookmark.
+    UntrackedRemote { remote: RemoteName },
+}
+
+impl BookmarkKind {
+    /// The remote name, if this is a remote bookmark.
+    pub fn remote(&self) -> Option<&RemoteName> {
+        match self {
+            Self::TrackedRemote { remote } | Self::UntrackedRemote { remote } => Some(remote),
+            _ => None,
+        }
+    }
+
+    /// Whether this bookmark has conflicting targets.
+    pub fn is_conflicted(&self) -> bool {
+        matches!(
+            self,
+            Self::Local { is_conflicted: true, .. } | Self::Tracking { is_conflicted: true, .. }
+        )
+    }
+
+    /// Whether the local bookmark differs from its tracked remote.
+    pub fn is_dirty(&self) -> bool {
+        matches!(
+            self,
+            Self::Local { is_dirty: true, .. } | Self::Tracking { is_dirty: true, .. }
+        )
+    }
+
+    /// Sort rank: local(0) < tracking(1) < tracked-remote(2) < untracked-remote(3).
+    pub fn rank(&self) -> u8 {
+        match self {
+            Self::Local { .. } => 0,
+            Self::Tracking { .. } => 1,
+            Self::TrackedRemote { .. } => 2,
+            Self::UntrackedRemote { .. } => 3,
+        }
+    }
+}
+
 pub struct BookmarkViewEntry {
     pub name: BookmarkName,
     pub commit_id: Option<CommitId>,
     pub change_id: Option<crate::dag::ShortId>,
     pub description: Option<String>,
-    pub is_tracked: bool,
-    /// Whether this local bookmark tracks a remote (e.g., `main` tracks `main@origin`).
-    pub is_tracking: bool,
-    pub is_synced: bool,
-    pub is_dirty: bool,
-    pub remote: Option<RemoteName>,
-    /// Whether the bookmark has conflicting targets.
-    pub is_conflicted: bool,
+    pub kind: BookmarkKind,
 }
 
 pub struct TagViewEntry {

@@ -271,7 +271,7 @@ impl App {
                 };
                 (scopes.contains(SearchScopes::BOOKMARK)
                     && (contains(entry.name.as_str())
-                        || entry.remote.as_ref().is_some_and(|r| contains(r.as_str()))))
+                        || entry.kind.remote().is_some_and(|r| contains(r.as_str()))))
                     || (scopes.contains(SearchScopes::DESCRIPTION)
                         && entry.description.as_deref().is_some_and(contains))
                     || (scopes.contains(SearchScopes::CHANGE_ID)

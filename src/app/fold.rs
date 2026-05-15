@@ -82,10 +82,10 @@ impl App {
             let name = &self.views.tag_entries[idx].name;
             if !self.views.folded_tags.contains(name) {
                 if let Some(details) = self.views.tag_details.get(name) {
-                    let local_commit = details.local_target.as_ref().map(|lt| &lt.commit_id);
+                    let local_commit = details.local_target.as_ref().map(|lt| &lt.summary.commit_id);
                     for ri in 0..details.remote_targets.len() {
                         let rt = &details.remote_targets[ri];
-                        if local_commit == Some(&rt.commit_id) {
+                        if local_commit == Some(&rt.summary.commit_id) {
                             continue;
                         }
                         self.rows.push(DisplayRow::TagRemoteTarget {
