@@ -403,4 +403,9 @@ impl App {
             }
         }
     }
+
+    /// Set cursor to a specific row, clamping to valid bounds.
+    pub fn set_cursor(&mut self, row: RowIdx) {
+        self.cursor = RowIdx::new(row.raw().min(self.rows.len().saturating_sub(1)));
+    }
 }

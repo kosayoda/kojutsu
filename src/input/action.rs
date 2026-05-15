@@ -1391,7 +1391,7 @@ fn jump_to_commit_in_dag(
     if let Some(idx) = app.entry_by_commit_id(cid) {
         app.switch_view(crate::app::ActiveView::Dag);
         if let Some(row) = app.row_of_commit(idx) {
-            app.cursor = row;
+            app.set_cursor(row);
         }
     } else {
         // Use change ID if available, otherwise fall back to commit ID.

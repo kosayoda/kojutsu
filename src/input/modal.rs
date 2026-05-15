@@ -273,7 +273,7 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
         KeyCode::Esc => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::TargetSelect { restore_cursor, .. } = mode {
-                app.cursor = restore_cursor;
+                app.set_cursor(restore_cursor);
             }
             Action::None
         }
@@ -298,7 +298,7 @@ pub(super) fn handle_commit_select(app: &mut App, key: KeyEvent) -> Action {
         KeyCode::Esc => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::CommitSelect { restore_cursor, .. } = mode {
-                app.cursor = restore_cursor;
+                app.set_cursor(restore_cursor);
             }
             Action::None
         }
@@ -336,7 +336,7 @@ pub(super) fn handle_jump(app: &mut App, key: KeyEvent) -> Action {
 
     // Exact match → jump and exit.
     if let Some((_, row_idx)) = labels.iter().find(|(label, _)| *label == input) {
-        app.cursor = *row_idx;
+        app.set_cursor(*row_idx);
         exit(app, restore_mode);
     } else {
         // Input is a prefix of remaining labels — stay in jump mode.
