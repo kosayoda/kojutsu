@@ -186,168 +186,171 @@ impl App {
     pub fn handle_repo_result_deferred(&mut self, result: RepoResult) -> DeferredWork {
         let mut deferred = DeferredWork::default();
         match result {
-            RepoResult::RevsetLoaded(data) => {
-                self.status_message = None;
-                self.revset.current = data.revset.into();
-                self.revset.draft = None;
-                self.revset.pending = None;
-                // Invalidate op log; re-request if currently viewing.
-                self.op_log.loaded = false;
-                self.op_log.limit = super::OP_LOG_BATCH_SIZE;
-                self.op_log.details.clear();
-                self.op_log.unfolded.clear();
-                if self.active_view == super::ActiveView::Operations {
-                    self.pending_repo_requests
-                        .push(RepoRequest::load_operations(self.op_log.limit));
+            RepoResult::Revset { revset, result } => match result {
+                Ok(data) => {
+                    self.status_message = None;
+                    self.revset.current = data.revset.into();
+                    self.revset.draft = None;
+                    self.revset.pending = None;
+                    // Invalidate op log; re-request if currently viewing.
+                    self.op_log.loaded = false;
+                    self.op_log.limit = super::OP_LOG_BATCH_SIZE;
+                    self.op_log.details.clear();
+                    self.op_log.unfolded.clear();
+                    if self.active_view == super::ActiveView::Operations {
+                        self.pending_repo_requests
+                            .push(RepoRequest::load_operations(self.op_log.limit));
+                    }
+                    self.repo_root = data.repo_root;
+                    self.views.remote_bookmarks = data.remote_bookmarks;
+                    self.views.remotes = data.remotes;
+                    self.views.all_tags = data.all_tags;
+                    self.views.tag_details = data.tag_details;
+                    self.views.bookmark_details = data.bookmark_details;
+                    self.views.workspace_entries = data.workspace_entries;
+                    self.revset.load_state = Loadable::Loaded(());
+                    for w in &data.warnings {
+                        self.push_command_log(
+                            super::CommandLogKind::Warning,
+                            w,
+                            None,
+                            Vec::new(),
+                            false,
+                        );
+                    }
+                    if !data.warnings.is_empty() {
+                        self.set_error(data.warnings.join("; "));
+                    }
+                    // apply_entries does its own rebuild_rows (needed for cursor restoration).
+                    self.apply_entries(data.entries);
                 }
-                self.repo_root = data.repo_root;
-                self.views.remote_bookmarks = data.remote_bookmarks;
-                self.views.remotes = data.remotes;
-                self.views.all_tags = data.all_tags;
-                self.views.tag_details = data.tag_details;
-                self.views.bookmark_details = data.bookmark_details;
-                self.views.workspace_entries = data.workspace_entries;
-                self.revset.load_state = Loadable::Loaded(());
-                for w in &data.warnings {
+                Err(error) => {
+                    self.revset.pending = None;
+                    self.revset.draft = Some(revset.into());
+                    self.revset.load_state = Loadable::Failed(error.clone());
+                    self.set_error("failed to load revset");
                     self.push_command_log(
-                        super::CommandLogKind::Warning,
-                        w,
+                        super::CommandLogKind::Background,
+                        "revset error",
                         None,
-                        Vec::new(),
+                        error.message.as_bytes().to_vec(),
                         false,
                     );
-                }
-                if !data.warnings.is_empty() {
-                    self.set_error(data.warnings.join("; "));
-                }
-                // apply_entries does its own rebuild_rows (needed for cursor restoration).
-                self.apply_entries(data.entries);
-            }
-            RepoResult::RevsetFailed { revset, error } => {
-                self.revset.pending = None;
-                self.revset.draft = Some(revset.into());
-                self.revset.load_state = Loadable::Failed(error.clone());
-                self.set_error("failed to load revset");
-                self.push_command_log(
-                    super::CommandLogKind::Background,
-                    "revset error",
-                    None,
-                    error.as_bytes().to_vec(),
-                    false,
-                );
-                self.mode = AppMode::CommandOutput {
-                    command_parts: None,
-                    command: "revset error".to_string(),
-                    output: error.into_bytes(),
-                    success: false,
-                    retry: vec![],
-                };
-            }
-            RepoResult::CommitDetailsLoaded { commit_id, details } => {
-                self.status_message = None;
-                let Some(idx) = self.entry_by_commit_id(&commit_id) else {
-                    return deferred;
-                };
-                // Update is_empty for this commit.
-                self.nodes[idx].commit.is_empty = details.is_empty;
-
-                // Re-request diffs for files that were previously unfolded.
-                let change_id = self.change_id(idx);
-                for (fi, file) in details.files.iter().enumerate() {
-                    let fold_key = super::FileFoldKey {
-                        change_id: change_id.clone(),
-                        path: file.path.clone(),
+                    self.mode = AppMode::CommandOutput {
+                        command_parts: None,
+                        command: "revset error".to_string(),
+                        output: error.message.into_bytes(),
+                        success: false,
+                        retry: vec![],
                     };
-                    if self.unfolded_files.contains(&fold_key) {
-                        self.nodes[idx].ensure_diffs(fi + 1);
-                        if self.nodes[idx].diffs[fi].should_request() {
-                            self.nodes[idx].diffs[fi] = Loadable::Loading;
-                            self.pending_repo_requests.push(RepoRequest::load_file_diff(
-                                commit_id.clone(),
-                                file.path.clone(),
-                                file.old_path.clone(),
-                            ));
+                }
+            },
+            RepoResult::CommitDetails { commit_id, result } => match result {
+                Ok(details) => {
+                    self.status_message = None;
+                    let Some(idx) = self.entry_by_commit_id(&commit_id) else {
+                        return deferred;
+                    };
+                    // Update is_empty for this commit.
+                    self.nodes[idx].commit.is_empty = details.is_empty;
+
+                    // Re-request diffs for files that were previously unfolded.
+                    let change_id = self.change_id(idx);
+                    for (fi, file) in details.files.iter().enumerate() {
+                        let fold_key = super::FileFoldKey {
+                            change_id: change_id.clone(),
+                            path: file.path.clone(),
+                        };
+                        if self.unfolded_files.contains(&fold_key) {
+                            self.nodes[idx].ensure_diffs(fi + 1);
+                            if self.nodes[idx].diffs[fi].should_request() {
+                                self.nodes[idx].diffs[fi] = Loadable::Loading;
+                                self.pending_repo_requests.push(RepoRequest::load_file_diff(
+                                    commit_id.clone(),
+                                    file.path.clone(),
+                                    file.old_path.clone(),
+                                ));
+                            }
                         }
                     }
-                }
 
-                // Store loaded files and stats.
-                self.nodes[idx].files = Loadable::Loaded(details.files);
-                self.nodes[idx].stats = Loadable::Loaded(details.stats);
-                // Ensure diffs vec is sized to match files.
-                let nfiles = self.nodes[idx].files.loaded().map_or(0, |f| f.len());
-                self.nodes[idx].ensure_diffs(nfiles);
-                deferred.rebuild = true;
-                deferred.scroll = true;
-            }
-            RepoResult::CommitDetailsFailed { commit_id, error } => {
-                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                    self.nodes[idx].files = Loadable::Failed(error.clone());
-                    self.nodes[idx].stats = Loadable::Failed(error.clone());
+                    // Store loaded files and stats.
+                    self.nodes[idx].files = Loadable::Loaded(details.files);
+                    self.nodes[idx].stats = Loadable::Loaded(details.stats);
+                    // Ensure diffs vec is sized to match files.
+                    let nfiles = self.nodes[idx].files.loaded().map_or(0, |f| f.len());
+                    self.nodes[idx].ensure_diffs(nfiles);
+                    deferred.rebuild = true;
+                    deferred.scroll = true;
                 }
-                let summary = format!("load files for {commit_id}");
-                self.push_command_log(
-                    super::CommandLogKind::Background,
-                    &summary,
-                    None,
-                    error.as_bytes().to_vec(),
-                    false,
-                );
-                self.mode = AppMode::CommandOutput {
-                    command_parts: None,
-                    command: summary,
-                    output: error.into_bytes(),
-                    success: false,
-                    retry: vec![],
-                };
-                deferred.rebuild = true;
-            }
-            RepoResult::FileDiffLoaded {
+                Err(error) => {
+                    if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                        self.nodes[idx].files = Loadable::Failed(error.clone());
+                        self.nodes[idx].stats = Loadable::Failed(error.clone());
+                    }
+                    let summary = format!("load files for {commit_id}");
+                    self.push_command_log(
+                        super::CommandLogKind::Background,
+                        &summary,
+                        None,
+                        error.message.as_bytes().to_vec(),
+                        false,
+                    );
+                    self.mode = AppMode::CommandOutput {
+                        command_parts: None,
+                        command: summary,
+                        output: error.message.into_bytes(),
+                        success: false,
+                        retry: vec![],
+                    };
+                    deferred.rebuild = true;
+                }
+            },
+            RepoResult::FileDiff {
                 commit_id,
                 path,
                 result,
-            } => {
-                self.status_message = None;
-                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                    if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
-                        let fi = file_idx.raw();
-                        self.nodes[idx].ensure_diffs(fi + 1);
-                        self.nodes[idx].diffs[fi] = Loadable::Loaded(result.git);
-                        self.nodes[idx].diffs_cw[fi] = Loadable::Loaded(result.color_words);
+            } => match result {
+                Ok(diff_result) => {
+                    self.status_message = None;
+                    if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                        if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
+                            let fi = file_idx.raw();
+                            self.nodes[idx].ensure_diffs(fi + 1);
+                            self.nodes[idx].diffs[fi] = Loadable::Loaded(diff_result.git);
+                            self.nodes[idx].diffs_cw[fi] =
+                                Loadable::Loaded(diff_result.color_words);
+                        }
                     }
+                    deferred.rebuild = true;
+                    deferred.scroll = true;
                 }
-                deferred.rebuild = true;
-                deferred.scroll = true;
-            }
-            RepoResult::FileDiffFailed {
-                commit_id,
-                path,
-                error,
-            } => {
-                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                    if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
-                        let fi = file_idx.raw();
-                        self.nodes[idx].ensure_diffs(fi + 1);
-                        self.nodes[idx].diffs[fi] = Loadable::Failed(error.clone());
+                Err(error) => {
+                    if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                        if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
+                            let fi = file_idx.raw();
+                            self.nodes[idx].ensure_diffs(fi + 1);
+                            self.nodes[idx].diffs[fi] = Loadable::Failed(error.clone());
+                        }
                     }
+                    let summary = format!("load diff for {path}");
+                    self.push_command_log(
+                        super::CommandLogKind::Background,
+                        &summary,
+                        None,
+                        error.message.as_bytes().to_vec(),
+                        false,
+                    );
+                    self.mode = AppMode::CommandOutput {
+                        command_parts: None,
+                        command: summary,
+                        output: error.message.into_bytes(),
+                        success: false,
+                        retry: vec![],
+                    };
+                    deferred.rebuild = true;
                 }
-                let summary = format!("load diff for {path}");
-                self.push_command_log(
-                    super::CommandLogKind::Background,
-                    &summary,
-                    None,
-                    error.as_bytes().to_vec(),
-                    false,
-                );
-                self.mode = AppMode::CommandOutput {
-                    command_parts: None,
-                    command: summary,
-                    output: error.into_bytes(),
-                    success: false,
-                    retry: vec![],
-                };
-                deferred.rebuild = true;
-            }
+            },
             RepoResult::WorkspaceUpdatedStale { message } => {
                 self.set_status(message);
             }
@@ -415,158 +418,167 @@ impl App {
                 }
                 self.rebuild_tag_entries();
             }
-            RepoResult::OperationsLoaded { entries, has_more } => {
-                self.op_log.entries = entries;
-                self.op_log.loaded = true;
-                self.op_log.has_more = has_more;
-                if self.active_view == super::ActiveView::Operations {
-                    deferred.rebuild = true;
-                }
-            }
-            RepoResult::OperationsFailed { error } => {
-                self.op_log.loaded = false;
-                self.op_log.entries.clear();
-                self.op_log.details.clear();
-                self.op_log.unfolded.clear();
-                let msg = format!("failed to load operation log: {error}");
-                self.push_command_log(
-                    super::CommandLogKind::Background,
-                    &msg,
-                    None,
-                    Vec::new(),
-                    false,
-                );
-                self.set_error(msg);
-            }
-            RepoResult::OpDiffLoaded { op_id, lines } => {
-                self.op_log
-                    .details
-                    .insert(op_id, super::Loadable::Loaded(lines));
-                if self.active_view == super::ActiveView::Operations {
-                    deferred.rebuild = true;
-                    deferred.scroll = true;
-                }
-            }
-            RepoResult::OpDiffFailed { op_id, error } => {
-                self.op_log
-                    .details
-                    .insert(op_id, super::Loadable::Failed(error.clone()));
-                let msg = format!("failed to load op diff: {error}");
-                self.push_command_log(
-                    super::CommandLogKind::Background,
-                    &msg,
-                    None,
-                    Vec::new(),
-                    false,
-                );
-                self.set_error(msg);
-            }
-            RepoResult::ConflictHunksLoaded {
-                commit_id,
-                path,
-                hunks,
-            } => {
-                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                    if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
-                        let fi = file_idx.raw();
-                        self.nodes[idx].ensure_conflict_hunks(fi + 1);
-                        self.nodes[idx].conflict_hunks[fi] = super::Loadable::Loaded(hunks);
+            RepoResult::Operations { result } => match result {
+                Ok((entries, has_more)) => {
+                    self.op_log.entries = entries;
+                    self.op_log.loaded = true;
+                    self.op_log.has_more = has_more;
+                    if self.active_view == super::ActiveView::Operations {
+                        deferred.rebuild = true;
                     }
                 }
-                deferred.rebuild = true;
-                deferred.scroll = true;
-            }
-            RepoResult::ConflictHunksFailed {
-                commit_id,
-                path,
-                error,
-            } => {
-                if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                    if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
-                        let fi = file_idx.raw();
-                        self.nodes[idx].ensure_conflict_hunks(fi + 1);
-                        self.nodes[idx].conflict_hunks[fi] = super::Loadable::Failed(error.clone());
+                Err(error) => {
+                    self.op_log.loaded = false;
+                    self.op_log.entries.clear();
+                    self.op_log.details.clear();
+                    self.op_log.unfolded.clear();
+                    let msg = format!("failed to load operation log: {error}");
+                    self.push_command_log(
+                        super::CommandLogKind::Background,
+                        &msg,
+                        None,
+                        Vec::new(),
+                        false,
+                    );
+                    self.set_error(msg);
+                }
+            },
+            RepoResult::OpDiff { op_id, result } => match result {
+                Ok(lines) => {
+                    self.op_log
+                        .details
+                        .insert(op_id, super::Loadable::Loaded(lines));
+                    if self.active_view == super::ActiveView::Operations {
+                        deferred.rebuild = true;
+                        deferred.scroll = true;
                     }
                 }
-                let msg = format!("failed to load conflict hunks for {path}: {error}");
-                self.push_command_log(
-                    super::CommandLogKind::Background,
-                    &msg,
-                    None,
-                    Vec::new(),
-                    false,
-                );
-                self.set_error(msg);
-            }
-            RepoResult::EvoLogLoaded { entries } => {
-                self.evolog.entries = entries;
-                self.evolog.loaded = true;
-                if self.active_view == super::ActiveView::Evolog {
-                    deferred.rebuild = true;
+                Err(error) => {
+                    self.op_log
+                        .details
+                        .insert(op_id, super::Loadable::Failed(error.clone()));
+                    let msg = format!("failed to load op diff: {error}");
+                    self.push_command_log(
+                        super::CommandLogKind::Background,
+                        &msg,
+                        None,
+                        Vec::new(),
+                        false,
+                    );
+                    self.set_error(msg);
                 }
-            }
-            RepoResult::EvoLogDetailsLoaded { commit_id, files } => {
-                self.evolog
-                    .files
-                    .insert(commit_id, super::Loadable::Loaded(files));
-                if self.active_view == super::ActiveView::Evolog {
-                    deferred.rebuild = true;
-                    deferred.scroll = true;
-                }
-            }
-            RepoResult::EvoLogDetailsFailed { error } => {
-                let msg = format!("failed to load evolog details: {error}");
-                self.push_command_log(
-                    super::CommandLogKind::Background,
-                    &msg,
-                    None,
-                    Vec::new(),
-                    false,
-                );
-                self.set_error(msg);
-            }
-            RepoResult::EvoLogFileDiffLoaded {
+            },
+            RepoResult::ConflictHunks {
                 commit_id,
                 path,
                 result,
-            } => {
-                let key = (commit_id, path);
-                self.evolog
-                    .file_diffs
-                    .insert(key.clone(), super::Loadable::Loaded(result.git));
-                self.evolog
-                    .file_diffs_cw
-                    .insert(key, super::Loadable::Loaded(result.color_words));
-                if self.active_view == super::ActiveView::Evolog {
+            } => match result {
+                Ok(hunks) => {
+                    if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                        if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
+                            let fi = file_idx.raw();
+                            self.nodes[idx].ensure_conflict_hunks(fi + 1);
+                            self.nodes[idx].conflict_hunks[fi] = super::Loadable::Loaded(hunks);
+                        }
+                    }
                     deferred.rebuild = true;
                     deferred.scroll = true;
                 }
-            }
-            RepoResult::EvoLogFileDiffFailed { error } => {
-                let msg = format!("failed to load evolog file diff: {error}");
-                self.push_command_log(
-                    super::CommandLogKind::Background,
-                    &msg,
-                    None,
-                    Vec::new(),
-                    false,
-                );
-                self.set_error(msg);
-            }
-            RepoResult::EvoLogFailed { error } => {
-                self.evolog.clear();
-                let msg = format!("failed to load evolog: {error}");
-                self.push_command_log(
-                    super::CommandLogKind::Background,
-                    &msg,
-                    None,
-                    Vec::new(),
-                    false,
-                );
-                self.set_error(msg);
-            }
+                Err(error) => {
+                    if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                        if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
+                            let fi = file_idx.raw();
+                            self.nodes[idx].ensure_conflict_hunks(fi + 1);
+                            self.nodes[idx].conflict_hunks[fi] =
+                                super::Loadable::Failed(error.clone());
+                        }
+                    }
+                    let msg = format!("failed to load conflict hunks for {path}: {error}");
+                    self.push_command_log(
+                        super::CommandLogKind::Background,
+                        &msg,
+                        None,
+                        Vec::new(),
+                        false,
+                    );
+                    self.set_error(msg);
+                }
+            },
+            RepoResult::EvoLog { result } => match result {
+                Ok(entries) => {
+                    self.evolog.entries = entries;
+                    self.evolog.loaded = true;
+                    if self.active_view == super::ActiveView::Evolog {
+                        deferred.rebuild = true;
+                    }
+                }
+                Err(error) => {
+                    self.evolog.clear();
+                    let msg = format!("failed to load evolog: {error}");
+                    self.push_command_log(
+                        super::CommandLogKind::Background,
+                        &msg,
+                        None,
+                        Vec::new(),
+                        false,
+                    );
+                    self.set_error(msg);
+                }
+            },
+            RepoResult::EvoLogDetails { commit_id, result } => match result {
+                Ok(files) => {
+                    self.evolog
+                        .files
+                        .insert(commit_id, super::Loadable::Loaded(files));
+                    if self.active_view == super::ActiveView::Evolog {
+                        deferred.rebuild = true;
+                        deferred.scroll = true;
+                    }
+                }
+                Err(error) => {
+                    let msg = format!("failed to load evolog details: {error}");
+                    self.push_command_log(
+                        super::CommandLogKind::Background,
+                        &msg,
+                        None,
+                        Vec::new(),
+                        false,
+                    );
+                    self.set_error(msg);
+                }
+            },
+            RepoResult::EvoLogFileDiff {
+                commit_id,
+                path,
+                result,
+            } => match result {
+                Ok(diff_result) => {
+                    let key = (commit_id, path);
+                    self.evolog
+                        .file_diffs
+                        .insert(key.clone(), super::Loadable::Loaded(diff_result.git));
+                    self.evolog
+                        .file_diffs_cw
+                        .insert(key, super::Loadable::Loaded(diff_result.color_words));
+                    if self.active_view == super::ActiveView::Evolog {
+                        deferred.rebuild = true;
+                        deferred.scroll = true;
+                    }
+                }
+                Err(error) => {
+                    let msg = format!("failed to load evolog file diff: {error}");
+                    self.push_command_log(
+                        super::CommandLogKind::Background,
+                        &msg,
+                        None,
+                        Vec::new(),
+                        false,
+                    );
+                    self.set_error(msg);
+                }
+            },
             RepoResult::BackgroundError { error } => {
-                let msg = format!("background task failed: {error}");
+                let msg = format!("background task failed: {}", error.message);
                 self.push_command_log(
                     super::CommandLogKind::Background,
                     &msg,

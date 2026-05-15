@@ -32,7 +32,7 @@ use crate::idx::{EntryIdx, EvoLogIdx, FileIdx, IndexVec, RowIdx};
 use crate::types::SmallVec;
 
 use crate::keymap::CommandFlags;
-use crate::repo_service::RepoRequest;
+use crate::repo_service::{RepoError, RepoRequest};
 use crate::types::{
     ChangeId, CommitId, DisplayRow, RepoPath, SearchScopes, SearchState, SelectionContext,
 };
@@ -42,7 +42,7 @@ pub enum Loadable<T> {
     NotRequested,
     Loading,
     Loaded(T),
-    Failed(String),
+    Failed(RepoError),
 }
 
 impl<T> Loadable<T> {

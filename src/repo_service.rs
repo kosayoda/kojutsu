@@ -67,6 +67,35 @@ pub struct RepoRequest {
     kind: RepoRequestKind,
 }
 
+/// Structured error from the repository service layer.
+#[derive(Clone, Debug)]
+pub struct RepoError {
+    pub kind: RepoErrorKind,
+    pub message: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RepoErrorKind {
+    /// Failed to open or re-open the jj repository.
+    RepoOpen,
+    /// Revset parse, resolve, or evaluation failure.
+    RevsetEvaluation,
+    /// Failed to load commit details, file diff, or conflict hunks.
+    CommitAccess,
+    /// Failed to load operation log or op diff.
+    OpLogAccess,
+    /// Failed to load evolution log, details, or file diff.
+    EvoLogAccess,
+    /// A background thread panicked.
+    BackgroundPanic,
+}
+
+impl std::fmt::Display for RepoError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 pub struct RevsetData {
     pub revset: String,
     pub repo_root: String,
@@ -82,98 +111,60 @@ pub struct RevsetData {
 }
 
 pub enum RepoResult {
-    RevsetLoaded(Box<RevsetData>),
-    RevsetFailed {
+    Revset {
         revset: String,
-        error: String,
+        result: Result<Box<RevsetData>, RepoError>,
     },
     /// The workspace was stale and has been (or failed to be) recovered.
-    WorkspaceUpdatedStale {
-        message: String,
-    },
+    WorkspaceUpdatedStale { message: String },
     /// Background-computed is_empty for a single commit.
-    CommitEmpty {
-        commit_id: CommitId,
-    },
+    CommitEmpty { commit_id: CommitId },
     DivergenceInfo {
         updates: Vec<(CommitId, DivergenceUpdate)>,
     },
     PrefixLengths {
         updates: Vec<(CommitId, PrefixLengthUpdate)>,
     },
-    CommitDetailsLoaded {
+    CommitDetails {
         commit_id: CommitId,
-        details: CommitDetails,
+        result: Result<CommitDetails, RepoError>,
     },
-    CommitDetailsFailed {
-        commit_id: CommitId,
-        error: String,
-    },
-    FileDiffLoaded {
+    FileDiff {
         commit_id: CommitId,
         path: RepoPath,
-        result: crate::dag::DiffResult,
-    },
-    FileDiffFailed {
-        commit_id: CommitId,
-        path: RepoPath,
-        error: String,
+        result: Result<crate::dag::DiffResult, RepoError>,
     },
     /// Background-computed prefix lengths for bookmark detail commits
     /// (conflict targets, remote tracking targets not in the DAG).
     BookmarkDetailPrefixLengths {
         updates: Vec<(CommitId, PrefixLengthUpdate)>,
     },
-    OperationsLoaded {
-        entries: Vec<crate::app::OpLogEntry>,
-        has_more: bool,
+    Operations {
+        result: Result<(Vec<crate::app::OpLogEntry>, bool), RepoError>,
     },
-    OperationsFailed {
-        error: String,
-    },
-    ConflictHunksLoaded {
+    ConflictHunks {
         commit_id: CommitId,
         path: RepoPath,
-        hunks: Vec<crate::dag::ConflictHunk>,
+        result: Result<Vec<crate::dag::ConflictHunkKind>, RepoError>,
     },
-    ConflictHunksFailed {
-        commit_id: CommitId,
-        path: RepoPath,
-        error: String,
-    },
-    OpDiffLoaded {
+    OpDiff {
         op_id: OperationId,
-        lines: Vec<crate::app::OpDetailLine>,
+        result: Result<Vec<crate::app::OpDetailLine>, RepoError>,
     },
-    OpDiffFailed {
-        op_id: OperationId,
-        error: String,
+    EvoLog {
+        result: Result<Vec<crate::app::EvoLogEntry>, RepoError>,
     },
-    EvoLogLoaded {
-        entries: Vec<crate::app::EvoLogEntry>,
-    },
-    EvoLogFailed {
-        error: String,
-    },
-    EvoLogDetailsLoaded {
+    EvoLogDetails {
         commit_id: CommitId,
-        files: Vec<crate::dag::FileChange>,
+        result: Result<Vec<crate::dag::FileChange>, RepoError>,
     },
-    EvoLogDetailsFailed {
-        error: String,
-    },
-    EvoLogFileDiffLoaded {
+    EvoLogFileDiff {
         commit_id: CommitId,
         path: RepoPath,
-        result: crate::dag::DiffResult,
-    },
-    EvoLogFileDiffFailed {
-        error: String,
+        result: Result<crate::dag::DiffResult, RepoError>,
     },
     /// A background computation thread panicked or failed.
-    BackgroundError {
-        error: String,
-    },
+    BackgroundError { error: RepoError },
 }
 
 impl RepoRequest {
@@ -434,11 +425,14 @@ impl RepoServiceState {
                     Err(update_err) => {
                         self.send_if_current(
                             epoch,
-                            RepoResult::RevsetFailed {
+                            RepoResult::Revset {
                                 revset: requested_revset,
-                                error: format!(
-                                    "workspace is stale and update-stale failed:\n{update_err}"
-                                ),
+                                result: Err(RepoError {
+                                    kind: RepoErrorKind::RepoOpen,
+                                    message: format!(
+                                        "workspace is stale and update-stale failed:\n{update_err}"
+                                    ),
+                                }),
                             },
                         );
                         return;
@@ -451,9 +445,12 @@ impl RepoServiceState {
             Err(err) => {
                 self.send_if_current(
                     epoch,
-                    RepoResult::RevsetFailed {
+                    RepoResult::Revset {
                         revset: requested_revset,
-                        error: format!("{err:#}"),
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::RepoOpen,
+                            message: format!("{err:#}"),
+                        }),
                     },
                 );
                 return;
@@ -514,18 +511,21 @@ impl RepoServiceState {
 
                 self.send_if_current(
                     epoch,
-                    RepoResult::RevsetLoaded(Box::new(RevsetData {
-                        revset: effective_revset,
-                        repo_root: repo.workspace_root().display().to_string(),
-                        entries,
-                        remote_bookmarks,
-                        remotes,
-                        all_tags,
-                        tag_details,
-                        bookmark_details,
-                        workspace_entries,
-                        warnings,
-                    })),
+                    RepoResult::Revset {
+                        revset: effective_revset.clone(),
+                        result: Ok(Box::new(RevsetData {
+                            revset: effective_revset,
+                            repo_root: repo.workspace_root().display().to_string(),
+                            entries,
+                            remote_bookmarks,
+                            remotes,
+                            all_tags,
+                            tag_details,
+                            bookmark_details,
+                            workspace_entries,
+                            warnings,
+                        })),
+                    },
                 );
 
                 // Spawn background thread to compute is_empty for all commits.
@@ -589,7 +589,10 @@ impl RepoServiceState {
                             Ok(r) => r,
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
-                                    error: format!("prefix lengths: {e:#}"),
+                                    error: RepoError {
+                                        kind: RepoErrorKind::BackgroundPanic,
+                                        message: format!("prefix lengths: {e:#}"),
+                                    },
                                 });
                                 return;
                             }
@@ -600,7 +603,10 @@ impl RepoServiceState {
                             }
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
-                                    error: format!("prefix lengths: {e:#}"),
+                                    error: RepoError {
+                                        kind: RepoErrorKind::BackgroundPanic,
+                                        message: format!("prefix lengths: {e:#}"),
+                                    },
                                 });
                             }
                             _ => {}
@@ -621,7 +627,10 @@ impl RepoServiceState {
                             Ok(r) => r,
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
-                                    error: format!("detail prefix lengths: {e:#}"),
+                                    error: RepoError {
+                                        kind: RepoErrorKind::BackgroundPanic,
+                                        message: format!("detail prefix lengths: {e:#}"),
+                                    },
                                 });
                                 return;
                             }
@@ -633,7 +642,10 @@ impl RepoServiceState {
                             }
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
-                                    error: format!("detail prefix lengths: {e:#}"),
+                                    error: RepoError {
+                                        kind: RepoErrorKind::BackgroundPanic,
+                                        message: format!("detail prefix lengths: {e:#}"),
+                                    },
                                 });
                             }
                             _ => {}
@@ -644,9 +656,12 @@ impl RepoServiceState {
             Err(err) => {
                 self.send_if_current(
                     epoch,
-                    RepoResult::RevsetFailed {
+                    RepoResult::Revset {
                         revset: effective_revset,
-                        error: format!("{err:#}"),
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::RevsetEvaluation,
+                            message: format!("{err:#}"),
+                        }),
                     },
                 );
             }
@@ -664,9 +679,12 @@ impl RepoServiceState {
             self.in_flight_commit_details.remove(&commit_id);
             self.send_if_current(
                 epoch,
-                RepoResult::CommitDetailsFailed {
+                RepoResult::CommitDetails {
                     commit_id,
-                    error: "repository not loaded yet".to_string(),
+                    result: Err(RepoError {
+                        kind: RepoErrorKind::CommitAccess,
+                        message: "repository not loaded yet".to_string(),
+                    }),
                 },
             );
             return;
@@ -675,16 +693,19 @@ impl RepoServiceState {
         match repo.commit_details(&commit_id) {
             Ok(details) => self.send_if_current(
                 epoch,
-                RepoResult::CommitDetailsLoaded {
+                RepoResult::CommitDetails {
                     commit_id: commit_id.clone(),
-                    details,
+                    result: Ok(details),
                 },
             ),
             Err(err) => self.send_if_current(
                 epoch,
-                RepoResult::CommitDetailsFailed {
+                RepoResult::CommitDetails {
                     commit_id: commit_id.clone(),
-                    error: format!("{err:#}"),
+                    result: Err(RepoError {
+                        kind: RepoErrorKind::CommitAccess,
+                        message: format!("{err:#}"),
+                    }),
                 },
             ),
         }
@@ -709,10 +730,13 @@ impl RepoServiceState {
             self.in_flight_file_diffs.remove(&key);
             self.send_if_current(
                 epoch,
-                RepoResult::FileDiffFailed {
+                RepoResult::FileDiff {
                     commit_id,
                     path,
-                    error: "repository not loaded yet".to_string(),
+                    result: Err(RepoError {
+                        kind: RepoErrorKind::CommitAccess,
+                        message: "repository not loaded yet".to_string(),
+                    }),
                 },
             );
             return;
@@ -721,18 +745,21 @@ impl RepoServiceState {
         match repo.file_diff(&commit_id, &path, old_path.as_ref()) {
             Ok(result) => self.send_if_current(
                 epoch,
-                RepoResult::FileDiffLoaded {
+                RepoResult::FileDiff {
                     commit_id: commit_id.clone(),
                     path: path.clone(),
-                    result,
+                    result: Ok(result),
                 },
             ),
             Err(err) => self.send_if_current(
                 epoch,
-                RepoResult::FileDiffFailed {
+                RepoResult::FileDiff {
                     commit_id: commit_id.clone(),
                     path: path.clone(),
-                    error: format!("{err:#}"),
+                    result: Err(RepoError {
+                        kind: RepoErrorKind::CommitAccess,
+                        message: format!("{err:#}"),
+                    }),
                 },
             ),
         }
@@ -744,19 +771,28 @@ impl RepoServiceState {
             return;
         }
         // Op log needs a repo; open one if not already loaded.
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::OperationsFailed { error })
+        let Some(repo) =
+            self.ensure_repo(epoch, |error| RepoResult::Operations { result: Err(error) })
         else {
             return;
         };
         match repo.operation_log(limit) {
             Ok((entries, has_more)) => {
-                self.send_if_current(epoch, RepoResult::OperationsLoaded { entries, has_more });
+                self.send_if_current(
+                    epoch,
+                    RepoResult::Operations {
+                        result: Ok((entries, has_more)),
+                    },
+                );
             }
             Err(err) => {
                 self.send_if_current(
                     epoch,
-                    RepoResult::OperationsFailed {
-                        error: format!("{err:#}"),
+                    RepoResult::Operations {
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::OpLogAccess,
+                            message: format!("{err:#}"),
+                        }),
                     },
                 );
             }
@@ -767,10 +803,10 @@ impl RepoServiceState {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::ConflictHunksFailed {
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::ConflictHunks {
             commit_id: commit_id.clone(),
             path: path.clone(),
-            error,
+            result: Err(error),
         }) else {
             return;
         };
@@ -778,20 +814,23 @@ impl RepoServiceState {
             Ok(hunks) => {
                 self.send_if_current(
                     epoch,
-                    RepoResult::ConflictHunksLoaded {
+                    RepoResult::ConflictHunks {
                         commit_id,
                         path,
-                        hunks,
+                        result: Ok(hunks),
                     },
                 );
             }
             Err(err) => {
                 self.send_if_current(
                     epoch,
-                    RepoResult::ConflictHunksFailed {
+                    RepoResult::ConflictHunks {
                         commit_id,
                         path,
-                        error: format!("{err:#}"),
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::CommitAccess,
+                            message: format!("{err:#}"),
+                        }),
                     },
                 );
             }
@@ -802,22 +841,31 @@ impl RepoServiceState {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::OpDiffFailed {
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::OpDiff {
             op_id: op_id.clone(),
-            error,
+            result: Err(error),
         }) else {
             return;
         };
         match repo.op_diff(op_id.as_str()) {
             Ok(lines) => {
-                self.send_if_current(epoch, RepoResult::OpDiffLoaded { op_id, lines });
+                self.send_if_current(
+                    epoch,
+                    RepoResult::OpDiff {
+                        op_id,
+                        result: Ok(lines),
+                    },
+                );
             }
             Err(err) => {
                 self.send_if_current(
                     epoch,
-                    RepoResult::OpDiffFailed {
+                    RepoResult::OpDiff {
                         op_id,
-                        error: format!("{err:#}"),
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::OpLogAccess,
+                            message: format!("{err:#}"),
+                        }),
                     },
                 );
             }
@@ -830,25 +878,31 @@ impl RepoServiceState {
         from_commit_id: CommitId,
         to_commit_id: CommitId,
     ) {
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::EvoLogDetailsFailed { error })
-        else {
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::EvoLogDetails {
+            commit_id: to_commit_id.clone(),
+            result: Err(error),
+        }) else {
             return;
         };
         match repo.inter_commit_details(from_commit_id.as_str(), to_commit_id.as_str()) {
             Ok(files) => {
                 self.send_if_current(
                     epoch,
-                    RepoResult::EvoLogDetailsLoaded {
+                    RepoResult::EvoLogDetails {
                         commit_id: to_commit_id,
-                        files,
+                        result: Ok(files),
                     },
                 );
             }
             Err(err) => {
                 self.send_if_current(
                     epoch,
-                    RepoResult::EvoLogDetailsFailed {
-                        error: format!("{err:#}"),
+                    RepoResult::EvoLogDetails {
+                        commit_id: to_commit_id,
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::EvoLogAccess,
+                            message: format!("{err:#}"),
+                        }),
                     },
                 );
             }
@@ -862,27 +916,34 @@ impl RepoServiceState {
         to_commit_id: CommitId,
         path: RepoPath,
     ) {
-        let Some(repo) =
-            self.ensure_repo(epoch, |error| RepoResult::EvoLogFileDiffFailed { error })
-        else {
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::EvoLogFileDiff {
+            commit_id: to_commit_id.clone(),
+            path: path.clone(),
+            result: Err(error),
+        }) else {
             return;
         };
         match repo.inter_commit_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path) {
             Ok(result) => {
                 self.send_if_current(
                     epoch,
-                    RepoResult::EvoLogFileDiffLoaded {
+                    RepoResult::EvoLogFileDiff {
                         commit_id: to_commit_id,
                         path,
-                        result,
+                        result: Ok(result),
                     },
                 );
             }
             Err(err) => {
                 self.send_if_current(
                     epoch,
-                    RepoResult::EvoLogFileDiffFailed {
-                        error: format!("{err:#}"),
+                    RepoResult::EvoLogFileDiff {
+                        commit_id: to_commit_id,
+                        path,
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::EvoLogAccess,
+                            message: format!("{err:#}"),
+                        }),
                     },
                 );
             }
@@ -890,18 +951,27 @@ impl RepoServiceState {
     }
 
     fn handle_evolution_log(&mut self, epoch: u64, commit_id: CommitId) {
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::EvoLogFailed { error }) else {
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::EvoLog { result: Err(error) })
+        else {
             return;
         };
         match repo.evolution_log(commit_id.as_str()) {
             Ok(entries) => {
-                self.send_if_current(epoch, RepoResult::EvoLogLoaded { entries });
+                self.send_if_current(
+                    epoch,
+                    RepoResult::EvoLog {
+                        result: Ok(entries),
+                    },
+                );
             }
             Err(err) => {
                 self.send_if_current(
                     epoch,
-                    RepoResult::EvoLogFailed {
-                        error: format!("{err:#}"),
+                    RepoResult::EvoLog {
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::EvoLogAccess,
+                            message: format!("{err:#}"),
+                        }),
                     },
                 );
             }
@@ -913,13 +983,19 @@ impl RepoServiceState {
     fn ensure_repo(
         &mut self,
         epoch: u64,
-        on_error: impl FnOnce(String) -> RepoResult,
+        on_error: impl FnOnce(RepoError) -> RepoResult,
     ) -> Option<&JjRepo> {
         if self.repo.is_none() {
             match JjRepo::open(&self.repo_path) {
                 Ok(repo) => self.repo = Some(repo),
                 Err(err) => {
-                    self.send_if_current(epoch, on_error(format!("{err:#}")));
+                    self.send_if_current(
+                        epoch,
+                        on_error(RepoError {
+                            kind: RepoErrorKind::RepoOpen,
+                            message: format!("{err:#}"),
+                        }),
+                    );
                     return None;
                 }
             }
@@ -945,7 +1021,12 @@ fn spawn_background(err_tx: Sender<RepoResult>, f: impl FnOnce() + Send + 'stati
                 .map(|s| s.to_string())
                 .or_else(|| e.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "unknown panic".to_string());
-            let _ = err_tx.send(RepoResult::BackgroundError { error: msg });
+            let _ = err_tx.send(RepoResult::BackgroundError {
+                error: RepoError {
+                    kind: RepoErrorKind::BackgroundPanic,
+                    message: msg,
+                },
+            });
         }
     });
 }
