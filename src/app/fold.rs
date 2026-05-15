@@ -205,12 +205,9 @@ impl App {
                         // Emit diff lines if this file is unfolded.
                         let key = (commit_id.clone(), files[fi].path.clone());
                         if self.evolog.unfolded_files.contains(&key) {
-                            let git_diff =
-                                self.toggles.contains(crate::keymap::CommandFlags::GIT_DIFF);
-                            let diffs = if git_diff {
-                                &self.evolog.file_diffs
-                            } else {
-                                &self.evolog.file_diffs_cw
+                            let diffs = match self.diff_format {
+                                super::DiffFormat::Git => &self.evolog.file_diffs,
+                                super::DiffFormat::ColorWords => &self.evolog.file_diffs_cw,
                             };
                             if let Some(Loadable::Loaded(lines)) = diffs.get(&key) {
                                 for li in 0..lines.len() {
@@ -267,8 +264,7 @@ impl App {
                         // If this file is unfolded, show diff lines or conflict hunks.
                         if self.is_file_unfolded(entry_idx, file_idx) {
                             if let Some(hunks) = self.nodes[entry_idx]
-                                .conflict_hunks
-                                .get(file_idx_raw)
+                                .conflict_hunks(file_idx_raw)
                                 .and_then(|l| l.loaded())
                             {
                                 // Show conflict hunks instead of diff.
@@ -611,13 +607,8 @@ impl App {
                 let commit_id = self.commit_id(entry_idx).clone();
 
                 // Request diff lines if needed.
-                let should_request_diff = self.nodes[entry_idx]
-                    .diffs
-                    .get(fi)
-                    .is_none_or(Loadable::should_request);
-                if should_request_diff {
-                    self.nodes[entry_idx].ensure_diffs(fi + 1);
-                    self.nodes[entry_idx].diffs[fi] = Loadable::Loading;
+                if self.nodes[entry_idx].diff_should_request(fi) {
+                    self.nodes[entry_idx].set_diff_state(fi, Loadable::Loading);
                     self.pending_repo_requests.push(RepoRequest::load_file_diff(
                         commit_id.clone(),
                         path.clone(),
@@ -627,13 +618,8 @@ impl App {
 
                 // Also request conflict hunks if the file is conflicted.
                 if has_conflict {
-                    let should_request_hunks = self.nodes[entry_idx]
-                        .conflict_hunks
-                        .get(fi)
-                        .is_none_or(Loadable::should_request);
-                    if should_request_hunks {
-                        self.nodes[entry_idx].ensure_conflict_hunks(fi + 1);
-                        self.nodes[entry_idx].conflict_hunks[fi] = Loadable::Loading;
+                    if self.nodes[entry_idx].conflict_hunks_should_request(fi) {
+                        self.nodes[entry_idx].set_conflict_hunks(fi, Loadable::Loading);
                         self.pending_repo_requests
                             .push(RepoRequest::load_conflict_hunks(commit_id, path));
                     }

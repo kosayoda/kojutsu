@@ -186,12 +186,14 @@ pub struct CommandLogEntry {
 }
 
 /// Result of picking a conflict side for a hunk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictPickResult {
     /// Hunk picked, but other hunks in the file are still unresolved.
     Pending,
-    /// All hunks resolved — file was written to disk, needs refresh.
-    FileResolved,
+    /// All hunks resolved — caller should write content to path and refresh.
+    FileResolved {
+        path: crate::types::RepoPath,
+        content: String,
+    },
 }
 
 /// Whether the target-select picker allows one or many targets.

@@ -56,10 +56,11 @@ impl App {
         let old_caches: HashMap<CommitId, NodeCache> = std::mem::take(&mut self.nodes)
             .into_vec()
             .into_iter()
-            .map(|n| {
+            .map(|mut n| {
+                let (diffs, diffs_cw) = n.take_diffs();
                 (
                     n.commit.graph_id.clone(),
-                    (n.files, n.stats, n.diffs, n.diffs_cw),
+                    (n.files, n.stats, diffs, diffs_cw),
                 )
             })
             .collect();
@@ -76,8 +77,7 @@ impl App {
                     node.stats = stats.clone();
                 }
                 if !diffs.is_empty() {
-                    node.diffs = diffs.clone();
-                    node.diffs_cw = diffs_cw.clone();
+                    node.restore_diffs(diffs.clone(), diffs_cw.clone());
                 }
             }
         }
@@ -262,9 +262,8 @@ impl App {
                             path: file.path.clone(),
                         };
                         if self.unfolded_files.contains(&fold_key) {
-                            self.nodes[idx].ensure_diffs(fi + 1);
-                            if self.nodes[idx].diffs[fi].should_request() {
-                                self.nodes[idx].diffs[fi] = Loadable::Loading;
+                            if self.nodes[idx].diff_should_request(fi) {
+                                self.nodes[idx].set_diff_state(fi, Loadable::Loading);
                                 self.pending_repo_requests.push(RepoRequest::load_file_diff(
                                     commit_id.clone(),
                                     file.path.clone(),
@@ -277,9 +276,6 @@ impl App {
                     // Store loaded files and stats.
                     self.nodes[idx].files = Loadable::Loaded(details.files);
                     self.nodes[idx].stats = Loadable::Loaded(details.stats);
-                    // Ensure diffs vec is sized to match files.
-                    let nfiles = self.nodes[idx].files.loaded().map_or(0, |f| f.len());
-                    self.nodes[idx].ensure_diffs(nfiles);
                     deferred.rebuild = true;
                     deferred.scroll = true;
                 }
@@ -316,10 +312,11 @@ impl App {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                         if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
                             let fi = file_idx.raw();
-                            self.nodes[idx].ensure_diffs(fi + 1);
-                            self.nodes[idx].diffs[fi] = Loadable::Loaded(diff_result.git);
-                            self.nodes[idx].diffs_cw[fi] =
-                                Loadable::Loaded(diff_result.color_words);
+                            self.nodes[idx].set_diff(
+                                fi,
+                                Loadable::Loaded(diff_result.git),
+                                Loadable::Loaded(diff_result.color_words),
+                            );
                         }
                     }
                     deferred.rebuild = true;
@@ -329,8 +326,7 @@ impl App {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                         if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
                             let fi = file_idx.raw();
-                            self.nodes[idx].ensure_diffs(fi + 1);
-                            self.nodes[idx].diffs[fi] = Loadable::Failed(error.clone());
+                            self.nodes[idx].set_diff_state(fi, Loadable::Failed(error.clone()));
                         }
                     }
                     let summary = format!("load diff for {path}");
@@ -477,8 +473,7 @@ impl App {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                         if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
                             let fi = file_idx.raw();
-                            self.nodes[idx].ensure_conflict_hunks(fi + 1);
-                            self.nodes[idx].conflict_hunks[fi] = super::Loadable::Loaded(hunks);
+                            self.nodes[idx].set_conflict_hunks(fi, super::Loadable::Loaded(hunks));
                         }
                     }
                     deferred.rebuild = true;
@@ -488,9 +483,8 @@ impl App {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                         if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
                             let fi = file_idx.raw();
-                            self.nodes[idx].ensure_conflict_hunks(fi + 1);
-                            self.nodes[idx].conflict_hunks[fi] =
-                                super::Loadable::Failed(error.clone());
+                            self.nodes[idx]
+                                .set_conflict_hunks(fi, super::Loadable::Failed(error.clone()));
                         }
                     }
                     let msg = format!("failed to load conflict hunks for {path}: {error}");

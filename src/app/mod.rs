@@ -74,16 +74,105 @@ pub struct DagNode {
     /// Lazily loaded per-commit line stats.
     pub stats: Loadable<LineStats>,
     /// Lazily loaded diff lines (git format), parallel to `files` (indexed by FileIdx).
-    pub diffs: Vec<Loadable<Vec<DiffLine>>>,
+    diffs: Vec<Loadable<Vec<DiffLine>>>,
     /// Lazily loaded diff lines (color-words format), parallel to `diffs`.
-    pub diffs_cw: Vec<Loadable<Vec<DiffLine>>>,
+    diffs_cw: Vec<Loadable<Vec<DiffLine>>>,
     /// Lazily loaded conflict hunks, parallel to `files` (for conflicted files).
-    pub conflict_hunks: Vec<Loadable<Vec<crate::dag::ConflictHunk>>>,
+    conflict_hunks: Vec<Loadable<Vec<crate::dag::ConflictHunkKind>>>,
+}
+
+/// Which diff format to display.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DiffFormat {
+    Git,
+    ColorWords,
 }
 
 impl DagNode {
-    /// Ensure the diffs vector is large enough to hold `n` entries.
-    pub fn ensure_diffs(&mut self, n: usize) {
+    /// Get the diff state for a file in the given format.
+    pub fn diff(&self, fi: usize, format: DiffFormat) -> Option<&Loadable<Vec<DiffLine>>> {
+        match format {
+            DiffFormat::Git => self.diffs.get(fi),
+            DiffFormat::ColorWords => self.diffs_cw.get(fi),
+        }
+    }
+
+    /// Get loaded conflict hunks for a file.
+    pub fn conflict_hunks(
+        &self,
+        fi: usize,
+    ) -> Option<&Loadable<Vec<crate::dag::ConflictHunkKind>>> {
+        self.conflict_hunks.get(fi)
+    }
+
+    /// Get mutable conflict hunks for a file.
+    pub fn conflict_hunks_mut(
+        &mut self,
+        fi: usize,
+    ) -> Option<&mut Loadable<Vec<crate::dag::ConflictHunkKind>>> {
+        self.conflict_hunks.get_mut(fi)
+    }
+
+    /// Set the diff state for a file, growing the vectors if needed.
+    pub fn set_diff(
+        &mut self,
+        fi: usize,
+        git: Loadable<Vec<DiffLine>>,
+        cw: Loadable<Vec<DiffLine>>,
+    ) {
+        self.ensure_diffs(fi + 1);
+        self.diffs[fi] = git;
+        self.diffs_cw[fi] = cw;
+    }
+
+    /// Set the diff state to a single value for both formats (e.g. Loading/Failed).
+    pub fn set_diff_state(&mut self, fi: usize, state: Loadable<Vec<DiffLine>>) {
+        self.ensure_diffs(fi + 1);
+        self.diffs[fi] = state.clone();
+        self.diffs_cw[fi] = state;
+    }
+
+    /// Set the conflict hunks state for a file, growing the vector if needed.
+    pub fn set_conflict_hunks(
+        &mut self,
+        fi: usize,
+        state: Loadable<Vec<crate::dag::ConflictHunkKind>>,
+    ) {
+        self.ensure_conflict_hunks(fi + 1);
+        self.conflict_hunks[fi] = state;
+    }
+
+    /// Extract and take ownership of cached diffs (used during DAG refresh).
+    pub fn take_diffs(&mut self) -> (Vec<Loadable<Vec<DiffLine>>>, Vec<Loadable<Vec<DiffLine>>>) {
+        (
+            std::mem::take(&mut self.diffs),
+            std::mem::take(&mut self.diffs_cw),
+        )
+    }
+
+    /// Preserve cached diffs from another node (used during DAG refresh).
+    pub fn restore_diffs(
+        &mut self,
+        diffs: Vec<Loadable<Vec<DiffLine>>>,
+        diffs_cw: Vec<Loadable<Vec<DiffLine>>>,
+    ) {
+        self.diffs = diffs;
+        self.diffs_cw = diffs_cw;
+    }
+
+    /// Check if a diff should be requested for a file.
+    pub fn diff_should_request(&self, fi: usize) -> bool {
+        self.diffs.get(fi).is_none_or(Loadable::should_request)
+    }
+
+    /// Check if conflict hunks should be requested for a file.
+    pub fn conflict_hunks_should_request(&self, fi: usize) -> bool {
+        self.conflict_hunks
+            .get(fi)
+            .is_none_or(Loadable::should_request)
+    }
+
+    fn ensure_diffs(&mut self, n: usize) {
         if self.diffs.len() < n {
             self.diffs.resize_with(n, || Loadable::NotRequested);
         }
@@ -92,8 +181,7 @@ impl DagNode {
         }
     }
 
-    /// Ensure the conflict_hunks vector is large enough to hold `n` entries.
-    pub fn ensure_conflict_hunks(&mut self, n: usize) {
+    fn ensure_conflict_hunks(&mut self, n: usize) {
         if self.conflict_hunks.len() < n {
             self.conflict_hunks
                 .resize_with(n, || Loadable::NotRequested);
@@ -152,6 +240,8 @@ pub struct App {
     pending_repo_requests: Vec<RepoRequest>,
     /// Global toggles that persist across commands.
     pub toggles: CommandFlags,
+    /// Which diff format to display (git vs color-words).
+    pub diff_format: DiffFormat,
     /// Transient status notice shown in the status bar.
     pub status_message: Option<(String, StatusLevel)>,
     /// Mode to restore after an overlay (search/help) is dismissed.
@@ -214,6 +304,7 @@ impl App {
             unfolded_files: HashSet::new(),
             pending_repo_requests: Vec::new(),
             toggles: CommandFlags::empty(),
+            diff_format: DiffFormat::ColorWords,
             status_message: None,
             pre_overlay_mode: None,
             show_line_numbers: false,
@@ -482,38 +573,14 @@ impl App {
                     }
                 }
             }
-            // Write to the working copy file.
-            let path = self
+            // Return the resolved content for the caller to write.
+            if let Some(path) = self
                 .files_for_entry(entry_idx)
                 .and_then(|f| f.get(fi))
-                .map(|f| f.path.clone());
-            let written = if let Some(file_path) = path {
-                let full_path = std::path::Path::new(&self.repo_root).join(file_path.as_str());
-                if std::fs::write(&full_path, &content).is_ok() {
-                    self.set_status(format!("resolved {}", file_path));
-                    true
-                } else {
-                    self.set_error(format!("failed to write {}", file_path));
-                    false
-                }
+                .map(|f| f.path.clone())
+            {
+                ConflictPickResult::FileResolved { path, content }
             } else {
-                false
-            };
-            if written {
-                ConflictPickResult::FileResolved
-            } else {
-                // Revert the selection since the file wasn't written.
-                if let Some(Loadable::Loaded(hunks)) =
-                    self.nodes[entry_idx].conflict_hunks.get_mut(fi)
-                {
-                    if let Some(hunk) = hunks.get_mut(hi) {
-                        if let crate::dag::ConflictHunkKind::Conflict { selected, .. } =
-                            &mut hunk.kind
-                        {
-                            *selected = None;
-                        }
-                    }
-                }
                 ConflictPickResult::Pending
             }
         } else {
@@ -650,13 +717,13 @@ impl App {
         self.nodes[entry_idx].files.loaded()
     }
 
+    pub fn diff_format(&self) -> DiffFormat {
+        self.diff_format
+    }
+
     pub fn diff_lines(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<&Vec<DiffLine>> {
-        let git_diff = self.toggles.contains(crate::keymap::CommandFlags::GIT_DIFF);
-        if git_diff {
-            self.nodes[entry_idx].diffs.get(file_idx.raw())?.loaded()
-        } else {
-            self.nodes[entry_idx].diffs_cw.get(file_idx.raw())?.loaded()
-        }
+        let format = self.diff_format();
+        self.nodes[entry_idx].diff(file_idx.raw(), format)?.loaded()
     }
 
     pub fn evolog_diff_lines(
@@ -668,11 +735,9 @@ impl App {
         let files = self.evolog.files.get(&entry.commit_id)?.loaded()?;
         let file = files.get(file_idx.raw())?;
         let key = (entry.commit_id.clone(), file.path.clone());
-        let git_diff = self.toggles.contains(crate::keymap::CommandFlags::GIT_DIFF);
-        let diffs = if git_diff {
-            &self.evolog.file_diffs
-        } else {
-            &self.evolog.file_diffs_cw
+        let diffs = match self.diff_format {
+            DiffFormat::Git => &self.evolog.file_diffs,
+            DiffFormat::ColorWords => &self.evolog.file_diffs_cw,
         };
         diffs.get(&key)?.loaded()
     }
@@ -857,7 +922,7 @@ impl App {
             op_log_search_scopes: self.effective_scopes(ActiveView::Operations).bits(),
             workspace_search_scopes: self.effective_scopes(ActiveView::Workspaces).bits(),
             active_preset: self.revset.active_preset,
-            git_diff: self.toggles.contains(CommandFlags::GIT_DIFF),
+            git_diff: self.diff_format == DiffFormat::Git,
         }
     }
 
@@ -868,7 +933,11 @@ impl App {
         self.toggles
             .set(CommandFlags::IGNORE_WORKING_COPY, state.ignore_working_copy);
         self.toggles.set(CommandFlags::DEBUG, state.debug);
-        self.toggles.set(CommandFlags::GIT_DIFF, state.git_diff);
+        self.diff_format = if state.git_diff {
+            DiffFormat::Git
+        } else {
+            DiffFormat::ColorWords
+        };
         if state.search_scopes != 0 {
             let scopes = SearchScopes::from_bits_truncate(state.search_scopes);
             self.view_states[ActiveView::Dag.idx()].search_scopes = scopes;

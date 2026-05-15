@@ -274,7 +274,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             Action::None
         }
         AppAction::ToggleGitDiff => {
-            app.toggles ^= CommandFlags::GIT_DIFF;
+            app.diff_format = match app.diff_format {
+                crate::app::DiffFormat::Git => crate::app::DiffFormat::ColorWords,
+                crate::app::DiffFormat::ColorWords => crate::app::DiffFormat::Git,
+            };
             app.rebuild_rows();
             Action::None
         }
@@ -499,11 +502,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     }
                 };
                 let result = app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, side);
-                return if matches!(result, crate::app::ConflictPickResult::FileResolved) {
-                    Action::Refresh
-                } else {
-                    Action::None
-                };
+                return write_conflict_resolution(app, result);
             }
 
             // Whole-file resolution from FileChange/DiffLine rows.
@@ -574,8 +573,9 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     _ => 2, // base
                 };
                 let result = app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, side);
-                if matches!(result, crate::app::ConflictPickResult::FileResolved) {
-                    return Action::Refresh;
+                let action = write_conflict_resolution(app, result);
+                if matches!(action, Action::Refresh) {
+                    return action;
                 }
             } else {
                 app.set_error("per-hunk only — use on a conflict hunk row");
@@ -1430,6 +1430,23 @@ pub(super) fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action
             app.revset.active_preset = None;
             Action::UpdateRevset(new_revset)
         }
+    }
+}
+
+/// Write resolved conflict content to disk and return the appropriate action.
+fn write_conflict_resolution(app: &mut App, result: crate::app::ConflictPickResult) -> Action {
+    match result {
+        crate::app::ConflictPickResult::FileResolved { path, content } => {
+            let full_path = std::path::Path::new(&app.repo_root).join(path.as_str());
+            if std::fs::write(&full_path, &content).is_ok() {
+                app.set_status(format!("resolved {}", path));
+                Action::Refresh
+            } else {
+                app.set_error(format!("failed to write {}", path));
+                Action::None
+            }
+        }
+        crate::app::ConflictPickResult::Pending => Action::None,
     }
 }
 

@@ -477,10 +477,10 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let hunks = app
                         .nodes
                         .get(*entry_idx)
-                        .and_then(|n| n.conflict_hunks.get(file_idx.raw()))
+                        .and_then(|n| n.conflict_hunks(file_idx.raw()))
                         .and_then(|l| l.loaded());
                     let total = hunks
-                        .map(|h| {
+                        .map(|h: &Vec<crate::dag::ConflictHunkKind>| {
                             h.iter()
                                 .filter(|h| {
                                     matches!(h, crate::dag::ConflictHunkKind::Conflict { .. })
@@ -518,9 +518,9 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let text = app
                         .nodes
                         .get(*entry_idx)
-                        .and_then(|n| n.conflict_hunks.get(file_idx.raw()))
+                        .and_then(|n| n.conflict_hunks(file_idx.raw()))
                         .and_then(|l| l.loaded())
-                        .and_then(|hunks| hunks.get(hunk_idx.raw()))
+                        .and_then(|hunks: &Vec<crate::dag::ConflictHunk>| hunks.get(hunk_idx.raw()))
                         .and_then(|hunk| match &hunk.kind {
                             crate::dag::ConflictHunkKind::Conflict {
                                 sides, selected, ..
@@ -570,9 +570,9 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let text = app
                         .nodes
                         .get(*entry_idx)
-                        .and_then(|n| n.conflict_hunks.get(file_idx.raw()))
+                        .and_then(|n| n.conflict_hunks(file_idx.raw()))
                         .and_then(|l| l.loaded())
-                        .and_then(|hunks| hunks.get(hunk_idx.raw()))
+                        .and_then(|hunks: &Vec<crate::dag::ConflictHunk>| hunks.get(hunk_idx.raw()))
                         .and_then(|hunk| match &hunk.kind {
                             crate::dag::ConflictHunkKind::Resolved { lines } => {
                                 lines.get(line_idx.raw()).cloned()

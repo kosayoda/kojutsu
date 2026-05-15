@@ -40,7 +40,6 @@ bitflags::bitflags! {
         const ALLOW_BACKWARDS     = 1 << 8;
         const DRY_RUN             = 1 << 9;
         const PARALLEL            = 1 << 10;
-        const GIT_DIFF            = 1 << 11;
     }
 }
 
