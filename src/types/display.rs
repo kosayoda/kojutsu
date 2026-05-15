@@ -4,42 +4,8 @@ use crate::idx::{
     FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 
-/// Identifies a display row for cursor restore after rebuild.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RowKey {
-    CommitNode(EntryIdx),
-    GraphLink(EntryIdx, GraphLineIdx),
-    FileChange(EntryIdx, FileIdx),
-    DiffLine(EntryIdx, FileIdx, DiffLineIdx),
-    DescriptionLine(EntryIdx, DescriptionLineIdx),
-    BookmarkItem(BookmarkIdx),
-    BookmarkConflictTarget(BookmarkIdx, BookmarkDetailIdx),
-    BookmarkRemoteTarget(BookmarkIdx, BookmarkDetailIdx),
-    TagItem(TagIdx),
-    TagRemoteTarget(TagIdx, TagDetailIdx),
-    OpLogItem(OpLogIdx),
-    OpLogDetailLine(OpLogIdx, OpLogDetailIdx),
-    OpLogGraphLink(OpLogIdx, GraphLineIdx),
-    OpLogLoadMore,
-    EvoLogItem(EvoLogIdx),
-    EvoLogFileChange(EvoLogIdx, FileIdx),
-    EvoLogFileDiffLine(EvoLogIdx, FileIdx, DiffLineIdx),
-    EvoLogGraphLink(EvoLogIdx, GraphLineIdx),
-    WorkspaceItem(WorkspaceIdx),
-    CommandLogItem(CommandLogIdx),
-    CommandLogDetail(CommandLogIdx, CommandLogDetailIdx),
-    ConflictHeader(EntryIdx, FileIdx, ConflictHunkIdx),
-    ConflictSide(
-        EntryIdx,
-        FileIdx,
-        ConflictHunkIdx,
-        ConflictSideIdx,
-        ConflictLineIdx,
-    ),
-    ConflictContext(EntryIdx, FileIdx, ConflictHunkIdx, ConflictLineIdx),
-}
-
 /// One visual row in the list.
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DisplayRow {
     /// A commit node line (graph glyph + commit info).
     CommitNode { entry_idx: EntryIdx },
@@ -145,90 +111,4 @@ pub enum DisplayRow {
         hunk_idx: ConflictHunkIdx,
         line_idx: ConflictLineIdx,
     },
-}
-
-impl DisplayRow {
-    pub fn key(&self) -> RowKey {
-        match *self {
-            DisplayRow::CommitNode { entry_idx } => RowKey::CommitNode(entry_idx),
-            DisplayRow::DescriptionLine {
-                entry_idx,
-                line_idx,
-            } => RowKey::DescriptionLine(entry_idx, line_idx),
-            DisplayRow::GraphLink {
-                entry_idx,
-                line_idx,
-            } => RowKey::GraphLink(entry_idx, line_idx),
-            DisplayRow::FileChange {
-                entry_idx,
-                file_idx,
-            } => RowKey::FileChange(entry_idx, file_idx),
-            DisplayRow::DiffLine {
-                entry_idx,
-                file_idx,
-                line_idx,
-            } => RowKey::DiffLine(entry_idx, file_idx, line_idx),
-            DisplayRow::BookmarkItem { bookmark_idx } => RowKey::BookmarkItem(bookmark_idx),
-            DisplayRow::BookmarkConflictTarget {
-                bookmark_idx,
-                target_idx,
-            } => RowKey::BookmarkConflictTarget(bookmark_idx, target_idx),
-            DisplayRow::BookmarkRemoteTarget {
-                bookmark_idx,
-                target_idx,
-            } => RowKey::BookmarkRemoteTarget(bookmark_idx, target_idx),
-            DisplayRow::TagItem { tag_idx } => RowKey::TagItem(tag_idx),
-            DisplayRow::TagRemoteTarget {
-                tag_idx,
-                target_idx,
-            } => RowKey::TagRemoteTarget(tag_idx, target_idx),
-            DisplayRow::OpLogItem { op_log_idx } => RowKey::OpLogItem(op_log_idx),
-            DisplayRow::OpLogDetailLine {
-                op_log_idx,
-                line_idx,
-            } => RowKey::OpLogDetailLine(op_log_idx, line_idx),
-            DisplayRow::OpLogGraphLink {
-                op_log_idx,
-                line_idx,
-            } => RowKey::OpLogGraphLink(op_log_idx, line_idx),
-            DisplayRow::OpLogLoadMore => RowKey::OpLogLoadMore,
-            DisplayRow::EvoLogItem { evolog_idx } => RowKey::EvoLogItem(evolog_idx),
-            DisplayRow::EvoLogFileChange {
-                evolog_idx,
-                file_idx,
-            } => RowKey::EvoLogFileChange(evolog_idx, file_idx),
-            DisplayRow::EvoLogFileDiffLine {
-                evolog_idx,
-                file_idx,
-                line_idx,
-            } => RowKey::EvoLogFileDiffLine(evolog_idx, file_idx, line_idx),
-            DisplayRow::EvoLogGraphLink {
-                evolog_idx,
-                line_idx,
-            } => RowKey::EvoLogGraphLink(evolog_idx, line_idx),
-            DisplayRow::WorkspaceItem { workspace_idx } => RowKey::WorkspaceItem(workspace_idx),
-            DisplayRow::CommandLogItem { log_idx } => RowKey::CommandLogItem(log_idx),
-            DisplayRow::CommandLogDetail { log_idx, line_idx } => {
-                RowKey::CommandLogDetail(log_idx, line_idx)
-            }
-            DisplayRow::ConflictHeader {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-            } => RowKey::ConflictHeader(entry_idx, file_idx, hunk_idx),
-            DisplayRow::ConflictSide {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-                side_idx,
-                line_idx,
-            } => RowKey::ConflictSide(entry_idx, file_idx, hunk_idx, side_idx, line_idx),
-            DisplayRow::ConflictContext {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-                line_idx,
-            } => RowKey::ConflictContext(entry_idx, file_idx, hunk_idx, line_idx),
-        }
-    }
 }

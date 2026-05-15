@@ -5,16 +5,16 @@ use crate::idx::{
     FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, RowIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
-use crate::types::{DisplayRow, RowKey};
+use crate::types::DisplayRow;
 
 /// Restore cursor position after a row rebuild. Tries each fallback key in
 /// order, returning the first matching row index. Falls back to clamping the
 /// current cursor within bounds.
-fn restore_cursor(rows: &[DisplayRow], cursor: RowIdx, fallbacks: &[Option<RowKey>]) -> RowIdx {
+fn restore_cursor(rows: &[DisplayRow], cursor: RowIdx, fallbacks: &[Option<DisplayRow>]) -> RowIdx {
     fallbacks
         .iter()
         .flatten()
-        .find_map(|key| rows.iter().position(|r| r.key() == *key))
+        .find_map(|key| rows.iter().position(|r| *r == *key))
         .map(RowIdx::new)
         .unwrap_or(RowIdx::new(cursor.raw().min(rows.len().saturating_sub(1))))
 }
@@ -34,7 +34,7 @@ impl App {
     }
 
     fn rebuild_bookmark_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).copied();
         self.rows.clear();
         for idx in 0..self.views.bookmark_entries.len() {
             let bi = BookmarkIdx::new(idx);
@@ -62,16 +62,17 @@ impl App {
         }
 
         let fallback = match prev_cursor {
-            Some(RowKey::BookmarkConflictTarget(bi, _) | RowKey::BookmarkRemoteTarget(bi, _)) => {
-                Some(RowKey::BookmarkItem(bi))
-            }
+            Some(
+                DisplayRow::BookmarkConflictTarget { bookmark_idx, .. }
+                | DisplayRow::BookmarkRemoteTarget { bookmark_idx, .. },
+            ) => Some(DisplayRow::BookmarkItem { bookmark_idx }),
             _ => None,
         };
         self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor, fallback]);
     }
 
     fn rebuild_tag_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).copied();
         self.rows.clear();
         for idx in 0..self.views.tag_entries.len() {
             let ti = TagIdx::new(idx);
@@ -99,7 +100,7 @@ impl App {
     }
 
     fn rebuild_workspace_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).copied();
         self.rows.clear();
         for idx in 0..self.views.workspace_entries.len() {
             self.rows.push(DisplayRow::WorkspaceItem {
@@ -110,7 +111,7 @@ impl App {
     }
 
     fn rebuild_command_log_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).copied();
         self.rows.clear();
         // Show entries in reverse chronological order (newest first).
         for idx in (0..self.command_log.entries.len()).rev() {
@@ -134,7 +135,7 @@ impl App {
     }
 
     fn rebuild_op_log_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).copied();
         self.rows.clear();
         for idx in 0..self.op_log.entries.len() {
             // Apply workspace filter (operations with no workspace always pass).
@@ -174,16 +175,18 @@ impl App {
         }
         // Don't follow the LoadMore sentinel — keep the numeric position so
         // the cursor lands on the first newly loaded entry.
-        let prev_cursor = prev_cursor.filter(|k| *k != RowKey::OpLogLoadMore);
+        let prev_cursor = prev_cursor.filter(|k| *k != DisplayRow::OpLogLoadMore);
         let fallback = match prev_cursor {
-            Some(RowKey::OpLogDetailLine(oi, _)) => Some(RowKey::OpLogItem(oi)),
+            Some(DisplayRow::OpLogDetailLine { op_log_idx, .. }) => {
+                Some(DisplayRow::OpLogItem { op_log_idx })
+            }
             _ => None,
         };
         self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor, fallback]);
     }
 
     fn rebuild_evolog_rows(&mut self) {
-        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).copied();
         self.rows.clear();
         for idx in 0..self.evolog.entries.len() {
             let ei = EvoLogIdx::new(idx);
@@ -235,7 +238,7 @@ impl App {
 
     fn rebuild_dag_rows(&mut self) {
         // Remember what the cursor was pointing at so we can restore it.
-        let prev_cursor = self.rows.get(self.cursor.raw()).map(DisplayRow::key);
+        let prev_cursor = self.rows.get(self.cursor.raw()).copied();
 
         self.rows.clear();
         for idx_raw in 0..self.nodes.len() {
@@ -331,30 +334,77 @@ impl App {
         // Restore cursor: try exact match, then fall back to parent file,
         // then parent commit. This handles fold scenarios where the cursor
         // was on a diff line that disappeared when the file was folded.
-        let fallbacks: [Option<RowKey>; 3] = match prev_cursor {
-            Some(RowKey::DiffLine(e, f, l)) => [
-                Some(RowKey::DiffLine(e, f, l)),
-                Some(RowKey::FileChange(e, f)),
-                Some(RowKey::CommitNode(e)),
+        let fallbacks: [Option<DisplayRow>; 3] = match prev_cursor {
+            Some(DisplayRow::DiffLine {
+                entry_idx,
+                file_idx,
+                line_idx,
+            }) => [
+                Some(DisplayRow::DiffLine {
+                    entry_idx,
+                    file_idx,
+                    line_idx,
+                }),
+                Some(DisplayRow::FileChange {
+                    entry_idx,
+                    file_idx,
+                }),
+                Some(DisplayRow::CommitNode { entry_idx }),
             ],
-            Some(RowKey::DescriptionLine(e, _)) => [Some(RowKey::CommitNode(e)), None, None],
-            Some(RowKey::FileChange(e, f)) => [
-                Some(RowKey::FileChange(e, f)),
-                Some(RowKey::CommitNode(e)),
+            Some(DisplayRow::DescriptionLine { entry_idx, .. }) => {
+                [Some(DisplayRow::CommitNode { entry_idx }), None, None]
+            }
+            Some(DisplayRow::FileChange {
+                entry_idx,
+                file_idx,
+            }) => [
+                Some(DisplayRow::FileChange {
+                    entry_idx,
+                    file_idx,
+                }),
+                Some(DisplayRow::CommitNode { entry_idx }),
                 None,
             ],
-            Some(RowKey::ConflictSide(e, f, h, _, _))
-            | Some(RowKey::ConflictContext(e, f, h, _)) => [
-                Some(RowKey::ConflictHeader(e, f, h)),
-                Some(RowKey::FileChange(e, f)),
-                Some(RowKey::CommitNode(e)),
+            Some(
+                DisplayRow::ConflictSide {
+                    entry_idx,
+                    file_idx,
+                    hunk_idx,
+                    ..
+                }
+                | DisplayRow::ConflictContext {
+                    entry_idx,
+                    file_idx,
+                    hunk_idx,
+                    ..
+                },
+            ) => [
+                Some(DisplayRow::ConflictHeader {
+                    entry_idx,
+                    file_idx,
+                    hunk_idx,
+                }),
+                Some(DisplayRow::FileChange {
+                    entry_idx,
+                    file_idx,
+                }),
+                Some(DisplayRow::CommitNode { entry_idx }),
             ],
-            Some(RowKey::ConflictHeader(e, f, _)) => [
-                Some(RowKey::FileChange(e, f)),
-                Some(RowKey::CommitNode(e)),
+            Some(DisplayRow::ConflictHeader {
+                entry_idx,
+                file_idx,
+                ..
+            }) => [
+                Some(DisplayRow::FileChange {
+                    entry_idx,
+                    file_idx,
+                }),
+                Some(DisplayRow::CommitNode { entry_idx }),
                 None,
             ],
-            Some(RowKey::GraphLink(e, _)) => [Some(RowKey::CommitNode(e)), None, None],
+            Some(DisplayRow::GraphLink { entry_idx, .. }) => {
+                [Some(DisplayRow::CommitNode { entry_idx }), None, None]
+            }
             Some(key) => [Some(key), None, None],
             None => [None, None, None],
         };

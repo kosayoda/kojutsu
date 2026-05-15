@@ -308,8 +308,9 @@ impl App {
             for (idx, entry) in self.views.bookmark_entries.iter().enumerate() {
                 if entry.name == *name {
                     if let Some(pos) = self.rows.iter().position(|r| {
-                        r.key()
-                            == crate::types::RowKey::BookmarkItem(crate::idx::BookmarkIdx::new(idx))
+                        *r == crate::types::DisplayRow::BookmarkItem {
+                            bookmark_idx: crate::idx::BookmarkIdx::new(idx),
+                        }
                     }) {
                         self.cursor = RowIdx::new(pos);
                         return;
