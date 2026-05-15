@@ -344,7 +344,7 @@ impl App {
                 }
                 let files = node.files.loaded()?;
                 let fi = files.iter().position(|f| f.path == vr.path)?;
-                let diff_lines = node.diff(fi, super::DiffFormat::Git)?.loaded()?;
+                let diff_lines = node.diff(fi, super::DiffFormat::Git)?;
                 let lines: Vec<_> = diff_lines
                     .iter()
                     .enumerate()

@@ -82,7 +82,10 @@ impl App {
             let name = &self.views.tag_entries[idx].name;
             if !self.views.folded_tags.contains(name) {
                 if let Some(details) = self.views.tag_details.get(name) {
-                    let local_commit = details.local_target.as_ref().map(|lt| &lt.summary.commit_id);
+                    let local_commit = details
+                        .local_target
+                        .as_ref()
+                        .map(|lt| &lt.summary.commit_id);
                     for ri in 0..details.remote_targets.len() {
                         let rt = &details.remote_targets[ri];
                         if local_commit == Some(&rt.summary.commit_id) {
@@ -205,11 +208,16 @@ impl App {
                         // Emit diff lines if this file is unfolded.
                         let key = (commit_id.clone(), files[fi].path.clone());
                         if self.evolog.unfolded_files.contains(&key) {
-                            let diffs = match self.diff_format {
-                                super::DiffFormat::Git => &self.evolog.file_diffs,
-                                super::DiffFormat::ColorWords => &self.evolog.file_diffs_cw,
-                            };
-                            if let Some(Loadable::Loaded(lines)) = diffs.get(&key) {
+                            if let Some(lines) = self
+                                .evolog
+                                .file_diffs
+                                .get(&key)
+                                .and_then(|l| l.loaded())
+                                .map(|r| match self.diff_format {
+                                    super::DiffFormat::Git => &r.git,
+                                    super::DiffFormat::ColorWords => &r.color_words,
+                                })
+                            {
                                 for li in 0..lines.len() {
                                     self.rows.push(DisplayRow::EvoLogFileDiffLine {
                                         evolog_idx: ei,

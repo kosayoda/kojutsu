@@ -49,19 +49,15 @@ impl App {
         type NodeCache = (
             Loadable<Vec<crate::dag::FileChange>>,
             Loadable<crate::dag::LineStats>,
-            Vec<Loadable<Vec<crate::dag::DiffLine>>>,
-            Vec<Loadable<Vec<crate::dag::DiffLine>>>,
+            Vec<Loadable<crate::dag::DiffResult>>,
         );
         // Collect old caches keyed by CommitId before replacing nodes.
         let old_caches: HashMap<CommitId, NodeCache> = std::mem::take(&mut self.nodes)
             .into_vec()
             .into_iter()
             .map(|mut n| {
-                let (diffs, diffs_cw) = n.take_diffs();
-                (
-                    n.commit.graph_id.clone(),
-                    (n.files, n.stats, diffs, diffs_cw),
-                )
+                let diffs = n.take_diffs();
+                (n.commit.graph_id.clone(), (n.files, n.stats, diffs))
             })
             .collect();
 
@@ -69,7 +65,7 @@ impl App {
 
         // Restore cached data for commits that survived the refresh.
         for node in nodes.iter_mut() {
-            if let Some((files, stats, diffs, diffs_cw)) = old_caches.get(&node.commit.graph_id) {
+            if let Some((files, stats, diffs)) = old_caches.get(&node.commit.graph_id) {
                 if !files.should_request() {
                     node.files = files.clone();
                 }
@@ -77,7 +73,7 @@ impl App {
                     node.stats = stats.clone();
                 }
                 if !diffs.is_empty() {
-                    node.restore_diffs(diffs.clone(), diffs_cw.clone());
+                    node.restore_diffs(diffs.clone());
                 }
             }
         }
@@ -312,11 +308,7 @@ impl App {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                         if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
                             let fi = file_idx.raw();
-                            self.nodes[idx].set_diff(
-                                fi,
-                                Loadable::Loaded(diff_result.git),
-                                Loadable::Loaded(diff_result.color_words),
-                            );
+                            self.nodes[idx].set_diff(fi, diff_result);
                         }
                     }
                     deferred.rebuild = true;
@@ -550,10 +542,7 @@ impl App {
                     let key = (commit_id, path);
                     self.evolog
                         .file_diffs
-                        .insert(key.clone(), super::Loadable::Loaded(diff_result.git));
-                    self.evolog
-                        .file_diffs_cw
-                        .insert(key, super::Loadable::Loaded(diff_result.color_words));
+                        .insert(key, super::Loadable::Loaded(diff_result));
                     if self.active_view == super::ActiveView::Evolog {
                         deferred.rebuild = true;
                         deferred.scroll = true;

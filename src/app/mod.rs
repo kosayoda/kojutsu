@@ -73,10 +73,8 @@ pub struct DagNode {
     pub files: Loadable<Vec<FileChange>>,
     /// Lazily loaded per-commit line stats.
     pub stats: Loadable<LineStats>,
-    /// Lazily loaded diff lines (git format), parallel to `files` (indexed by FileIdx).
-    diffs: Vec<Loadable<Vec<DiffLine>>>,
-    /// Lazily loaded diff lines (color-words format), parallel to `diffs`.
-    diffs_cw: Vec<Loadable<Vec<DiffLine>>>,
+    /// Lazily loaded diff results (both formats), parallel to `files` (indexed by FileIdx).
+    diffs: Vec<Loadable<crate::dag::DiffResult>>,
     /// Lazily loaded conflict hunks, parallel to `files` (for conflicted files).
     conflict_hunks: Vec<Loadable<Vec<crate::dag::ConflictHunkKind>>>,
 }
@@ -89,12 +87,18 @@ pub enum DiffFormat {
 }
 
 impl DagNode {
-    /// Get the diff state for a file in the given format.
-    pub fn diff(&self, fi: usize, format: DiffFormat) -> Option<&Loadable<Vec<DiffLine>>> {
-        match format {
-            DiffFormat::Git => self.diffs.get(fi),
-            DiffFormat::ColorWords => self.diffs_cw.get(fi),
-        }
+    /// Get the loaded diff lines for a file in the given format.
+    pub fn diff(&self, fi: usize, format: DiffFormat) -> Option<&Vec<DiffLine>> {
+        let result = self.diffs.get(fi)?.loaded()?;
+        Some(match format {
+            DiffFormat::Git => &result.git,
+            DiffFormat::ColorWords => &result.color_words,
+        })
+    }
+
+    /// Get the raw diff result state for a file.
+    pub fn diff_result(&self, fi: usize) -> Option<&Loadable<crate::dag::DiffResult>> {
+        self.diffs.get(fi)
     }
 
     /// Get loaded conflict hunks for a file.
@@ -113,23 +117,16 @@ impl DagNode {
         self.conflict_hunks.get_mut(fi)
     }
 
-    /// Set the diff state for a file, growing the vectors if needed.
-    pub fn set_diff(
-        &mut self,
-        fi: usize,
-        git: Loadable<Vec<DiffLine>>,
-        cw: Loadable<Vec<DiffLine>>,
-    ) {
+    /// Set the diff result for a file, growing the vector if needed.
+    pub fn set_diff(&mut self, fi: usize, result: crate::dag::DiffResult) {
         self.ensure_diffs(fi + 1);
-        self.diffs[fi] = git;
-        self.diffs_cw[fi] = cw;
+        self.diffs[fi] = Loadable::Loaded(result);
     }
 
-    /// Set the diff state to a single value for both formats (e.g. Loading/Failed).
-    pub fn set_diff_state(&mut self, fi: usize, state: Loadable<Vec<DiffLine>>) {
+    /// Set the diff state for a file (e.g. Loading/Failed).
+    pub fn set_diff_state(&mut self, fi: usize, state: Loadable<crate::dag::DiffResult>) {
         self.ensure_diffs(fi + 1);
-        self.diffs[fi] = state.clone();
-        self.diffs_cw[fi] = state;
+        self.diffs[fi] = state;
     }
 
     /// Set the conflict hunks state for a file, growing the vector if needed.
@@ -143,21 +140,13 @@ impl DagNode {
     }
 
     /// Extract and take ownership of cached diffs (used during DAG refresh).
-    pub fn take_diffs(&mut self) -> (Vec<Loadable<Vec<DiffLine>>>, Vec<Loadable<Vec<DiffLine>>>) {
-        (
-            std::mem::take(&mut self.diffs),
-            std::mem::take(&mut self.diffs_cw),
-        )
+    pub fn take_diffs(&mut self) -> Vec<Loadable<crate::dag::DiffResult>> {
+        std::mem::take(&mut self.diffs)
     }
 
     /// Preserve cached diffs from another node (used during DAG refresh).
-    pub fn restore_diffs(
-        &mut self,
-        diffs: Vec<Loadable<Vec<DiffLine>>>,
-        diffs_cw: Vec<Loadable<Vec<DiffLine>>>,
-    ) {
+    pub fn restore_diffs(&mut self, diffs: Vec<Loadable<crate::dag::DiffResult>>) {
         self.diffs = diffs;
-        self.diffs_cw = diffs_cw;
     }
 
     /// Check if a diff should be requested for a file.
@@ -175,9 +164,6 @@ impl DagNode {
     fn ensure_diffs(&mut self, n: usize) {
         if self.diffs.len() < n {
             self.diffs.resize_with(n, || Loadable::NotRequested);
-        }
-        if self.diffs_cw.len() < n {
-            self.diffs_cw.resize_with(n, || Loadable::NotRequested);
         }
     }
 
@@ -723,7 +709,7 @@ impl App {
 
     pub fn diff_lines(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<&Vec<DiffLine>> {
         let format = self.diff_format();
-        self.nodes[entry_idx].diff(file_idx.raw(), format)?.loaded()
+        self.nodes[entry_idx].diff(file_idx.raw(), format)
     }
 
     pub fn evolog_diff_lines(
@@ -735,11 +721,11 @@ impl App {
         let files = self.evolog.files.get(&entry.commit_id)?.loaded()?;
         let file = files.get(file_idx.raw())?;
         let key = (entry.commit_id.clone(), file.path.clone());
-        let diffs = match self.diff_format {
-            DiffFormat::Git => &self.evolog.file_diffs,
-            DiffFormat::ColorWords => &self.evolog.file_diffs_cw,
-        };
-        diffs.get(&key)?.loaded()
+        let result = self.evolog.file_diffs.get(&key)?.loaded()?;
+        Some(match self.diff_format {
+            DiffFormat::Git => &result.git,
+            DiffFormat::ColorWords => &result.color_words,
+        })
     }
 
     pub fn commit_stats(&self, entry_idx: EntryIdx) -> Option<LineStats> {
@@ -1002,7 +988,6 @@ fn build_nodes(
                 files: Loadable::NotRequested,
                 stats: Loadable::NotRequested,
                 diffs: Vec::new(),
-                diffs_cw: Vec::new(),
                 conflict_hunks: Vec::new(),
             }
         })

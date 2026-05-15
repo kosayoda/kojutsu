@@ -124,8 +124,7 @@ pub struct EvoLogState {
     pub unfolded: HashSet<CommitId>,
     pub files: HashMap<CommitId, Loadable<Vec<crate::dag::FileChange>>>,
     pub unfolded_files: HashSet<(CommitId, RepoPath)>,
-    pub file_diffs: HashMap<(CommitId, RepoPath), Loadable<Vec<crate::dag::DiffLine>>>,
-    pub file_diffs_cw: HashMap<(CommitId, RepoPath), Loadable<Vec<crate::dag::DiffLine>>>,
+    pub file_diffs: HashMap<(CommitId, RepoPath), Loadable<crate::dag::DiffResult>>,
 }
 
 impl EvoLogState {
@@ -138,7 +137,6 @@ impl EvoLogState {
             files: HashMap::new(),
             unfolded_files: HashSet::new(),
             file_diffs: HashMap::new(),
-            file_diffs_cw: HashMap::new(),
         }
     }
 
@@ -149,7 +147,6 @@ impl EvoLogState {
         self.files.clear();
         self.unfolded_files.clear();
         self.file_diffs.clear();
-        self.file_diffs_cw.clear();
     }
 }
 
@@ -342,7 +339,13 @@ impl BookmarkKind {
     pub fn is_conflicted(&self) -> bool {
         matches!(
             self,
-            Self::Local { is_conflicted: true, .. } | Self::Tracking { is_conflicted: true, .. }
+            Self::Local {
+                is_conflicted: true,
+                ..
+            } | Self::Tracking {
+                is_conflicted: true,
+                ..
+            }
         )
     }
 
