@@ -1,31 +1,32 @@
-use ratatui::crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
-};
-use tui_input::backend::crossterm::EventHandler;
-
 use std::collections::HashSet;
 
+use smallvec::smallvec;
+
 use crate::app::{App, AppMode, TargetMode};
-use crate::dag::{BookmarkRef, DiffLineKind};
+use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{ChangeSelection, InsertPosition, JJCommand};
 use crate::keymap::{
-    self, action_label, action_supported_selection_kinds, AppAction, CommandFlags, Keymap, Keymaps,
+    self, action_label, action_supported_selection_kinds, AppAction, CommandFlags, Keymap,
     LookupResult,
 };
-use smallvec::smallvec;
-
 use crate::types::{
     BookmarkName, ChangeId, CommitId, DisplayRow, FollowUpAction, FollowUpOption, MessageMode,
-    PendingCommand, PendingCommitSelect, PendingSelection, RebaseSource, RemoteName, SelectionKind,
-    SmallVec, SplitKind, SquashKind, Str, TagName, TargetOperation, WorkspaceName,
+    PendingCommand, PendingSelection, RebaseSource, RemoteName, SelectionKind, SmallVec, SplitKind,
+    SquashKind, Str, TargetOperation, WorkspaceName,
 };
 
+use super::bookmark::{
+    enter_bookmark_advance, enter_bookmark_select, enter_bookmark_text_input,
+    enter_remote_bookmark_select, enter_tag_delete, BookmarkTextAction, PendingSelectionKind,
+};
+use super::Action;
+
 /// Number of rows to jump for page-up/page-down style navigation.
-const PAGE_SIZE: usize = 15;
+use super::PAGE_SIZE;
 
 /// Build the appropriate `ChangeSelection` from the current app state.
-fn build_change_selection(app: &App) -> ChangeSelection {
+pub(super) fn build_change_selection(app: &App) -> ChangeSelection {
     match app.selection_kind() {
         SelectionKind::Commit => ChangeSelection::All,
         SelectionKind::File => {
@@ -47,105 +48,11 @@ fn build_change_selection(app: &App) -> ChangeSelection {
     }
 }
 
-/// Result of handling an input event.
-pub enum Action {
-    /// Quit the application.
-    Quit,
-    /// No action needed (already handled by mutating App).
-    None,
-    /// Run a jj CLI command (captured output), then refresh the DAG.
-    RunJj(JJCommand),
-    /// Suspend the TUI, run an interactive jj command, then resume.
-    SuspendAndRunJj(JJCommand),
-    /// Snapshot the working copy and reload the DAG.
-    Refresh,
-    /// Evaluate a new revset and refresh the view.
-    UpdateRevset(String),
-    /// Suspend TUI and open $EDITOR to edit the revset.
-    EditRevsetInEditor,
-}
-
-/// Handle a key press, dispatching through the keymap trie and app mode.
-pub fn handle_key(app: &mut App, keymaps: &'static Keymaps, key: KeyEvent) -> Action {
-    let Some(node) = keymap::key_event_to_node(&key) else {
-        return Action::None;
-    };
-    let keymap = keymaps.for_view(app.active_view);
-
-    match &app.mode {
-        AppMode::Normal => handle_normal_key(app, keymap, &node),
-        AppMode::Submenu {
-            children, flags, ..
-        } => {
-            let children = *children;
-            let flags = *flags;
-            handle_submenu_key(app, children, flags, &node)
-        }
-        AppMode::CommandOutput { .. } => {
-            // Take ownership so we can inspect retry options.
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            let retry = match mode {
-                AppMode::CommandOutput { retry, .. } => retry,
-                _ => unreachable!(),
-            };
-            if node.key == keymap_parser::Key::Esc {
-                Action::None
-            } else if !retry.is_empty() {
-                app.mode = AppMode::FollowUp {
-                    prompt: "Retry?".into(),
-                    options: retry,
-                };
-                Action::None
-            } else {
-                handle_normal_key(app, keymap, &node)
-            }
-        }
-        AppMode::Help { .. } => {
-            use keymap_parser::Key;
-            match node.key {
-                Key::Char('j') | Key::Down => {
-                    if let AppMode::Help { scroll } = &mut app.mode {
-                        *scroll = scroll.saturating_add(1);
-                    }
-                    Action::None
-                }
-                Key::Char('k') | Key::Up => {
-                    if let AppMode::Help { scroll } = &mut app.mode {
-                        *scroll = scroll.saturating_sub(1);
-                    }
-                    Action::None
-                }
-                // Dismiss without forwarding.
-                Key::Esc | Key::Char('q') | Key::Char('?') => {
-                    app.mode = app.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
-                    Action::None
-                }
-                // Dismiss and forward printable keys to the underlying mode.
-                Key::Char(_) => {
-                    app.mode = app.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
-                    match &app.mode {
-                        AppMode::Normal => handle_normal_key(app, keymap, &node),
-                        AppMode::TargetSelect { .. } => handle_target_select(app, key),
-                        AppMode::CommitSelect { .. } => handle_commit_select(app, key),
-                        _ => Action::None,
-                    }
-                }
-                // Ignore everything else (function keys, modifier combos,
-                // spurious escape sequences from terminal resize, etc.).
-                _ => Action::None,
-            }
-        }
-        AppMode::TextInput { .. } => handle_text_input(app, key),
-        AppMode::SearchInput => handle_search_input(app, key),
-        AppMode::TargetSelect { .. } => handle_target_select(app, key),
-        AppMode::CommitSelect { .. } => handle_commit_select(app, key),
-        AppMode::FollowUp { .. } => handle_follow_up(app, key),
-        AppMode::SelectFromList { .. } => handle_select_from_list(app, key),
-        AppMode::Jump { .. } => handle_jump(app, key),
-    }
-}
-
-fn handle_normal_key(app: &mut App, keymap: &'static Keymap, node: &keymap_parser::Node) -> Action {
+pub(super) fn handle_normal_key(
+    app: &mut App,
+    keymap: &'static Keymap,
+    node: &keymap_parser::Node,
+) -> Action {
     if node.key == keymap_parser::Key::Esc && app.search.is_some() {
         app.clear_search();
         return Action::None;
@@ -201,7 +108,7 @@ fn handle_normal_key(app: &mut App, keymap: &'static Keymap, node: &keymap_parse
     }
 }
 
-fn handle_submenu_key(
+pub(super) fn handle_submenu_key(
     app: &mut App,
     children: &'static [(keymap_parser::Node, keymap::KeymapNode)],
     flags: CommandFlags,
@@ -452,7 +359,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::Refresh => Action::Refresh,
         AppAction::SelectPreset => {
             if app.revset.presets.is_empty() {
-                app.set_status("no presets configured");
+                app.set_error("no presets configured");
                 return Action::None;
             }
             let items: Vec<String> = app.revset.presets.iter().map(|p| p.name.clone()).collect();
@@ -524,7 +431,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 );
                 Action::None
             } else {
-                app.set_status("no other workspace on this commit");
+                app.set_error("no other workspace on this commit");
                 Action::None
             }
         }
@@ -580,7 +487,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     AppAction::ResolveTheirs => 1,
                     _ => {
                         // Merge tool doesn't apply per-hunk.
-                        app.set_status("merge tool is for whole-file only");
+                        app.set_error("merge tool is for whole-file only");
                         return Action::None;
                     }
                 };
@@ -604,7 +511,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     ..
                 }) => (*entry_idx, *file_idx),
                 _ => {
-                    app.set_status("cursor must be on a file or conflict hunk");
+                    app.set_error("cursor must be on a file or conflict hunk");
                     return Action::None;
                 }
             };
@@ -615,7 +522,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             };
             if !file.has_conflict {
-                app.set_status("no conflict on this file");
+                app.set_error("no conflict on this file");
                 return Action::None;
             }
             let change_id = app.change_id(entry_idx);
@@ -662,14 +569,14 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     return Action::Refresh;
                 }
             } else {
-                app.set_status("per-hunk only — use on a conflict hunk row");
+                app.set_error("per-hunk only — use on a conflict hunk row");
             }
             Action::None
         }
         AppAction::FileUntrack => {
             let paths = app.selected_file_paths();
             if paths.is_empty() {
-                app.set_status("no files selected");
+                app.set_error("no files selected");
                 return Action::None;
             }
             Action::RunJj(JJCommand::FileUntrack {
@@ -950,7 +857,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::GitPushBookmark => {
             let bookmarks = app.selected_bookmarks().unwrap_or(&[]);
             if bookmarks.is_empty() {
-                app.set_status("no bookmarks on this commit");
+                app.set_error("no bookmarks on this commit");
                 return Action::None;
             }
             let items: Vec<String> = bookmarks.iter().map(|b| b.name.to_string()).collect();
@@ -1031,7 +938,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::BmViewTrack => {
             let Some(br) = app.selected_bookmark_ref() else {
-                app.set_status("bookmark is already local");
+                app.set_error("bookmark is already local");
                 return Action::None;
             };
             Action::RunJj(JJCommand::BookmarkTrack {
@@ -1041,7 +948,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::BmViewUntrack => {
             let Some(br) = app.selected_bookmark_ref() else {
-                app.set_status("bookmark has no remote to untrack");
+                app.set_error("bookmark has no remote to untrack");
                 return Action::None;
             };
             Action::RunJj(JJCommand::BookmarkUntrack {
@@ -1250,7 +1157,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             workspaces.sort();
             workspaces.dedup();
             if workspaces.is_empty() {
-                app.set_status("no workspace info in operation log");
+                app.set_error("no workspace info in operation log");
                 return Action::None;
             }
             app.mode = AppMode::select_from_list(
@@ -1323,7 +1230,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             };
             if entry.is_current {
-                app.set_status("already on current version");
+                app.set_error("already on current version");
                 return Action::None;
             }
             let from = ChangeId::new(entry.commit_id.as_str());
@@ -1377,7 +1284,6 @@ fn run_cmd(cmd: JJCommand) -> Action {
     }
 }
 
-/// Dispatch a follow-up action (execute command or enter text input).
 /// Try to jump to a commit in the DAG view. If the commit is in the current
 /// revset, switches to DAG and moves the cursor. Otherwise offers to widen
 /// the revset. If there's no commit at all, shows an error.
@@ -1419,7 +1325,7 @@ fn offer_widen_revset(app: &mut App, id: &str) {
     };
 }
 
-fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action {
+pub(super) fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action {
     match action {
         FollowUpAction::Execute(cmd) => run_cmd(cmd),
         FollowUpAction::TextInput { prompt, pending } => {
@@ -1481,124 +1387,11 @@ fn enter_describe_input(app: &mut App, flags: CommandFlags) -> Action {
     Action::None
 }
 
-fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Enter => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::TextInput {
-                input, on_submit, ..
-            } = mode
-            {
-                let text = input.to_string();
-                match on_submit {
-                    PendingCommand::Revset => {
-                        app.revset.active_preset = None;
-                        Action::UpdateRevset(text)
-                    }
-                    PendingCommand::WorkspaceAddPath { flags } => {
-                        app.mode = AppMode::text_input(
-                            "workspace name (enter for default): ",
-                            "",
-                            PendingCommand::WorkspaceAddName { path: text, flags },
-                        );
-                        Action::None
-                    }
-                    PendingCommand::WorkspaceAddName { path, flags } => {
-                        let name = if text.is_empty() {
-                            None
-                        } else {
-                            Some(WorkspaceName::new(text))
-                        };
-                        // CommitSelect needs the DAG view to navigate commits.
-                        if app.active_view != crate::app::ActiveView::Dag {
-                            app.switch_view(crate::app::ActiveView::Dag);
-                        }
-                        let restore_cursor = app.cursor;
-                        app.mode = AppMode::CommitSelect {
-                            restore_cursor,
-                            pending: PendingCommitSelect::WorkspaceAdd { path, name },
-                            flags,
-                        };
-                        Action::None
-                    }
-                    cmd => Action::RunJj(cmd.into_jj_command(text)),
-                }
-            } else {
-                Action::None
-            }
-        }
-        KeyCode::Esc => {
-            app.mode = AppMode::Normal;
-            Action::None
-        }
-        _ => {
-            if let AppMode::TextInput { input, .. } = &mut app.mode {
-                input.handle_event(&Event::Key(key));
-            }
-            Action::None
-        }
-    }
-}
-
-fn handle_search_input(app: &mut App, key: KeyEvent) -> Action {
-    use crate::types::SearchFocus;
-
-    match key.code {
-        KeyCode::Esc => {
-            app.cancel_search();
-            Action::None
-        }
-        KeyCode::Enter => {
-            app.confirm_search();
-            Action::None
-        }
-        KeyCode::Tab => {
-            app.toggle_search_focus();
-            Action::None
-        }
-        _ => {
-            let focus = app.search.as_ref().map(|s| s.focus);
-            match focus {
-                Some(SearchFocus::Query) => match key.code {
-                    KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.search_next();
-                    }
-                    KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.search_prev();
-                    }
-                    _ => {
-                        if let Some(search) = &mut app.search {
-                            let mut input = search.input.clone();
-                            input.handle_event(&Event::Key(key));
-                            app.update_search_input(input);
-                        }
-                    }
-                },
-                Some(SearchFocus::Scopes) => match key.code {
-                    KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.search_next();
-                    }
-                    KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.search_prev();
-                    }
-                    KeyCode::Char('0') => app.reset_search_scopes(),
-                    KeyCode::Char('*') => app.enable_all_search_scopes(),
-                    KeyCode::Char(ch) => {
-                        let specs = crate::types::scope_specs_for_view(app.active_view);
-                        if let Some(spec) = specs.iter().find(|s| s.hint.starts_with(ch)) {
-                            app.toggle_search_scope(spec.flag);
-                        }
-                    }
-                    _ => {}
-                },
-                None => {}
-            }
-            Action::None
-        }
-    }
-}
-
-fn enter_target_select(app: &mut App, operation: TargetOperation, flags: CommandFlags) -> Action {
+pub(super) fn enter_target_select(
+    app: &mut App,
+    operation: TargetOperation,
+    flags: CommandFlags,
+) -> Action {
     let Some(source) = app.selected_change_id() else {
         return Action::None;
     };
@@ -1619,872 +1412,4 @@ fn enter_target_select(app: &mut App, operation: TargetOperation, flags: Command
         target_mode,
     };
     Action::None
-}
-
-/// Shared navigation for TargetSelect and CommitSelect modes.
-/// Returns `Some(Action)` if the key was handled, `None` if not recognized.
-///
-/// Uses `key_event_to_node` for consistent key matching with the keymap system.
-fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<Action> {
-    use keymap_parser::Key;
-
-    let node = keymap::key_event_to_node(key)?;
-    let shift = (node.modifiers & keymap_parser::Modifier::Shift as u8) != 0;
-    let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
-
-    match (node.key, shift, ctrl) {
-        (Key::Char('j'), true, _) => {
-            app.move_down_section();
-            Some(Action::None)
-        }
-        (Key::Char('k'), true, _) => {
-            app.move_up_section();
-            Some(Action::None)
-        }
-        (Key::Char('d'), _, true) => {
-            app.page_down(PAGE_SIZE);
-            Some(Action::None)
-        }
-        (Key::Char('u'), _, true) => {
-            app.page_up(PAGE_SIZE);
-            Some(Action::None)
-        }
-        (Key::Char('n'), _, true) => {
-            app.search_next();
-            Some(Action::None)
-        }
-        (Key::Char('p'), _, true) => {
-            app.search_prev();
-            Some(Action::None)
-        }
-        (Key::Char('j'), _, _) | (Key::Down, _, _) => {
-            app.move_down();
-            Some(Action::None)
-        }
-        (Key::Char('k'), _, _) | (Key::Up, _, _) => {
-            app.move_up();
-            Some(Action::None)
-        }
-        (Key::PageDown, _, _) => {
-            app.page_down(PAGE_SIZE);
-            Some(Action::None)
-        }
-        (Key::PageUp, _, _) => {
-            app.page_up(PAGE_SIZE);
-            Some(Action::None)
-        }
-        (Key::Char('@'), _, _) => {
-            app.jump_to_working_copy();
-            Some(Action::None)
-        }
-        (Key::Char('0'), _, _) => {
-            app.move_to_top();
-            Some(Action::None)
-        }
-        (Key::Char('$'), _, _) => {
-            app.move_to_bottom();
-            Some(Action::None)
-        }
-        (Key::Tab, _, _) => {
-            app.toggle_fold();
-            Some(Action::None)
-        }
-        (Key::Char('\''), _, _) => {
-            app.enter_jump();
-            Some(Action::None)
-        }
-        (Key::Char('/'), _, _) => {
-            app.begin_search();
-            Some(Action::None)
-        }
-        (Key::Char('?'), _, _) => {
-            let old_mode = std::mem::replace(&mut app.mode, AppMode::Help { scroll: 0 });
-            app.pre_overlay_mode = Some(old_mode);
-            Some(Action::None)
-        }
-        _ => None,
-    }
-}
-
-fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Char(' ') => {
-            // Toggle target in multi-select mode.
-            let id = app.selected_change_id();
-            if let (
-                Some(id),
-                AppMode::TargetSelect {
-                    target_mode: TargetMode::Multi { targets },
-                    ..
-                },
-            ) = (id, &mut app.mode)
-            {
-                if !targets.remove(&id) {
-                    targets.insert(id);
-                }
-            }
-            Action::None
-        }
-        KeyCode::Enter => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::TargetSelect {
-                source,
-                operation,
-                flags,
-                target_mode,
-                ..
-            } = mode
-            {
-                let targets = match target_mode {
-                    TargetMode::Multi { targets } if !targets.is_empty() => {
-                        targets.into_iter().collect()
-                    }
-                    _ => {
-                        let Some(target) = app.selected_change_id() else {
-                            return Action::None;
-                        };
-                        smallvec![target]
-                    }
-                };
-                let label = operation.label();
-                let selection = build_change_selection(app);
-                let mut options = operation.follow_up(source, targets.clone(), flags, selection);
-                if options.len() == 1 {
-                    let opt = options.remove(0);
-                    return execute_follow_up(app, opt.action);
-                }
-                let target_str: String = targets
-                    .iter()
-                    .map(|t| t.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let prompt = format!("{label} {target_str}:");
-                app.mode = AppMode::FollowUp { prompt, options };
-            }
-            Action::None
-        }
-        KeyCode::Esc => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::TargetSelect { restore_cursor, .. } = mode {
-                app.cursor = restore_cursor;
-            }
-            Action::None
-        }
-        _ => handle_select_navigation(app, &key).unwrap_or(Action::None),
-    }
-}
-
-fn handle_commit_select(app: &mut App, key: KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Enter => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::CommitSelect { pending, flags, .. } = mode {
-                let Some(target) = app.selected_change_id() else {
-                    return Action::None;
-                };
-                let cmd = pending.into_jj_command(target, flags);
-                Action::RunJj(cmd)
-            } else {
-                Action::None
-            }
-        }
-        KeyCode::Esc => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::CommitSelect { restore_cursor, .. } = mode {
-                app.cursor = restore_cursor;
-            }
-            Action::None
-        }
-        _ => handle_select_navigation(app, &key).unwrap_or(Action::None),
-    }
-}
-
-fn handle_jump(app: &mut App, key: KeyEvent) -> Action {
-    let (mut labels, mut input, restore_mode) =
-        match std::mem::replace(&mut app.mode, AppMode::Normal) {
-            AppMode::Jump {
-                labels,
-                input,
-                restore_mode,
-            } => (labels, input, restore_mode),
-            _ => unreachable!(),
-        };
-
-    let exit = |app: &mut App, restore: Option<Box<AppMode>>| {
-        app.mode = restore.map_or(AppMode::Normal, |m| *m);
-    };
-
-    let KeyCode::Char(c) = key.code else {
-        exit(app, restore_mode);
-        return Action::None;
-    };
-
-    input.push(c);
-    labels.retain(|(label, _)| label.starts_with(&input));
-
-    if labels.is_empty() {
-        exit(app, restore_mode);
-        return Action::None;
-    }
-
-    // Exact match → jump and exit.
-    if let Some((_, row_idx)) = labels.iter().find(|(label, _)| *label == input) {
-        app.cursor = *row_idx;
-        exit(app, restore_mode);
-    } else {
-        // Input is a prefix of remaining labels — stay in jump mode.
-        app.mode = AppMode::Jump {
-            labels,
-            input,
-            restore_mode,
-        };
-    }
-
-    Action::None
-}
-
-fn handle_follow_up(app: &mut App, key: KeyEvent) -> Action {
-    if key.code == KeyCode::Esc {
-        app.mode = AppMode::Normal;
-        return Action::None;
-    }
-
-    let c = match key.code {
-        KeyCode::Char(c) => c,
-        _ => return Action::None,
-    };
-
-    let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-    let AppMode::FollowUp { options, .. } = mode else {
-        return Action::None;
-    };
-
-    // Find the matching option.
-    let Some(option) = options.into_iter().find(|o| o.key == c) else {
-        return Action::None;
-    };
-
-    execute_follow_up(app, option.action)
-}
-
-// ---------------------------------------------------------------------------
-// Bookmark helpers
-// ---------------------------------------------------------------------------
-
-/// Show a select-from-list for remote bookmarks, or a status message if empty.
-fn enter_remote_bookmark_select(
-    app: &mut App,
-    bookmarks: Vec<String>,
-    empty_msg: &str,
-    title: &str,
-    on_select: PendingSelection,
-) -> Action {
-    if bookmarks.is_empty() {
-        app.set_status(empty_msg);
-        return Action::None;
-    }
-    app.mode = AppMode::select_from_list(title, bookmarks, true, on_select, true);
-    Action::None
-}
-
-enum BookmarkTextAction {
-    Create,
-    Set,
-}
-
-#[derive(Clone, Copy)]
-enum PendingSelectionKind {
-    Delete,
-    Forget,
-    Move,
-    Rename,
-}
-
-impl PendingSelectionKind {
-    fn title(self) -> &'static str {
-        match self {
-            Self::Delete => "delete bookmark",
-            Self::Forget => "forget bookmark",
-            Self::Move => "move bookmark",
-            Self::Rename => "rename bookmark",
-        }
-    }
-
-    fn to_pending(self, change_id: ChangeId, flags: CommandFlags) -> PendingSelection {
-        match self {
-            Self::Delete => PendingSelection::BookmarkDelete { change_id, flags },
-            Self::Forget => PendingSelection::BookmarkForget { change_id, flags },
-            Self::Move => PendingSelection::BookmarkMove { change_id, flags },
-            Self::Rename => PendingSelection::BookmarkRename { change_id, flags },
-        }
-    }
-
-    fn is_multi(self) -> bool {
-        matches!(self, Self::Delete | Self::Forget)
-    }
-}
-
-fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Action {
-    let Some(change_id) = app.selected_change_id() else {
-        return Action::None;
-    };
-
-    // Check if the selected commit is the working copy.
-    let is_wc = app.selected_bookmarks().is_some_and(|_| {
-        // Check via the entries
-        let entry_idx = match app.rows.get(app.cursor.raw()) {
-            Some(DisplayRow::CommitNode { entry_idx })
-            | Some(DisplayRow::DescriptionLine { entry_idx, .. })
-            | Some(DisplayRow::GraphLink { entry_idx, .. })
-            | Some(DisplayRow::FileChange { entry_idx, .. })
-            | Some(DisplayRow::DiffLine { entry_idx, .. }) => Some(*entry_idx),
-            Some(DisplayRow::BookmarkItem { .. })
-            | Some(DisplayRow::BookmarkConflictTarget { .. })
-            | Some(DisplayRow::BookmarkRemoteTarget { .. })
-            | Some(DisplayRow::TagItem { .. })
-            | Some(DisplayRow::TagRemoteTarget { .. })
-            | Some(DisplayRow::OpLogItem { .. })
-            | Some(DisplayRow::OpLogDetailLine { .. })
-            | Some(DisplayRow::OpLogGraphLink { .. })
-            | Some(DisplayRow::OpLogLoadMore)
-            | Some(DisplayRow::EvoLogItem { .. })
-            | Some(DisplayRow::EvoLogFileChange { .. })
-            | Some(DisplayRow::EvoLogFileDiffLine { .. })
-            | Some(DisplayRow::EvoLogGraphLink { .. })
-            | Some(DisplayRow::WorkspaceItem { .. })
-            | Some(DisplayRow::CommandLogItem { .. })
-            | Some(DisplayRow::CommandLogDetail { .. })
-            | Some(DisplayRow::ConflictHeader { .. })
-            | Some(DisplayRow::ConflictSide { .. })
-            | Some(DisplayRow::ConflictContext { .. })
-            | None => None,
-        };
-        entry_idx.is_some_and(|idx| app.nodes[idx].commit.is_working_copy())
-    });
-
-    if is_wc {
-        // On working copy: advance immediately (jj default = advance to @).
-        Action::RunJj(JJCommand::BookmarkAdvance {
-            change_id: None,
-            flags,
-        })
-    } else {
-        // Not on working copy: show follow-up to choose between selected and @.
-        app.mode = AppMode::FollowUp {
-            prompt: "advance bookmarks to:".to_string(),
-            options: vec![
-                FollowUpOption {
-                    key: 's',
-                    label: "selected",
-                    action: FollowUpAction::Execute(JJCommand::BookmarkAdvance {
-                        change_id: Some(change_id),
-                        flags,
-                    }),
-                },
-                FollowUpOption {
-                    key: '@',
-                    label: "working copy",
-                    action: FollowUpAction::Execute(JJCommand::BookmarkAdvance {
-                        change_id: None,
-                        flags,
-                    }),
-                },
-            ],
-        };
-        Action::None
-    }
-}
-
-fn enter_bookmark_text_input(
-    app: &mut App,
-    flags: CommandFlags,
-    prompt: &str,
-    action: BookmarkTextAction,
-) -> Action {
-    let Some(change_id) = app.selected_change_id() else {
-        return Action::None;
-    };
-
-    let on_submit = match action {
-        BookmarkTextAction::Create => PendingCommand::BookmarkCreate { change_id, flags },
-        BookmarkTextAction::Set => PendingCommand::BookmarkSet { change_id, flags },
-    };
-
-    app.mode = AppMode::text_input(prompt, "", on_submit);
-    Action::None
-}
-
-fn enter_bookmark_select(app: &mut App, flags: CommandFlags, kind: PendingSelectionKind) -> Action {
-    let Some(change_id) = app.selected_change_id() else {
-        return Action::None;
-    };
-    let bookmarks = app.selected_bookmarks().unwrap_or(&[]);
-    if bookmarks.is_empty() {
-        app.set_status("no bookmarks on this commit");
-        return Action::None;
-    }
-
-    let on_select = kind.to_pending(change_id, flags);
-    let items: Vec<String> = bookmarks.iter().map(|b| b.name.to_string()).collect();
-
-    if items.len() == 1 {
-        return resolve_selection(app, on_select, items.into());
-    }
-
-    app.mode = AppMode::select_from_list(kind.title(), items, kind.is_multi(), on_select, false);
-    Action::None
-}
-
-fn enter_tag_delete(app: &mut App, flags: CommandFlags) -> Action {
-    let tags = app.selected_tags().unwrap_or(&[]);
-    if tags.is_empty() {
-        app.set_status("no tags on this commit");
-        return Action::None;
-    }
-    let items: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
-    if items.len() == 1 {
-        return Action::RunJj(JJCommand::TagDelete {
-            names: items.into_iter().map(TagName::new).collect(),
-            flags,
-        });
-    }
-    let on_select = PendingSelection::TagDelete { flags };
-    app.mode = AppMode::select_from_list("delete tag", items, true, on_select, false);
-    Action::None
-}
-
-/// Recompute which items match the filter.
-fn recompute_list_filter(items: &[String], filter: &str) -> Vec<usize> {
-    if filter.is_empty() {
-        return (0..items.len()).collect();
-    }
-    let lower = filter.to_lowercase();
-    items
-        .iter()
-        .enumerate()
-        .filter(|(_, item)| item.to_lowercase().contains(&lower))
-        .map(|(i, _)| i)
-        .collect()
-}
-
-/// Move the list cursor by `delta` rows (positive = down, negative = up).
-fn list_move(app: &mut App, delta: isize) {
-    if let AppMode::SelectFromList {
-        cursor,
-        filtered_indices,
-        ..
-    } = &mut app.mode
-    {
-        let max = filtered_indices.len().saturating_sub(1);
-        *cursor = (*cursor as isize + delta).clamp(0, max as isize) as usize;
-    }
-}
-
-/// Jump the list cursor to start (false) or end (true).
-fn list_jump(app: &mut App, to_end: bool) {
-    if let AppMode::SelectFromList {
-        cursor,
-        filtered_indices,
-        ..
-    } = &mut app.mode
-    {
-        *cursor = if to_end {
-            filtered_indices.len().saturating_sub(1)
-        } else {
-            0
-        };
-    }
-}
-
-fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
-    use keymap_parser::Key;
-
-    let node = keymap::key_event_to_node(&key);
-    let ctrl = node
-        .as_ref()
-        .is_some_and(|n| (n.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0);
-    let node_key = node.map(|n| n.key);
-
-    // While filtering, intercept all keys except Tab/Esc/Enter.
-    let is_filtering = matches!(
-        &app.mode,
-        AppMode::SelectFromList {
-            filtering: true,
-            ..
-        }
-    );
-    if is_filtering {
-        match key.code {
-            KeyCode::Char(c) if !ctrl => {
-                if let AppMode::SelectFromList {
-                    filter,
-                    items,
-                    filtered_indices,
-                    cursor,
-                    scroll_offset,
-                    ..
-                } = &mut app.mode
-                {
-                    filter.push(c);
-                    *filtered_indices = recompute_list_filter(items, filter);
-                    *cursor = 0;
-                    *scroll_offset = 0;
-                }
-                return Action::None;
-            }
-            KeyCode::Backspace => {
-                if let AppMode::SelectFromList {
-                    filter,
-                    items,
-                    filtered_indices,
-                    cursor,
-                    scroll_offset,
-                    ..
-                } = &mut app.mode
-                {
-                    filter.pop();
-                    *filtered_indices = recompute_list_filter(items, filter);
-                    *cursor = (*cursor).min(filtered_indices.len().saturating_sub(1));
-                    *scroll_offset = 0;
-                }
-                return Action::None;
-            }
-            // Tab, Esc, Enter, arrows, page keys, and ctrl-n/p fall through to the
-            // main match below so list navigation works while filtering.
-            _ if matches!(
-                node_key,
-                Some(Key::Tab)
-                    | Some(Key::Esc)
-                    | Some(Key::Enter)
-                    | Some(Key::Up)
-                    | Some(Key::Down)
-                    | Some(Key::PageUp)
-                    | Some(Key::PageDown)
-            ) => {}
-            _ if matches!(node_key, Some(Key::Char('n') | Key::Char('p'))) && ctrl => {}
-            // All other keys are swallowed while filtering.
-            _ => return Action::None,
-        }
-    }
-
-    match node_key {
-        Some(Key::Char('n')) if ctrl => {
-            list_move(app, 1);
-            Action::None
-        }
-        Some(Key::Char('p')) if ctrl => {
-            list_move(app, -1);
-            Action::None
-        }
-        Some(Key::Char('j')) | Some(Key::Down) => {
-            list_move(app, 1);
-            Action::None
-        }
-        Some(Key::Char('k')) | Some(Key::Up) => {
-            list_move(app, -1);
-            Action::None
-        }
-        Some(Key::Char('d')) if ctrl => {
-            list_move(app, PAGE_SIZE as isize);
-            Action::None
-        }
-        Some(Key::Char('u')) if ctrl => {
-            list_move(app, -(PAGE_SIZE as isize));
-            Action::None
-        }
-        Some(Key::PageDown) => {
-            list_move(app, PAGE_SIZE as isize);
-            Action::None
-        }
-        Some(Key::PageUp) => {
-            list_move(app, -(PAGE_SIZE as isize));
-            Action::None
-        }
-        Some(Key::Char('0')) => {
-            list_jump(app, false);
-            Action::None
-        }
-        Some(Key::Char('$')) => {
-            list_jump(app, true);
-            Action::None
-        }
-        Some(Key::Tab) => {
-            if let AppMode::SelectFromList { filtering, .. } = &mut app.mode {
-                *filtering = !*filtering;
-            }
-            Action::None
-        }
-        Some(Key::Space) => {
-            if let AppMode::SelectFromList {
-                cursor,
-                filtered_indices,
-                marked,
-                multi,
-                ..
-            } = &mut app.mode
-            {
-                if *multi {
-                    if let Some(&orig_idx) = filtered_indices.get(*cursor) {
-                        if marked.contains(&orig_idx) {
-                            marked.remove(&orig_idx);
-                        } else {
-                            marked.insert(orig_idx);
-                        }
-                    }
-                }
-            }
-            Action::None
-        }
-        Some(Key::Enter) => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::SelectFromList {
-                items,
-                filtered_indices,
-                cursor,
-                marked,
-                multi,
-                on_select,
-                ..
-            } = mode
-            {
-                let names: Vec<String> = if multi && !marked.is_empty() {
-                    let mut indices: Vec<usize> = marked.into_iter().collect();
-                    indices.sort();
-                    indices
-                        .into_iter()
-                        .filter_map(|i| items.get(i).cloned())
-                        .collect()
-                } else {
-                    let orig_idx = filtered_indices.get(cursor).copied().unwrap_or(0);
-                    vec![items.into_iter().nth(orig_idx).unwrap_or_default()]
-                };
-                resolve_selection(app, on_select, names.into())
-            } else {
-                Action::None
-            }
-        }
-        Some(Key::Esc) => {
-            // If filtering, just exit filter focus — keep the filter text.
-            if let AppMode::SelectFromList { filtering, .. } = &mut app.mode {
-                if *filtering {
-                    *filtering = false;
-                    return Action::None;
-                }
-            }
-            app.mode = AppMode::Normal;
-            Action::None
-        }
-        _ => Action::None,
-    }
-}
-
-/// After item(s) have been selected from a list, decide what to do next.
-fn resolve_selection(
-    app: &mut App,
-    on_select: PendingSelection,
-    names: SmallVec<String>,
-) -> Action {
-    match on_select {
-        PendingSelection::BookmarkDelete { flags, .. } => {
-            let names = names.into_iter().map(BookmarkName::new).collect();
-            Action::RunJj(JJCommand::BookmarkDelete { names, flags })
-        }
-        PendingSelection::BookmarkForget { flags, .. } => {
-            let names = names.into_iter().map(BookmarkName::new).collect();
-            Action::RunJj(JJCommand::BookmarkForget { names, flags })
-        }
-        PendingSelection::WorkspaceForget { flags } => {
-            let names = names.into_iter().map(WorkspaceName::new).collect();
-            Action::RunJj(JJCommand::WorkspaceForget { names, flags })
-        }
-        PendingSelection::BookmarkTrack { flags } => Action::RunJj(JJCommand::BookmarkTrack {
-            bookmarks: parse_remote_bookmarks(names),
-            flags,
-        }),
-        PendingSelection::BookmarkUntrack { flags } => Action::RunJj(JJCommand::BookmarkUntrack {
-            bookmarks: parse_remote_bookmarks(names),
-            flags,
-        }),
-        PendingSelection::GitPushBookmark { flags } => {
-            let bookmarks: SmallVec<BookmarkName> =
-                names.into_iter().map(BookmarkName::new).collect();
-            if app.views.remotes.len() > 1 {
-                let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
-                app.mode = AppMode::select_from_list(
-                    "push bookmark to remote",
-                    items,
-                    false,
-                    PendingSelection::GitRemoteForPushBookmark { bookmarks, flags },
-                    false,
-                );
-                Action::None
-            } else {
-                Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
-                    bookmarks,
-                    remote: None,
-                    flags,
-                })
-            }
-        }
-        PendingSelection::GitRemoteForFetch { all_remotes, flags } => {
-            let remote = names.into_iter().next().map(RemoteName::new);
-            Action::SuspendAndRunJj(JJCommand::GitFetch {
-                all_remotes,
-                remote,
-                flags,
-            })
-        }
-        PendingSelection::GitRemoteForPush { all, flags } => {
-            let remote = names.into_iter().next().map(RemoteName::new);
-            Action::SuspendAndRunJj(JJCommand::GitPush { all, remote, flags })
-        }
-        PendingSelection::GitRemoteForPushBookmark { bookmarks, flags } => {
-            let remote = names.into_iter().next().map(RemoteName::new);
-            Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
-                bookmarks,
-                remote,
-                flags,
-            })
-        }
-        PendingSelection::TagDelete { flags } => {
-            let names = names.into_iter().map(TagName::new).collect();
-            Action::RunJj(JJCommand::TagDelete { names, flags })
-        }
-        // Single-item operations: take the first name.
-        PendingSelection::BookmarkMove {
-            change_id, flags, ..
-        } => {
-            let name = BookmarkName::new(names.into_iter().next().unwrap_or_default());
-            app.mode = AppMode::TargetSelect {
-                prompt: "move bookmark",
-                source: change_id,
-                restore_cursor: app.cursor,
-                operation: TargetOperation::BookmarkMove {
-                    bookmark_name: name,
-                },
-                flags,
-                target_mode: TargetMode::Single,
-            };
-            Action::None
-        }
-        PendingSelection::BookmarkRename { flags, .. } => {
-            let name = names.into_iter().next().unwrap_or_default();
-            app.mode = AppMode::text_input(
-                "rename to: ",
-                name.clone(),
-                PendingCommand::BookmarkRename {
-                    old_name: BookmarkName::new(name),
-                    flags,
-                },
-            );
-            Action::None
-        }
-        PendingSelection::PresetSelect => {
-            let name = names.into_iter().next().unwrap_or_default();
-            let idx = app.revset.presets.iter().position(|p| p.name == name);
-            if let Some(i) = idx {
-                app.revset.active_preset = Some(i);
-                Action::UpdateRevset(app.revset.presets[i].revset.clone())
-            } else {
-                Action::None
-            }
-        }
-        PendingSelection::OpLogWorkspaceFilter => {
-            app.op_log.workspace_filter = names.into_iter().map(WorkspaceName::new).collect();
-            app.rebuild_rows();
-            Action::None
-        }
-    }
-}
-
-/// Parse `"name@remote"` display strings into `BookmarkRef` values.
-fn parse_remote_bookmarks(names: SmallVec<String>) -> SmallVec<BookmarkRef> {
-    names
-        .into_iter()
-        .filter_map(|s| {
-            let (name, remote) = s.rsplit_once('@')?;
-            Some(BookmarkRef {
-                name: BookmarkName::new(name),
-                remote: crate::types::RemoteName::new(remote),
-            })
-        })
-        .collect()
-}
-
-/// Navigate to a screen position (shared by mouse handlers).
-fn mouse_select_row(app: &mut App, mouse: &MouseEvent, list_offset: u16) {
-    let screen_line = (mouse.row.saturating_sub(list_offset)) as usize;
-    let row = app.row_at_screen_line(screen_line);
-    app.select_row(row);
-}
-
-/// Handle a mouse event.
-pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Action {
-    match &app.mode {
-        // Modes where mouse interaction in the DAG list makes sense.
-        AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. } => {
-            match mouse.kind {
-                MouseEventKind::Down(MouseButton::Left) => {
-                    mouse_select_row(app, &mouse, list_offset);
-                    Action::None
-                }
-                MouseEventKind::Down(MouseButton::Right) => {
-                    // Select and confirm.
-                    mouse_select_row(app, &mouse, list_offset);
-                    let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-                    match &app.mode {
-                        AppMode::TargetSelect { .. } => handle_target_select(app, enter),
-                        AppMode::CommitSelect { .. } => handle_commit_select(app, enter),
-                        _ => Action::None,
-                    }
-                }
-                MouseEventKind::ScrollUp => {
-                    app.move_up();
-                    Action::None
-                }
-                MouseEventKind::ScrollDown => {
-                    app.move_down();
-                    Action::None
-                }
-                _ => Action::None,
-            }
-        }
-        // Dismiss command output only on a deliberate click, not mouse movement.
-        AppMode::CommandOutput { .. } => {
-            if matches!(mouse.kind, MouseEventKind::Down(_)) {
-                app.mode = AppMode::Normal;
-            }
-            Action::None
-        }
-        // Ignore mouse in modal input modes (text input, search, follow-up, list).
-        AppMode::TextInput { .. }
-        | AppMode::SearchInput
-        | AppMode::FollowUp { .. }
-        | AppMode::SelectFromList { .. } => Action::None,
-        // Normal, Submenu, Help: standard DAG navigation.
-        _ => match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                app.mode = AppMode::Normal;
-                mouse_select_row(app, &mouse, list_offset);
-                Action::None
-            }
-            MouseEventKind::Down(MouseButton::Right) => {
-                app.mode = AppMode::Normal;
-                mouse_select_row(app, &mouse, list_offset);
-                app.toggle_fold();
-                Action::None
-            }
-            MouseEventKind::ScrollUp => {
-                app.mode = AppMode::Normal;
-                app.move_up();
-                Action::None
-            }
-            MouseEventKind::ScrollDown => {
-                app.mode = AppMode::Normal;
-                app.move_down();
-                Action::None
-            }
-            _ => Action::None,
-        },
-    }
 }
