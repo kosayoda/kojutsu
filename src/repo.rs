@@ -789,8 +789,8 @@ impl JjRepo {
         &self,
         commit_id: &UiCommitId,
         path: &RepoPath,
-    ) -> Result<Vec<crate::dag::ConflictHunk>> {
-        use crate::dag::{ConflictHunk, ConflictHunkKind};
+    ) -> Result<Vec<crate::dag::ConflictHunkKind>> {
+        use crate::dag::ConflictHunkKind;
 
         let repo = self.repo.as_ref();
         let backend_id = BackendCommitId::try_from_hex(commit_id.as_str())
@@ -825,9 +825,7 @@ impl JjRepo {
                     .lines()
                     .map(String::from)
                     .collect();
-                vec![ConflictHunk {
-                    kind: ConflictHunkKind::Resolved { lines },
-                }]
+                vec![ConflictHunkKind::Resolved { lines }]
             }
             jj_lib::files::MergeResult::Conflict(merge_hunks) => {
                 merge_hunks
@@ -838,9 +836,7 @@ impl JjRepo {
                                 .lines()
                                 .map(String::from)
                                 .collect();
-                            ConflictHunk {
-                                kind: ConflictHunkKind::Resolved { lines },
-                            }
+                            ConflictHunkKind::Resolved { lines }
                         } else {
                             // Collect each side's content as lines.
                             let sides: Vec<Vec<String>> = hunk
@@ -852,11 +848,9 @@ impl JjRepo {
                                         .collect()
                                 })
                                 .collect();
-                            ConflictHunk {
-                                kind: ConflictHunkKind::Conflict {
-                                    sides,
-                                    selected: None,
-                                },
+                            ConflictHunkKind::Conflict {
+                                sides,
+                                selected: None,
                             }
                         }
                     })

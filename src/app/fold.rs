@@ -277,7 +277,7 @@ impl App {
                             {
                                 // Show conflict hunks instead of diff.
                                 for (hi, hunk) in hunks.iter().enumerate() {
-                                    match &hunk.kind {
+                                    match hunk {
                                         crate::dag::ConflictHunkKind::Resolved { lines } => {
                                             for li in 0..lines.len() {
                                                 self.rows.push(DisplayRow::ConflictContext {

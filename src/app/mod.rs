@@ -37,7 +37,7 @@ use crate::types::{
     ChangeId, CommitId, DisplayRow, RepoPath, SearchScopes, SearchState, SelectionContext,
 };
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Loadable<T> {
     NotRequested,
     Loading,
@@ -84,6 +84,17 @@ pub struct DagNode {
 pub enum DiffFormat {
     Git,
     ColorWords,
+}
+
+impl std::fmt::Debug for DagNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DagNode")
+            .field("commit", &self.commit)
+            .field("parents", &self.parents)
+            .field("children", &self.children)
+            .field("row", &self.row)
+            .finish_non_exhaustive()
+    }
 }
 
 impl DagNode {
@@ -246,6 +257,16 @@ pub struct App {
     pub search_scopes: SearchScopes,
     /// Where to jump the cursor after the next DAG refresh.
     pub jump_after_refresh: Option<JumpTarget>,
+}
+
+impl std::fmt::Debug for App {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("App")
+            .field("active_view", &self.active_view)
+            .field("nodes_len", &self.nodes.len())
+            .field("cursor", &self.cursor)
+            .finish_non_exhaustive()
+    }
 }
 
 impl App {
@@ -521,7 +542,7 @@ impl App {
         };
         if let crate::dag::ConflictHunkKind::Conflict {
             sides, selected, ..
-        } = &mut hunk.kind
+        } = hunk
         {
             if side < sides.len() {
                 *selected = Some(side);
@@ -529,7 +550,7 @@ impl App {
         }
 
         // Check if all conflict hunks are now resolved.
-        let all_resolved = hunks.iter().all(|h| match &h.kind {
+        let all_resolved = hunks.iter().all(|h| match h {
             crate::dag::ConflictHunkKind::Resolved { .. } => true,
             crate::dag::ConflictHunkKind::Conflict { selected, .. } => selected.is_some(),
         });
@@ -538,7 +559,7 @@ impl App {
             // Assemble resolved content.
             let mut content = String::new();
             for h in hunks.iter() {
-                match &h.kind {
+                match h {
                     crate::dag::ConflictHunkKind::Resolved { lines } => {
                         for line in lines {
                             content.push_str(line);

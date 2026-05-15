@@ -11,7 +11,7 @@ use crate::types::{
 /// if the shortest unique prefix is 4 chars: `display = "xvzwolmw"` (8 chars),
 /// `prefix_len = 4`. If the prefix is 10 chars: `display = "xvzwolmwrq"` (10 chars),
 /// `prefix_len = 10`. The UI renders the prefix bright and the rest dimmed.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ShortId {
     /// Display string (at least 8 chars, longer if needed for uniqueness).
     pub display: String,
@@ -26,6 +26,7 @@ impl ShortId {
 }
 
 /// Commit metadata extracted from jj-lib, with no jj-lib types leaking out.
+#[derive(Debug)]
 pub struct CommitInfo {
     /// Full commit ID hex, used as stable key for graph rendering.
     pub graph_id: CommitId,
@@ -107,6 +108,7 @@ pub struct DivergenceUpdate {
 }
 
 /// A local bookmark with its tracking status.
+#[derive(Debug)]
 pub struct BookmarkInfo {
     /// Bookmark name.
     pub name: BookmarkName,
@@ -119,7 +121,7 @@ pub struct BookmarkInfo {
 }
 
 /// A workspace that has a commit as its working copy.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct WorkspaceAnnotation {
     /// Workspace name (e.g., "default", "feature").
     pub name: WorkspaceName,
@@ -135,7 +137,7 @@ pub struct BookmarkRef {
 }
 
 /// A remote bookmark (e.g., `main@origin`).
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RemoteBookmarkInfo {
     /// Bookmark name (e.g., "main").
     pub name: BookmarkName,
@@ -156,10 +158,6 @@ pub struct RemoteBookmarkRef {
     pub is_tracked: bool,
 }
 
-// ---------------------------------------------------------------------------
-// Shared commit summary for bookmark/tag detail rows
-// ---------------------------------------------------------------------------
-
 /// Core commit fields shared across bookmark conflict targets, remote targets,
 /// and tag targets.
 pub struct CommitSummary {
@@ -172,10 +170,6 @@ pub struct CommitSummary {
     /// First line of description.
     pub description: Option<String>,
 }
-
-// ---------------------------------------------------------------------------
-// Rich bookmark detail types (for bookmark view child rows)
-// ---------------------------------------------------------------------------
 
 /// Whether a conflict target was added or removed.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -281,6 +275,7 @@ impl CommitInfo {
     }
 }
 
+#[derive(Debug)]
 pub struct AuthorInfo {
     pub name: String,
     pub email: String,
@@ -337,12 +332,6 @@ pub enum FileStatus {
     Deleted,
     Renamed,
     Copied,
-}
-
-/// A hunk in a conflicted file — either auto-resolved or needing user choice.
-#[derive(Clone)]
-pub struct ConflictHunk {
-    pub kind: ConflictHunkKind,
 }
 
 #[derive(Clone)]

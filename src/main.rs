@@ -1,11 +1,9 @@
-use std::os::unix::io::AsRawFd;
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc};
-use std::thread;
+use std::sync::mpsc;
 
 use clap::Parser;
 use color_eyre::Result;
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{Event, KeyEventKind};
 
 use kojutsu::app::{App, AppMode, DeferredWork, JumpTarget, Loadable};
 use kojutsu::input::{self, Action};
@@ -20,11 +18,6 @@ enum AppEvent {
     Init,
     Terminal(Event),
     Repo(Box<RepoResult>),
-}
-
-struct TerminalEvents {
-    waker: Arc<mio::Waker>,
-    join: thread::JoinHandle<()>,
 }
 
 #[derive(Parser)]
@@ -137,7 +130,7 @@ fn main() -> Result<()> {
     app.request_revset_load(requested_revset);
     flush_repo_requests(&mut app, &repo_requests);
     let mut terminal = kojutsu::terminal::init()?;
-    let mut terminal_events = spawn_terminal_events(event_tx.clone());
+    let mut terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
     let _ = event_tx.send(AppEvent::Init);
 
     let mut dirty = true;
@@ -216,7 +209,7 @@ fn main() -> Result<()> {
             Action::SuspendAndRunJj(cmd) => {
                 terminal_events.stop();
                 suspend_and_run(&mut app, &repo_path, &mut terminal, cmd);
-                terminal_events = spawn_terminal_events(event_tx.clone());
+                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
             }
             Action::Refresh => {
                 refresh_app(&mut app);
@@ -228,7 +221,7 @@ fn main() -> Result<()> {
                 app.revset.active_preset = None;
                 terminal_events.stop();
                 edit_revset_in_editor(&mut app, &mut terminal);
-                terminal_events = spawn_terminal_events(event_tx.clone());
+                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
             }
             Action::None => {}
         }
@@ -244,95 +237,6 @@ fn main() -> Result<()> {
 fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
     for request in app.take_repo_requests() {
         service.send(request);
-    }
-}
-
-const STDIN_TOKEN: mio::Token = mio::Token(0);
-const WAKE_TOKEN: mio::Token = mio::Token(1);
-const SIGNAL_TOKEN: mio::Token = mio::Token(2);
-
-fn spawn_terminal_events(event_tx: mpsc::Sender<AppEvent>) -> TerminalEvents {
-    let poll = mio::Poll::new().expect("failed to create mio Poll");
-    let waker =
-        Arc::new(mio::Waker::new(poll.registry(), WAKE_TOKEN).expect("failed to create Waker"));
-
-    let waker_clone = Arc::clone(&waker);
-    let join = thread::spawn(move || {
-        let mut poll = poll;
-        let stdin_fd = std::io::stdin().as_raw_fd();
-        let mut source = mio::unix::SourceFd(&stdin_fd);
-        poll.registry()
-            .register(&mut source, STDIN_TOKEN, mio::Interest::READABLE)
-            .expect("failed to register stdin");
-
-        // Register SIGWINCH so terminal resize wakes the poll.
-        let mut signals = signal_hook_mio::v1_0::Signals::new([signal_hook::consts::SIGWINCH])
-            .expect("failed to register SIGWINCH");
-        poll.registry()
-            .register(&mut signals, SIGNAL_TOKEN, mio::Interest::READABLE)
-            .expect("failed to register signal source");
-
-        let mut events = mio::Events::with_capacity(4);
-        loop {
-            if poll.poll(&mut events, None).is_err() {
-                break;
-            }
-            for ev in &events {
-                match ev.token() {
-                    WAKE_TOKEN => return,
-                    SIGNAL_TOKEN => {
-                        // Drain pending signals and send a Resize event.
-                        for _sig in signals.pending() {}
-                        // Query the actual terminal size.
-                        if let Ok((cols, rows)) = crossterm::terminal::size() {
-                            let _ = event_tx.send(AppEvent::Terminal(Event::Resize(cols, rows)));
-                        }
-                        // Drain any stdin events triggered by the resize (e.g.
-                        // mouse position reports) so they don't delay the next
-                        // real keypress.
-                        while event::poll(std::time::Duration::ZERO).unwrap_or(false) {
-                            match event::read() {
-                                Ok(ev) => {
-                                    let _ = event_tx.send(AppEvent::Terminal(ev));
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                    }
-                    STDIN_TOKEN => {
-                        // Read the first event, then drain any events
-                        // crossterm buffered internally since mio won't
-                        // re-trigger for bytes already consumed from stdin.
-                        loop {
-                            match event::read() {
-                                Ok(ev) => {
-                                    if event_tx.send(AppEvent::Terminal(ev)).is_err() {
-                                        return;
-                                    }
-                                }
-                                Err(_) => return,
-                            }
-                            if !event::poll(std::time::Duration::ZERO).unwrap_or(false) {
-                                break;
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-    });
-
-    TerminalEvents {
-        waker: waker_clone,
-        join,
-    }
-}
-
-impl TerminalEvents {
-    fn stop(self) {
-        let _ = self.waker.wake();
-        let _ = self.join.join();
     }
 }
 

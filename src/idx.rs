@@ -4,10 +4,6 @@
 
 use std::marker::PhantomData;
 
-// ---------------------------------------------------------------------------
-// Index newtypes
-// ---------------------------------------------------------------------------
-
 macro_rules! define_idx {
     ($(#[$meta:meta])* $vis:vis $name:ident) => {
         $(#[$meta])*
@@ -116,10 +112,6 @@ define_idx!(
     /// Index into `App::rows` (flattened display row list).
     pub RowIdx
 );
-
-// ---------------------------------------------------------------------------
-// IndexVec<I, T> -- a Vec<T> indexed by a typed index I.
-// ---------------------------------------------------------------------------
 
 /// A `Vec<T>` that can only be indexed by a specific typed index `I`.
 ///

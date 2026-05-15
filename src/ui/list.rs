@@ -520,8 +520,10 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .get(*entry_idx)
                         .and_then(|n| n.conflict_hunks(file_idx.raw()))
                         .and_then(|l| l.loaded())
-                        .and_then(|hunks: &Vec<crate::dag::ConflictHunk>| hunks.get(hunk_idx.raw()))
-                        .and_then(|hunk| match &hunk.kind {
+                        .and_then(|hunks: &Vec<crate::dag::ConflictHunkKind>| {
+                            hunks.get(hunk_idx.raw())
+                        })
+                        .and_then(|hunk| match hunk {
                             crate::dag::ConflictHunkKind::Conflict {
                                 sides, selected, ..
                             } => {
@@ -572,8 +574,10 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .get(*entry_idx)
                         .and_then(|n| n.conflict_hunks(file_idx.raw()))
                         .and_then(|l| l.loaded())
-                        .and_then(|hunks: &Vec<crate::dag::ConflictHunk>| hunks.get(hunk_idx.raw()))
-                        .and_then(|hunk| match &hunk.kind {
+                        .and_then(|hunks: &Vec<crate::dag::ConflictHunkKind>| {
+                            hunks.get(hunk_idx.raw())
+                        })
+                        .and_then(|hunk| match hunk {
                             crate::dag::ConflictHunkKind::Resolved { lines } => {
                                 lines.get(line_idx.raw()).cloned()
                             }

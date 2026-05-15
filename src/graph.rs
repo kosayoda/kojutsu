@@ -28,65 +28,22 @@ pub struct GraphLines {
 /// Each `GraphLines` contains properly-padded graph prefixes that the UI
 /// can directly concatenate with styled content.
 pub fn render(entries: &[DagEntry], glyphs: &GlyphChars) -> Vec<GraphLines> {
-    let mut renderer = GraphRowRenderer::new()
-        .output()
-        .with_min_row_height(2)
-        .build_box_drawing();
-
-    entries
+    let ids: Vec<String> = entries
         .iter()
-        .map(|entry| {
-            // Convert edges to renderdag ancestors. Missing edges become
-            // Anonymous to produce ~ terminator lines in the graph.
-            let parents: Vec<Ancestor<String>> = if entry.edges.is_empty() {
-                vec![]
-            } else {
-                entry
-                    .edges
-                    .iter()
-                    .map(|e| match e.kind {
-                        EdgeKind::Direct => Ancestor::Parent(e.target.to_string()),
-                        EdgeKind::Indirect => Ancestor::Ancestor(e.target.to_string()),
-                        EdgeKind::Missing => Ancestor::Anonymous,
-                    })
-                    .collect()
-            };
-
-            let glyph_char = glyphs.char_for(entry.commit.glyph());
-
-            // Pass a 2-line message with different sentinel characters so we
-            // can identify which output line is the node line vs continuation
-            // line. The renderer may insert extra pad/link/term lines and
-            // prepend an extra_pad_line from the previous entry, so we can't
-            // rely on positional indexing.
-            let message = format!("{NODE_SENTINEL}\n{CONT_SENTINEL}");
-            let row = renderer.next_row(
-                entry.commit.graph_id.to_string(),
-                parents,
-                glyph_char.to_string(),
-                message,
-            );
-
-            let mut node = String::new();
-            let mut cont = String::new();
-            let mut extra = Vec::new();
-
-            for line in row.lines() {
-                if let Some(idx) = line.find(NODE_SENTINEL) {
-                    // Node line: everything before the sentinel is the graph prefix
-                    node = line[..idx].to_string();
-                } else if let Some(idx) = line.find(CONT_SENTINEL) {
-                    // Continuation line: everything before the sentinel
-                    cont = line[..idx].to_string();
-                } else {
-                    // Pure graph line (link, pad, term, extra_pad)
-                    extra.push(line.trim_end().to_string());
-                }
-            }
-
-            GraphLines { node, cont, extra }
+        .map(|e| e.commit.graph_id.to_string())
+        .collect();
+    let generic: Vec<(&str, &[Edge], char)> = entries
+        .iter()
+        .zip(&ids)
+        .map(|(entry, id)| {
+            (
+                id.as_str(),
+                entry.edges.as_slice(),
+                glyphs.char_for(entry.commit.glyph()),
+            )
         })
-        .collect()
+        .collect();
+    render_generic(&generic)
 }
 
 /// Render graph lines for a list of entries with edges and a glyph per entry.

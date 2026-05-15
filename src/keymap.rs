@@ -19,10 +19,6 @@ impl SelectionKindSet {
     pub const ALL: Self = Self::COMMIT.union(Self::FILE).union(Self::LINE);
 }
 
-// ---------------------------------------------------------------------------
-// CommandFlags -- toggleable flags that modify command behavior.
-// ---------------------------------------------------------------------------
-
 /// Label used for the conflict prefix submenu.
 pub const CONFLICT_PREFIX: &str = "conflict";
 
@@ -42,11 +38,6 @@ bitflags::bitflags! {
         const PARALLEL            = 1 << 10;
     }
 }
-
-// ---------------------------------------------------------------------------
-// AppAction -- every action the application supports.
-// Flag-specific variants are gone; flags are toggled separately.
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppAction {
@@ -183,10 +174,6 @@ pub enum AppAction {
     OpLogFilterWorkspace,
 }
 
-// ---------------------------------------------------------------------------
-// Trie types
-// ---------------------------------------------------------------------------
-
 /// A node in the keymap trie.
 pub enum KeymapNode {
     /// Leaf: this key (or key sequence) triggers an action.
@@ -275,10 +262,6 @@ impl Keymaps {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Default keymap construction
-// ---------------------------------------------------------------------------
 
 /// Bindings shared across all views (navigation, search, quit, help, etc.).
 fn shared_bindings() -> Vec<(Node, KeymapNode)> {
@@ -742,10 +725,6 @@ fn toggle(key_str: &str, flag: CommandFlags, description: &'static str) -> (Node
     (node, KeymapNode::Toggle { flag, description })
 }
 
-// ---------------------------------------------------------------------------
-// Crossterm KeyEvent → keymap_parser Node conversion
-// ---------------------------------------------------------------------------
-
 /// Convert a crossterm `KeyEvent` to a `keymap_parser::Node` for trie lookup.
 ///
 /// Returns `None` for key codes we don't handle (e.g. media keys).
@@ -800,10 +779,6 @@ fn convert_modifiers(mods: &KeyModifiers) -> keymap_parser::Modifiers {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Display helpers for the submenu popup
-// ---------------------------------------------------------------------------
-
 /// Format a `Node` as a human-readable key string for display.
 ///
 /// Shift + lowercase letter is shown as the uppercase letter (e.g., `J` instead
@@ -818,10 +793,6 @@ pub fn display_key(node: &Node) -> String {
     }
     format!("{node}")
 }
-
-// ---------------------------------------------------------------------------
-// Help generation
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HelpGroup {

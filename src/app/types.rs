@@ -30,10 +30,6 @@ impl VisualState {
     }
 }
 
-// ---------------------------------------------------------------------------
-// View-specific state sub-structs
-// ---------------------------------------------------------------------------
-
 /// Data loaded from the repo for bookmark/tag/workspace views.
 pub struct ViewData {
     /// Aggregated bookmark data for the bookmark view.
@@ -200,10 +196,6 @@ pub enum TargetMode {
     Multi { targets: HashSet<ChangeId> },
 }
 
-// ---------------------------------------------------------------------------
-// Persisted state -- saved to ~/.local/state/kojutsu/state.json across app restarts.
-// ---------------------------------------------------------------------------
-
 #[derive(Default, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PersistedState {
@@ -251,7 +243,15 @@ pub enum StatusLevel {
 pub const OP_LOG_BATCH_SIZE: usize = 200;
 
 #[derive(
-    Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize, strum::EnumCount,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::EnumCount,
 )]
 pub enum ActiveView {
     #[default]

@@ -391,10 +391,6 @@ pub fn state_path() -> Option<PathBuf> {
     )
 }
 
-// ---------------------------------------------------------------------------
-// Custom Color deserializer
-// ---------------------------------------------------------------------------
-
 /// Deserialize a ratatui `Color` from TOML.
 ///
 /// Accepts:
