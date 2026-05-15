@@ -5,7 +5,7 @@ use super::operations::{
     MessageMode, RebaseKind, RebaseSource, RebaseTarget, SplitKind, SplitTarget, SquashKind,
     SquashTarget,
 };
-use crate::jj_command::{ChangeSelection, JJCommand};
+use crate::jj_command::{ChangeSelection, JJCommand, JJCommandKind};
 use crate::keymap::CommandFlags;
 
 /// What to do after selecting an item from a list.
@@ -75,10 +75,12 @@ impl PendingCommitSelect {
 
     pub fn into_jj_command(self, target: ChangeId, flags: CommandFlags) -> JJCommand {
         match self {
-            PendingCommitSelect::WorkspaceAdd { path, name } => JJCommand::WorkspaceAdd {
-                path,
-                name,
-                revision: target,
+            PendingCommitSelect::WorkspaceAdd { path, name } => JJCommand {
+                kind: JJCommandKind::WorkspaceAdd {
+                    path,
+                    name,
+                    revision: target,
+                },
                 flags,
             },
         }
@@ -163,50 +165,68 @@ impl PendingCommand {
     /// Panics if called on `Revset` -- that variant is handled separately.
     pub fn into_jj_command(self, text: String) -> JJCommand {
         match self {
-            PendingCommand::Describe { change_ids, flags } => JJCommand::Describe {
-                change_ids,
-                message: text,
+            PendingCommand::Describe { change_ids, flags } => JJCommand {
+                kind: JJCommandKind::Describe {
+                    change_ids,
+                    message: text,
+                },
                 flags,
             },
             PendingCommand::SquashWithMessage { builder, flags } => builder.build(text, flags),
             PendingCommand::Revset => panic!("Revset pending command handled separately"),
-            PendingCommand::BookmarkCreate { change_id, flags } => JJCommand::BookmarkCreate {
-                name: BookmarkName::new(text),
-                change_id,
+            PendingCommand::BookmarkCreate { change_id, flags } => JJCommand {
+                kind: JJCommandKind::BookmarkCreate {
+                    name: BookmarkName::new(text),
+                    change_id,
+                },
                 flags,
             },
-            PendingCommand::BookmarkSet { change_id, flags } => JJCommand::BookmarkSet {
-                name: BookmarkName::new(text),
-                change_id,
+            PendingCommand::BookmarkSet { change_id, flags } => JJCommand {
+                kind: JJCommandKind::BookmarkSet {
+                    name: BookmarkName::new(text),
+                    change_id,
+                },
                 flags,
             },
-            PendingCommand::BookmarkSetByName { name, flags } => JJCommand::BookmarkSet {
-                name,
-                change_id: ChangeId::new(text),
+            PendingCommand::BookmarkSetByName { name, flags } => JJCommand {
+                kind: JJCommandKind::BookmarkSet {
+                    name,
+                    change_id: ChangeId::new(text),
+                },
                 flags,
             },
-            PendingCommand::BookmarkRename { old_name, flags } => JJCommand::BookmarkRename {
-                old_name,
-                new_name: BookmarkName::new(text),
+            PendingCommand::BookmarkRename { old_name, flags } => JJCommand {
+                kind: JJCommandKind::BookmarkRename {
+                    old_name,
+                    new_name: BookmarkName::new(text),
+                },
                 flags,
             },
-            PendingCommand::TagSet { change_id, flags } => JJCommand::TagSet {
-                name: TagName::new(text),
-                change_id,
+            PendingCommand::TagSet { change_id, flags } => JJCommand {
+                kind: JJCommandKind::TagSet {
+                    name: TagName::new(text),
+                    change_id,
+                },
                 flags,
             },
-            PendingCommand::TagSetByName { name, flags } => JJCommand::TagSet {
-                name,
-                change_id: ChangeId::new(text),
+            PendingCommand::TagSetByName { name, flags } => JJCommand {
+                kind: JJCommandKind::TagSet {
+                    name,
+                    change_id: ChangeId::new(text),
+                },
                 flags,
             },
-            PendingCommand::Commit { flags, selection } => JJCommand::Commit {
-                message: Some(text),
-                selection,
+            PendingCommand::Commit { flags, selection } => JJCommand {
+                kind: JJCommandKind::Commit {
+                    message: Some(text),
+                    selection,
+                },
                 flags,
             },
-            PendingCommand::WorkspaceRename { flags } => JJCommand::WorkspaceRename {
-                new_name: WorkspaceName::new(text),
+            PendingCommand::WorkspaceRename { flags } => JJCommand {
+                kind: JJCommandKind::WorkspaceRename {
+                    new_name: WorkspaceName::new(text),
+                },
                 flags,
             },
             PendingCommand::WorkspaceAddPath { .. } | PendingCommand::WorkspaceAddName { .. } => {
@@ -288,13 +308,15 @@ impl TargetOperation {
             ),
             TargetOperation::Split(kind) => auto_follow_up(
                 "split",
-                JJCommand::Split {
-                    change_id: source,
-                    target: Some(SplitTarget {
-                        target: targets.into_iter().next().expect("target required"),
-                        kind,
-                    }),
-                    selection,
+                JJCommand {
+                    kind: JJCommandKind::Split {
+                        change_id: source,
+                        target: Some(SplitTarget {
+                            target: targets.into_iter().next().expect("target required"),
+                            kind,
+                        }),
+                        selection,
+                    },
                     flags,
                 },
             ),
@@ -304,37 +326,45 @@ impl TargetOperation {
             } => rebase_follow_up(sources, targets, source_mode, flags),
             TargetOperation::RestoreFrom => auto_follow_up(
                 "restore",
-                JJCommand::Restore {
-                    from: targets.into_iter().next(),
-                    into: None,
-                    changes_in: None,
-                    selection,
+                JJCommand {
+                    kind: JJCommandKind::Restore {
+                        from: targets.into_iter().next(),
+                        into: None,
+                        changes_in: None,
+                        selection,
+                    },
                     flags,
                 },
             ),
             TargetOperation::RestoreInto => auto_follow_up(
                 "restore",
-                JJCommand::Restore {
-                    from: None,
-                    into: targets.into_iter().next(),
-                    changes_in: None,
-                    selection,
+                JJCommand {
+                    kind: JJCommandKind::Restore {
+                        from: None,
+                        into: targets.into_iter().next(),
+                        changes_in: None,
+                        selection,
+                    },
                     flags,
                 },
             ),
             TargetOperation::BookmarkMove { bookmark_name } => auto_follow_up(
                 "move",
-                JJCommand::BookmarkMove {
-                    name: bookmark_name.clone(),
-                    target: targets.into_iter().next().expect("target required"),
+                JJCommand {
+                    kind: JJCommandKind::BookmarkMove {
+                        name: bookmark_name.clone(),
+                        target: targets.into_iter().next().expect("target required"),
+                    },
                     flags,
                 },
             ),
             TargetOperation::DuplicateOnto => auto_follow_up(
                 "duplicate",
-                JJCommand::Duplicate {
-                    change_ids: smallvec::smallvec![source],
-                    onto: targets.into_iter().next(),
+                JJCommand {
+                    kind: JJCommandKind::Duplicate {
+                        change_ids: smallvec::smallvec![source],
+                        onto: targets.into_iter().next(),
+                    },
                     flags,
                 },
             ),
@@ -342,11 +372,13 @@ impl TargetOperation {
                 .map(|kind| FollowUpOption {
                     key: kind.key(),
                     label: kind.label(),
-                    action: FollowUpAction::Execute(JJCommand::Revert {
-                        change_ids: sources.clone(),
-                        dest: RebaseTarget {
-                            targets: targets.clone(),
-                            kind,
+                    action: FollowUpAction::Execute(JJCommand {
+                        kind: JJCommandKind::Revert {
+                            change_ids: sources.clone(),
+                            dest: RebaseTarget {
+                                targets: targets.clone(),
+                                kind,
+                            },
                         },
                         flags,
                     }),
@@ -372,18 +404,22 @@ fn squash_follow_up(
     selection: ChangeSelection,
     flags: CommandFlags,
 ) -> Vec<FollowUpOption> {
-    let default_cmd = JJCommand::Squash {
-        change_id: source.clone(),
-        target: target.clone(),
-        message: MessageMode::Default,
-        selection: selection.clone(),
+    let default_cmd = JJCommand {
+        kind: JJCommandKind::Squash {
+            change_id: source.clone(),
+            target: target.clone(),
+            message: MessageMode::Default,
+            selection: selection.clone(),
+        },
         flags,
     };
-    let use_dest_cmd = JJCommand::Squash {
-        change_id: source.clone(),
-        target: target.clone(),
-        message: MessageMode::UseDestination,
-        selection: selection.clone(),
+    let use_dest_cmd = JJCommand {
+        kind: JJCommandKind::Squash {
+            change_id: source.clone(),
+            target: target.clone(),
+            message: MessageMode::UseDestination,
+            selection: selection.clone(),
+        },
         flags,
     };
     let builder = ReadyCommand::Squash {
@@ -425,12 +461,14 @@ fn rebase_follow_up(
         .map(|kind| FollowUpOption {
             key: kind.key(),
             label: kind.label(),
-            action: FollowUpAction::Execute(JJCommand::Rebase {
-                change_ids: sources.clone(),
-                source_mode: source_mode.clone(),
-                dest: RebaseTarget {
-                    targets: targets.clone(),
-                    kind,
+            action: FollowUpAction::Execute(JJCommand {
+                kind: JJCommandKind::Rebase {
+                    change_ids: sources.clone(),
+                    source_mode: source_mode.clone(),
+                    dest: RebaseTarget {
+                        targets: targets.clone(),
+                        kind,
+                    },
                 },
                 flags,
             }),
@@ -455,11 +493,13 @@ impl ReadyCommand {
                 source,
                 target,
                 selection,
-            } => JJCommand::Squash {
-                change_id: source,
-                target,
-                message: MessageMode::Inline(message),
-                selection,
+            } => JJCommand {
+                kind: JJCommandKind::Squash {
+                    change_id: source,
+                    target,
+                    message: MessageMode::Inline(message),
+                    selection,
+                },
                 flags,
             },
         }

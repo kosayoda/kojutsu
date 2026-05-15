@@ -1,6 +1,6 @@
 use crate::app::{App, AppMode};
 use crate::dag::BookmarkRef;
-use crate::jj_command::JJCommand;
+use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::CommandFlags;
 use crate::types::{
     BookmarkName, ChangeId, DisplayRow, FollowUpAction, FollowUpOption, PendingCommand,
@@ -102,8 +102,8 @@ pub(super) fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Acti
 
     if is_wc {
         // On working copy: advance immediately (jj default = advance to @).
-        Action::RunJj(JJCommand::BookmarkAdvance {
-            change_id: None,
+        Action::RunJj(JJCommand {
+            kind: JJCommandKind::BookmarkAdvance { change_id: None },
             flags,
         })
     } else {
@@ -114,16 +114,18 @@ pub(super) fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Acti
                 FollowUpOption {
                     key: 's',
                     label: "selected",
-                    action: FollowUpAction::Execute(JJCommand::BookmarkAdvance {
-                        change_id: Some(change_id),
+                    action: FollowUpAction::Execute(JJCommand {
+                        kind: JJCommandKind::BookmarkAdvance {
+                            change_id: Some(change_id),
+                        },
                         flags,
                     }),
                 },
                 FollowUpOption {
                     key: '@',
                     label: "working copy",
-                    action: FollowUpAction::Execute(JJCommand::BookmarkAdvance {
-                        change_id: None,
+                    action: FollowUpAction::Execute(JJCommand {
+                        kind: JJCommandKind::BookmarkAdvance { change_id: None },
                         flags,
                     }),
                 },
@@ -185,8 +187,10 @@ pub(super) fn enter_tag_delete(app: &mut App, flags: CommandFlags) -> Action {
     }
     let items: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
     if items.len() == 1 {
-        return Action::RunJj(JJCommand::TagDelete {
-            names: items.into_iter().map(TagName::new).collect(),
+        return Action::RunJj(JJCommand {
+            kind: JJCommandKind::TagDelete {
+                names: items.into_iter().map(TagName::new).collect(),
+            },
             flags,
         });
     }

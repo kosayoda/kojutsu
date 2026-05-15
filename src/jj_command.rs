@@ -40,30 +40,32 @@ pub enum ChangeSelection {
 
 /// A typesafe representation of a jj CLI command.
 #[derive(Debug, Clone)]
-pub enum JJCommand {
+pub struct JJCommand {
+    pub kind: JJCommandKind,
+    pub flags: CommandFlags,
+}
+
+/// The specific jj subcommand and its arguments.
+#[derive(Debug, Clone)]
+pub enum JJCommandKind {
     Abandon {
         change_ids: SmallVec<ChangeId>,
-        flags: CommandFlags,
     },
     /// Describe with an inline message (non-interactive).
     Describe {
         change_ids: SmallVec<ChangeId>,
         message: String,
-        flags: CommandFlags,
     },
     /// Describe via jj's configured editor (interactive -- needs terminal).
     DescribeInEditor {
         change_id: ChangeId,
-        flags: CommandFlags,
     },
     Edit {
         change_id: ChangeId,
-        flags: CommandFlags,
     },
     New {
         change_ids: SmallVec<ChangeId>,
         insert: Option<InsertPosition>,
-        flags: CommandFlags,
     },
     Squash {
         change_id: ChangeId,
@@ -71,188 +73,143 @@ pub enum JJCommand {
         message: MessageMode,
         /// How to filter changes.
         selection: ChangeSelection,
-        flags: CommandFlags,
     },
     Rebase {
         change_ids: SmallVec<ChangeId>,
         source_mode: RebaseSource,
         dest: RebaseTarget,
-        flags: CommandFlags,
     },
     Restore {
         from: Option<ChangeId>,
         into: Option<ChangeId>,
         changes_in: Option<ChangeId>,
         selection: ChangeSelection,
-        flags: CommandFlags,
     },
     Split {
         change_id: ChangeId,
         target: Option<SplitTarget>,
         selection: ChangeSelection,
-        flags: CommandFlags,
     },
     BookmarkCreate {
         name: BookmarkName,
         change_id: ChangeId,
-        flags: CommandFlags,
     },
     BookmarkSet {
         name: BookmarkName,
         change_id: ChangeId,
-        flags: CommandFlags,
     },
     BookmarkDelete {
         names: SmallVec<BookmarkName>,
-        flags: CommandFlags,
     },
     BookmarkForget {
         names: SmallVec<BookmarkName>,
-        flags: CommandFlags,
     },
     BookmarkMove {
         name: BookmarkName,
         target: ChangeId,
-        flags: CommandFlags,
     },
     BookmarkRename {
         old_name: BookmarkName,
         new_name: BookmarkName,
-        flags: CommandFlags,
     },
     BookmarkAdvance {
         change_id: Option<ChangeId>,
-        flags: CommandFlags,
     },
     BookmarkTrack {
         bookmarks: SmallVec<BookmarkRef>,
-        flags: CommandFlags,
     },
     BookmarkUntrack {
         bookmarks: SmallVec<BookmarkRef>,
-        flags: CommandFlags,
     },
-    Undo {
-        flags: CommandFlags,
-    },
-    Redo {
-        flags: CommandFlags,
-    },
+    Undo,
+    Redo,
     GitFetch {
         all_remotes: bool,
         remote: Option<RemoteName>,
-        flags: CommandFlags,
     },
     GitPush {
         all: bool,
         remote: Option<RemoteName>,
-        flags: CommandFlags,
     },
     GitPushChange {
         change_id: ChangeId,
         remote: Option<RemoteName>,
-        flags: CommandFlags,
     },
     GitPushBookmark {
         bookmarks: SmallVec<BookmarkName>,
         remote: Option<RemoteName>,
-        flags: CommandFlags,
     },
     GitFetchBookmark {
         bookmark: BookmarkName,
         remote: RemoteName,
-        flags: CommandFlags,
     },
-    GitExport {
-        flags: CommandFlags,
-    },
-    GitImport {
-        flags: CommandFlags,
-    },
+    GitExport,
+    GitImport,
     Absorb {
         /// Source revision. `None` = default (absorb from @).
         from: Option<ChangeId>,
         /// How to filter changes. Absorb supports all changes or file-level selection.
         selection: ChangeSelection,
-        flags: CommandFlags,
     },
     Commit {
         /// Inline message. `None` = open $EDITOR.
         message: Option<String>,
         /// How to filter changes.
         selection: ChangeSelection,
-        flags: CommandFlags,
     },
     Duplicate {
         change_ids: SmallVec<ChangeId>,
         /// Target revision for `--onto`. `None` = duplicate onto same parents.
         onto: Option<ChangeId>,
-        flags: CommandFlags,
     },
     Parallelize {
         change_ids: SmallVec<ChangeId>,
-        flags: CommandFlags,
     },
     SimplifyParents {
         change_ids: SmallVec<ChangeId>,
-        flags: CommandFlags,
     },
     Revert {
         change_ids: SmallVec<ChangeId>,
         dest: RebaseTarget,
-        flags: CommandFlags,
     },
     WorkspaceAdd {
         path: String,
         name: Option<WorkspaceName>,
         revision: ChangeId,
-        flags: CommandFlags,
     },
     WorkspaceForget {
         names: SmallVec<WorkspaceName>,
-        flags: CommandFlags,
     },
-    WorkspaceList {
-        flags: CommandFlags,
-    },
+    WorkspaceList,
     WorkspaceRename {
         new_name: WorkspaceName,
-        flags: CommandFlags,
     },
     TagSet {
         name: TagName,
         change_id: ChangeId,
-        flags: CommandFlags,
     },
     TagDelete {
         names: SmallVec<TagName>,
-        flags: CommandFlags,
     },
     OpRestore {
         op_id: OperationId,
-        flags: CommandFlags,
     },
     OpRevert {
         op_id: OperationId,
-        flags: CommandFlags,
     },
     OpAbandon {
         op_id: OperationId,
-        flags: CommandFlags,
     },
     Fix {
         change_ids: SmallVec<ChangeId>,
-        flags: CommandFlags,
     },
     FileUntrack {
         paths: SmallVec<Str>,
-        flags: CommandFlags,
     },
     Resolve {
         change_id: ChangeId,
         path: Str,
         tool: ResolveTool,
-        flags: CommandFlags,
     },
 }
 
@@ -294,111 +251,9 @@ pub struct JJCommandResult {
 }
 
 impl JJCommand {
-    /// Extract the `CommandFlags` from any variant.
-    fn flags(&self) -> CommandFlags {
-        match self {
-            JJCommand::Abandon { flags, .. }
-            | JJCommand::Describe { flags, .. }
-            | JJCommand::DescribeInEditor { flags, .. }
-            | JJCommand::Edit { flags, .. }
-            | JJCommand::New { flags, .. }
-            | JJCommand::Rebase { flags, .. }
-            | JJCommand::Restore { flags, .. }
-            | JJCommand::Split { flags, .. }
-            | JJCommand::BookmarkCreate { flags, .. }
-            | JJCommand::BookmarkSet { flags, .. }
-            | JJCommand::BookmarkDelete { flags, .. }
-            | JJCommand::BookmarkForget { flags, .. }
-            | JJCommand::BookmarkMove { flags, .. }
-            | JJCommand::BookmarkRename { flags, .. }
-            | JJCommand::BookmarkAdvance { flags, .. }
-            | JJCommand::BookmarkTrack { flags, .. }
-            | JJCommand::BookmarkUntrack { flags, .. }
-            | JJCommand::Undo { flags, .. }
-            | JJCommand::Redo { flags, .. }
-            | JJCommand::GitFetch { flags, .. }
-            | JJCommand::GitPush { flags, .. }
-            | JJCommand::GitPushChange { flags, .. }
-            | JJCommand::GitPushBookmark { flags, .. }
-            | JJCommand::GitFetchBookmark { flags, .. }
-            | JJCommand::GitExport { flags, .. }
-            | JJCommand::GitImport { flags, .. }
-            | JJCommand::Absorb { flags, .. }
-            | JJCommand::Commit { flags, .. }
-            | JJCommand::Duplicate { flags, .. }
-            | JJCommand::Parallelize { flags, .. }
-            | JJCommand::SimplifyParents { flags, .. }
-            | JJCommand::Revert { flags, .. }
-            | JJCommand::Squash { flags, .. }
-            | JJCommand::WorkspaceAdd { flags, .. }
-            | JJCommand::WorkspaceForget { flags, .. }
-            | JJCommand::WorkspaceList { flags, .. }
-            | JJCommand::WorkspaceRename { flags, .. }
-            | JJCommand::TagSet { flags, .. }
-            | JJCommand::TagDelete { flags, .. }
-            | JJCommand::OpRestore { flags, .. }
-            | JJCommand::OpRevert { flags, .. }
-            | JJCommand::OpAbandon { flags, .. }
-            | JJCommand::Fix { flags, .. }
-            | JJCommand::FileUntrack { flags, .. }
-            | JJCommand::Resolve { flags, .. } => *flags,
-        }
-    }
-
-    /// Mutable reference to the flags in any variant.
-    fn flags_mut(&mut self) -> &mut CommandFlags {
-        match self {
-            JJCommand::Abandon { flags, .. }
-            | JJCommand::Describe { flags, .. }
-            | JJCommand::DescribeInEditor { flags, .. }
-            | JJCommand::Edit { flags, .. }
-            | JJCommand::New { flags, .. }
-            | JJCommand::Rebase { flags, .. }
-            | JJCommand::Restore { flags, .. }
-            | JJCommand::Split { flags, .. }
-            | JJCommand::BookmarkCreate { flags, .. }
-            | JJCommand::BookmarkSet { flags, .. }
-            | JJCommand::BookmarkDelete { flags, .. }
-            | JJCommand::BookmarkForget { flags, .. }
-            | JJCommand::BookmarkMove { flags, .. }
-            | JJCommand::BookmarkRename { flags, .. }
-            | JJCommand::BookmarkAdvance { flags, .. }
-            | JJCommand::BookmarkTrack { flags, .. }
-            | JJCommand::BookmarkUntrack { flags, .. }
-            | JJCommand::Undo { flags, .. }
-            | JJCommand::Redo { flags, .. }
-            | JJCommand::GitFetch { flags, .. }
-            | JJCommand::GitPush { flags, .. }
-            | JJCommand::GitPushChange { flags, .. }
-            | JJCommand::GitPushBookmark { flags, .. }
-            | JJCommand::GitFetchBookmark { flags, .. }
-            | JJCommand::GitExport { flags, .. }
-            | JJCommand::GitImport { flags, .. }
-            | JJCommand::Absorb { flags, .. }
-            | JJCommand::Commit { flags, .. }
-            | JJCommand::Duplicate { flags, .. }
-            | JJCommand::Parallelize { flags, .. }
-            | JJCommand::SimplifyParents { flags, .. }
-            | JJCommand::Revert { flags, .. }
-            | JJCommand::Squash { flags, .. }
-            | JJCommand::WorkspaceAdd { flags, .. }
-            | JJCommand::WorkspaceForget { flags, .. }
-            | JJCommand::WorkspaceList { flags, .. }
-            | JJCommand::WorkspaceRename { flags, .. }
-            | JJCommand::TagSet { flags, .. }
-            | JJCommand::TagDelete { flags, .. }
-            | JJCommand::OpRestore { flags, .. }
-            | JJCommand::OpRevert { flags, .. }
-            | JJCommand::OpAbandon { flags, .. }
-            | JJCommand::Fix { flags, .. }
-            | JJCommand::FileUntrack { flags, .. }
-            | JJCommand::Resolve { flags, .. } => flags,
-        }
-    }
-
     /// Return a clone of this command with an additional flag set.
     pub fn with_flag(mut self, flag: CommandFlags) -> Self {
-        *self.flags_mut() |= flag;
+        self.flags |= flag;
         self
     }
 
@@ -431,29 +286,29 @@ impl JJCommand {
 
     /// Where to jump the cursor after this command succeeds.
     pub fn jump_target(&self) -> Option<JumpTarget> {
-        match self {
+        match &self.kind {
             // Commands that move @.
-            JJCommand::New { .. }
-            | JJCommand::Edit { .. }
-            | JJCommand::Commit { .. }
-            | JJCommand::Squash { .. }
-            | JJCommand::Abandon { .. }
-            | JJCommand::Absorb { .. }
-            | JJCommand::Split { .. }
-            | JJCommand::Parallelize { .. }
-            | JJCommand::SimplifyParents { .. }
-            | JJCommand::Revert { .. } => Some(JumpTarget::WorkingCopy),
+            JJCommandKind::New { .. }
+            | JJCommandKind::Edit { .. }
+            | JJCommandKind::Commit { .. }
+            | JJCommandKind::Squash { .. }
+            | JJCommandKind::Abandon { .. }
+            | JJCommandKind::Absorb { .. }
+            | JJCommandKind::Split { .. }
+            | JJCommandKind::Parallelize { .. }
+            | JJCommandKind::SimplifyParents { .. }
+            | JJCommandKind::Revert { .. } => Some(JumpTarget::WorkingCopy),
             // Bookmark operations: jump to the affected bookmark.
-            JJCommand::BookmarkTrack { bookmarks, .. } => bookmarks
+            JJCommandKind::BookmarkTrack { bookmarks, .. } => bookmarks
                 .first()
                 .map(|br| JumpTarget::Bookmark(br.name.clone())),
-            JJCommand::BookmarkUntrack { bookmarks, .. } => bookmarks
+            JJCommandKind::BookmarkUntrack { bookmarks, .. } => bookmarks
                 .first()
                 .map(|br| JumpTarget::Bookmark(br.name.clone())),
-            JJCommand::BookmarkCreate { name, .. }
-            | JJCommand::BookmarkSet { name, .. }
-            | JJCommand::BookmarkMove { name, .. } => Some(JumpTarget::Bookmark(name.clone())),
-            JJCommand::BookmarkRename { new_name, .. } => {
+            JJCommandKind::BookmarkCreate { name, .. }
+            | JJCommandKind::BookmarkSet { name, .. }
+            | JJCommandKind::BookmarkMove { name, .. } => Some(JumpTarget::Bookmark(name.clone())),
+            JJCommandKind::BookmarkRename { new_name, .. } => {
                 Some(JumpTarget::Bookmark(new_name.clone()))
             }
             // Everything else: use normal ChangeId restoration.
@@ -463,9 +318,9 @@ impl JJCommand {
 
     /// Build the CLI arguments for `jj`.
     pub fn args(&self) -> Vec<Str> {
-        let flags = self.flags();
-        let mut args = match self {
-            JJCommand::Abandon { change_ids, .. } => {
+        let flags = self.flags;
+        let mut args = match &self.kind {
+            JJCommandKind::Abandon { change_ids, .. } => {
                 let mut args: Vec<Str> = vec!["abandon".into()];
                 push_flags(
                     &mut args,
@@ -480,7 +335,7 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::Describe {
+            JJCommandKind::Describe {
                 change_ids,
                 message,
                 ..
@@ -492,13 +347,13 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::DescribeInEditor { change_id, .. } => {
+            JJCommandKind::DescribeInEditor { change_id, .. } => {
                 vec!["describe".into(), format_compact!("{change_id}")]
             }
-            JJCommand::Edit { change_id, .. } => {
+            JJCommandKind::Edit { change_id, .. } => {
                 vec!["edit".into(), format_compact!("{change_id}")]
             }
-            JJCommand::New {
+            JJCommandKind::New {
                 change_ids, insert, ..
             } => {
                 let mut args: Vec<Str> = vec!["new".into()];
@@ -511,7 +366,7 @@ impl JJCommand {
                 push_flags(&mut args, flags, &[(CommandFlags::NO_EDIT, "--no-edit")]);
                 args
             }
-            JJCommand::Rebase {
+            JJCommandKind::Rebase {
                 change_ids,
                 source_mode,
                 dest,
@@ -533,7 +388,7 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::Restore {
+            JJCommandKind::Restore {
                 from,
                 into,
                 changes_in,
@@ -564,7 +419,7 @@ impl JJCommand {
                 push_change_selection(&mut args, selection);
                 args
             }
-            JJCommand::Split {
+            JJCommandKind::Split {
                 change_id,
                 target,
                 selection,
@@ -587,7 +442,7 @@ impl JJCommand {
                 push_change_selection(&mut args, selection);
                 args
             }
-            JJCommand::BookmarkCreate {
+            JJCommandKind::BookmarkCreate {
                 name, change_id, ..
             } => {
                 vec![
@@ -598,7 +453,7 @@ impl JJCommand {
                     Str::from(name.as_str()),
                 ]
             }
-            JJCommand::BookmarkSet {
+            JJCommandKind::BookmarkSet {
                 name, change_id, ..
             } => {
                 let mut args: Vec<Str> = vec!["bookmark".into(), "set".into()];
@@ -612,17 +467,17 @@ impl JJCommand {
                 args.push(Str::from(name.as_str()));
                 args
             }
-            JJCommand::BookmarkDelete { names, .. } => {
+            JJCommandKind::BookmarkDelete { names, .. } => {
                 let mut args: Vec<Str> = vec!["bookmark".into(), "delete".into()];
                 args.extend(names.iter().map(|n| Str::from(n.as_str())));
                 args
             }
-            JJCommand::BookmarkForget { names, .. } => {
+            JJCommandKind::BookmarkForget { names, .. } => {
                 let mut args: Vec<Str> = vec!["bookmark".into(), "forget".into()];
                 args.extend(names.iter().map(|n| Str::from(n.as_str())));
                 args
             }
-            JJCommand::BookmarkMove { name, target, .. } => {
+            JJCommandKind::BookmarkMove { name, target, .. } => {
                 let mut args: Vec<Str> = vec!["bookmark".into(), "move".into()];
                 push_flags(
                     &mut args,
@@ -634,7 +489,7 @@ impl JJCommand {
                 args.push(Str::from(name.as_str()));
                 args
             }
-            JJCommand::BookmarkRename {
+            JJCommandKind::BookmarkRename {
                 old_name, new_name, ..
             } => {
                 vec![
@@ -644,7 +499,7 @@ impl JJCommand {
                     Str::from(new_name.as_str()),
                 ]
             }
-            JJCommand::BookmarkAdvance { change_id, .. } => {
+            JJCommandKind::BookmarkAdvance { change_id, .. } => {
                 let mut args: Vec<Str> = vec!["bookmark".into(), "advance".into()];
                 if let Some(id) = change_id {
                     args.push("--to".into());
@@ -652,7 +507,7 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::BookmarkTrack { bookmarks, .. } => {
+            JJCommandKind::BookmarkTrack { bookmarks, .. } => {
                 let mut args: Vec<Str> = vec!["bookmark".into(), "track".into()];
                 for br in bookmarks {
                     args.push(Str::from(br.name.as_str()));
@@ -661,7 +516,7 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::BookmarkUntrack { bookmarks, .. } => {
+            JJCommandKind::BookmarkUntrack { bookmarks, .. } => {
                 let mut args: Vec<Str> = vec!["bookmark".into(), "untrack".into()];
                 for br in bookmarks {
                     args.push(Str::from(br.name.as_str()));
@@ -670,9 +525,9 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::Undo { .. } => vec!["undo".into()],
-            JJCommand::Redo { .. } => vec!["redo".into()],
-            JJCommand::GitFetch {
+            JJCommandKind::Undo => vec!["undo".into()],
+            JJCommandKind::Redo => vec!["redo".into()],
+            JJCommandKind::GitFetch {
                 all_remotes,
                 remote,
                 ..
@@ -687,7 +542,7 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::GitPush { all, remote, .. } => {
+            JJCommandKind::GitPush { all, remote, .. } => {
                 let mut args: Vec<Str> = vec!["git".into(), "push".into()];
                 if *all {
                     args.push("--all".into());
@@ -699,7 +554,7 @@ impl JJCommand {
                 push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
             }
-            JJCommand::GitPushChange {
+            JJCommandKind::GitPushChange {
                 change_id, remote, ..
             } => {
                 let mut args: Vec<Str> = vec!["git".into(), "push".into()];
@@ -712,7 +567,7 @@ impl JJCommand {
                 push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
             }
-            JJCommand::GitPushBookmark {
+            JJCommandKind::GitPushBookmark {
                 bookmarks, remote, ..
             } => {
                 let mut args: Vec<Str> = vec!["git".into(), "push".into()];
@@ -727,7 +582,7 @@ impl JJCommand {
                 push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
                 args
             }
-            JJCommand::GitFetchBookmark {
+            JJCommandKind::GitFetchBookmark {
                 bookmark, remote, ..
             } => {
                 vec![
@@ -739,9 +594,9 @@ impl JJCommand {
                     Str::from(remote.as_str()),
                 ]
             }
-            JJCommand::GitExport { .. } => vec!["git".into(), "export".into()],
-            JJCommand::GitImport { .. } => vec!["git".into(), "import".into()],
-            JJCommand::Absorb {
+            JJCommandKind::GitExport => vec!["git".into(), "export".into()],
+            JJCommandKind::GitImport => vec!["git".into(), "import".into()],
+            JJCommandKind::Absorb {
                 from, selection, ..
             } => {
                 let mut args: Vec<Str> = vec!["absorb".into()];
@@ -760,7 +615,7 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::Commit {
+            JJCommandKind::Commit {
                 message, selection, ..
             } => {
                 let mut args: Vec<Str> = vec!["commit".into()];
@@ -776,14 +631,14 @@ impl JJCommand {
                 push_change_selection(&mut args, selection);
                 args
             }
-            JJCommand::Parallelize { change_ids, .. } => {
+            JJCommandKind::Parallelize { change_ids, .. } => {
                 let mut args: Vec<Str> = vec!["parallelize".into()];
                 for id in change_ids {
                     args.push(format_compact!("{id}"));
                 }
                 args
             }
-            JJCommand::SimplifyParents { change_ids, .. } => {
+            JJCommandKind::SimplifyParents { change_ids, .. } => {
                 let mut args: Vec<Str> = vec!["simplify-parents".into()];
                 for id in change_ids {
                     args.push("-r".into());
@@ -791,7 +646,7 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::Revert {
+            JJCommandKind::Revert {
                 change_ids, dest, ..
             } => {
                 let mut args: Vec<Str> = vec!["revert".into()];
@@ -805,7 +660,7 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::Duplicate {
+            JJCommandKind::Duplicate {
                 change_ids, onto, ..
             } => {
                 let mut args: Vec<Str> = vec!["duplicate".into()];
@@ -818,7 +673,7 @@ impl JJCommand {
                 }
                 args
             }
-            JJCommand::Squash {
+            JJCommandKind::Squash {
                 change_id,
                 target,
                 message,
@@ -859,7 +714,7 @@ impl JJCommand {
                 push_change_selection(&mut args, selection);
                 args
             }
-            JJCommand::WorkspaceAdd {
+            JJCommandKind::WorkspaceAdd {
                 path,
                 name,
                 revision,
@@ -875,22 +730,22 @@ impl JJCommand {
                 args.push(Str::from(path.as_str()));
                 args
             }
-            JJCommand::WorkspaceForget { names, .. } => {
+            JJCommandKind::WorkspaceForget { names, .. } => {
                 let mut args: Vec<Str> = vec!["workspace".into(), "forget".into()];
                 args.extend(names.iter().map(|n| Str::from(n.as_str())));
                 args
             }
-            JJCommand::WorkspaceList { .. } => {
+            JJCommandKind::WorkspaceList => {
                 vec!["workspace".into(), "list".into()]
             }
-            JJCommand::WorkspaceRename { new_name, .. } => {
+            JJCommandKind::WorkspaceRename { new_name, .. } => {
                 vec![
                     "workspace".into(),
                     "rename".into(),
                     Str::from(new_name.as_str()),
                 ]
             }
-            JJCommand::TagSet {
+            JJCommandKind::TagSet {
                 name, change_id, ..
             } => {
                 let mut args: Vec<Str> = vec!["tag".into(), "set".into()];
@@ -904,33 +759,33 @@ impl JJCommand {
                 args.push(Str::from(name.as_str()));
                 args
             }
-            JJCommand::TagDelete { names, .. } => {
+            JJCommandKind::TagDelete { names, .. } => {
                 let mut args: Vec<Str> = vec!["tag".into(), "delete".into()];
                 args.extend(names.iter().map(|n| Str::from(n.as_str())));
                 args
             }
-            JJCommand::OpRestore { op_id, .. } => {
+            JJCommandKind::OpRestore { op_id, .. } => {
                 vec!["op".into(), "restore".into(), Str::from(op_id.as_str())]
             }
-            JJCommand::OpRevert { op_id, .. } => {
+            JJCommandKind::OpRevert { op_id, .. } => {
                 vec!["op".into(), "revert".into(), Str::from(op_id.as_str())]
             }
-            JJCommand::OpAbandon { op_id, .. } => {
+            JJCommandKind::OpAbandon { op_id, .. } => {
                 vec!["op".into(), "abandon".into(), Str::from(op_id.as_str())]
             }
-            JJCommand::Fix { change_ids, .. } => {
+            JJCommandKind::Fix { change_ids, .. } => {
                 let mut args: Vec<Str> = vec!["fix".into(), "-s".into()];
                 for id in change_ids {
                     args.push(format_compact!("{id}"));
                 }
                 args
             }
-            JJCommand::FileUntrack { paths, .. } => {
+            JJCommandKind::FileUntrack { paths, .. } => {
                 let mut args: Vec<Str> = vec!["file".into(), "untrack".into()];
                 args.extend(paths.iter().cloned());
                 args
             }
-            JJCommand::Resolve {
+            JJCommandKind::Resolve {
                 change_id,
                 path,
                 tool,
@@ -999,36 +854,29 @@ impl JJCommand {
 
     /// Whether this command needs an interactive terminal (editor/diff tool).
     pub fn is_interactive(&self) -> bool {
-        match self {
-            JJCommand::DescribeInEditor { .. } => true,
-            JJCommand::Squash {
-                message,
-                selection,
-                flags,
-                ..
+        let flags = self.flags;
+        match &self.kind {
+            JJCommandKind::DescribeInEditor { .. } => true,
+            JJCommandKind::Squash {
+                message, selection, ..
             } => {
                 flags.contains(CommandFlags::INTERACTIVE)
                     || matches!(message, MessageMode::Default)
                     || matches!(selection, ChangeSelection::Lines(_))
             }
-            JJCommand::Commit {
-                message,
-                selection,
-                flags,
-                ..
+            JJCommandKind::Commit {
+                message, selection, ..
             } => {
                 message.is_none()
                     || flags.contains(CommandFlags::INTERACTIVE)
                     || matches!(selection, ChangeSelection::Lines(_))
             }
-            JJCommand::Restore {
-                selection, flags, ..
-            } => {
+            JJCommandKind::Restore { selection, .. } => {
                 flags.contains(CommandFlags::INTERACTIVE)
                     || matches!(selection, ChangeSelection::Lines(_))
             }
-            JJCommand::Split { .. } => true,
-            JJCommand::Resolve { tool, .. } => matches!(tool, ResolveTool::Default),
+            JJCommandKind::Split { .. } => true,
+            JJCommandKind::Resolve { tool, .. } => matches!(tool, ResolveTool::Default),
             _ => false,
         }
     }

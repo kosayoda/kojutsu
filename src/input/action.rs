@@ -5,7 +5,7 @@ use smallvec::smallvec;
 use crate::app::{App, AppMode, TargetMode};
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
-use crate::jj_command::{ChangeSelection, InsertPosition, JJCommand};
+use crate::jj_command::{ChangeSelection, InsertPosition, JJCommand, JJCommandKind};
 use crate::keymap::{
     self, action_label, action_supported_selection_kinds, AppAction, CommandFlags, Keymap,
     LookupResult,
@@ -416,8 +416,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 })
                 .unwrap_or_default();
             if workspaces.len() == 1 {
-                Action::RunJj(JJCommand::WorkspaceForget {
-                    names: workspaces.into(),
+                Action::RunJj(JJCommand {
+                    kind: JJCommandKind::WorkspaceForget {
+                        names: workspaces.into(),
+                    },
                     flags,
                 })
             } else if workspaces.len() > 1 {
@@ -435,7 +437,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 Action::None
             }
         }
-        AppAction::WorkspaceList => Action::RunJj(JJCommand::WorkspaceList { flags }),
+        AppAction::WorkspaceList => Action::RunJj(JJCommand {
+            kind: JJCommandKind::WorkspaceList,
+            flags,
+        }),
         AppAction::WorkspaceRename => {
             app.mode = AppMode::text_input(
                 "rename workspace to: ",
@@ -448,13 +453,15 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.mode = AppMode::Help { scroll: 0 };
             Action::None
         }
-        AppAction::Abandon => make_multi_command(app, |ids| JJCommand::Abandon {
-            change_ids: ids,
+        AppAction::Abandon => make_multi_command(app, |ids| JJCommand {
+            kind: JJCommandKind::Abandon { change_ids: ids },
             flags,
         }),
-        AppAction::Absorb => make_command(app, |id| JJCommand::Absorb {
-            from: Some(id),
-            selection: build_change_selection(app),
+        AppAction::Absorb => make_command(app, |id| JJCommand {
+            kind: JJCommandKind::Absorb {
+                from: Some(id),
+                selection: build_change_selection(app),
+            },
             flags,
         }),
         AppAction::ExpandAncestors => {
@@ -464,8 +471,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.expand_ancestors(entry_idx);
             Action::None
         }
-        AppAction::Fix => make_multi_command(app, |ids| JJCommand::Fix {
-            change_ids: ids,
+        AppAction::Fix => make_multi_command(app, |ids| JJCommand {
+            kind: JJCommandKind::Fix { change_ids: ids },
             flags,
         }),
         AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
@@ -532,10 +539,12 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 AppAction::ResolveTheirs => crate::jj_command::ResolveTool::Theirs,
                 _ => crate::jj_command::ResolveTool::Default,
             };
-            let cmd = JJCommand::Resolve {
-                change_id,
-                path,
-                tool: tool.clone(),
+            let cmd = JJCommand {
+                kind: JJCommandKind::Resolve {
+                    change_id,
+                    path,
+                    tool: tool.clone(),
+                },
                 flags,
             };
             if matches!(tool, crate::jj_command::ResolveTool::Default) {
@@ -579,15 +588,19 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 app.set_error("no files selected");
                 return Action::None;
             }
-            Action::RunJj(JJCommand::FileUntrack {
-                paths: paths.into(),
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::FileUntrack {
+                    paths: paths.into(),
+                },
                 flags,
             })
         }
         AppAction::Commit => {
-            let cmd = JJCommand::Commit {
-                message: None,
-                selection: build_change_selection(app),
+            let cmd = JJCommand {
+                kind: JJCommandKind::Commit {
+                    message: None,
+                    selection: build_change_selection(app),
+                },
                 flags,
             };
             Action::SuspendAndRunJj(cmd)
@@ -604,27 +617,33 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             Action::None
         }
         AppAction::Describe => enter_describe_input(app, flags),
-        AppAction::DescribeInEditor => make_command(app, |id| JJCommand::DescribeInEditor {
-            change_id: id,
+        AppAction::DescribeInEditor => make_command(app, |id| JJCommand {
+            kind: JJCommandKind::DescribeInEditor { change_id: id },
             flags,
         }),
-        AppAction::Edit => make_command(app, |id| JJCommand::Edit {
-            change_id: id,
+        AppAction::Edit => make_command(app, |id| JJCommand {
+            kind: JJCommandKind::Edit { change_id: id },
             flags,
         }),
-        AppAction::New => make_multi_command(app, |ids| JJCommand::New {
-            change_ids: ids,
-            insert: None,
+        AppAction::New => make_multi_command(app, |ids| JJCommand {
+            kind: JJCommandKind::New {
+                change_ids: ids,
+                insert: None,
+            },
             flags,
         }),
-        AppAction::NewInsertAfter => make_command(app, |id| JJCommand::New {
-            change_ids: smallvec![id],
-            insert: Some(InsertPosition::After),
+        AppAction::NewInsertAfter => make_command(app, |id| JJCommand {
+            kind: JJCommandKind::New {
+                change_ids: smallvec![id],
+                insert: Some(InsertPosition::After),
+            },
             flags,
         }),
-        AppAction::NewInsertBefore => make_command(app, |id| JJCommand::New {
-            change_ids: smallvec![id],
-            insert: Some(InsertPosition::Before),
+        AppAction::NewInsertBefore => make_command(app, |id| JJCommand {
+            kind: JJCommandKind::New {
+                change_ids: smallvec![id],
+                insert: Some(InsertPosition::Before),
+            },
             flags,
         }),
         AppAction::Squash => {
@@ -634,11 +653,13 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 enter_target_select(app, TargetOperation::Squash(SquashKind::Into), flags)
             } else {
                 let selection = build_change_selection(app);
-                make_command(app, |id| JJCommand::Squash {
-                    change_id: id,
-                    target: None,
-                    message: MessageMode::Default,
-                    selection: selection.clone(),
+                make_command(app, |id| JJCommand {
+                    kind: JJCommandKind::Squash {
+                        change_id: id,
+                        target: None,
+                        message: MessageMode::Default,
+                        selection: selection.clone(),
+                    },
                     flags,
                 })
             }
@@ -689,19 +710,23 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 flags,
             )
         }
-        AppAction::Restore => make_command(app, |id| JJCommand::Restore {
-            from: None,
-            into: None,
-            changes_in: Some(id),
-            selection: build_change_selection(app),
+        AppAction::Restore => make_command(app, |id| JJCommand {
+            kind: JJCommandKind::Restore {
+                from: None,
+                into: None,
+                changes_in: Some(id),
+                selection: build_change_selection(app),
+            },
             flags,
         }),
         AppAction::RestoreFrom => enter_target_select(app, TargetOperation::RestoreFrom, flags),
         AppAction::RestoreInto => enter_target_select(app, TargetOperation::RestoreInto, flags),
-        AppAction::Split => make_command(app, |id| JJCommand::Split {
-            change_id: id,
-            target: None,
-            selection: build_change_selection(app),
+        AppAction::Split => make_command(app, |id| JJCommand {
+            kind: JJCommandKind::Split {
+                change_id: id,
+                target: None,
+                selection: build_change_selection(app),
+            },
             flags,
         }),
         AppAction::SplitOnto => {
@@ -775,8 +800,14 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::TagDelete => enter_tag_delete(app, flags),
 
-        AppAction::Undo => Action::RunJj(JJCommand::Undo { flags }),
-        AppAction::Redo => Action::RunJj(JJCommand::Redo { flags }),
+        AppAction::Undo => Action::RunJj(JJCommand {
+            kind: JJCommandKind::Undo,
+            flags,
+        }),
+        AppAction::Redo => Action::RunJj(JJCommand {
+            kind: JJCommandKind::Redo,
+            flags,
+        }),
 
         // Git commands (network ops suspend TUI for SSH auth / progress)
         AppAction::GitFetch => {
@@ -794,16 +825,20 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 );
                 Action::None
             } else {
-                Action::SuspendAndRunJj(JJCommand::GitFetch {
-                    all_remotes: false,
-                    remote: None,
+                Action::SuspendAndRunJj(JJCommand {
+                    kind: JJCommandKind::GitFetch {
+                        all_remotes: false,
+                        remote: None,
+                    },
                     flags,
                 })
             }
         }
-        AppAction::GitFetchAllRemotes => Action::SuspendAndRunJj(JJCommand::GitFetch {
-            all_remotes: true,
-            remote: None,
+        AppAction::GitFetchAllRemotes => Action::SuspendAndRunJj(JJCommand {
+            kind: JJCommandKind::GitFetch {
+                all_remotes: true,
+                remote: None,
+            },
             flags,
         }),
         AppAction::GitPush => {
@@ -818,9 +853,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 );
                 Action::None
             } else {
-                Action::SuspendAndRunJj(JJCommand::GitPush {
-                    all: false,
-                    remote: None,
+                Action::SuspendAndRunJj(JJCommand {
+                    kind: JJCommandKind::GitPush {
+                        all: false,
+                        remote: None,
+                    },
                     flags,
                 })
             }
@@ -837,9 +874,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 );
                 Action::None
             } else {
-                Action::SuspendAndRunJj(JJCommand::GitPush {
-                    all: true,
-                    remote: None,
+                Action::SuspendAndRunJj(JJCommand {
+                    kind: JJCommandKind::GitPush {
+                        all: true,
+                        remote: None,
+                    },
                     flags,
                 })
             }
@@ -848,9 +887,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             let Some(change_id) = app.selected_change_id() else {
                 return Action::None;
             };
-            Action::SuspendAndRunJj(JJCommand::GitPushChange {
-                change_id,
-                remote: None,
+            Action::SuspendAndRunJj(JJCommand {
+                kind: JJCommandKind::GitPushChange {
+                    change_id,
+                    remote: None,
+                },
                 flags,
             })
         }
@@ -878,9 +919,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     );
                     return Action::None;
                 }
-                return Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
-                    bookmarks: bookmark_names,
-                    remote: None,
+                return Action::SuspendAndRunJj(JJCommand {
+                    kind: JJCommandKind::GitPushBookmark {
+                        bookmarks: bookmark_names,
+                        remote: None,
+                    },
                     flags,
                 });
             }
@@ -893,24 +936,32 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             );
             Action::None
         }
-        AppAction::GitExport => Action::RunJj(JJCommand::GitExport { flags }),
-        AppAction::GitImport => Action::RunJj(JJCommand::GitImport { flags }),
+        AppAction::GitExport => Action::RunJj(JJCommand {
+            kind: JJCommandKind::GitExport,
+            flags,
+        }),
+        AppAction::GitImport => Action::RunJj(JJCommand {
+            kind: JJCommandKind::GitImport,
+            flags,
+        }),
 
         // Duplicate
-        AppAction::Duplicate => make_multi_command(app, |ids| JJCommand::Duplicate {
-            change_ids: ids,
-            onto: None,
+        AppAction::Duplicate => make_multi_command(app, |ids| JJCommand {
+            kind: JJCommandKind::Duplicate {
+                change_ids: ids,
+                onto: None,
+            },
             flags,
         }),
         AppAction::DuplicateOnto => enter_target_select(app, TargetOperation::DuplicateOnto, flags),
 
         // Parallelize / Simplify parents / Revert
-        AppAction::Parallelize => make_multi_command(app, |ids| JJCommand::Parallelize {
-            change_ids: ids,
+        AppAction::Parallelize => make_multi_command(app, |ids| JJCommand {
+            kind: JJCommandKind::Parallelize { change_ids: ids },
             flags,
         }),
-        AppAction::SimplifyParents => make_multi_command(app, |ids| JJCommand::SimplifyParents {
-            change_ids: ids,
+        AppAction::SimplifyParents => make_multi_command(app, |ids| JJCommand {
+            kind: JJCommandKind::SimplifyParents { change_ids: ids },
             flags,
         }),
         AppAction::Revert => {
@@ -931,8 +982,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             };
             let name = entry.name.clone();
-            Action::RunJj(JJCommand::BookmarkDelete {
-                names: smallvec![name],
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::BookmarkDelete {
+                    names: smallvec![name],
+                },
                 flags,
             })
         }
@@ -941,8 +994,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 app.set_error("bookmark is already local");
                 return Action::None;
             };
-            Action::RunJj(JJCommand::BookmarkTrack {
-                bookmarks: smallvec![br],
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::BookmarkTrack {
+                    bookmarks: smallvec![br],
+                },
                 flags,
             })
         }
@@ -951,8 +1006,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 app.set_error("bookmark has no remote to untrack");
                 return Action::None;
             };
-            Action::RunJj(JJCommand::BookmarkUntrack {
-                bookmarks: smallvec![br],
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::BookmarkUntrack {
+                    bookmarks: smallvec![br],
+                },
                 flags,
             })
         }
@@ -961,9 +1018,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             if let Some((entry, target)) = app.selected_remote_target() {
                 let name = entry.name.clone();
                 let remote = RemoteName::new(target.remote.as_str());
-                return Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
-                    bookmarks: smallvec![name],
-                    remote: Some(remote),
+                return Action::SuspendAndRunJj(JJCommand {
+                    kind: JJCommandKind::GitPushBookmark {
+                        bookmarks: smallvec![name],
+                        remote: Some(remote),
+                    },
                     flags,
                 });
             }
@@ -971,9 +1030,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             };
             let name = entry.name.clone();
-            Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
-                bookmarks: smallvec![name],
-                remote: None,
+            Action::SuspendAndRunJj(JJCommand {
+                kind: JJCommandKind::GitPushBookmark {
+                    bookmarks: smallvec![name],
+                    remote: None,
+                },
                 flags,
             })
         }
@@ -989,9 +1050,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                     Some(suffix) => ChangeId::new(format!("{prefix}/{suffix}")),
                     None => ChangeId::new(prefix),
                 };
-                return Action::RunJj(JJCommand::BookmarkSet {
-                    name,
-                    change_id,
+                return Action::RunJj(JJCommand {
+                    kind: JJCommandKind::BookmarkSet { name, change_id },
                     flags: flags | CommandFlags::ALLOW_BACKWARDS,
                 });
             }
@@ -1027,7 +1087,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 app.set_error("bookmark has no associated commit");
                 return Action::None;
             };
-            Action::RunJj(JJCommand::Edit { change_id, flags })
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::Edit { change_id },
+                flags,
+            })
         }
         AppAction::BmViewRename => {
             let Some(entry) = app.selected_bookmark_entry() else {
@@ -1054,8 +1117,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             };
             let name = entry.name.clone();
-            Action::RunJj(JJCommand::BookmarkForget {
-                names: smallvec![name],
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::BookmarkForget {
+                    names: smallvec![name],
+                },
                 flags,
             })
         }
@@ -1074,9 +1139,11 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         AppAction::BmViewFetch => {
             // On a remote target row: fetch that specific bookmark+remote.
             if let Some((entry, target)) = app.selected_remote_target() {
-                return Action::SuspendAndRunJj(JJCommand::GitFetchBookmark {
-                    bookmark: entry.name.clone(),
-                    remote: RemoteName::new(target.remote.as_str()),
+                return Action::SuspendAndRunJj(JJCommand {
+                    kind: JJCommandKind::GitFetchBookmark {
+                        bookmark: entry.name.clone(),
+                        remote: RemoteName::new(target.remote.as_str()),
+                    },
                     flags,
                 });
             }
@@ -1086,16 +1153,20 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             };
             if let Some(remote) = &entry.remote {
                 // Remote bookmark row — fetch from that remote.
-                return Action::SuspendAndRunJj(JJCommand::GitFetchBookmark {
-                    bookmark: entry.name.clone(),
-                    remote: RemoteName::new(remote.as_str()),
+                return Action::SuspendAndRunJj(JJCommand {
+                    kind: JJCommandKind::GitFetchBookmark {
+                        bookmark: entry.name.clone(),
+                        remote: RemoteName::new(remote.as_str()),
+                    },
                     flags,
                 });
             }
             // Local bookmark — fetch from all remotes for this bookmark.
-            Action::SuspendAndRunJj(JJCommand::GitFetch {
-                all_remotes: false,
-                remote: None,
+            Action::SuspendAndRunJj(JJCommand {
+                kind: JJCommandKind::GitFetch {
+                    all_remotes: false,
+                    remote: None,
+                },
                 flags,
             })
         }
@@ -1109,8 +1180,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             };
             let name = entry.name.clone();
-            Action::RunJj(JJCommand::TagDelete {
-                names: smallvec![name],
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::TagDelete {
+                    names: smallvec![name],
+                },
                 flags,
             })
         }
@@ -1174,21 +1247,30 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             };
             let op_id = entry.id.clone();
-            Action::RunJj(JJCommand::OpRestore { op_id, flags })
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::OpRestore { op_id },
+                flags,
+            })
         }
         AppAction::OpLogRevert => {
             let Some(entry) = app.selected_op_log_entry() else {
                 return Action::None;
             };
             let op_id = entry.id.clone();
-            Action::RunJj(JJCommand::OpRevert { op_id, flags })
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::OpRevert { op_id },
+                flags,
+            })
         }
         AppAction::OpLogAbandon => {
             let Some(entry) = app.selected_op_log_entry() else {
                 return Action::None;
             };
             let op_id = entry.id.clone();
-            Action::RunJj(JJCommand::OpAbandon { op_id, flags })
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::OpAbandon { op_id },
+                flags,
+            })
         }
         // Workspace view actions
         AppAction::SwitchToWorkspaceView => {
@@ -1212,16 +1294,21 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             };
             let change_id = ChangeId::new(entry.commit_id.as_str());
-            Action::RunJj(JJCommand::Edit { change_id, flags })
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::Edit { change_id },
+                flags,
+            })
         }
         AppAction::EvoLogNew => {
             let Some(entry) = app.selected_evolog_entry() else {
                 return Action::None;
             };
             let change_id = ChangeId::new(entry.commit_id.as_str());
-            Action::RunJj(JJCommand::New {
-                change_ids: smallvec![change_id],
-                insert: None,
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::New {
+                    change_ids: smallvec![change_id],
+                    insert: None,
+                },
                 flags,
             })
         }
@@ -1240,11 +1327,13 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 .iter()
                 .find(|e| e.is_current)
                 .map(|e| ChangeId::new(e.commit_id.as_str()));
-            Action::RunJj(JJCommand::Restore {
-                from: Some(from),
-                into,
-                changes_in: None,
-                selection: build_change_selection(app),
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::Restore {
+                    from: Some(from),
+                    into,
+                    changes_in: None,
+                    selection: build_change_selection(app),
+                },
                 flags,
             })
         }
@@ -1253,8 +1342,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 return Action::None;
             };
             let name = entry.name.clone();
-            Action::RunJj(JJCommand::WorkspaceForget {
-                names: smallvec![name],
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::WorkspaceForget {
+                    names: smallvec![name],
+                },
                 flags,
             })
         }

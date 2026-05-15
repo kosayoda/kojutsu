@@ -2,7 +2,7 @@ use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::TargetMode;
 use crate::app::{App, AppMode};
-use crate::jj_command::JJCommand;
+use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap;
 use crate::types::{
     BookmarkName, PendingSelection, RemoteName, SmallVec, TagName, TargetOperation, WorkspaceName,
@@ -244,22 +244,35 @@ pub(super) fn resolve_selection(
     match on_select {
         PendingSelection::BookmarkDelete { flags, .. } => {
             let names = names.into_iter().map(BookmarkName::new).collect();
-            Action::RunJj(JJCommand::BookmarkDelete { names, flags })
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::BookmarkDelete { names },
+                flags,
+            })
         }
         PendingSelection::BookmarkForget { flags, .. } => {
             let names = names.into_iter().map(BookmarkName::new).collect();
-            Action::RunJj(JJCommand::BookmarkForget { names, flags })
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::BookmarkForget { names },
+                flags,
+            })
         }
         PendingSelection::WorkspaceForget { flags } => {
             let names = names.into_iter().map(WorkspaceName::new).collect();
-            Action::RunJj(JJCommand::WorkspaceForget { names, flags })
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::WorkspaceForget { names },
+                flags,
+            })
         }
-        PendingSelection::BookmarkTrack { flags } => Action::RunJj(JJCommand::BookmarkTrack {
-            bookmarks: super::bookmark::parse_remote_bookmarks(names),
+        PendingSelection::BookmarkTrack { flags } => Action::RunJj(JJCommand {
+            kind: JJCommandKind::BookmarkTrack {
+                bookmarks: super::bookmark::parse_remote_bookmarks(names),
+            },
             flags,
         }),
-        PendingSelection::BookmarkUntrack { flags } => Action::RunJj(JJCommand::BookmarkUntrack {
-            bookmarks: super::bookmark::parse_remote_bookmarks(names),
+        PendingSelection::BookmarkUntrack { flags } => Action::RunJj(JJCommand {
+            kind: JJCommandKind::BookmarkUntrack {
+                bookmarks: super::bookmark::parse_remote_bookmarks(names),
+            },
             flags,
         }),
         PendingSelection::GitPushBookmark { flags } => {
@@ -276,36 +289,45 @@ pub(super) fn resolve_selection(
                 );
                 Action::None
             } else {
-                Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
-                    bookmarks,
-                    remote: None,
+                Action::SuspendAndRunJj(JJCommand {
+                    kind: JJCommandKind::GitPushBookmark {
+                        bookmarks,
+                        remote: None,
+                    },
                     flags,
                 })
             }
         }
         PendingSelection::GitRemoteForFetch { all_remotes, flags } => {
             let remote = names.into_iter().next().map(RemoteName::new);
-            Action::SuspendAndRunJj(JJCommand::GitFetch {
-                all_remotes,
-                remote,
+            Action::SuspendAndRunJj(JJCommand {
+                kind: JJCommandKind::GitFetch {
+                    all_remotes,
+                    remote,
+                },
                 flags,
             })
         }
         PendingSelection::GitRemoteForPush { all, flags } => {
             let remote = names.into_iter().next().map(RemoteName::new);
-            Action::SuspendAndRunJj(JJCommand::GitPush { all, remote, flags })
+            Action::SuspendAndRunJj(JJCommand {
+                kind: JJCommandKind::GitPush { all, remote },
+                flags,
+            })
         }
         PendingSelection::GitRemoteForPushBookmark { bookmarks, flags } => {
             let remote = names.into_iter().next().map(RemoteName::new);
-            Action::SuspendAndRunJj(JJCommand::GitPushBookmark {
-                bookmarks,
-                remote,
+            Action::SuspendAndRunJj(JJCommand {
+                kind: JJCommandKind::GitPushBookmark { bookmarks, remote },
                 flags,
             })
         }
         PendingSelection::TagDelete { flags } => {
             let names = names.into_iter().map(TagName::new).collect();
-            Action::RunJj(JJCommand::TagDelete { names, flags })
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::TagDelete { names },
+                flags,
+            })
         }
         // Single-item operations: take the first name.
         PendingSelection::BookmarkMove {
