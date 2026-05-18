@@ -167,6 +167,9 @@ pub enum AppAction {
     EvoLogRestore,
     EvoLogEdit,
     EvoLogNew,
+    // Interdiff
+    Interdiff,
+    EvoLogInterdiff,
     // Op log view actions
     OpLogRestore,
     OpLogRevert,
@@ -247,6 +250,7 @@ pub struct Keymaps {
     pub workspaces: Keymap,
     pub evolog: Keymap,
     pub command_log: Keymap,
+    pub interdiff: Keymap,
 }
 
 impl Keymaps {
@@ -259,6 +263,7 @@ impl Keymaps {
             crate::app::ActiveView::Evolog => &self.evolog,
             crate::app::ActiveView::Workspaces => &self.workspaces,
             crate::app::ActiveView::CommandLog => &self.command_log,
+            crate::app::ActiveView::Interdiff => &self.interdiff,
         }
     }
 }
@@ -562,6 +567,7 @@ impl Default for Keymaps {
                     bind("t", AppAction::DuplicateOnto, "onto…", C),
                 ],
             ),
+            bind("i", AppAction::Interdiff, "interdiff\u{2026}", C),
             bind("p", AppAction::Parallelize, "parallelize", C),
             bind("shift-p", AppAction::SimplifyParents, "simplify parents", C),
             bind("z", AppAction::Revert, "revert", C),
@@ -664,12 +670,14 @@ impl Default for Keymaps {
         let mut evolog_root = shared_bindings();
         evolog_root.extend(vec![
             bind("shift-e", AppAction::SwitchToEvoLogView, "evolog", C),
+            bind("d", AppAction::EvoLogInterdiff, "interdiff vs current", C),
             bind("r", AppAction::EvoLogRestore, "restore from", C),
             bind("e", AppAction::EvoLogEdit, "edit (checkout)", C),
             bind("n", AppAction::EvoLogNew, "new from", C),
         ]);
 
         let cmd_log_root = shared_bindings();
+        let interdiff_root = shared_bindings();
 
         Keymaps {
             dag: Keymap { root: dag_root },
@@ -679,6 +687,9 @@ impl Default for Keymaps {
             workspaces: Keymap { root: ws_root },
             evolog: Keymap { root: evolog_root },
             command_log: Keymap { root: cmd_log_root },
+            interdiff: Keymap {
+                root: interdiff_root,
+            },
         }
     }
 }
@@ -824,7 +835,8 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
     use SelectionKind::{Commit, File, Line};
     match action {
         // File+line selection support requires explicit opt-in.
-        AppAction::Absorb => &[Commit, File],
+        AppAction::Absorb | AppAction::Interdiff => &[Commit],
+        AppAction::EvoLogInterdiff => &[Commit],
         // Operations that only make sense at commit level.
         AppAction::Abandon
         | AppAction::Describe
@@ -923,6 +935,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
             "resolve"
         }
+        AppAction::Interdiff | AppAction::EvoLogInterdiff => "interdiff",
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",

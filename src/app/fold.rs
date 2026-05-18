@@ -30,6 +30,7 @@ impl App {
             ActiveView::Evolog => self.rebuild_evolog_rows(),
             ActiveView::Workspaces => self.rebuild_workspace_rows(),
             ActiveView::CommandLog => self.rebuild_command_log_rows(),
+            ActiveView::Interdiff => self.rebuild_interdiff_rows(),
         }
     }
 
@@ -559,6 +560,12 @@ impl App {
                     self.rebuild_rows();
                 }
             }
+            Some(DisplayRow::InterdiffFileChange { file_idx }) => {
+                self.toggle_interdiff_file_fold(*file_idx);
+            }
+            Some(DisplayRow::InterdiffDiffLine { file_idx, .. }) => {
+                self.toggle_interdiff_file_fold(*file_idx);
+            }
             _ => {}
         }
     }
@@ -716,6 +723,84 @@ impl App {
         }
         self.rebuild_rows();
         if self.evolog.unfolded_files.contains(&key) {
+            self.scroll_to_show_children();
+        }
+    }
+
+    fn rebuild_interdiff_rows(&mut self) {
+        let prev_cursor = self.rows.get(self.cursor.raw()).copied();
+        self.rows.clear();
+        self.rows.push(DisplayRow::InterdiffHeader);
+
+        if let Loadable::Loaded(files) = &self.interdiff.files {
+            for fi in 0..files.len() {
+                let file_idx = FileIdx::new(fi);
+                self.rows.push(DisplayRow::InterdiffFileChange { file_idx });
+
+                let path = &files[fi].path;
+                if self.interdiff.unfolded_files.contains(path) {
+                    let format = self.diff_format;
+                    if let Some(lines) = self
+                        .interdiff
+                        .file_diffs
+                        .get(path)
+                        .and_then(|l| l.loaded())
+                        .map(|r| match format {
+                            super::DiffFormat::Git => &r.git,
+                            super::DiffFormat::ColorWords => &r.color_words,
+                        })
+                    {
+                        for li in 0..lines.len() {
+                            self.rows.push(DisplayRow::InterdiffDiffLine {
+                                file_idx,
+                                line_idx: DiffLineIdx::new(li),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
+    }
+
+    pub(crate) fn toggle_interdiff_file_fold(&mut self, file_idx: FileIdx) {
+        let files = match &self.interdiff.files {
+            Loadable::Loaded(f) => f,
+            _ => return,
+        };
+        let Some(file) = files.get(file_idx.raw()) else {
+            return;
+        };
+        let path = file.path.clone();
+
+        if self.interdiff.unfolded_files.contains(&path) {
+            self.interdiff.unfolded_files.remove(&path);
+        } else {
+            if self
+                .interdiff
+                .file_diffs
+                .get(&path)
+                .is_none_or(Loadable::should_request)
+            {
+                if let (Some(from), Some(to)) =
+                    (&self.interdiff.from_commit_id, &self.interdiff.to_commit_id)
+                {
+                    self.interdiff
+                        .file_diffs
+                        .insert(path.clone(), Loadable::Loading);
+                    self.pending_repo_requests
+                        .push(RepoRequest::load_interdiff_file_diff(
+                            from.clone(),
+                            to.clone(),
+                            path.clone(),
+                        ));
+                }
+            }
+            self.interdiff.unfolded_files.insert(path.clone());
+        }
+        self.rebuild_rows();
+        if self.interdiff.unfolded_files.contains(&path) {
             self.scroll_to_show_children();
         }
     }

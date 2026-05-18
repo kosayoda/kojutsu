@@ -367,19 +367,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|l| l.loaded())
                         .and_then(|files| files.get(file_idx.raw()));
                     if let Some(file) = file {
-                        let status_str = match file.status {
-                            FileStatus::Added => "A",
-                            FileStatus::Modified => "M",
-                            FileStatus::Deleted => "D",
-                            FileStatus::Renamed => "R",
-                            FileStatus::Copied => "C",
-                        };
-                        let status_color = match file.status {
-                            FileStatus::Added => theme.added,
-                            FileStatus::Modified => theme.change_id,
-                            FileStatus::Deleted => theme.error,
-                            FileStatus::Renamed | FileStatus::Copied => theme.accent,
-                        };
+                        let (status_str, status_color) =
+                            file_status_display(file.status, theme);
                         let mut spans = vec![
                             gutter_span(row_search.as_ref(), theme),
                             Span::styled(
@@ -408,34 +397,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let diff_line = app
                         .evolog_diff_lines(*evolog_idx, *file_idx)
                         .and_then(|lines| lines.get(line_idx.raw()));
-                    if let Some(diff_line) = diff_line {
-                        let (base_style, prefix) = match diff_line.kind {
-                            DiffLineKind::Added => (Style::default().fg(theme.added), "+"),
-                            DiffLineKind::Removed => (Style::default().fg(theme.error), "-"),
-                            DiffLineKind::Context => (Style::default().fg(theme.muted), " "),
-                            DiffLineKind::Header => (
-                                Style::default()
-                                    .fg(theme.accent)
-                                    .add_modifier(Modifier::BOLD),
-                                "@",
-                            ),
-                        };
-                        let mut spans = vec![
-                            gutter_span(row_search.as_ref(), theme),
-                            Span::styled(format!("    {prefix} "), base_style),
-                        ];
-                        push_diff_tokens(
-                            &mut spans,
-                            diff_line,
-                            base_style,
-                            row_search.as_ref(),
-                            theme,
-                            &tab_spaces,
-                        );
-                        vec![Line::from(spans)]
-                    } else {
-                        vec![Line::raw("")]
-                    }
+                    render_simple_diff_line(diff_line, row_search.as_ref(), theme, &tab_spaces)
                 }
                 DisplayRow::EvoLogGraphLink {
                     evolog_idx,
@@ -588,6 +550,59 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         Span::raw("        "),
                         Span::styled(text, Style::default().fg(theme.muted)),
                     ])]
+                }
+                DisplayRow::InterdiffHeader => {
+                    let from = app.interdiff.from_label.to_string();
+                    let to = app.interdiff.to_label.to_string();
+                    let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
+                    spans.push(Span::styled(
+                        "  interdiff: ",
+                        Style::default().fg(theme.muted),
+                    ));
+                    spans.push(Span::styled(from, Style::default().fg(theme.change_id)));
+                    spans.push(Span::styled(" \u{2192} ", Style::default().fg(theme.muted)));
+                    spans.push(Span::styled(to, Style::default().fg(theme.change_id)));
+                    vec![Line::from(spans)]
+                }
+                DisplayRow::InterdiffFileChange { file_idx } => {
+                    let file = app
+                        .interdiff
+                        .files
+                        .loaded()
+                        .and_then(|files| files.get(file_idx.raw()));
+                    if let Some(file) = file {
+                        let (status_str, status_color) =
+                            file_status_display(file.status, theme);
+                        let is_unfolded = app.interdiff.unfolded_files.contains(&file.path);
+                        let fold_char = if is_unfolded { "\u{25be}" } else { "\u{25b8}" };
+                        let mut spans = vec![
+                            gutter_span(row_search.as_ref(), theme),
+                            Span::styled(
+                                format!("  {fold_char} "),
+                                Style::default().fg(theme.muted),
+                            ),
+                            Span::styled(
+                                format!("{status_str} "),
+                                Style::default().fg(status_color),
+                            ),
+                            Span::styled(
+                                file.path.as_str().to_string(),
+                                Style::default().fg(theme.text),
+                            ),
+                        ];
+                        if file.stats.added > 0 || file.stats.removed > 0 {
+                            push_line_stats(&mut spans, file.stats, false, theme);
+                        }
+                        vec![Line::from(spans)]
+                    } else {
+                        vec![Line::raw("")]
+                    }
+                }
+                DisplayRow::InterdiffDiffLine { file_idx, line_idx } => {
+                    let diff_line = app
+                        .interdiff_diff_lines(*file_idx)
+                        .and_then(|lines| lines.get(line_idx.raw()));
+                    render_simple_diff_line(diff_line, row_search.as_ref(), theme, &tab_spaces)
                 }
             }
         })
@@ -1498,6 +1513,48 @@ fn render_evolog_item(
 
     let line2 = Line::from(spans2);
     vec![line1, line2]
+}
+
+/// File status marker and color for secondary views (evolog, interdiff).
+fn file_status_display(status: FileStatus, theme: &Theme) -> (&'static str, ratatui::style::Color) {
+    match status {
+        FileStatus::Added => ("A", theme.added),
+        FileStatus::Modified => ("M", theme.change_id),
+        FileStatus::Deleted => ("D", theme.error),
+        FileStatus::Renamed | FileStatus::Copied => {
+            (if matches!(status, FileStatus::Renamed) { "R" } else { "C" }, theme.accent)
+        }
+    }
+}
+
+/// Render a diff line for views that don't need line numbers or selection bars
+/// (evolog, interdiff).
+fn render_simple_diff_line(
+    diff_line: Option<&DiffLine>,
+    search: Option<&SearchRender<'_>>,
+    theme: &Theme,
+    tab_str: &str,
+) -> Vec<Line<'static>> {
+    let Some(diff_line) = diff_line else {
+        return vec![Line::raw("")];
+    };
+    let (base_style, prefix) = match diff_line.kind {
+        DiffLineKind::Added => (Style::default().fg(theme.added), "+"),
+        DiffLineKind::Removed => (Style::default().fg(theme.error), "-"),
+        DiffLineKind::Context => (Style::default().fg(theme.muted), " "),
+        DiffLineKind::Header => (
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+            "@",
+        ),
+    };
+    let mut spans = vec![
+        gutter_span(search, theme),
+        Span::styled(format!("    {prefix} "), base_style),
+    ];
+    push_diff_tokens(&mut spans, diff_line, base_style, search, theme, tab_str);
+    vec![Line::from(spans)]
 }
 
 fn render_simple_graph_link(

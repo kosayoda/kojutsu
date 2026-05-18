@@ -965,6 +965,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             kind: JJCommandKind::SimplifyParents { change_ids: ids },
             flags,
         }),
+        AppAction::Interdiff => enter_target_select(app, TargetOperation::Interdiff, flags),
         AppAction::Revert => {
             let sources = app.selected_change_ids();
             enter_target_select(app, TargetOperation::Revert { sources }, flags)
@@ -1314,6 +1315,25 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 flags,
             })
         }
+        AppAction::EvoLogInterdiff => {
+            let Some(entry) = app.selected_evolog_entry() else {
+                return Action::None;
+            };
+            if entry.is_current {
+                app.set_error("already on current version");
+                return Action::None;
+            }
+            let from_id = CommitId::new(entry.commit_id.as_str());
+            let from_label = Str::from(entry.change_id.display.as_str());
+            let Some(current) = app.evolog.entries.iter().find(|e| e.is_current) else {
+                app.set_error("no current version found");
+                return Action::None;
+            };
+            let to_id = CommitId::new(current.commit_id.as_str());
+            let to_label = Str::from(current.change_id.display.as_str());
+            app.enter_interdiff_view(from_id, to_id, from_label, to_label);
+            Action::None
+        }
         AppAction::EvoLogRestore => {
             let Some(entry) = app.selected_evolog_entry() else {
                 return Action::None;
@@ -1431,6 +1451,15 @@ pub(super) fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action
             app.switch_view(crate::app::ActiveView::Dag);
             app.revset.active_preset = None;
             Action::UpdateRevset(new_revset)
+        }
+        FollowUpAction::EnterInterdiff {
+            from,
+            to,
+            from_label,
+            to_label,
+        } => {
+            app.enter_interdiff_view(from, to, from_label, to_label);
+            Action::None
         }
     }
 }

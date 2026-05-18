@@ -256,6 +256,20 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
                         smallvec![target]
                     }
                 };
+                // Interdiff is handled directly (needs commit IDs from app state).
+                if matches!(operation, crate::types::TargetOperation::Interdiff) {
+                    let target = targets.into_iter().next().unwrap_or(source.clone());
+                    // Resolve change IDs to commit IDs via the DAG index.
+                    let from_commit = app.commit_id_for_change(&source);
+                    let to_commit = app.commit_id_for_change(&target);
+                    if let (Some(from_cid), Some(to_cid)) = (from_commit, to_commit) {
+                        let from_label = crate::types::Str::from(source.as_str());
+                        let to_label = crate::types::Str::from(target.as_str());
+                        app.enter_interdiff_view(from_cid, to_cid, from_label, to_label);
+                    }
+                    return Action::None;
+                }
+
                 let label = operation.label();
                 let selection = super::action::build_change_selection(app);
                 let mut options = operation.follow_up(source, targets.clone(), flags, selection);

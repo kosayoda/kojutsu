@@ -9,7 +9,7 @@ use crate::keymap::CommandFlags;
 use strum::IntoEnumIterator;
 
 use crate::types::{
-    BookmarkName, ChangeId, ChangeSelection, MessageMode, OperationId, PendingCommand,
+    BookmarkName, ChangeId, ChangeSelection, CommitId, MessageMode, OperationId, PendingCommand,
     PendingCommitSelect, ReadyCommand, RebaseKind, RebaseSource, RebaseTarget, RemoteName,
     SmallVec, SplitTarget, SquashTarget, Str, TagName, TargetOperation, WorkspaceName,
 };
@@ -1236,6 +1236,13 @@ pub enum FollowUpAction {
     },
     /// Widen the current revset to include a specific change, then jump to it.
     WidenRevset { change_id: String },
+    /// Enter the interdiff view (instead of running a CLI command).
+    EnterInterdiff {
+        from: CommitId,
+        to: CommitId,
+        from_label: Str,
+        to_label: Str,
+    },
 }
 
 impl PendingCommitSelect {
@@ -1412,6 +1419,19 @@ impl TargetOperation {
                     flags,
                 },
             ),
+            TargetOperation::Interdiff => {
+                let to = targets.into_iter().next().expect("target required");
+                vec![FollowUpOption {
+                    key: ' ',
+                    label: "interdiff",
+                    action: FollowUpAction::EnterInterdiff {
+                        from: CommitId::new(source.as_str()),
+                        to: CommitId::new(to.as_str()),
+                        from_label: Str::from(source.as_str()),
+                        to_label: Str::from(to.as_str()),
+                    },
+                }]
+            }
             TargetOperation::Revert { sources } => RebaseKind::iter()
                 .map(|kind| FollowUpOption {
                     key: kind.key(),

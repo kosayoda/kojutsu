@@ -139,6 +139,7 @@ pub enum TargetOperation {
     Revert {
         sources: SmallVec<ChangeId>,
     },
+    Interdiff,
 }
 
 impl TargetOperation {
@@ -170,6 +171,7 @@ impl TargetOperation {
             TargetOperation::BookmarkMove { .. } => "move bookmark",
             TargetOperation::DuplicateOnto => "duplicate onto",
             TargetOperation::Revert { .. } => "revert",
+            TargetOperation::Interdiff => "interdiff with",
         }
     }
 }

@@ -130,6 +130,7 @@ pub fn scope_specs_for_view(view: crate::app::ActiveView) -> &'static [SearchSco
         crate::app::ActiveView::Evolog => SEARCH_SCOPE_SPECS,
         crate::app::ActiveView::Workspaces => WORKSPACE_VIEW_SCOPE_SPECS,
         crate::app::ActiveView::CommandLog => COMMAND_LOG_VIEW_SCOPE_SPECS,
+        crate::app::ActiveView::Interdiff => SEARCH_SCOPE_SPECS,
     }
 }
 

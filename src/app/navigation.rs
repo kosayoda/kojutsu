@@ -19,6 +19,10 @@ impl App {
                 .diff_lines(*entry_idx, *file_idx)
                 .and_then(|lines| lines.get(line_idx.raw()))
                 .is_some_and(|dl| dl.kind == DiffLineKind::Context),
+            DisplayRow::InterdiffDiffLine { file_idx, line_idx } => self
+                .interdiff_diff_lines(*file_idx)
+                .and_then(|lines| lines.get(line_idx.raw()))
+                .is_some_and(|dl| dl.kind == DiffLineKind::Context),
             _ => false,
         }
     }

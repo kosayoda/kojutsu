@@ -31,7 +31,8 @@ use jj_lib::conflicts::{
 };
 use jj_lib::diff_presentation::unified::{self, git_diff_part, DiffLineType};
 use jj_lib::diff_presentation::DiffTokenType;
-use jj_lib::merge::Diff;
+use jj_lib::merge::{Diff, Merge};
+use jj_lib::merged_tree::MergedTree;
 use jj_lib::repo_path::RepoPathBuf;
 
 use crate::dag::{
@@ -1826,14 +1827,24 @@ impl JjRepo {
 
         let from_tree = from_commit.tree();
         let to_tree = to_commit.tree();
+        self.trees_file_diff(&from_tree, &to_tree, path)
+    }
 
+    /// Compute the diff for a single file between two trees.
+    fn trees_file_diff(
+        &self,
+        before_tree: &MergedTree,
+        after_tree: &MergedTree,
+        path: &RepoPath,
+    ) -> Result<DiffResult> {
+        let repo = self.repo.as_ref();
         let repo_path = RepoPathBuf::from_internal_string(path.as_str())
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
         let labels = ConflictLabels::unlabeled();
         let materialize_options = default_materialize_options();
 
-        let before_value = from_tree.path_value(&repo_path).block_on()?;
-        let after_value = to_tree.path_value(&repo_path).block_on()?;
+        let before_value = before_tree.path_value(&repo_path).block_on()?;
+        let after_value = after_tree.path_value(&repo_path).block_on()?;
 
         let before_mat =
             materialize_tree_value(repo.store(), &repo_path, before_value, &labels).block_on()?;
@@ -1849,7 +1860,7 @@ impl JjRepo {
 
         if before_part.content.is_binary || after_part.content.is_binary {
             let line = DiffLine {
-                kind: DiffLineKind::Context,
+                kind: DiffLineKind::Header,
                 content: "(binary file)".to_string(),
                 tokens: Vec::new(),
                 old_line: None,
@@ -1875,6 +1886,113 @@ impl JjRepo {
             git: git_lines,
             color_words: cw_lines,
         })
+    }
+
+    /// Compute the rebased tree pair for an interdiff.
+    /// Returns (rebased_from_tree, to_tree) where rebased_from_tree has from's
+    /// changes applied onto to's parent base via 3-way merge.
+    fn compute_interdiff_trees(
+        &self,
+        from_id: &str,
+        to_id: &str,
+    ) -> Result<(MergedTree, MergedTree)> {
+        let repo = self.repo.as_ref();
+        let from_commit_id = BackendCommitId::try_from_hex(from_id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
+        let to_commit_id = BackendCommitId::try_from_hex(to_id)
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
+        let from_commit = repo.store().get_commit(&from_commit_id)?;
+        let to_commit = repo.store().get_commit(&to_commit_id)?;
+
+        let from_parent_tree = from_commit.parent_tree(repo).block_on()?;
+        let from_tree = from_commit.tree();
+        let to_parent_tree = to_commit.parent_tree(repo).block_on()?;
+        let to_tree = to_commit.tree();
+
+        let merge_input = Merge::from_removes_adds(
+            [(from_parent_tree, String::new())],
+            [(to_parent_tree, String::new()), (from_tree, String::new())],
+        );
+        let rebased_tree = MergedTree::merge(merge_input)
+            .block_on()
+            .map_err(|e| color_eyre::eyre::eyre!("tree merge failed: {e}"))?;
+
+        Ok((rebased_tree, to_tree))
+    }
+
+    /// Compute file-level changes for an interdiff between two commits.
+    /// Rebases `from` onto `to`'s parents, then diffs the result against `to`.
+    pub fn interdiff_details(&self, from_id: &str, to_id: &str) -> Result<Vec<FileChange>> {
+        let repo = self.repo.as_ref();
+        let (rebased_tree, to_tree) = self.compute_interdiff_trees(from_id, to_id)?;
+
+        let copy_records = jj_lib::copies::CopyRecords::default();
+        let labels = ConflictLabels::unlabeled();
+        let materialize_options = default_materialize_options();
+
+        let mut changes = Vec::new();
+        let mut diff_stream =
+            rebased_tree.diff_stream_with_copies(&to_tree, &EverythingMatcher, &copy_records);
+
+        while let Some(entry) = diff_stream.next().block_on() {
+            let path = entry.path.target();
+            let target_path = path.as_internal_file_string().to_string();
+            let values = match entry.values {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            let before_present = values.before.is_present();
+            let after_present = values.after.is_present();
+            let status = match (before_present, after_present) {
+                (false, true) => FileStatus::Added,
+                (true, false) => FileStatus::Deleted,
+                (true, true) => FileStatus::Modified,
+                (false, false) => continue,
+            };
+            let has_conflict = !values.after.is_resolved();
+
+            let mut file_stats = LineStats::default();
+            let before_mat =
+                materialize_tree_value(repo.store(), path, values.before, &labels).block_on()?;
+            let after_mat =
+                materialize_tree_value(repo.store(), path, values.after, &labels).block_on()?;
+            let before_part = git_diff_part(path, before_mat, &materialize_options)
+                .block_on()
+                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+            let after_part = git_diff_part(path, after_mat, &materialize_options)
+                .block_on()
+                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+            if !before_part.content.is_binary && !after_part.content.is_binary {
+                let contents = Diff::new(
+                    before_part.content.contents.as_ref(),
+                    after_part.content.contents.as_ref(),
+                );
+                let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
+                file_stats = count_line_stats(&hunks);
+            }
+
+            changes.push(FileChange {
+                path: RepoPath::new(&target_path),
+                old_path: None,
+                status,
+                has_conflict,
+                stats: file_stats,
+            });
+        }
+
+        Ok(changes)
+    }
+
+    /// Compute per-file diff for an interdiff between two commits.
+    pub fn interdiff_file_diff(
+        &self,
+        from_id: &str,
+        to_id: &str,
+        path: &RepoPath,
+    ) -> Result<DiffResult> {
+        let (rebased_tree, to_tree) = self.compute_interdiff_trees(from_id, to_id)?;
+        self.trees_file_diff(&rebased_tree, &to_tree, path)
     }
 
     /// Compute the diff between an operation and its parent.

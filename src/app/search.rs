@@ -314,7 +314,8 @@ impl App {
             | DisplayRow::EvoLogGraphLink { .. }
             | DisplayRow::ConflictHeader { .. }
             | DisplayRow::ConflictSide { .. }
-            | DisplayRow::ConflictContext { .. } => false,
+            | DisplayRow::ConflictContext { .. }
+            | DisplayRow::InterdiffDiffLine { .. } => false,
             DisplayRow::EvoLogItem { evolog_idx } => {
                 let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) else {
                     return false;
@@ -341,6 +342,19 @@ impl App {
                     return false;
                 };
                 scopes.contains(SearchScopes::DESCRIPTION) && contains(&entry.summary)
+            }
+            DisplayRow::InterdiffHeader => {
+                scopes.contains(SearchScopes::DESCRIPTION)
+                    && (contains(&self.interdiff.from_label) || contains(&self.interdiff.to_label))
+            }
+            DisplayRow::InterdiffFileChange { file_idx } => {
+                scopes.contains(SearchScopes::PATH_COMMAND)
+                    && self
+                        .interdiff
+                        .files
+                        .loaded()
+                        .and_then(|files| files.get(file_idx.raw()))
+                        .is_some_and(|file| contains(file.path.as_str()))
             }
             DisplayRow::CommandLogDetail { .. } => false,
         }

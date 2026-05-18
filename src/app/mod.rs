@@ -206,6 +206,8 @@ pub struct App {
     pub evolog: EvoLogState,
     /// Command log view state.
     pub command_log: CommandLogState,
+    /// Interdiff view state.
+    pub interdiff: InterdiffState,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
@@ -288,6 +290,7 @@ impl App {
             op_log: OpLogState::new(),
             evolog: EvoLogState::new(),
             command_log: CommandLogState::new(),
+            interdiff: InterdiffState::new(),
             rows: Vec::new(),
             cursor: RowIdx::new(0),
             view_states: default_view_states(),
@@ -365,8 +368,8 @@ impl App {
     }
 
     pub fn switch_view(&mut self, view: ActiveView) {
-        // Allow evolog → evolog (reload with different commit).
-        if self.active_view == view && view != ActiveView::Evolog {
+        // Allow evolog/interdiff → same (reload with different commit).
+        if self.active_view == view && view != ActiveView::Evolog && view != ActiveView::Interdiff {
             return;
         }
         // Save current view state.
@@ -409,6 +412,41 @@ impl App {
         *self.list_state.offset_mut() = vs.scroll_offset;
         self.search_scopes = vs.search_scopes;
         self.h_scroll = vs.h_scroll;
+    }
+
+    /// Enter the interdiff view comparing two commits.
+    pub fn enter_interdiff_view(
+        &mut self,
+        from: CommitId,
+        to: CommitId,
+        from_label: crate::types::Str,
+        to_label: crate::types::Str,
+    ) {
+        self.interdiff.clear();
+        self.interdiff.from_commit_id = Some(from.clone());
+        self.interdiff.to_commit_id = Some(to.clone());
+        self.interdiff.from_label = from_label;
+        self.interdiff.to_label = to_label;
+        self.interdiff.files = Loadable::Loading;
+        self.pending_repo_requests
+            .push(crate::repo_service::RepoRequest::load_interdiff_details(
+                from, to,
+            ));
+        self.switch_view(ActiveView::Interdiff);
+    }
+
+    /// Get the diff lines for an interdiff file.
+    pub fn interdiff_diff_lines(
+        &self,
+        file_idx: crate::idx::FileIdx,
+    ) -> Option<&Vec<crate::dag::DiffLine>> {
+        let files = self.interdiff.files.loaded()?;
+        let file = files.get(file_idx.raw())?;
+        let diff = self.interdiff.file_diffs.get(&file.path)?.loaded()?;
+        Some(match self.diff_format {
+            DiffFormat::Git => &diff.git,
+            DiffFormat::ColorWords => &diff.color_words,
+        })
     }
 
     /// Number of ancestor generations to load when expanding at a terminator.
@@ -652,7 +690,10 @@ impl App {
             | DisplayRow::CommandLogDetail { .. }
             | DisplayRow::ConflictHeader { .. }
             | DisplayRow::ConflictSide { .. }
-            | DisplayRow::ConflictContext { .. } => return None,
+            | DisplayRow::ConflictContext { .. }
+            | DisplayRow::InterdiffHeader
+            | DisplayRow::InterdiffFileChange { .. }
+            | DisplayRow::InterdiffDiffLine { .. } => return None,
         };
         Some(entry_idx)
     }
@@ -693,6 +734,18 @@ impl App {
 
     pub(crate) fn change_id(&self, entry_idx: EntryIdx) -> ChangeId {
         self.nodes[entry_idx].commit.unique_change_id()
+    }
+
+    /// Resolve a change ID (prefix or full) to its commit (graph) ID via the DAG nodes.
+    pub fn commit_id_for_change(&self, change_id: &ChangeId) -> Option<CommitId> {
+        self.nodes
+            .iter()
+            .find(|n| {
+                let prefix = n.commit.unique_prefix();
+                let full = n.commit.unique_change_id();
+                prefix == *change_id || full == *change_id
+            })
+            .map(|n| n.commit.graph_id.clone())
     }
 
     pub(crate) fn file_fold_key(
@@ -825,7 +878,8 @@ impl App {
                     | DisplayRow::WorkspaceItem { .. }
                     | DisplayRow::CommandLogItem { .. }
                     | DisplayRow::FileChange { .. }
-                    | DisplayRow::EvoLogFileChange { .. } => Some(idx),
+                    | DisplayRow::EvoLogFileChange { .. }
+                    | DisplayRow::InterdiffFileChange { .. } => Some(idx),
                     _ if self.is_hunk_header(idx) => Some(idx),
                     _ => None,
                 }
@@ -897,6 +951,10 @@ impl App {
                 line_idx,
             } => self
                 .evolog_diff_lines(*evolog_idx, *file_idx)
+                .and_then(|lines| lines.get(line_idx.raw()))
+                .is_some_and(|dl| dl.kind == crate::dag::DiffLineKind::Header),
+            DisplayRow::InterdiffDiffLine { file_idx, line_idx } => self
+                .interdiff_diff_lines(*file_idx)
                 .and_then(|lines| lines.get(line_idx.raw()))
                 .is_some_and(|dl| dl.kind == crate::dag::DiffLineKind::Header),
             _ => false,

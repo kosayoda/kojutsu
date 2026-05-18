@@ -95,6 +95,9 @@ pub(super) fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Acti
             | Some(DisplayRow::ConflictHeader { .. })
             | Some(DisplayRow::ConflictSide { .. })
             | Some(DisplayRow::ConflictContext { .. })
+            | Some(DisplayRow::InterdiffHeader)
+            | Some(DisplayRow::InterdiffFileChange { .. })
+            | Some(DisplayRow::InterdiffDiffLine { .. })
             | None => None,
         };
         entry_idx.is_some_and(|idx| app.nodes[idx].commit.is_working_copy())

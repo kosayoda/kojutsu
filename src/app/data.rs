@@ -560,6 +560,51 @@ impl App {
                     self.set_error(msg);
                 }
             },
+            RepoResult::InterdiffDetails { result } => match result {
+                Ok(files) => {
+                    self.interdiff.files = Loadable::Loaded(files);
+                    if self.active_view == super::ActiveView::Interdiff {
+                        deferred.rebuild = true;
+                    }
+                }
+                Err(error) => {
+                    self.interdiff.files = Loadable::Failed(error.clone());
+                    let msg = format!("failed to load interdiff: {error}");
+                    self.push_command_log(
+                        super::CommandLogKind::Background,
+                        &msg,
+                        None,
+                        Vec::new(),
+                        false,
+                    );
+                    self.set_error(msg);
+                }
+            },
+            RepoResult::InterdiffFileDiff { path, result } => match result {
+                Ok(diff_result) => {
+                    self.interdiff
+                        .file_diffs
+                        .insert(path, Loadable::Loaded(diff_result));
+                    if self.active_view == super::ActiveView::Interdiff {
+                        deferred.rebuild = true;
+                        deferred.scroll = true;
+                    }
+                }
+                Err(error) => {
+                    self.interdiff
+                        .file_diffs
+                        .insert(path, Loadable::Failed(error.clone()));
+                    let msg = format!("failed to load interdiff file diff: {error}");
+                    self.push_command_log(
+                        super::CommandLogKind::Background,
+                        &msg,
+                        None,
+                        Vec::new(),
+                        false,
+                    );
+                    self.set_error(msg);
+                }
+            },
             RepoResult::BackgroundError { error } => {
                 let msg = format!("background task failed: {}", error.message);
                 self.push_command_log(

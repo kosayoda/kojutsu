@@ -161,6 +161,35 @@ impl CommandLogState {
     }
 }
 
+/// State for the interdiff view.
+pub struct InterdiffState {
+    pub from_commit_id: Option<CommitId>,
+    pub to_commit_id: Option<CommitId>,
+    pub from_label: Str,
+    pub to_label: Str,
+    pub files: Loadable<Vec<crate::dag::FileChange>>,
+    pub unfolded_files: HashSet<RepoPath>,
+    pub file_diffs: HashMap<RepoPath, Loadable<crate::dag::DiffResult>>,
+}
+
+impl InterdiffState {
+    pub fn new() -> Self {
+        Self {
+            from_commit_id: None,
+            to_commit_id: None,
+            from_label: Str::default(),
+            to_label: Str::default(),
+            files: Loadable::NotRequested,
+            unfolded_files: HashSet::new(),
+            file_diffs: HashMap::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::new();
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CommandLogKind {
     Command,
@@ -262,6 +291,7 @@ pub enum ActiveView {
     Workspaces,
     Evolog,
     CommandLog,
+    Interdiff,
 }
 
 impl ActiveView {
@@ -278,6 +308,7 @@ impl ActiveView {
             Self::Workspaces => SearchScopes::DEFAULT,
             Self::Evolog => SearchScopes::DEFAULT,
             Self::CommandLog => SearchScopes::DEFAULT,
+            Self::Interdiff => SearchScopes::DEFAULT,
         }
     }
 }
@@ -311,6 +342,7 @@ pub(super) fn default_view_states() -> [ViewState; <ActiveView as strum::EnumCou
         ViewState::new(ActiveView::Workspaces.default_scopes()),
         ViewState::new(ActiveView::Evolog.default_scopes()),
         ViewState::new(ActiveView::CommandLog.default_scopes()),
+        ViewState::new(ActiveView::Interdiff.default_scopes()),
     ]
 }
 

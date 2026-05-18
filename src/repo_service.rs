@@ -59,6 +59,15 @@ enum RepoRequestKind {
         to_commit_id: CommitId,
         path: RepoPath,
     },
+    InterdiffDetails {
+        from_commit_id: CommitId,
+        to_commit_id: CommitId,
+    },
+    InterdiffFileDiff {
+        from_commit_id: CommitId,
+        to_commit_id: CommitId,
+        path: RepoPath,
+    },
 }
 
 #[derive(Clone)]
@@ -86,6 +95,8 @@ pub enum RepoErrorKind {
     OpLogAccess,
     /// Failed to load evolution log, details, or file diff.
     EvoLogAccess,
+    /// Failed to load interdiff details or file diff.
+    InterdiffAccess,
     /// A background thread panicked.
     BackgroundPanic,
 }
@@ -160,6 +171,13 @@ pub enum RepoResult {
     },
     EvoLogFileDiff {
         commit_id: CommitId,
+        path: RepoPath,
+        result: Result<crate::dag::DiffResult, RepoError>,
+    },
+    InterdiffDetails {
+        result: Result<Vec<crate::dag::FileChange>, RepoError>,
+    },
+    InterdiffFileDiff {
         path: RepoPath,
         result: Result<crate::dag::DiffResult, RepoError>,
     },
@@ -245,6 +263,27 @@ impl RepoRequest {
             kind: RepoRequestKind::EvolutionLog { commit_id },
         }
     }
+
+    pub fn load_interdiff_details(from: CommitId, to: CommitId) -> Self {
+        Self {
+            epoch: 0,
+            kind: RepoRequestKind::InterdiffDetails {
+                from_commit_id: from,
+                to_commit_id: to,
+            },
+        }
+    }
+
+    pub fn load_interdiff_file_diff(from: CommitId, to: CommitId, path: RepoPath) -> Self {
+        Self {
+            epoch: 0,
+            kind: RepoRequestKind::InterdiffFileDiff {
+                from_commit_id: from,
+                to_commit_id: to,
+                path,
+            },
+        }
+    }
 }
 
 impl RepoService {
@@ -278,7 +317,11 @@ impl RepoRequestHandle {
             | RepoRequestKind::OpDiff { .. }
             | RepoRequestKind::EvolutionLog { .. }
             | RepoRequestKind::EvoLogDetails { .. }
-            | RepoRequestKind::EvoLogFileDiff { .. } => self.current_epoch.load(Ordering::SeqCst),
+            | RepoRequestKind::EvoLogFileDiff { .. }
+            | RepoRequestKind::InterdiffDetails { .. }
+            | RepoRequestKind::InterdiffFileDiff { .. } => {
+                self.current_epoch.load(Ordering::SeqCst)
+            }
         };
         let _ = self.request_tx.send(request);
     }
@@ -403,6 +446,19 @@ impl RepoServiceState {
                 path,
             } => {
                 self.handle_evolog_file_diff(epoch, from_commit_id, to_commit_id, path);
+            }
+            RepoRequestKind::InterdiffDetails {
+                from_commit_id,
+                to_commit_id,
+            } => {
+                self.handle_interdiff_details(epoch, from_commit_id, to_commit_id);
+            }
+            RepoRequestKind::InterdiffFileDiff {
+                from_commit_id,
+                to_commit_id,
+                path,
+            } => {
+                self.handle_interdiff_file_diff(epoch, from_commit_id, to_commit_id, path);
             }
         }
     }
@@ -942,6 +998,73 @@ impl RepoServiceState {
                         path,
                         result: Err(RepoError {
                             kind: RepoErrorKind::EvoLogAccess,
+                            message: format!("{err:#}"),
+                        }),
+                    },
+                );
+            }
+        }
+    }
+
+    fn handle_interdiff_details(
+        &mut self,
+        epoch: u64,
+        from_commit_id: CommitId,
+        to_commit_id: CommitId,
+    ) {
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::InterdiffDetails {
+            result: Err(error),
+        }) else {
+            return;
+        };
+        match repo.interdiff_details(from_commit_id.as_str(), to_commit_id.as_str()) {
+            Ok(files) => {
+                self.send_if_current(epoch, RepoResult::InterdiffDetails { result: Ok(files) });
+            }
+            Err(err) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::InterdiffDetails {
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::InterdiffAccess,
+                            message: format!("{err:#}"),
+                        }),
+                    },
+                );
+            }
+        }
+    }
+
+    fn handle_interdiff_file_diff(
+        &mut self,
+        epoch: u64,
+        from_commit_id: CommitId,
+        to_commit_id: CommitId,
+        path: RepoPath,
+    ) {
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::InterdiffFileDiff {
+            path: path.clone(),
+            result: Err(error),
+        }) else {
+            return;
+        };
+        match repo.interdiff_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path) {
+            Ok(result) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::InterdiffFileDiff {
+                        path,
+                        result: Ok(result),
+                    },
+                );
+            }
+            Err(err) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::InterdiffFileDiff {
+                        path,
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::InterdiffAccess,
                             message: format!("{err:#}"),
                         }),
                     },

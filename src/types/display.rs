@@ -111,4 +111,13 @@ pub enum DisplayRow {
         hunk_idx: ConflictHunkIdx,
         line_idx: ConflictLineIdx,
     },
+    /// Header row in the interdiff view.
+    InterdiffHeader,
+    /// A file change row in the interdiff view.
+    InterdiffFileChange { file_idx: FileIdx },
+    /// A diff line within an unfolded interdiff file.
+    InterdiffDiffLine {
+        file_idx: FileIdx,
+        line_idx: DiffLineIdx,
+    },
 }
