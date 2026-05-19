@@ -2117,6 +2117,35 @@ impl JjRepo {
         let mut commit_cache: HashMap<BackendCommitId, CachedMeta> = HashMap::new();
         let mut commit_info: HashMap<UiCommitId, crate::dag::AnnotateCommitInfo> = HashMap::new();
 
+        // Pre-seed with the annotated-at commit so header info is always available.
+        {
+            let change_id = Self::short_change_id(&prefix_index, repo, &commit);
+            let short_cid = Self::short_commit_id(&prefix_index, repo, &backend_id);
+            let author_sig = commit.author();
+            let committer_sig = commit.committer();
+            commit_info.insert(
+                commit_id.clone(),
+                crate::dag::AnnotateCommitInfo {
+                    commit_id: short_cid,
+                    change_id,
+                    author_name: author_sig.name.clone(),
+                    author_email: author_sig.email.clone(),
+                    author_date: format_absolute_time(&author_sig.timestamp),
+                    committer_name: committer_sig.name.clone(),
+                    committer_email: committer_sig.email.clone(),
+                    committer_date: format_absolute_time(&committer_sig.timestamp),
+                    description_lines: {
+                        let trimmed = commit.description().trim();
+                        if trimmed.is_empty() {
+                            Vec::new()
+                        } else {
+                            trimmed.lines().map(String::from).collect()
+                        }
+                    },
+                },
+            );
+        }
+
         let mut lines = Vec::new();
         for (line_number, (origin_result, content)) in annotation.line_origins().enumerate() {
             let (origin, outside_domain) = match origin_result {

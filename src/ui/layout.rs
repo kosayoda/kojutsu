@@ -7,6 +7,7 @@ use ratatui::Frame;
 use crate::app::{App, StatusLevel, GLOBAL_TOGGLES};
 use crate::theme::Theme;
 
+
 /// Minimum separator between repo and revset when on a single line.
 pub(super) const HEADER_SEP: &str = "  ";
 
@@ -85,6 +86,64 @@ pub(super) fn draw_header(
     };
     if let Some(line) = workspace_filter_line {
         header.push(line);
+    }
+    if app.active_view == crate::app::ActiveView::Annotate {
+        let mut spans = Vec::new();
+        if let Some(path) = &app.annotate.path {
+            spans.push(Span::styled("annotate: ", Style::default().fg(theme.muted)));
+            spans.push(Span::styled(
+                path.as_str(),
+                Style::default().fg(theme.text),
+            ));
+        }
+        if let Some(cid) = &app.annotate.commit_id {
+            if let Some(info) = app.annotate.commit_info.get(cid) {
+                // Change ID (prefix highlighted, suffix muted)
+                spans.push(Span::styled("  ", Style::default()));
+                let ch_prefix = info.change_id.display[..info.change_id.prefix_len.min(info.change_id.display.len())].to_string();
+                let ch_suffix = info.change_id.display[info.change_id.prefix_len.min(info.change_id.display.len())..].to_string();
+                spans.push(Span::styled(ch_prefix, Style::default().fg(theme.change_id).add_modifier(Modifier::BOLD)));
+                if !ch_suffix.is_empty() {
+                    spans.push(Span::styled(ch_suffix, Style::default().fg(theme.muted)));
+                }
+                // Commit ID (prefix highlighted, suffix muted)
+                spans.push(Span::styled("  ", Style::default()));
+                let co_prefix = info.commit_id.display[..info.commit_id.prefix_len.min(info.commit_id.display.len())].to_string();
+                let co_suffix = info.commit_id.display[info.commit_id.prefix_len.min(info.commit_id.display.len())..].to_string();
+                spans.push(Span::styled(co_prefix, Style::default().fg(theme.commit_id).add_modifier(Modifier::BOLD)));
+                if !co_suffix.is_empty() {
+                    spans.push(Span::styled(co_suffix, Style::default().fg(theme.muted)));
+                }
+                // Author
+                spans.push(Span::styled(
+                    format!("  {} <{}>", info.author_name, info.author_email),
+                    Style::default().fg(theme.muted),
+                ));
+                // Date
+                spans.push(Span::styled(
+                    format!("  {}", info.author_date),
+                    Style::default().fg(theme.muted),
+                ));
+                // First line of description
+                if let Some(first_line) = info.description_lines.first() {
+                    spans.push(Span::styled("  ", Style::default()));
+                    spans.push(Span::styled(
+                        first_line.clone(),
+                        Style::default().fg(theme.text),
+                    ));
+                }
+            } else {
+                // Data not yet loaded — show raw commit ID
+                spans.push(Span::styled(" @ ", Style::default().fg(theme.muted)));
+                spans.push(Span::styled(
+                    cid.as_str().get(..12).unwrap_or(cid.as_str()),
+                    Style::default().fg(theme.commit_id),
+                ));
+            }
+        }
+        if !spans.is_empty() {
+            header.push(Line::from(spans));
+        }
     }
     frame.render_widget(Paragraph::new(header), area);
 }

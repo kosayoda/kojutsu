@@ -603,26 +603,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     render_simple_diff_line(diff_line, row_search.as_ref(), theme, &tab_spaces)
                 }
                 DisplayRow::AnnotateHeader => {
-                    let path = app
-                        .annotate
-                        .path
-                        .as_ref()
-                        .map(|p| p.as_str().to_string())
-                        .unwrap_or_default();
-                    let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
-                    spans.push(Span::styled(
-                        "  annotate: ",
-                        Style::default().fg(theme.muted),
-                    ));
-                    spans.push(Span::styled(path, Style::default().fg(theme.text)));
-                    if let Some(cid) = &app.annotate.commit_id {
-                        spans.push(Span::styled(" @ ", Style::default().fg(theme.muted)));
-                        spans.push(Span::styled(
-                            cid.as_str().get(..12).unwrap_or(cid.as_str()).to_string(),
-                            Style::default().fg(theme.commit_id),
-                        ));
-                    }
-                    vec![Line::from(spans)]
+                    // Rendered in the fixed header area, not in the scrollable list.
+                    vec![Line::raw("")]
                 }
                 DisplayRow::AnnotateLine { line_idx } => {
                     let line = app

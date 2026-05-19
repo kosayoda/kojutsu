@@ -784,7 +784,6 @@ impl App {
     fn rebuild_annotate_rows(&mut self) {
         let prev_cursor = self.rows.get(self.cursor.raw()).copied();
         self.rows.clear();
-        self.rows.push(DisplayRow::AnnotateHeader);
 
         if let Loadable::Loaded(lines) = &self.annotate.lines {
             for li in 0..lines.len() {

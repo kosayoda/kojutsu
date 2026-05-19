@@ -24,7 +24,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
     let base_height: u16 = if single_line { 1 } else { 2 };
     let show_ws_filter = app.active_view == crate::app::ActiveView::Operations
         && !app.op_log.workspace_filter.is_empty();
-    let header_height = base_height + if show_ws_filter { 1 } else { 0 };
+    let show_annotate_header = app.active_view == crate::app::ActiveView::Annotate;
+    let header_height =
+        base_height + if show_ws_filter { 1 } else { 0 } + if show_annotate_header { 1 } else { 0 };
 
     let [header_area, main_area, status_area] = Layout::vertical([
         Constraint::Length(header_height),
