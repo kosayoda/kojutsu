@@ -174,6 +174,7 @@ pub enum AppAction {
     FileAnnotate,
     AnnotateGoToCommit,
     AnnotateTimeTravel,
+    AnnotateForward,
     // Op log view actions
     OpLogRestore,
     OpLogRevert,
@@ -697,6 +698,7 @@ impl Default for Keymaps {
                 "blame at this commit",
                 C,
             ),
+            bind("f", AppAction::AnnotateForward, "forward (undo blame)", C),
         ]);
 
         Keymaps {
@@ -903,7 +905,9 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::ResolveOurs
         | AppAction::ResolveTheirs
         | AppAction::ResolveMergeTool => &[File],
-        AppAction::AnnotateGoToCommit | AppAction::AnnotateTimeTravel => &[Commit],
+        AppAction::AnnotateGoToCommit
+        | AppAction::AnnotateTimeTravel
+        | AppAction::AnnotateForward => &[Commit],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }
@@ -961,9 +965,10 @@ pub fn action_label(action: AppAction) -> &'static str {
             "resolve"
         }
         AppAction::Interdiff | AppAction::EvoLogInterdiff => "interdiff",
-        AppAction::FileAnnotate | AppAction::AnnotateGoToCommit | AppAction::AnnotateTimeTravel => {
-            "annotate"
-        }
+        AppAction::FileAnnotate
+        | AppAction::AnnotateGoToCommit
+        | AppAction::AnnotateTimeTravel
+        | AppAction::AnnotateForward => "annotate",
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",

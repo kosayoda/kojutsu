@@ -469,6 +469,24 @@ impl App {
         self.switch_view(ActiveView::Annotate);
     }
 
+    /// Navigate to a different commit within the annotate view (time travel).
+    /// Preserves the history stack for backtracking.
+    pub fn annotate_navigate(&mut self, commit_id: CommitId, target_line: usize) {
+        let Some(path) = self.annotate.path.clone() else {
+            return;
+        };
+        self.annotate.clear_keep_history();
+        self.annotate.commit_id = Some(commit_id.clone());
+        self.annotate.path = Some(path.clone());
+        self.annotate.lines = Loadable::Loading;
+        self.annotate.target_line = Some(target_line);
+        self.pending_repo_requests
+            .push(crate::repo_service::RepoRequest::load_file_annotate(
+                commit_id, path,
+            ));
+        self.rebuild_rows();
+    }
+
     /// Get the selected annotate line data (if cursor is on an annotate line).
     pub fn selected_annotate_line(&self) -> Option<&crate::dag::AnnotateLineData> {
         let line_idx = match self.rows.get(self.cursor.raw())? {

@@ -1407,12 +1407,25 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
         }
         AppAction::AnnotateTimeTravel => {
             if let Some(line) = app.selected_annotate_line() {
-                let commit_id = line.commit_id.clone();
+                let new_commit = line.commit_id.clone();
                 let line_number = line.line_number;
-                if let Some(path) = app.annotate.path.clone() {
-                    app.enter_annotate_view(commit_id, path);
-                    app.annotate.target_line = Some(line_number);
+                let same_commit = app
+                    .annotate
+                    .commit_id
+                    .as_ref()
+                    .is_some_and(|c| *c == new_commit);
+                if !same_commit {
+                    if let Some(current_commit) = app.annotate.commit_id.clone() {
+                        app.annotate.history.push((current_commit, line_number));
+                    }
+                    app.annotate_navigate(new_commit, line_number);
                 }
+            }
+            Action::None
+        }
+        AppAction::AnnotateForward => {
+            if let Some((prev_commit, prev_line)) = app.annotate.history.pop() {
+                app.annotate_navigate(prev_commit, prev_line);
             }
             Action::None
         }

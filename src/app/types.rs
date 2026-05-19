@@ -204,6 +204,8 @@ pub struct AnnotateState {
     pub unfolded_lines: HashSet<usize>,
     /// After reload, jump cursor to this 1-based line number.
     pub target_line: Option<usize>,
+    /// Time-travel history stack: (commit_id, line_number) for backtracking with `f`.
+    pub history: Vec<(CommitId, usize)>,
 }
 
 impl AnnotateState {
@@ -215,7 +217,15 @@ impl AnnotateState {
             commit_info: HashMap::new(),
             unfolded_lines: HashSet::new(),
             target_line: None,
+            history: Vec::new(),
         }
+    }
+
+    /// Clear state for a fresh annotation, but preserve history stack.
+    pub fn clear_keep_history(&mut self) {
+        let history = std::mem::take(&mut self.history);
+        *self = Self::new();
+        self.history = history;
     }
 
     pub fn clear(&mut self) {
