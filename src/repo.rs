@@ -288,6 +288,49 @@ impl JjRepo {
         }
     }
 
+    /// Resolve a revset to a single commit's hex ID.
+    pub fn resolve_single_commit(&self, revset_str: &str) -> Result<String> {
+        let repo = self.repo.as_ref();
+        let extensions = RevsetExtensions::default();
+        let fileset_aliases_map = FilesetAliasesMap::new();
+        let path_converter = RepoPathUiConverter::Fs {
+            cwd: self.workspace_root.clone(),
+            base: self.workspace_root.clone(),
+        };
+        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
+        let mut diagnostics = RevsetDiagnostics::new();
+        let parsed = jj_lib::revset::parse(&mut diagnostics, revset_str, &context)
+            .wrap_err_with(|| format!("failed to parse revset: {revset_str}"))?;
+        let symbol_resolver = SymbolResolver::new(
+            repo,
+            &[] as &[Box<dyn jj_lib::revset::SymbolResolverExtension>],
+        );
+        let resolved = parsed
+            .resolve_user_expression(repo, &symbol_resolver)
+            .wrap_err("failed to resolve revset symbols")?;
+        let revset = resolved
+            .evaluate(repo)
+            .wrap_err("failed to evaluate revset")?;
+        let mut ids: Vec<BackendCommitId> = revset.stream().try_collect().block_on()?;
+        match ids.len() {
+            0 => color_eyre::eyre::bail!("revset '{revset_str}' matched no commits"),
+            1 => Ok(ids.remove(0).hex()),
+            n => color_eyre::eyre::bail!("revset '{revset_str}' matched {n} commits, expected 1"),
+        }
+    }
+
+    /// Convert a filesystem path to a repo-internal path string.
+    pub fn parse_file_path(&self, input: &str) -> Result<String> {
+        let path_converter = RepoPathUiConverter::Fs {
+            cwd: self.workspace_root.clone(),
+            base: self.workspace_root.clone(),
+        };
+        let repo_path = path_converter
+            .parse_file_path(input)
+            .map_err(|e| color_eyre::eyre::eyre!("invalid file path '{input}': {e}"))?;
+        Ok(repo_path.as_internal_file_string().to_string())
+    }
+
     /// Evaluate a revset string and return DAG entries in topological order
     /// with graph edges for rendering.
     pub fn evaluate_revset(&self, revset_str: &str) -> Result<RevsetResult> {

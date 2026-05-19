@@ -50,6 +50,23 @@ struct Cli {
     /// Internal: right directory for diff tool mode (positional).
     #[arg(hide = true)]
     diff_right: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<CliCommand>,
+}
+
+#[derive(clap::Subcommand)]
+enum CliCommand {
+    /// Show line-by-line annotation (blame) for a file
+    #[command(alias = "annotate")]
+    Blame {
+        /// File to annotate
+        file: String,
+
+        /// Revision to annotate at (default: @)
+        #[arg(short = 'r', long = "revision", default_value = "@")]
+        revision: String,
+    },
 }
 
 fn main() -> Result<()> {
@@ -80,6 +97,17 @@ fn main() -> Result<()> {
         find_workspace_dir(&cwd).to_path_buf()
     } else {
         cli.repository.canonicalize().unwrap_or(cli.repository)
+    };
+
+    // Handle blame subcommand: resolve commit + path before entering TUI.
+    let blame_target = if let Some(CliCommand::Blame { file, revision }) = &cli.command {
+        let _ = JjRepo::snapshot(&repo_path);
+        let jj = JjRepo::open(&repo_path)?;
+        let commit_hex = jj.resolve_single_commit(revision)?;
+        let internal_path = jj.parse_file_path(file)?;
+        Some((commit_hex, internal_path))
+    } else {
+        None
     };
 
     if cli.debug_graph {
@@ -128,6 +156,14 @@ fn main() -> Result<()> {
     app.apply_persisted_state(&persisted);
     app.revset.active_preset = active_preset;
     app.request_revset_load(requested_revset);
+
+    // If launched with `blame`, enter annotate view immediately.
+    if let Some((commit_hex, internal_path)) = blame_target {
+        let commit_id = kojutsu::types::CommitId::new(&commit_hex);
+        let path = kojutsu::types::RepoPath::new(&internal_path);
+        app.enter_annotate_view(commit_id, path);
+    }
+
     flush_repo_requests(&mut app, &repo_requests);
     let mut terminal = kojutsu::terminal::init()?;
     let mut terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
