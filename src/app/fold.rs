@@ -804,6 +804,22 @@ impl App {
             }
         }
 
+        // Jump to target line after time-travel reload.
+        // Only consume target_line when data is actually loaded.
+        if self.annotate.lines.loaded().is_some() {
+            if let Some(target) = self.annotate.target_line.take() {
+                if let Some(row_idx) = self.rows.iter().position(|r| {
+                    matches!(r, DisplayRow::AnnotateLine { line_idx }
+                        if self.annotate.lines.loaded()
+                            .and_then(|l| l.get(line_idx.raw()))
+                            .is_some_and(|l| l.line_number == target))
+                }) {
+                    self.cursor = crate::idx::RowIdx::new(row_idx);
+                    return;
+                }
+            }
+        }
+
         self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
     }
 

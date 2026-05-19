@@ -1405,6 +1405,17 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             }
             Action::None
         }
+        AppAction::AnnotateTimeTravel => {
+            if let Some(line) = app.selected_annotate_line() {
+                let commit_id = line.commit_id.clone();
+                let line_number = line.line_number;
+                if let Some(path) = app.annotate.path.clone() {
+                    app.enter_annotate_view(commit_id, path);
+                    app.annotate.target_line = Some(line_number);
+                }
+            }
+            Action::None
+        }
         AppAction::AnnotateGoToCommit => {
             if let Some(line) = app.selected_annotate_line() {
                 let commit_id = line.commit_id.clone();

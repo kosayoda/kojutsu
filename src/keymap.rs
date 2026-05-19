@@ -173,6 +173,7 @@ pub enum AppAction {
     // Annotate (blame)
     FileAnnotate,
     AnnotateGoToCommit,
+    AnnotateTimeTravel,
     // Op log view actions
     OpLogRestore,
     OpLogRevert,
@@ -688,12 +689,15 @@ impl Default for Keymaps {
         let interdiff_root = shared_bindings();
 
         let mut annotate_root = shared_bindings();
-        annotate_root.extend(vec![bind(
-            "enter",
-            AppAction::AnnotateGoToCommit,
-            "go to commit",
-            C,
-        )]);
+        annotate_root.extend(vec![
+            bind("enter", AppAction::AnnotateGoToCommit, "go to commit", C),
+            bind(
+                "b",
+                AppAction::AnnotateTimeTravel,
+                "blame at this commit",
+                C,
+            ),
+        ]);
 
         Keymaps {
             dag: Keymap { root: dag_root },
@@ -899,7 +903,7 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::ResolveOurs
         | AppAction::ResolveTheirs
         | AppAction::ResolveMergeTool => &[File],
-        AppAction::AnnotateGoToCommit => &[Commit],
+        AppAction::AnnotateGoToCommit | AppAction::AnnotateTimeTravel => &[Commit],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }
@@ -957,7 +961,9 @@ pub fn action_label(action: AppAction) -> &'static str {
             "resolve"
         }
         AppAction::Interdiff | AppAction::EvoLogInterdiff => "interdiff",
-        AppAction::FileAnnotate | AppAction::AnnotateGoToCommit => "annotate",
+        AppAction::FileAnnotate | AppAction::AnnotateGoToCommit | AppAction::AnnotateTimeTravel => {
+            "annotate"
+        }
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",

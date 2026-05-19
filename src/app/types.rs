@@ -202,6 +202,8 @@ pub struct AnnotateState {
     pub commit_info: HashMap<CommitId, crate::dag::AnnotateCommitInfo>,
     /// Line indices that are currently unfolded (showing details).
     pub unfolded_lines: HashSet<usize>,
+    /// After reload, jump cursor to this 1-based line number.
+    pub target_line: Option<usize>,
 }
 
 impl AnnotateState {
@@ -212,6 +214,7 @@ impl AnnotateState {
             lines: Loadable::NotRequested,
             commit_info: HashMap::new(),
             unfolded_lines: HashSet::new(),
+            target_line: None,
         }
     }
 
