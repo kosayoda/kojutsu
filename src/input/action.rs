@@ -475,10 +475,16 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.expand_ancestors(entry_idx);
             Action::None
         }
-        AppAction::Fix => make_multi_command(app, |ids| JJCommand {
-            kind: JJCommandKind::Fix { change_ids: ids },
-            flags,
-        }),
+        AppAction::Fix => {
+            let selection = build_change_selection(app);
+            make_multi_command(app, |ids| JJCommand {
+                kind: JJCommandKind::Fix {
+                    change_ids: ids,
+                    selection: selection.clone(),
+                },
+                flags,
+            })
+        }
         AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
             // Check if cursor is on a conflict hunk row (per-hunk resolution).
             if let Some(DisplayRow::ConflictHeader {

@@ -194,6 +194,7 @@ pub enum JJCommandKind {
     },
     Fix {
         change_ids: SmallVec<ChangeId>,
+        selection: ChangeSelection,
     },
     FileUntrack {
         paths: SmallVec<Str>,
@@ -765,11 +766,16 @@ impl JJCommand {
             JJCommandKind::OpAbandon { op_id, .. } => {
                 vec!["op".into(), "abandon".into(), Str::from(op_id.as_str())]
             }
-            JJCommandKind::Fix { change_ids, .. } => {
+            JJCommandKind::Fix {
+                change_ids,
+                selection,
+                ..
+            } => {
                 let mut args: Vec<Str> = vec!["fix".into(), "-s".into()];
                 for id in change_ids {
                     args.push(format_compact!("{id}"));
                 }
+                push_change_selection(&mut args, &selection);
                 args
             }
             JJCommandKind::FileUntrack { paths, .. } => {

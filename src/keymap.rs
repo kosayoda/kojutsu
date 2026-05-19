@@ -835,7 +835,8 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
     use SelectionKind::{Commit, File, Line};
     match action {
         // File+line selection support requires explicit opt-in.
-        AppAction::Absorb | AppAction::Interdiff => &[Commit],
+        AppAction::Absorb | AppAction::Fix => &[Commit, File],
+        AppAction::Interdiff => &[Commit],
         AppAction::EvoLogInterdiff => &[Commit],
         // Operations that only make sense at commit level.
         AppAction::Abandon
@@ -872,7 +873,6 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::SimplifyParents
         | AppAction::Revert
         | AppAction::ExpandAncestors
-        | AppAction::Fix
         | AppAction::TagSet
         | AppAction::TagDelete => &[Commit],
         AppAction::FileUntrack
