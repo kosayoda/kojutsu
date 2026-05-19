@@ -2186,9 +2186,13 @@ impl JjRepo {
                 relative_time: meta.relative_time.clone(),
                 line_number: line_number + 1,
                 content: content_str,
+                syntax_tokens: Vec::new(),
                 outside_domain,
             });
         }
+
+        // Syntax-highlight all lines in a second pass.
+        syntax_highlight_lines(&mut lines, file_path.as_str());
 
         Ok(crate::dag::AnnotateResult { lines, commit_info })
     }
@@ -2463,6 +2467,172 @@ pub fn millis_to_relative_time(millis: i64) -> Str {
     match chrono::DateTime::from_timestamp(secs, nanos) {
         Some(dt) => format_relative_time(dt).into(),
         None => "unknown".into(),
+    }
+}
+
+/// Apply syntax highlighting to annotate lines based on file extension.
+/// Uses ANSI terminal colors so highlighting respects the user's color scheme.
+fn syntax_highlight_lines(lines: &mut [crate::dag::AnnotateLineData], file_path: &str) {
+    use syntect::easy::HighlightLines;
+    use syntect::highlighting::Color;
+    use syntect::parsing::SyntaxSet;
+
+    let ss = SyntaxSet::load_defaults_newlines();
+
+    let syntax = file_path
+        .rsplit('.')
+        .next()
+        .and_then(|ext| ss.find_syntax_by_extension(ext))
+        .or_else(|| {
+            let name = file_path.rsplit('/').next().unwrap_or(file_path);
+            ss.find_syntax_by_extension(name)
+        })
+        .unwrap_or_else(|| ss.find_syntax_plain_text());
+
+    if syntax.name == "Plain Text" {
+        return;
+    }
+
+    // ANSI color palette indices used as sentinel RGB values.
+    // We encode ANSI index N as RGB(N, 0, 1) so we can decode it back.
+    let ansi = |idx: u8| Color {
+        r: idx,
+        g: 0,
+        b: 1,
+        a: 0xFF,
+    };
+
+    let theme = build_ansi_theme(ansi);
+    let mut h = HighlightLines::new(syntax, &theme);
+
+    for line in lines.iter_mut() {
+        let input = format!("{}\n", line.content);
+        let Ok(regions) = h.highlight_line(&input, &ss) else {
+            continue;
+        };
+        let mut tokens = Vec::new();
+        for (style, text) in regions {
+            let trimmed = text.trim_end_matches('\n');
+            if trimmed.is_empty() {
+                continue;
+            }
+            let fg = style.foreground;
+            let color_idx = if fg.g == 0 && fg.b == 1 {
+                fg.r // decode our sentinel
+            } else {
+                7 // default: ANSI white
+            };
+            tokens.push(crate::dag::SyntaxToken {
+                text: trimmed.to_string(),
+                color_idx,
+            });
+        }
+        line.syntax_tokens = tokens;
+    }
+}
+
+/// Build a syntect Theme that maps syntax scopes to ANSI terminal color indices.
+/// Color mapping follows the koda colorscheme conventions.
+fn build_ansi_theme(
+    ansi: impl Fn(u8) -> syntect::highlighting::Color,
+) -> syntect::highlighting::Theme {
+    use std::str::FromStr;
+    use syntect::highlighting::{ScopeSelectors, Theme, ThemeItem, ThemeSettings};
+
+    let item = |scope: &str, color_idx: u8| ThemeItem {
+        scope: ScopeSelectors::from_str(scope).unwrap_or_default(),
+        style: syntect::highlighting::StyleModifier {
+            foreground: Some(ansi(color_idx)),
+            background: None,
+            font_style: None,
+        },
+    };
+
+    // ANSI indices: 1=red, 2=green, 3=yellow, 4=blue, 5=magenta, 6=cyan,
+    //              7=white(fg), 8=bright black(dim)
+    Theme {
+        name: Some("ansi".to_string()),
+        author: None,
+        settings: ThemeSettings {
+            foreground: Some(ansi(7)),
+            background: Some(ansi(0)),
+            ..Default::default()
+        },
+        scopes: vec![
+            // Comments (including delimiters like ///) → dim (fg_alt)
+            item("comment", 8),
+            item("punctuation.definition.comment", 8),
+            // Strings, characters → green (including quote delimiters)
+            item("string", 2),
+            item("constant.character", 2),
+            item("punctuation.definition.string", 2),
+            // Numbers, booleans, floats, special chars → yellow (orange equivalent)
+            item("constant.numeric", 3),
+            item("constant.character.escape", 3),
+            item("constant.other.placeholder", 3),
+            // Language constants (true/false/nil) → cyan
+            item("constant.language", 6),
+            item("constant", 6),
+            item("entity.name.constant", 6),
+            // Keywords, control flow, storage → red
+            item("keyword", 1),
+            item("storage", 1),
+            item("keyword.control.import", 1),
+            // Repeat keywords (for/while/loop) → magenta
+            item("keyword.control.repeat", 5),
+            // Types, structures, traits, interfaces → blue
+            item("entity.name.type", 4),
+            item("entity.name.class", 4),
+            item("entity.name.struct", 4),
+            item("entity.name.enum", 4),
+            item("entity.name.union", 4),
+            item("entity.name.trait", 4),
+            item("entity.name.impl", 4),
+            item("entity.name.interface", 4),
+            item("entity.other.inherited-class", 4),
+            item("support.type", 4),
+            item("support.class", 4),
+            // Functions → yellow
+            item("entity.name.function", 3),
+            item("support.function", 3),
+            item("variable.function", 3),
+            // Macros → magenta (override function parent)
+            item("entity.name.function.macro", 5),
+            item("support.macro", 5),
+            item("entity.name.macro", 5),
+            item("meta.attribute", 5),
+            // Variables, identifiers → default fg
+            item("variable", 7),
+            // Operators, delimiters, punctuation → default fg
+            item("keyword.operator", 7),
+            item("punctuation", 7),
+            // Properties, members, labels, attributes → magenta (purple equivalent)
+            item("variable.other.member", 5),
+            item("variable.other.property", 5),
+            item("entity.name.label", 5),
+            item("entity.other.attribute-name", 5),
+            item("variable.annotation", 5),
+            // Tags (HTML/XML) → red
+            item("entity.name.tag", 1),
+            // Modules, namespaces → default fg
+            item("entity.name.module, entity.name.namespace", 7),
+            // Language builtins (self, super, etc.) → cyan
+            item("variable.language", 6),
+            item("support.constant", 6),
+            // Invalid → red
+            item("invalid", 1),
+            // Markup (markdown, etc.)
+            item("markup.heading, entity.name.section", 4),
+            item("markup.list", 1),
+            item("markup.raw", 2),
+            item("markup.underline.link", 6),
+            item("markup.link", 6),
+            item("markup.quote", 8),
+            item("markup.inserted", 2),
+            item("markup.deleted", 1),
+            item("markup.changed", 3),
+        ],
+        ..Default::default()
     }
 }
 

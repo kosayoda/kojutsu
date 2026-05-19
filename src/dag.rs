@@ -427,6 +427,13 @@ pub struct AnnotateResult {
     pub commit_info: HashMap<CommitId, AnnotateCommitInfo>,
 }
 
+/// A syntax-highlighted token within a line.
+pub struct SyntaxToken {
+    pub text: String,
+    /// ANSI color index (0-15 for terminal palette colors).
+    pub color_idx: u8,
+}
+
 /// A single line from file annotation (blame).
 pub struct AnnotateLineData {
     /// Full hex commit ID (for jump-to-commit).
@@ -439,8 +446,10 @@ pub struct AnnotateLineData {
     pub relative_time: crate::types::Str,
     /// 1-based line number in the current file.
     pub line_number: usize,
-    /// The line content.
+    /// The line content (plain text, used for search).
     pub content: String,
+    /// Syntax-highlighted tokens for rendering. Empty if highlighting unavailable.
+    pub syntax_tokens: Vec<SyntaxToken>,
     /// Whether this line's origin was outside the annotation domain.
     pub outside_domain: bool,
 }

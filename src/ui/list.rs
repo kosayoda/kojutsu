@@ -660,8 +660,27 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             format!("{:>5}: ", line.line_number),
                             Style::default().fg(theme.muted),
                         ));
-                        let content = expand_tabs(&line.content, &tab_spaces);
-                        spans.push(Span::styled(content, Style::default().fg(theme.text)));
+                        let search_active = row_search
+                            .as_ref()
+                            .is_some_and(|s| s.row_state != SearchRowState::None);
+                        if line.syntax_tokens.is_empty() || search_active {
+                            let content = expand_tabs(&line.content, &tab_spaces);
+                            push_searchable(
+                                &mut spans,
+                                &content,
+                                SearchScopes::LINE,
+                                Style::default().fg(theme.text),
+                                row_search.as_ref(),
+                            );
+                        } else {
+                            for token in &line.syntax_tokens {
+                                let text = expand_tabs(&token.text, &tab_spaces);
+                                spans.push(Span::styled(
+                                    text,
+                                    Style::default().fg(Color::Indexed(token.color_idx)),
+                                ));
+                            }
+                        }
                         vec![Line::from(spans)]
                     } else {
                         vec![Line::raw("")]
