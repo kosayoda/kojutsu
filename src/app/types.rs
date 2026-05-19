@@ -198,6 +198,10 @@ pub struct AnnotateState {
     pub path: Option<RepoPath>,
     /// Annotation lines.
     pub lines: Loadable<Vec<crate::dag::AnnotateLineData>>,
+    /// Per-commit detail metadata for expansion.
+    pub commit_info: HashMap<CommitId, crate::dag::AnnotateCommitInfo>,
+    /// Line indices that are currently unfolded (showing details).
+    pub unfolded_lines: HashSet<usize>,
 }
 
 impl AnnotateState {
@@ -206,6 +210,8 @@ impl AnnotateState {
             commit_id: None,
             path: None,
             lines: Loadable::NotRequested,
+            commit_info: HashMap::new(),
+            unfolded_lines: HashSet::new(),
         }
     }
 

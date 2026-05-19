@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use compact_str::format_compact;
 use jiff::Timestamp;
 
@@ -396,6 +398,33 @@ pub struct DiffResult {
     pub git: Vec<DiffLine>,
     /// Color-words format with inline removed/added tokens.
     pub color_words: Vec<DiffLine>,
+}
+
+/// Per-commit metadata for the annotate detail expansion.
+pub struct AnnotateCommitInfo {
+    pub commit_id: ShortId,
+    pub change_id: ShortId,
+    pub author_name: String,
+    pub author_email: String,
+    pub author_date: String,
+    pub committer_name: String,
+    pub committer_email: String,
+    pub committer_date: String,
+    /// Pre-split description lines (trimmed). Empty vec → "(no description set)".
+    pub description_lines: Vec<String>,
+}
+
+impl AnnotateCommitInfo {
+    /// Number of detail rows this commit info expands to.
+    pub fn detail_row_count(&self) -> usize {
+        4 + self.description_lines.len().max(1)
+    }
+}
+
+/// Result from file annotation: lines + per-commit metadata.
+pub struct AnnotateResult {
+    pub lines: Vec<AnnotateLineData>,
+    pub commit_info: HashMap<CommitId, AnnotateCommitInfo>,
 }
 
 /// A single line from file annotation (blame).

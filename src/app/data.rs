@@ -606,8 +606,9 @@ impl App {
                 }
             },
             RepoResult::Annotate { result } => match result {
-                Ok(lines) => {
-                    self.annotate.lines = Loadable::Loaded(lines);
+                Ok(annotate_result) => {
+                    self.annotate.lines = Loadable::Loaded(annotate_result.lines);
+                    self.annotate.commit_info = annotate_result.commit_info;
                     if self.active_view == super::ActiveView::Annotate {
                         deferred.rebuild = true;
                     }

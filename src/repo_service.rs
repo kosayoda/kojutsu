@@ -188,7 +188,7 @@ pub enum RepoResult {
         result: Result<crate::dag::DiffResult, RepoError>,
     },
     Annotate {
-        result: Result<Vec<crate::dag::AnnotateLineData>, RepoError>,
+        result: Result<crate::dag::AnnotateResult, RepoError>,
     },
     /// A background computation thread panicked or failed.
     BackgroundError { error: RepoError },

@@ -567,6 +567,22 @@ impl App {
             Some(DisplayRow::InterdiffDiffLine { file_idx, .. }) => {
                 self.toggle_interdiff_file_fold(*file_idx);
             }
+            Some(DisplayRow::AnnotateLine { line_idx }) => {
+                let idx = line_idx.raw();
+                if self.annotate.unfolded_lines.contains(&idx) {
+                    self.annotate.unfolded_lines.remove(&idx);
+                } else {
+                    self.annotate.unfolded_lines.insert(idx);
+                }
+                self.rebuild_rows();
+                if self.annotate.unfolded_lines.contains(&idx) {
+                    self.scroll_to_show_children();
+                }
+            }
+            Some(DisplayRow::AnnotateDetail { line_idx, .. }) => {
+                self.annotate.unfolded_lines.remove(&line_idx.raw());
+                self.rebuild_rows();
+            }
             _ => {}
         }
     }
@@ -772,9 +788,19 @@ impl App {
 
         if let Loadable::Loaded(lines) = &self.annotate.lines {
             for li in 0..lines.len() {
-                self.rows.push(DisplayRow::AnnotateLine {
-                    line_idx: crate::idx::AnnotateLineIdx::new(li),
-                });
+                let line_idx = crate::idx::AnnotateLineIdx::new(li);
+                self.rows.push(DisplayRow::AnnotateLine { line_idx });
+
+                if self.annotate.unfolded_lines.contains(&li) {
+                    if let Some(info) = self.annotate.commit_info.get(&lines[li].commit_id) {
+                        for di in 0..info.detail_row_count() {
+                            self.rows.push(DisplayRow::AnnotateDetail {
+                                line_idx,
+                                detail_idx: crate::idx::AnnotateDetailIdx::new(di),
+                            });
+                        }
+                    }
+                }
             }
         }
 

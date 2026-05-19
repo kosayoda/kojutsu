@@ -667,6 +667,83 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         vec![Line::raw("")]
                     }
                 }
+                DisplayRow::AnnotateDetail {
+                    line_idx,
+                    detail_idx,
+                } => {
+                    let info = app
+                        .annotate
+                        .lines
+                        .loaded()
+                        .and_then(|l| l.get(line_idx.raw()))
+                        .and_then(|line| app.annotate.commit_info.get(&line.commit_id));
+                    if let Some(info) = info {
+                        let di = detail_idx.raw();
+                        let is_cursor = row_idx == app.cursor.raw();
+                        let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
+                        let label_style = Style::default().fg(theme.muted);
+                        match di {
+                            0 => {
+                                spans.push(Span::styled("      Change:    ", label_style));
+                                push_short_id(&mut spans, &info.change_id, theme.change_id, theme);
+                            }
+                            1 => {
+                                spans.push(Span::styled("      Commit:    ", label_style));
+                                push_short_id(&mut spans, &info.commit_id, theme.commit_id, theme);
+                            }
+                            2 => {
+                                spans.push(Span::styled("      Author:    ", label_style));
+                                spans.push(Span::styled(
+                                    format!(
+                                        "{} <{}>  {}",
+                                        info.author_name, info.author_email, info.author_date
+                                    ),
+                                    Style::default().fg(theme.text),
+                                ));
+                            }
+                            3 => {
+                                spans.push(Span::styled("      Committer: ", label_style));
+                                spans.push(Span::styled(
+                                    format!(
+                                        "{} <{}>  {}",
+                                        info.committer_name,
+                                        info.committer_email,
+                                        info.committer_date
+                                    ),
+                                    Style::default().fg(theme.text),
+                                ));
+                            }
+                            _ => {
+                                let desc_line_idx = di - 4;
+                                let text = if info.description_lines.is_empty() {
+                                    "(no description set)"
+                                } else {
+                                    info.description_lines
+                                        .get(desc_line_idx)
+                                        .map(|s| s.as_str())
+                                        .unwrap_or("")
+                                };
+                                spans.push(Span::styled(
+                                    format!("      {text}"),
+                                    Style::default().fg(theme.text),
+                                ));
+                            }
+                        }
+                        if is_cursor {
+                            let used: usize = spans.iter().map(|s| s.width()).sum();
+                            if used < max_w {
+                                spans
+                                    .push(Span::styled(" ".repeat(max_w - used), Style::default()));
+                            }
+                            for span in &mut spans {
+                                span.style = span.style.bg(theme.selection_bg_strong);
+                            }
+                        }
+                        vec![Line::from(spans)]
+                    } else {
+                        vec![Line::raw("")]
+                    }
+                }
             }
         })
         .collect();

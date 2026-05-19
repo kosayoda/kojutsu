@@ -100,6 +100,7 @@ pub(super) fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Acti
             | Some(DisplayRow::InterdiffDiffLine { .. })
             | Some(DisplayRow::AnnotateHeader)
             | Some(DisplayRow::AnnotateLine { .. })
+            | Some(DisplayRow::AnnotateDetail { .. })
             | None => None,
         };
         entry_idx.is_some_and(|idx| app.nodes[idx].commit.is_working_copy())

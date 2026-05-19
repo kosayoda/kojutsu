@@ -374,6 +374,20 @@ impl App {
                     false
                 }
             }
+            DisplayRow::AnnotateDetail { line_idx, .. } => {
+                let info = self
+                    .annotate
+                    .lines
+                    .loaded()
+                    .and_then(|l| l.get(line_idx.raw()))
+                    .and_then(|line| self.annotate.commit_info.get(&line.commit_id));
+                info.is_some_and(|info| {
+                    (scopes.contains(SearchScopes::DESCRIPTION)
+                        && info.description_lines.iter().any(|l| contains(l)))
+                        || (scopes.contains(SearchScopes::AUTHOR)
+                            && (contains(&info.author_name) || contains(&info.author_email)))
+                })
+            }
         }
     }
 }

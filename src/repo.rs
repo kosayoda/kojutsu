@@ -2069,7 +2069,7 @@ impl JjRepo {
         &self,
         commit_id: &UiCommitId,
         file_path: &RepoPath,
-    ) -> Result<Vec<crate::dag::AnnotateLineData>> {
+    ) -> Result<crate::dag::AnnotateResult> {
         use jj_lib::annotate::FileAnnotator;
         use jj_lib::revset::ResolvedRevsetExpression;
 
@@ -2107,15 +2107,15 @@ impl JjRepo {
             .populate(repo)
             .wrap_err("failed to populate ID prefix index for annotate")?;
 
-        // Cache commit metadata per unique backend CommitId (avoids repeated
-        // get_commit + hex encoding + prefix computation for lines from the same commit).
+        // Cache commit metadata per unique backend CommitId.
         struct CachedMeta {
-            commit_id: UiCommitId,
+            ui_commit_id: UiCommitId,
             change_id: ShortId,
-            author: String,
+            author_display: String,
             relative_time: Str,
         }
         let mut commit_cache: HashMap<BackendCommitId, CachedMeta> = HashMap::new();
+        let mut commit_info: HashMap<UiCommitId, crate::dag::AnnotateCommitInfo> = HashMap::new();
 
         let mut lines = Vec::new();
         for (line_number, (origin_result, content)) in annotation.line_origins().enumerate() {
@@ -2127,19 +2127,48 @@ impl JjRepo {
             if !commit_cache.contains_key(&origin.commit_id) {
                 let c = repo.store().get_commit(&origin.commit_id)?;
                 let change_id = Self::short_change_id(&prefix_index, repo, &c);
-                let sig = c.author();
-                let author = if sig.name.is_empty() {
-                    sig.email.clone()
+                let short_commit_id = Self::short_commit_id(&prefix_index, repo, &origin.commit_id);
+                let commit_id_hex = origin.commit_id.hex();
+
+                let author_sig = c.author();
+                let author_display = if author_sig.name.is_empty() {
+                    author_sig.email.clone()
                 } else {
-                    sig.name.clone()
+                    author_sig.name.clone()
                 };
-                let relative_time = millis_to_relative_time(sig.timestamp.timestamp.0);
+                let relative_time = millis_to_relative_time(author_sig.timestamp.timestamp.0);
+
+                let committer_sig = c.committer();
+                let ui_cid = UiCommitId::new(&commit_id_hex);
+
+                commit_info.insert(
+                    ui_cid.clone(),
+                    crate::dag::AnnotateCommitInfo {
+                        commit_id: short_commit_id,
+                        change_id: change_id.clone(),
+                        author_name: author_sig.name.clone(),
+                        author_email: author_sig.email.clone(),
+                        author_date: format_absolute_time(&author_sig.timestamp),
+                        committer_name: committer_sig.name.clone(),
+                        committer_email: committer_sig.email.clone(),
+                        committer_date: format_absolute_time(&committer_sig.timestamp),
+                        description_lines: {
+                            let trimmed = c.description().trim();
+                            if trimmed.is_empty() {
+                                Vec::new()
+                            } else {
+                                trimmed.lines().map(String::from).collect()
+                            }
+                        },
+                    },
+                );
+
                 commit_cache.insert(
                     origin.commit_id.clone(),
                     CachedMeta {
-                        commit_id: UiCommitId::new(origin.commit_id.hex()),
+                        ui_commit_id: ui_cid,
                         change_id,
-                        author,
+                        author_display,
                         relative_time,
                     },
                 );
@@ -2151,9 +2180,9 @@ impl JjRepo {
                 .to_string();
 
             lines.push(crate::dag::AnnotateLineData {
-                commit_id: meta.commit_id.clone(),
+                commit_id: meta.ui_commit_id.clone(),
                 change_id: meta.change_id.clone(),
-                author: meta.author.clone(),
+                author: meta.author_display.clone(),
                 relative_time: meta.relative_time.clone(),
                 line_number: line_number + 1,
                 content: content_str,
@@ -2161,7 +2190,7 @@ impl JjRepo {
             });
         }
 
-        Ok(lines)
+        Ok(crate::dag::AnnotateResult { lines, commit_info })
     }
 
     /// Compute the diff between an operation and its parent.
@@ -2411,7 +2440,23 @@ impl JjRepo {
     }
 }
 
-/// Convert a millisecond timestamp to a relative time string (e.g. "5 hours ago").
+/// Format a jj timestamp as an absolute date string (e.g. "2026-05-15 13:11:51 +02:00").
+fn format_absolute_time(ts: &jj_lib::backend::Timestamp) -> String {
+    let secs = ts.timestamp.0 / 1000;
+    let nanos = ((ts.timestamp.0 % 1000) * 1_000_000) as u32;
+    let offset_secs = ts.tz_offset * 60;
+    match chrono::DateTime::from_timestamp(secs, nanos) {
+        Some(utc) => {
+            let offset = chrono::FixedOffset::east_opt(offset_secs)
+                .unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
+            utc.with_timezone(&offset)
+                .format("%Y-%m-%d %H:%M:%S %:z")
+                .to_string()
+        }
+        None => "unknown".to_string(),
+    }
+}
+
 pub fn millis_to_relative_time(millis: i64) -> Str {
     let secs = millis / 1000;
     let nanos = ((millis % 1000) * 1_000_000) as u32;

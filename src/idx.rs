@@ -113,6 +113,10 @@ define_idx!(
     pub AnnotateLineIdx
 );
 define_idx!(
+    /// Index into detail rows within an expanded annotate line.
+    pub AnnotateDetailIdx
+);
+define_idx!(
     /// Index into `App::rows` (flattened display row list).
     pub RowIdx
 );

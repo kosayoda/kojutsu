@@ -724,7 +724,8 @@ impl App {
             | DisplayRow::InterdiffFileChange { .. }
             | DisplayRow::InterdiffDiffLine { .. }
             | DisplayRow::AnnotateHeader
-            | DisplayRow::AnnotateLine { .. } => return None,
+            | DisplayRow::AnnotateLine { .. }
+            | DisplayRow::AnnotateDetail { .. } => return None,
         };
         Some(entry_idx)
     }
