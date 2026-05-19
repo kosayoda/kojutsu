@@ -1377,6 +1377,47 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                 flags,
             })
         }
+        AppAction::FileAnnotate => {
+            // Extract commit_id and file_path from current cursor position.
+            let info = match app.rows.get(app.cursor.raw()) {
+                Some(DisplayRow::FileChange {
+                    entry_idx,
+                    file_idx,
+                })
+                | Some(DisplayRow::DiffLine {
+                    entry_idx,
+                    file_idx,
+                    ..
+                }) => {
+                    let commit_id = app.nodes[*entry_idx].commit.graph_id.clone();
+                    let path = app
+                        .files_for_entry(*entry_idx)
+                        .and_then(|f| f.get(file_idx.raw()))
+                        .map(|f| f.path.clone());
+                    path.map(|p| (commit_id, p))
+                }
+                _ => None,
+            };
+            if let Some((commit_id, path)) = info {
+                app.enter_annotate_view(commit_id, path);
+            } else {
+                app.set_error("select a file to annotate");
+            }
+            Action::None
+        }
+        AppAction::AnnotateGoToCommit => {
+            if let Some(line) = app.selected_annotate_line() {
+                let commit_id = line.commit_id.clone();
+                let change_id = line.change_id.clone();
+                jump_to_commit_in_dag(
+                    app,
+                    Some(&commit_id),
+                    Some(&change_id),
+                    "annotate line has no commit",
+                );
+            }
+            Action::None
+        }
         AppAction::WsViewJumpToCommit => {
             let Some(entry) = app.selected_workspace_entry() else {
                 return Action::None;

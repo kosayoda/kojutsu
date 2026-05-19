@@ -190,6 +190,30 @@ impl InterdiffState {
     }
 }
 
+/// State for the annotate (blame) view.
+pub struct AnnotateState {
+    /// The commit being annotated.
+    pub commit_id: Option<CommitId>,
+    /// The file path being annotated.
+    pub path: Option<RepoPath>,
+    /// Annotation lines.
+    pub lines: Loadable<Vec<crate::dag::AnnotateLineData>>,
+}
+
+impl AnnotateState {
+    pub fn new() -> Self {
+        Self {
+            commit_id: None,
+            path: None,
+            lines: Loadable::NotRequested,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::new();
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CommandLogKind {
     Command,
@@ -292,6 +316,7 @@ pub enum ActiveView {
     Evolog,
     CommandLog,
     Interdiff,
+    Annotate,
 }
 
 impl ActiveView {
@@ -309,6 +334,7 @@ impl ActiveView {
             Self::Evolog => SearchScopes::DEFAULT,
             Self::CommandLog => SearchScopes::DEFAULT,
             Self::Interdiff => SearchScopes::DEFAULT,
+            Self::Annotate => SearchScopes::DEFAULT,
         }
     }
 }
@@ -343,6 +369,7 @@ pub(super) fn default_view_states() -> [ViewState; <ActiveView as strum::EnumCou
         ViewState::new(ActiveView::Evolog.default_scopes()),
         ViewState::new(ActiveView::CommandLog.default_scopes()),
         ViewState::new(ActiveView::Interdiff.default_scopes()),
+        ViewState::new(ActiveView::Annotate.default_scopes()),
     ]
 }
 

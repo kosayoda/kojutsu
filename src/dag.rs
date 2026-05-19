@@ -398,6 +398,24 @@ pub struct DiffResult {
     pub color_words: Vec<DiffLine>,
 }
 
+/// A single line from file annotation (blame).
+pub struct AnnotateLineData {
+    /// Full hex commit ID (for jump-to-commit).
+    pub commit_id: CommitId,
+    /// Short change ID for display (prefix-highlighted).
+    pub change_id: ShortId,
+    /// Author name.
+    pub author: String,
+    /// Relative time string (e.g. "3 days ago").
+    pub relative_time: crate::types::Str,
+    /// 1-based line number in the current file.
+    pub line_number: usize,
+    /// The line content.
+    pub content: String,
+    /// Whether this line's origin was outside the annotation domain.
+    pub outside_domain: bool,
+}
+
 impl DiffLineKind {
     /// Whether this line kind can be individually selected (added or removed).
     pub fn is_selectable(self) -> bool {

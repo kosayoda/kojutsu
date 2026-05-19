@@ -68,6 +68,10 @@ enum RepoRequestKind {
         to_commit_id: CommitId,
         path: RepoPath,
     },
+    Annotate {
+        commit_id: CommitId,
+        path: RepoPath,
+    },
 }
 
 #[derive(Clone)]
@@ -97,6 +101,8 @@ pub enum RepoErrorKind {
     EvoLogAccess,
     /// Failed to load interdiff details or file diff.
     InterdiffAccess,
+    /// Failed to annotate file.
+    AnnotateAccess,
     /// A background thread panicked.
     BackgroundPanic,
 }
@@ -180,6 +186,9 @@ pub enum RepoResult {
     InterdiffFileDiff {
         path: RepoPath,
         result: Result<crate::dag::DiffResult, RepoError>,
+    },
+    Annotate {
+        result: Result<Vec<crate::dag::AnnotateLineData>, RepoError>,
     },
     /// A background computation thread panicked or failed.
     BackgroundError { error: RepoError },
@@ -284,6 +293,13 @@ impl RepoRequest {
             },
         }
     }
+
+    pub fn load_file_annotate(commit_id: CommitId, path: RepoPath) -> Self {
+        Self {
+            epoch: 0,
+            kind: RepoRequestKind::Annotate { commit_id, path },
+        }
+    }
 }
 
 impl RepoService {
@@ -319,9 +335,8 @@ impl RepoRequestHandle {
             | RepoRequestKind::EvoLogDetails { .. }
             | RepoRequestKind::EvoLogFileDiff { .. }
             | RepoRequestKind::InterdiffDetails { .. }
-            | RepoRequestKind::InterdiffFileDiff { .. } => {
-                self.current_epoch.load(Ordering::SeqCst)
-            }
+            | RepoRequestKind::InterdiffFileDiff { .. }
+            | RepoRequestKind::Annotate { .. } => self.current_epoch.load(Ordering::SeqCst),
         };
         let _ = self.request_tx.send(request);
     }
@@ -459,6 +474,9 @@ impl RepoServiceState {
                 path,
             } => {
                 self.handle_interdiff_file_diff(epoch, from_commit_id, to_commit_id, path);
+            }
+            RepoRequestKind::Annotate { commit_id, path } => {
+                self.handle_file_annotate(epoch, commit_id, path);
             }
         }
     }
@@ -1065,6 +1083,30 @@ impl RepoServiceState {
                         path,
                         result: Err(RepoError {
                             kind: RepoErrorKind::InterdiffAccess,
+                            message: format!("{err:#}"),
+                        }),
+                    },
+                );
+            }
+        }
+    }
+
+    fn handle_file_annotate(&mut self, epoch: u64, commit_id: CommitId, path: RepoPath) {
+        let Some(repo) =
+            self.ensure_repo(epoch, |error| RepoResult::Annotate { result: Err(error) })
+        else {
+            return;
+        };
+        match repo.file_annotate(&commit_id, &path) {
+            Ok(lines) => {
+                self.send_if_current(epoch, RepoResult::Annotate { result: Ok(lines) });
+            }
+            Err(err) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::Annotate {
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::AnnotateAccess,
                             message: format!("{err:#}"),
                         }),
                     },

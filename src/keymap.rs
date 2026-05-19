@@ -170,6 +170,9 @@ pub enum AppAction {
     // Interdiff
     Interdiff,
     EvoLogInterdiff,
+    // Annotate (blame)
+    FileAnnotate,
+    AnnotateGoToCommit,
     // Op log view actions
     OpLogRestore,
     OpLogRevert,
@@ -251,6 +254,7 @@ pub struct Keymaps {
     pub evolog: Keymap,
     pub command_log: Keymap,
     pub interdiff: Keymap,
+    pub annotate: Keymap,
 }
 
 impl Keymaps {
@@ -264,6 +268,7 @@ impl Keymaps {
             crate::app::ActiveView::Workspaces => &self.workspaces,
             crate::app::ActiveView::CommandLog => &self.command_log,
             crate::app::ActiveView::Interdiff => &self.interdiff,
+            crate::app::ActiveView::Annotate => &self.annotate,
         }
     }
 }
@@ -387,7 +392,10 @@ impl Default for Keymaps {
                 "shift-f",
                 "file",
                 C,
-                vec![bind("u", AppAction::FileUntrack, "untrack", C)],
+                vec![
+                    bind("u", AppAction::FileUntrack, "untrack", C),
+                    bind("a", AppAction::FileAnnotate, "annotate", C),
+                ],
             ),
             prefix(
                 "b",
@@ -679,6 +687,14 @@ impl Default for Keymaps {
         let cmd_log_root = shared_bindings();
         let interdiff_root = shared_bindings();
 
+        let mut annotate_root = shared_bindings();
+        annotate_root.extend(vec![bind(
+            "enter",
+            AppAction::AnnotateGoToCommit,
+            "go to commit",
+            C,
+        )]);
+
         Keymaps {
             dag: Keymap { root: dag_root },
             bookmarks: Keymap { root: bm_root },
@@ -689,6 +705,9 @@ impl Default for Keymaps {
             command_log: Keymap { root: cmd_log_root },
             interdiff: Keymap {
                 root: interdiff_root,
+            },
+            annotate: Keymap {
+                root: annotate_root,
             },
         }
     }
@@ -876,9 +895,11 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::TagSet
         | AppAction::TagDelete => &[Commit],
         AppAction::FileUntrack
+        | AppAction::FileAnnotate
         | AppAction::ResolveOurs
         | AppAction::ResolveTheirs
         | AppAction::ResolveMergeTool => &[File],
+        AppAction::AnnotateGoToCommit => &[Commit],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }
@@ -936,6 +957,7 @@ pub fn action_label(action: AppAction) -> &'static str {
             "resolve"
         }
         AppAction::Interdiff | AppAction::EvoLogInterdiff => "interdiff",
+        AppAction::FileAnnotate | AppAction::AnnotateGoToCommit => "annotate",
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",

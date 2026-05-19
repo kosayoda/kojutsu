@@ -357,6 +357,23 @@ impl App {
                         .is_some_and(|file| contains(file.path.as_str()))
             }
             DisplayRow::CommandLogDetail { .. } => false,
+            DisplayRow::AnnotateHeader => self.annotate.path.as_ref().is_some_and(|path| {
+                scopes.contains(SearchScopes::PATH_COMMAND) && contains(path.as_str())
+            }),
+            DisplayRow::AnnotateLine { line_idx } => {
+                let line = self
+                    .annotate
+                    .lines
+                    .loaded()
+                    .and_then(|l| l.get(line_idx.raw()));
+                if let Some(line) = line {
+                    (scopes.contains(SearchScopes::CHANGE_ID) && contains(&line.change_id.display))
+                        || (scopes.contains(SearchScopes::AUTHOR) && contains(&line.author))
+                        || (scopes.contains(SearchScopes::DESCRIPTION) && contains(&line.content))
+                } else {
+                    false
+                }
+            }
         }
     }
 }

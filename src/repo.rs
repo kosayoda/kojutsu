@@ -1374,6 +1374,43 @@ impl JjRepo {
         }
     }
 
+    /// Build a `ShortId` for a commit's change ID using the prefix index.
+    fn short_change_id(
+        prefix_index: &jj_lib::id_prefix::IdPrefixIndex,
+        repo: &dyn jj_lib::repo::Repo,
+        commit: &Commit,
+    ) -> ShortId {
+        let change_prefix_len = prefix_index
+            .shortest_change_prefix_len(repo, commit.change_id())
+            .unwrap_or(DISPLAY_ID_LEN);
+        let change_id_hex = commit.change_id().reverse_hex();
+        let change_display_len = change_prefix_len.max(DISPLAY_ID_LEN);
+        ShortId {
+            display: change_id_hex
+                .get(..change_display_len)
+                .unwrap_or(&change_id_hex)
+                .to_string(),
+            prefix_len: change_prefix_len,
+        }
+    }
+
+    /// Build a `ShortId` for a backend commit ID using the prefix index.
+    fn short_commit_id(
+        prefix_index: &jj_lib::id_prefix::IdPrefixIndex,
+        repo: &dyn jj_lib::repo::Repo,
+        commit_id: &BackendCommitId,
+    ) -> ShortId {
+        let prefix_len = prefix_index
+            .shortest_commit_prefix_len(repo, commit_id)
+            .unwrap_or(DISPLAY_ID_LEN);
+        let hex = commit_id.hex();
+        let display_len = prefix_len.max(DISPLAY_ID_LEN);
+        ShortId {
+            display: hex.get(..display_len).unwrap_or(&hex).to_string(),
+            prefix_len,
+        }
+    }
+
     /// Shared commit metadata extraction for bookmark detail rows.
     fn commit_detail_info(&self, commit_id: &BackendCommitId) -> Option<CommitDetailInfo> {
         let repo = self.repo.as_ref();
@@ -1643,26 +1680,15 @@ impl JjRepo {
         for entry in predecessor_entries {
             let commit = &entry.commit;
 
-            let change_prefix_len = prefix_index
-                .shortest_change_prefix_len(repo, commit.change_id())
-                .unwrap_or(DISPLAY_ID_LEN);
-            let change_id_hex = commit.change_id().reverse_hex();
-            let change_display_len = change_prefix_len.max(DISPLAY_ID_LEN);
-            let change_id = ShortId {
-                display: change_id_hex
-                    .get(..change_display_len)
-                    .unwrap_or(&change_id_hex)
-                    .to_string(),
-                prefix_len: change_prefix_len,
-            };
+            let change_id = Self::short_change_id(&prefix_index, repo, commit);
 
             let description = parse_first_line_description(commit.description());
 
             let sig = commit.author();
-            let author: Str = if sig.email.is_empty() {
-                sig.name.as_str().into()
-            } else {
+            let author: Str = if sig.name.is_empty() {
                 sig.email.as_str().into()
+            } else {
+                sig.name.as_str().into()
             };
 
             let relative_time = millis_to_relative_time(sig.timestamp.timestamp.0);
@@ -1993,6 +2019,106 @@ impl JjRepo {
     ) -> Result<DiffResult> {
         let (rebased_tree, to_tree) = self.compute_interdiff_trees(from_id, to_id)?;
         self.trees_file_diff(&rebased_tree, &to_tree, path)
+    }
+
+    /// Compute line-by-line annotation (blame) for a file at a specific commit.
+    pub fn file_annotate(
+        &self,
+        commit_id: &UiCommitId,
+        file_path: &RepoPath,
+    ) -> Result<Vec<crate::dag::AnnotateLineData>> {
+        use jj_lib::annotate::FileAnnotator;
+        use jj_lib::revset::ResolvedRevsetExpression;
+
+        let repo = self.repo.as_ref();
+
+        let backend_id = BackendCommitId::try_from_hex(commit_id.as_str())
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit id hex"))?;
+        let commit = repo.store().get_commit(&backend_id)?;
+
+        let repo_path = RepoPathBuf::from_internal_string(file_path.as_str())
+            .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
+
+        let mut annotator = FileAnnotator::from_commit(&commit, &repo_path)
+            .block_on()
+            .wrap_err("failed to initialize annotator")?;
+
+        let domain = ResolvedRevsetExpression::all();
+        annotator
+            .compute(repo, &domain)
+            .block_on()
+            .map_err(|e| color_eyre::eyre::eyre!("annotation failed: {e}"))?;
+
+        let annotation = annotator.to_annotation();
+
+        // Build ID prefix context for short change IDs.
+        let extensions = RevsetExtensions::default();
+        let fileset_aliases_map = FilesetAliasesMap::new();
+        let path_converter = RepoPathUiConverter::Fs {
+            cwd: self.workspace_root.clone(),
+            base: self.workspace_root.clone(),
+        };
+        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
+        let id_prefix_context = self.build_id_prefix_context(&context);
+        let prefix_index = id_prefix_context
+            .populate(repo)
+            .wrap_err("failed to populate ID prefix index for annotate")?;
+
+        // Cache commit metadata per unique backend CommitId (avoids repeated
+        // get_commit + hex encoding + prefix computation for lines from the same commit).
+        struct CachedMeta {
+            commit_id: UiCommitId,
+            change_id: ShortId,
+            author: String,
+            relative_time: Str,
+        }
+        let mut commit_cache: HashMap<BackendCommitId, CachedMeta> = HashMap::new();
+
+        let mut lines = Vec::new();
+        for (line_number, (origin_result, content)) in annotation.line_origins().enumerate() {
+            let (origin, outside_domain) = match origin_result {
+                Ok(o) => (o, false),
+                Err(o) => (o, true),
+            };
+
+            if !commit_cache.contains_key(&origin.commit_id) {
+                let c = repo.store().get_commit(&origin.commit_id)?;
+                let change_id = Self::short_change_id(&prefix_index, repo, &c);
+                let sig = c.author();
+                let author = if sig.name.is_empty() {
+                    sig.email.clone()
+                } else {
+                    sig.name.clone()
+                };
+                let relative_time = millis_to_relative_time(sig.timestamp.timestamp.0);
+                commit_cache.insert(
+                    origin.commit_id.clone(),
+                    CachedMeta {
+                        commit_id: UiCommitId::new(origin.commit_id.hex()),
+                        change_id,
+                        author,
+                        relative_time,
+                    },
+                );
+            }
+            let meta = &commit_cache[&origin.commit_id];
+
+            let content_str = String::from_utf8_lossy(content)
+                .trim_end_matches('\n')
+                .to_string();
+
+            lines.push(crate::dag::AnnotateLineData {
+                commit_id: meta.commit_id.clone(),
+                change_id: meta.change_id.clone(),
+                author: meta.author.clone(),
+                relative_time: meta.relative_time.clone(),
+                line_number: line_number + 1,
+                content: content_str,
+                outside_domain,
+            });
+        }
+
+        Ok(lines)
     }
 
     /// Compute the diff between an operation and its parent.

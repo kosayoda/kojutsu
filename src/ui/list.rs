@@ -367,8 +367,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|l| l.loaded())
                         .and_then(|files| files.get(file_idx.raw()));
                     if let Some(file) = file {
-                        let (status_str, status_color) =
-                            file_status_display(file.status, theme);
+                        let (status_str, status_color) = file_status_display(file.status, theme);
                         let mut spans = vec![
                             gutter_span(row_search.as_ref(), theme),
                             Span::styled(
@@ -571,8 +570,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .loaded()
                         .and_then(|files| files.get(file_idx.raw()));
                     if let Some(file) = file {
-                        let (status_str, status_color) =
-                            file_status_display(file.status, theme);
+                        let (status_str, status_color) = file_status_display(file.status, theme);
                         let is_unfolded = app.interdiff.unfolded_files.contains(&file.path);
                         let fold_char = if is_unfolded { "\u{25be}" } else { "\u{25b8}" };
                         let mut spans = vec![
@@ -603,6 +601,71 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .interdiff_diff_lines(*file_idx)
                         .and_then(|lines| lines.get(line_idx.raw()));
                     render_simple_diff_line(diff_line, row_search.as_ref(), theme, &tab_spaces)
+                }
+                DisplayRow::AnnotateHeader => {
+                    let path = app
+                        .annotate
+                        .path
+                        .as_ref()
+                        .map(|p| p.as_str().to_string())
+                        .unwrap_or_default();
+                    let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
+                    spans.push(Span::styled(
+                        "  annotate: ",
+                        Style::default().fg(theme.muted),
+                    ));
+                    spans.push(Span::styled(path, Style::default().fg(theme.text)));
+                    if let Some(cid) = &app.annotate.commit_id {
+                        spans.push(Span::styled(" @ ", Style::default().fg(theme.muted)));
+                        spans.push(Span::styled(
+                            cid.as_str().get(..12).unwrap_or(cid.as_str()).to_string(),
+                            Style::default().fg(theme.commit_id),
+                        ));
+                    }
+                    vec![Line::from(spans)]
+                }
+                DisplayRow::AnnotateLine { line_idx } => {
+                    let line = app
+                        .annotate
+                        .lines
+                        .loaded()
+                        .and_then(|lines| lines.get(line_idx.raw()));
+                    if let Some(line) = line {
+                        let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
+                        spans.push(Span::raw("  "));
+                        push_short_id(&mut spans, &line.change_id, theme.change_id, theme);
+                        spans.push(Span::raw(" "));
+                        let author_display: String = if line.author.chars().count() > 15 {
+                            let truncated: String = line.author.chars().take(15).collect();
+                            truncated
+                        } else {
+                            format!("{:<15}", line.author)
+                        };
+                        spans.push(Span::styled(
+                            author_display,
+                            Style::default().fg(theme.selection),
+                        ));
+                        spans.push(Span::raw(" "));
+                        let time_display: String =
+                            if line.relative_time.chars().count() > 15 {
+                                line.relative_time.chars().take(15).collect()
+                            } else {
+                                format!("{:<15}", line.relative_time)
+                            };
+                        spans.push(Span::styled(
+                            format!("{:<12}", line.relative_time),
+                            Style::default().fg(theme.muted),
+                        ));
+                        spans.push(Span::styled(
+                            format!("{:>5}: ", line.line_number),
+                            Style::default().fg(theme.muted),
+                        ));
+                        let content = expand_tabs(&line.content, &tab_spaces);
+                        spans.push(Span::styled(content, Style::default().fg(theme.text)));
+                        vec![Line::from(spans)]
+                    } else {
+                        vec![Line::raw("")]
+                    }
                 }
             }
         })
@@ -1521,9 +1584,14 @@ fn file_status_display(status: FileStatus, theme: &Theme) -> (&'static str, rata
         FileStatus::Added => ("A", theme.added),
         FileStatus::Modified => ("M", theme.change_id),
         FileStatus::Deleted => ("D", theme.error),
-        FileStatus::Renamed | FileStatus::Copied => {
-            (if matches!(status, FileStatus::Renamed) { "R" } else { "C" }, theme.accent)
-        }
+        FileStatus::Renamed | FileStatus::Copied => (
+            if matches!(status, FileStatus::Renamed) {
+                "R"
+            } else {
+                "C"
+            },
+            theme.accent,
+        ),
     }
 }
 

@@ -208,6 +208,8 @@ pub struct App {
     pub command_log: CommandLogState,
     /// Interdiff view state.
     pub interdiff: InterdiffState,
+    /// Annotate (blame) view state.
+    pub annotate: AnnotateState,
     /// Flattened display rows (one per visual line).
     pub rows: Vec<DisplayRow>,
     /// Index into `rows` of the currently selected row.
@@ -291,6 +293,7 @@ impl App {
             evolog: EvoLogState::new(),
             command_log: CommandLogState::new(),
             interdiff: InterdiffState::new(),
+            annotate: AnnotateState::new(),
             rows: Vec::new(),
             cursor: RowIdx::new(0),
             view_states: default_view_states(),
@@ -369,7 +372,11 @@ impl App {
 
     pub fn switch_view(&mut self, view: ActiveView) {
         // Allow evolog/interdiff → same (reload with different commit).
-        if self.active_view == view && view != ActiveView::Evolog && view != ActiveView::Interdiff {
+        if self.active_view == view
+            && view != ActiveView::Evolog
+            && view != ActiveView::Interdiff
+            && view != ActiveView::Annotate
+        {
             return;
         }
         // Save current view state.
@@ -447,6 +454,28 @@ impl App {
             DiffFormat::Git => &diff.git,
             DiffFormat::ColorWords => &diff.color_words,
         })
+    }
+
+    /// Enter the annotate (blame) view for a file at a specific commit.
+    pub fn enter_annotate_view(&mut self, commit_id: CommitId, path: crate::types::RepoPath) {
+        self.annotate.clear();
+        self.annotate.commit_id = Some(commit_id.clone());
+        self.annotate.path = Some(path.clone());
+        self.annotate.lines = Loadable::Loading;
+        self.pending_repo_requests
+            .push(crate::repo_service::RepoRequest::load_file_annotate(
+                commit_id, path,
+            ));
+        self.switch_view(ActiveView::Annotate);
+    }
+
+    /// Get the selected annotate line data (if cursor is on an annotate line).
+    pub fn selected_annotate_line(&self) -> Option<&crate::dag::AnnotateLineData> {
+        let line_idx = match self.rows.get(self.cursor.raw())? {
+            DisplayRow::AnnotateLine { line_idx } => *line_idx,
+            _ => return None,
+        };
+        self.annotate.lines.loaded()?.get(line_idx.raw())
     }
 
     /// Number of ancestor generations to load when expanding at a terminator.
@@ -693,7 +722,9 @@ impl App {
             | DisplayRow::ConflictContext { .. }
             | DisplayRow::InterdiffHeader
             | DisplayRow::InterdiffFileChange { .. }
-            | DisplayRow::InterdiffDiffLine { .. } => return None,
+            | DisplayRow::InterdiffDiffLine { .. }
+            | DisplayRow::AnnotateHeader
+            | DisplayRow::AnnotateLine { .. } => return None,
         };
         Some(entry_idx)
     }

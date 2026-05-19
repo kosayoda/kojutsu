@@ -125,6 +125,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         crate::app::ActiveView::Workspaces => " Workspaces ",
         crate::app::ActiveView::CommandLog => " Command Log ",
         crate::app::ActiveView::Interdiff => " Interdiff ",
+        crate::app::ActiveView::Annotate => " Annotate ",
     };
 
     let mut wc_spans: Vec<Span> = Vec::new();

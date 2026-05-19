@@ -109,6 +109,10 @@ define_idx!(
     pub CommandLogDetailIdx
 );
 define_idx!(
+    /// Index into lines in the annotate (blame) view.
+    pub AnnotateLineIdx
+);
+define_idx!(
     /// Index into `App::rows` (flattened display row list).
     pub RowIdx
 );

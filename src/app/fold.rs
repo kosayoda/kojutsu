@@ -31,6 +31,7 @@ impl App {
             ActiveView::Workspaces => self.rebuild_workspace_rows(),
             ActiveView::CommandLog => self.rebuild_command_log_rows(),
             ActiveView::Interdiff => self.rebuild_interdiff_rows(),
+            ActiveView::Annotate => self.rebuild_annotate_rows(),
         }
     }
 
@@ -758,6 +759,22 @@ impl App {
                         }
                     }
                 }
+            }
+        }
+
+        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
+    }
+
+    fn rebuild_annotate_rows(&mut self) {
+        let prev_cursor = self.rows.get(self.cursor.raw()).copied();
+        self.rows.clear();
+        self.rows.push(DisplayRow::AnnotateHeader);
+
+        if let Loadable::Loaded(lines) = &self.annotate.lines {
+            for li in 0..lines.len() {
+                self.rows.push(DisplayRow::AnnotateLine {
+                    line_idx: crate::idx::AnnotateLineIdx::new(li),
+                });
             }
         }
 

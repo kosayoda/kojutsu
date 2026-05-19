@@ -1,7 +1,7 @@
 use crate::idx::{
-    BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, CommandLogIdx, ConflictHunkIdx,
-    ConflictLineIdx, ConflictSideIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx,
-    FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
+    AnnotateLineIdx, BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, CommandLogIdx,
+    ConflictHunkIdx, ConflictLineIdx, ConflictSideIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx,
+    EvoLogIdx, FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 
 /// One visual row in the list.
@@ -120,4 +120,8 @@ pub enum DisplayRow {
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     },
+    /// Header row in the annotate (blame) view.
+    AnnotateHeader,
+    /// A single annotated line in the annotate view.
+    AnnotateLine { line_idx: AnnotateLineIdx },
 }

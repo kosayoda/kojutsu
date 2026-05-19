@@ -605,6 +605,26 @@ impl App {
                     self.set_error(msg);
                 }
             },
+            RepoResult::Annotate { result } => match result {
+                Ok(lines) => {
+                    self.annotate.lines = Loadable::Loaded(lines);
+                    if self.active_view == super::ActiveView::Annotate {
+                        deferred.rebuild = true;
+                    }
+                }
+                Err(error) => {
+                    self.annotate.lines = Loadable::Failed(error.clone());
+                    let msg = format!("failed to annotate file: {error}");
+                    self.push_command_log(
+                        super::CommandLogKind::Background,
+                        &msg,
+                        None,
+                        Vec::new(),
+                        false,
+                    );
+                    self.set_error(msg);
+                }
+            },
             RepoResult::BackgroundError { error } => {
                 let msg = format!("background task failed: {}", error.message);
                 self.push_command_log(
