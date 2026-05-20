@@ -684,10 +684,22 @@ impl Default for Keymaps {
             bind("r", AppAction::EvoLogRestore, "restore from", C),
             bind("e", AppAction::EvoLogEdit, "edit (checkout)", C),
             bind("n", AppAction::EvoLogNew, "new from", C),
+            prefix(
+                "shift-f",
+                "file",
+                C,
+                vec![bind("a", AppAction::FileAnnotate, "annotate", C)],
+            ),
         ]);
 
         let cmd_log_root = shared_bindings();
-        let interdiff_root = shared_bindings();
+        let mut interdiff_root = shared_bindings();
+        interdiff_root.push(prefix(
+            "shift-f",
+            "file",
+            C,
+            vec![bind("a", AppAction::FileAnnotate, "annotate", C)],
+        ));
 
         let mut annotate_root = shared_bindings();
         annotate_root.extend(vec![

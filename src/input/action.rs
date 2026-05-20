@@ -1378,8 +1378,8 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             })
         }
         AppAction::FileAnnotate => {
-            // Extract commit_id and file_path from current cursor position.
             let info = match app.rows.get(app.cursor.raw()) {
+                // DAG view: file change or diff line
                 Some(DisplayRow::FileChange {
                     entry_idx,
                     file_idx,
@@ -1395,6 +1395,35 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
                         .and_then(|f| f.get(file_idx.raw()))
                         .map(|f| f.path.clone());
                     path.map(|p| (commit_id, p))
+                }
+                // Evolog view: file change or diff line
+                Some(DisplayRow::EvoLogFileChange {
+                    evolog_idx,
+                    file_idx,
+                })
+                | Some(DisplayRow::EvoLogFileDiffLine {
+                    evolog_idx,
+                    file_idx,
+                    ..
+                }) => app.evolog.entries.get(evolog_idx.raw()).and_then(|entry| {
+                    let cid = &entry.commit_id;
+                    app.evolog
+                        .files
+                        .get(cid)
+                        .and_then(|l| l.loaded())
+                        .and_then(|files| files.get(file_idx.raw()))
+                        .map(|f| (cid.clone(), f.path.clone()))
+                }),
+                // Interdiff view: file change or diff line
+                Some(DisplayRow::InterdiffFileChange { file_idx })
+                | Some(DisplayRow::InterdiffDiffLine { file_idx, .. }) => {
+                    app.interdiff.to_commit_id.as_ref().and_then(|cid| {
+                        app.interdiff
+                            .files
+                            .loaded()
+                            .and_then(|files| files.get(file_idx.raw()))
+                            .map(|f| (cid.clone(), f.path.clone()))
+                    })
                 }
                 _ => None,
             };
