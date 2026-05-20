@@ -117,6 +117,15 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     // Only build full ListItems for rows near the visible window.
     // Off-screen rows get a cheap placeholder — ratatui's List still sees
     // the correct total item count for scroll math.
+    // For annotate view: highlight all lines from the same commit as cursor.
+    let annotate_highlight_commit: Option<crate::types::CommitId> =
+        if app.active_view == crate::app::ActiveView::Annotate {
+            app.selected_annotate_line()
+                .map(|line| line.commit_id.clone())
+        } else {
+            None
+        };
+
     let offset = app.list_state.offset();
     let vis_start = offset.min(app.cursor.raw()).saturating_sub(20);
     let vis_end = (offset.max(app.cursor.raw()) + area.height as usize + 20).min(app.rows.len());
@@ -609,7 +618,17 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .loaded()
                         .and_then(|lines| lines.get(line_idx.raw()));
                     if let Some(line) = line {
-                        let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
+                        let same_commit = annotate_highlight_commit
+                            .as_ref()
+                            .is_some_and(|c| *c == line.commit_id);
+                        let is_cursor = row_idx == app.cursor.raw();
+                        let mut spans = vec![];
+                        if is_cursor {
+                            spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
+                            spans.push(Span::raw(" "));
+                        } else {
+                            spans.push(gutter_span(row_search.as_ref(), theme));
+                        }
                         spans.push(Span::raw("  "));
                         push_short_id(&mut spans, &line.change_id, theme.change_id, theme);
                         spans.push(Span::raw(" "));
@@ -657,6 +676,15 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                                     text,
                                     Style::default().fg(Color::Indexed(token.color_idx)),
                                 ));
+                            }
+                        }
+                        if is_cursor {
+                            for span in &mut spans {
+                                span.style = span.style.bg(theme.selection_bg_strong);
+                            }
+                        } else if same_commit {
+                            for span in &mut spans {
+                                span.style = span.style.bg(theme.selection_bg);
                             }
                         }
                         vec![Line::from(spans)]
