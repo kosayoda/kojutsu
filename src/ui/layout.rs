@@ -4,9 +4,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
+use super::spans::push_short_id;
 use crate::app::{App, StatusLevel, GLOBAL_TOGGLES};
 use crate::theme::Theme;
-
 
 /// Minimum separator between repo and revset when on a single line.
 pub(super) const HEADER_SEP: &str = "  ";
@@ -92,39 +92,24 @@ pub(super) fn draw_header(
         if let Some(path) = &app.annotate.path {
             spans.push(Span::styled("annotate: ", Style::default().fg(theme.muted)));
             spans.push(Span::styled(
-                path.as_str(),
+                path.as_str().to_string(),
                 Style::default().fg(theme.text),
             ));
         }
         if let Some(cid) = &app.annotate.commit_id {
             if let Some(info) = app.annotate.commit_info.get(cid) {
-                // Change ID (prefix highlighted, suffix muted)
                 spans.push(Span::styled("  ", Style::default()));
-                let ch_prefix = info.change_id.display[..info.change_id.prefix_len.min(info.change_id.display.len())].to_string();
-                let ch_suffix = info.change_id.display[info.change_id.prefix_len.min(info.change_id.display.len())..].to_string();
-                spans.push(Span::styled(ch_prefix, Style::default().fg(theme.change_id).add_modifier(Modifier::BOLD)));
-                if !ch_suffix.is_empty() {
-                    spans.push(Span::styled(ch_suffix, Style::default().fg(theme.muted)));
-                }
-                // Commit ID (prefix highlighted, suffix muted)
+                push_short_id(&mut spans, &info.change_id, theme.change_id, theme);
                 spans.push(Span::styled("  ", Style::default()));
-                let co_prefix = info.commit_id.display[..info.commit_id.prefix_len.min(info.commit_id.display.len())].to_string();
-                let co_suffix = info.commit_id.display[info.commit_id.prefix_len.min(info.commit_id.display.len())..].to_string();
-                spans.push(Span::styled(co_prefix, Style::default().fg(theme.commit_id).add_modifier(Modifier::BOLD)));
-                if !co_suffix.is_empty() {
-                    spans.push(Span::styled(co_suffix, Style::default().fg(theme.muted)));
-                }
-                // Author
+                push_short_id(&mut spans, &info.commit_id, theme.commit_id, theme);
                 spans.push(Span::styled(
                     format!("  {} <{}>", info.author_name, info.author_email),
                     Style::default().fg(theme.muted),
                 ));
-                // Date
                 spans.push(Span::styled(
                     format!("  {}", info.author_date),
                     Style::default().fg(theme.muted),
                 ));
-                // First line of description
                 if let Some(first_line) = info.description_lines.first() {
                     spans.push(Span::styled("  ", Style::default()));
                     spans.push(Span::styled(
@@ -136,7 +121,7 @@ pub(super) fn draw_header(
                 // Data not yet loaded — show raw commit ID
                 spans.push(Span::styled(" @ ", Style::default().fg(theme.muted)));
                 spans.push(Span::styled(
-                    cid.as_str().get(..12).unwrap_or(cid.as_str()),
+                    cid.as_str().get(..12).unwrap_or(cid.as_str()).to_string(),
                     Style::default().fg(theme.commit_id),
                 ));
             }

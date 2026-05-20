@@ -98,7 +98,6 @@ pub(super) fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Acti
             | Some(DisplayRow::InterdiffHeader)
             | Some(DisplayRow::InterdiffFileChange { .. })
             | Some(DisplayRow::InterdiffDiffLine { .. })
-            | Some(DisplayRow::AnnotateHeader)
             | Some(DisplayRow::AnnotateLine { .. })
             | Some(DisplayRow::AnnotateDetail { .. })
             | None => None,

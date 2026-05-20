@@ -602,10 +602,6 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|lines| lines.get(line_idx.raw()));
                     render_simple_diff_line(diff_line, row_search.as_ref(), theme, &tab_spaces)
                 }
-                DisplayRow::AnnotateHeader => {
-                    // Rendered in the fixed header area, not in the scrollable list.
-                    vec![Line::raw("")]
-                }
                 DisplayRow::AnnotateLine { line_idx } => {
                     let line = app
                         .annotate

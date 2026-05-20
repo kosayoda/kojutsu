@@ -2121,28 +2121,9 @@ impl JjRepo {
         {
             let change_id = Self::short_change_id(&prefix_index, repo, &commit);
             let short_cid = Self::short_commit_id(&prefix_index, repo, &backend_id);
-            let author_sig = commit.author();
-            let committer_sig = commit.committer();
             commit_info.insert(
                 commit_id.clone(),
-                crate::dag::AnnotateCommitInfo {
-                    commit_id: short_cid,
-                    change_id,
-                    author_name: author_sig.name.clone(),
-                    author_email: author_sig.email.clone(),
-                    author_date: format_absolute_time(&author_sig.timestamp),
-                    committer_name: committer_sig.name.clone(),
-                    committer_email: committer_sig.email.clone(),
-                    committer_date: format_absolute_time(&committer_sig.timestamp),
-                    description_lines: {
-                        let trimmed = commit.description().trim();
-                        if trimmed.is_empty() {
-                            Vec::new()
-                        } else {
-                            trimmed.lines().map(String::from).collect()
-                        }
-                    },
-                },
+                build_annotate_commit_info(&commit, short_cid, change_id),
             );
         }
 
@@ -2167,29 +2148,11 @@ impl JjRepo {
                 };
                 let relative_time = millis_to_relative_time(author_sig.timestamp.timestamp.0);
 
-                let committer_sig = c.committer();
                 let ui_cid = UiCommitId::new(&commit_id_hex);
 
                 commit_info.insert(
                     ui_cid.clone(),
-                    crate::dag::AnnotateCommitInfo {
-                        commit_id: short_commit_id,
-                        change_id: change_id.clone(),
-                        author_name: author_sig.name.clone(),
-                        author_email: author_sig.email.clone(),
-                        author_date: format_absolute_time(&author_sig.timestamp),
-                        committer_name: committer_sig.name.clone(),
-                        committer_email: committer_sig.email.clone(),
-                        committer_date: format_absolute_time(&committer_sig.timestamp),
-                        description_lines: {
-                            let trimmed = c.description().trim();
-                            if trimmed.is_empty() {
-                                Vec::new()
-                            } else {
-                                trimmed.lines().map(String::from).collect()
-                            }
-                        },
-                    },
+                    build_annotate_commit_info(&c, short_commit_id, change_id.clone()),
                 );
 
                 commit_cache.insert(
@@ -2220,7 +2183,6 @@ impl JjRepo {
             });
         }
 
-        // Syntax-highlight all lines in a second pass.
         syntax_highlight_lines(&mut lines, file_path.as_str());
 
         Ok(crate::dag::AnnotateResult { lines, commit_info })
@@ -2499,14 +2461,58 @@ pub fn millis_to_relative_time(millis: i64) -> Str {
     }
 }
 
+fn build_annotate_commit_info(
+    commit: &Commit,
+    short_commit_id: ShortId,
+    change_id: ShortId,
+) -> crate::dag::AnnotateCommitInfo {
+    let author_sig = commit.author();
+    let committer_sig = commit.committer();
+    crate::dag::AnnotateCommitInfo {
+        commit_id: short_commit_id,
+        change_id,
+        author_name: author_sig.name.clone(),
+        author_email: author_sig.email.clone(),
+        author_date: format_absolute_time(&author_sig.timestamp),
+        committer_name: committer_sig.name.clone(),
+        committer_email: committer_sig.email.clone(),
+        committer_date: format_absolute_time(&committer_sig.timestamp),
+        description_lines: {
+            let trimmed = commit.description().trim();
+            if trimmed.is_empty() {
+                Vec::new()
+            } else {
+                trimmed.lines().map(String::from).collect()
+            }
+        },
+    }
+}
+
+/// Cached syntax definitions and ANSI theme for syntax highlighting.
+fn syntax_assets() -> &'static (syntect::parsing::SyntaxSet, syntect::highlighting::Theme) {
+    use std::sync::LazyLock;
+    use syntect::highlighting::Color;
+    static ASSETS: LazyLock<(syntect::parsing::SyntaxSet, syntect::highlighting::Theme)> =
+        LazyLock::new(|| {
+            let ss = syntect::parsing::SyntaxSet::load_defaults_newlines();
+            let ansi = |idx: u8| Color {
+                r: idx,
+                g: 0,
+                b: 1,
+                a: 0xFF,
+            };
+            let theme = build_ansi_theme(ansi);
+            (ss, theme)
+        });
+    &ASSETS
+}
+
 /// Apply syntax highlighting to annotate lines based on file extension.
 /// Uses ANSI terminal colors so highlighting respects the user's color scheme.
 fn syntax_highlight_lines(lines: &mut [crate::dag::AnnotateLineData], file_path: &str) {
     use syntect::easy::HighlightLines;
-    use syntect::highlighting::Color;
-    use syntect::parsing::SyntaxSet;
 
-    let ss = SyntaxSet::load_defaults_newlines();
+    let (ss, theme) = syntax_assets();
 
     let syntax = file_path
         .rsplit('.')
@@ -2522,21 +2528,11 @@ fn syntax_highlight_lines(lines: &mut [crate::dag::AnnotateLineData], file_path:
         return;
     }
 
-    // ANSI color palette indices used as sentinel RGB values.
-    // We encode ANSI index N as RGB(N, 0, 1) so we can decode it back.
-    let ansi = |idx: u8| Color {
-        r: idx,
-        g: 0,
-        b: 1,
-        a: 0xFF,
-    };
-
-    let theme = build_ansi_theme(ansi);
-    let mut h = HighlightLines::new(syntax, &theme);
+    let mut h = HighlightLines::new(syntax, theme);
 
     for line in lines.iter_mut() {
         let input = format!("{}\n", line.content);
-        let Ok(regions) = h.highlight_line(&input, &ss) else {
+        let Ok(regions) = h.highlight_line(&input, ss) else {
             continue;
         };
         let mut tokens = Vec::new();

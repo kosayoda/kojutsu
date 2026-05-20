@@ -477,13 +477,14 @@ impl App {
         };
         self.annotate.clear_keep_history();
         self.annotate.commit_id = Some(commit_id.clone());
-        self.annotate.path = Some(path.clone());
         self.annotate.lines = Loadable::Loading;
         self.annotate.target_line = Some(target_line);
         self.pending_repo_requests
             .push(crate::repo_service::RepoRequest::load_file_annotate(
-                commit_id, path,
+                commit_id,
+                path.clone(),
             ));
+        self.annotate.path = Some(path);
         self.rebuild_rows();
     }
 
@@ -741,7 +742,6 @@ impl App {
             | DisplayRow::InterdiffHeader
             | DisplayRow::InterdiffFileChange { .. }
             | DisplayRow::InterdiffDiffLine { .. }
-            | DisplayRow::AnnotateHeader
             | DisplayRow::AnnotateLine { .. }
             | DisplayRow::AnnotateDetail { .. } => return None,
         };

@@ -357,9 +357,6 @@ impl App {
                         .is_some_and(|file| contains(file.path.as_str()))
             }
             DisplayRow::CommandLogDetail { .. } => false,
-            DisplayRow::AnnotateHeader => self.annotate.path.as_ref().is_some_and(|path| {
-                scopes.contains(SearchScopes::PATH_COMMAND) && contains(path.as_str())
-            }),
             DisplayRow::AnnotateLine { line_idx } => {
                 let line = self
                     .annotate

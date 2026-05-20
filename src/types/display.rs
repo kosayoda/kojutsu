@@ -121,8 +121,6 @@ pub enum DisplayRow {
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     },
-    /// Header row in the annotate (blame) view.
-    AnnotateHeader,
     /// A single annotated line in the annotate view.
     AnnotateLine { line_idx: AnnotateLineIdx },
     /// A detail row within an expanded annotate line.
