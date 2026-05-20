@@ -21,6 +21,7 @@ impl SearchScopes {
     pub const DEFAULT_BOOKMARK: Self = Self::BOOKMARK.union(Self::DESCRIPTION);
     pub const DEFAULT_TAG: Self = Self::TAG.union(Self::DESCRIPTION);
     pub const DEFAULT_OP_LOG: Self = Self::DESCRIPTION;
+    pub const DEFAULT_ANNOTATE: Self = Self::CHANGE_ID.union(Self::LINE);
 }
 
 pub struct SearchScopeSpec {
@@ -127,11 +128,11 @@ pub fn scope_specs_for_view(view: crate::app::ActiveView) -> &'static [SearchSco
         crate::app::ActiveView::Bookmarks => BOOKMARK_VIEW_SCOPE_SPECS,
         crate::app::ActiveView::Tags => TAG_VIEW_SCOPE_SPECS,
         crate::app::ActiveView::Operations => OP_LOG_VIEW_SCOPE_SPECS,
-        crate::app::ActiveView::Evolog => SEARCH_SCOPE_SPECS,
+        crate::app::ActiveView::Evolog => EVOLOG_VIEW_SCOPE_SPECS,
         crate::app::ActiveView::Workspaces => WORKSPACE_VIEW_SCOPE_SPECS,
         crate::app::ActiveView::CommandLog => COMMAND_LOG_VIEW_SCOPE_SPECS,
-        crate::app::ActiveView::Interdiff => SEARCH_SCOPE_SPECS,
-        crate::app::ActiveView::Annotate => SEARCH_SCOPE_SPECS,
+        crate::app::ActiveView::Interdiff => INTERDIFF_VIEW_SCOPE_SPECS,
+        crate::app::ActiveView::Annotate => ANNOTATE_VIEW_SCOPE_SPECS,
     }
 }
 
@@ -153,6 +154,75 @@ pub const COMMAND_LOG_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[SearchScopeSpec {
     hint: "d",
     label: "description",
 }];
+
+pub const EVOLOG_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
+    SearchScopeSpec {
+        flag: SearchScopes::CHANGE_ID,
+        hint: "c",
+        label: "change-id",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::DESCRIPTION,
+        hint: "d",
+        label: "description",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::AUTHOR,
+        hint: "a",
+        label: "author",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::PATH_COMMAND,
+        hint: "p",
+        label: "path",
+    },
+];
+
+pub const INTERDIFF_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
+    SearchScopeSpec {
+        flag: SearchScopes::DESCRIPTION,
+        hint: "d",
+        label: "description",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::PATH_COMMAND,
+        hint: "p",
+        label: "path",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::LINE,
+        hint: "l",
+        label: "line",
+    },
+];
+
+pub const ANNOTATE_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
+    SearchScopeSpec {
+        flag: SearchScopes::CHANGE_ID,
+        hint: "c",
+        label: "change-id",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::DESCRIPTION,
+        hint: "d",
+        label: "description",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::AUTHOR,
+        hint: "a",
+        label: "author",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::LINE,
+        hint: "l",
+        label: "line",
+    },
+    SearchScopeSpec {
+        flag: SearchScopes::PATH_COMMAND,
+        hint: "p",
+        label: "path",
+    },
+];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SearchFocus {

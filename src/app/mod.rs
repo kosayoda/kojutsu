@@ -1016,22 +1016,12 @@ impl App {
     }
 
     pub fn to_persisted_state(&self) -> PersistedState {
-        use strum::EnumCount;
-        let mut view_search_scopes = [0u8; ActiveView::COUNT];
-        for (i, scopes) in view_search_scopes.iter_mut().enumerate() {
-            // Safety: ActiveView variants are 0..COUNT by repr.
-            // We read effective_scopes for each view via its index in view_states.
-            *scopes = self.view_states[i].search_scopes.bits();
-        }
-        // The active view's scopes live in self.search_scopes, not view_states.
-        view_search_scopes[self.active_view.idx()] = self.search_scopes.bits();
-
         PersistedState {
             show_line_numbers: self.show_line_numbers,
             ignore_immutable: self.toggles.contains(CommandFlags::IGNORE_IMMUTABLE),
             ignore_working_copy: self.toggles.contains(CommandFlags::IGNORE_WORKING_COPY),
             debug: self.toggles.contains(CommandFlags::DEBUG),
-            view_search_scopes,
+            view_search_scopes: Default::default(),
             active_preset: self.revset.active_preset,
             git_diff: self.diff_format == DiffFormat::Git,
         }
@@ -1049,16 +1039,6 @@ impl App {
         } else {
             DiffFormat::ColorWords
         };
-        for (i, &bits) in state.view_search_scopes.iter().enumerate() {
-            if bits != 0 {
-                let scopes = SearchScopes::from_bits_truncate(bits);
-                self.view_states[i].search_scopes = scopes;
-                // DAG is default active view — sync to live search_scopes.
-                if i == ActiveView::Dag.idx() {
-                    self.search_scopes = scopes;
-                }
-            }
-        }
         self.revset.active_preset = state
             .active_preset
             .filter(|&i| i < self.revset.presets.len());

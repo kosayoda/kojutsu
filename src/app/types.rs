@@ -359,7 +359,7 @@ impl ActiveView {
             Self::Evolog => SearchScopes::DEFAULT,
             Self::CommandLog => SearchScopes::DEFAULT,
             Self::Interdiff => SearchScopes::DEFAULT,
-            Self::Annotate => SearchScopes::DEFAULT,
+            Self::Annotate => SearchScopes::DEFAULT_ANNOTATE,
         }
     }
 }

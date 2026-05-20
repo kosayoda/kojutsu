@@ -30,14 +30,7 @@ impl App {
         self.mode = self.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
     }
 
-    fn save_search_scopes(&mut self) {
-        if let Some(search) = &self.search {
-            self.search_scopes = search.scopes;
-        }
-    }
-
     pub fn cancel_search(&mut self) {
-        self.save_search_scopes();
         if let Some(search) = &self.search {
             self.cursor = search.restore_cursor;
         }
@@ -50,20 +43,12 @@ impl App {
     /// Used from plain normal mode, where the current cursor position is the
     /// user's intentional location after navigating matches.
     pub fn clear_search(&mut self) {
-        self.save_search_scopes();
         self.search = None;
         self.restore_mode();
     }
 
     pub fn confirm_search(&mut self) {
-        self.save_search_scopes();
-        let clear = self
-            .search
-            .as_ref()
-            .is_some_and(|search| search.query().is_empty());
-        if clear {
-            self.search = None;
-        }
+        self.search = None;
         self.restore_mode();
     }
 
@@ -237,6 +222,8 @@ impl App {
                                 .remote_bookmarks
                                 .iter()
                                 .any(|b| contains(&format!("{}@{}", b.name, b.remote)))))
+                    || (scopes.contains(SearchScopes::TAG)
+                        && commit.tags.iter().any(|t| contains(t.as_str())))
             }
             DisplayRow::FileChange {
                 entry_idx,
@@ -309,13 +296,10 @@ impl App {
             | DisplayRow::OpLogDetailLine { .. }
             | DisplayRow::OpLogGraphLink { .. }
             | DisplayRow::OpLogLoadMore
-            | DisplayRow::EvoLogFileChange { .. }
-            | DisplayRow::EvoLogFileDiffLine { .. }
             | DisplayRow::EvoLogGraphLink { .. }
             | DisplayRow::ConflictHeader { .. }
             | DisplayRow::ConflictSide { .. }
-            | DisplayRow::ConflictContext { .. }
-            | DisplayRow::InterdiffDiffLine { .. } => false,
+            | DisplayRow::ConflictContext { .. } => false,
             DisplayRow::EvoLogItem { evolog_idx } => {
                 let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) else {
                     return false;
@@ -323,6 +307,39 @@ impl App {
                 (scopes.contains(SearchScopes::CHANGE_ID) && contains(&entry.change_id.display))
                     || (scopes.contains(SearchScopes::DESCRIPTION)
                         && entry.description.as_deref().is_some_and(contains))
+                    || (scopes.contains(SearchScopes::AUTHOR) && contains(entry.author.as_str()))
+            }
+            DisplayRow::EvoLogFileChange {
+                evolog_idx,
+                file_idx,
+            } => {
+                scopes.contains(SearchScopes::PATH_COMMAND)
+                    && self
+                        .evolog
+                        .entries
+                        .get(evolog_idx.raw())
+                        .and_then(|e| self.evolog.files.get(&e.commit_id))
+                        .and_then(|l| l.loaded())
+                        .and_then(|files| files.get(file_idx.raw()))
+                        .is_some_and(|file| contains(file.path.as_str()))
+            }
+            DisplayRow::EvoLogFileDiffLine {
+                evolog_idx,
+                file_idx,
+                line_idx,
+            } => {
+                scopes.contains(SearchScopes::LINE)
+                    && self
+                        .evolog_diff_lines(*evolog_idx, *file_idx)
+                        .and_then(|lines| lines.get(line_idx.raw()))
+                        .is_some_and(|line| contains(line.content.as_str()))
+            }
+            DisplayRow::InterdiffDiffLine { file_idx, line_idx } => {
+                scopes.contains(SearchScopes::LINE)
+                    && self
+                        .interdiff_diff_lines(*file_idx)
+                        .and_then(|lines| lines.get(line_idx.raw()))
+                        .is_some_and(|line| contains(line.content.as_str()))
             }
             DisplayRow::WorkspaceItem { workspace_idx } => {
                 let Some(entry) = self.views.workspace_entries.get(workspace_idx.raw()) else {
@@ -366,7 +383,7 @@ impl App {
                 if let Some(line) = line {
                     (scopes.contains(SearchScopes::CHANGE_ID) && contains(&line.change_id.display))
                         || (scopes.contains(SearchScopes::AUTHOR) && contains(&line.author))
-                        || (scopes.contains(SearchScopes::DESCRIPTION) && contains(&line.content))
+                        || (scopes.contains(SearchScopes::LINE) && contains(&line.content))
                 } else {
                     false
                 }
@@ -379,8 +396,9 @@ impl App {
                     .and_then(|l| l.get(line_idx.raw()))
                     .and_then(|line| self.annotate.commit_info.get(&line.commit_id));
                 info.is_some_and(|info| {
-                    (scopes.contains(SearchScopes::DESCRIPTION)
-                        && info.description_lines.iter().any(|l| contains(l)))
+                    (scopes.contains(SearchScopes::CHANGE_ID) && contains(&info.change_id.display))
+                        || (scopes.contains(SearchScopes::DESCRIPTION)
+                            && info.description_lines.iter().any(|l| contains(l)))
                         || (scopes.contains(SearchScopes::AUTHOR)
                             && (contains(&info.author_name) || contains(&info.author_email)))
                 })
