@@ -221,11 +221,14 @@ impl AnnotateState {
         }
     }
 
-    /// Clear state for a fresh annotation, but preserve history stack.
+    /// Clear state for a fresh annotation, but preserve history stack and
+    /// commit_info (needed for breadcrumb rendering of past commits).
     pub fn clear_keep_history(&mut self) {
         let history = std::mem::take(&mut self.history);
+        let commit_info = std::mem::take(&mut self.commit_info);
         *self = Self::new();
         self.history = history;
+        self.commit_info = commit_info;
     }
 
     pub fn clear(&mut self) {

@@ -117,6 +117,13 @@ pub(super) fn draw_header(
                         Style::default().fg(theme.text),
                     ));
                 }
+                let depth = app.annotate.history.len();
+                if depth > 0 {
+                    spans.push(Span::styled(
+                        format!("  [depth {depth}]"),
+                        Style::default().fg(theme.muted),
+                    ));
+                }
             } else {
                 // Data not yet loaded — show raw commit ID
                 spans.push(Span::styled(" @ ", Style::default().fg(theme.muted)));
@@ -128,6 +135,63 @@ pub(super) fn draw_header(
         }
         if !spans.is_empty() {
             header.push(Line::from(spans));
+        }
+
+        // Breadcrumb line — only when history is non-empty.
+        if !app.annotate.history.is_empty() {
+            let mut crumbs = Vec::new();
+            let muted = Style::default().fg(theme.muted);
+
+            for (i, (hist_cid, _)) in app.annotate.history.iter().enumerate() {
+                if i > 0 {
+                    crumbs.push(Span::styled(" → ", muted));
+                }
+                if let Some(info) = app.annotate.commit_info.get(hist_cid) {
+                    let id = &info.change_id;
+                    let p = id.display[..id.prefix_len.min(id.display.len())].to_string();
+                    let s = id.display[id.prefix_len.min(id.display.len())..].to_string();
+                    crumbs.push(Span::styled(
+                        p,
+                        Style::default()
+                            .fg(theme.change_id)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    if !s.is_empty() {
+                        crumbs.push(Span::styled(s, muted));
+                    }
+                } else {
+                    crumbs.push(Span::styled(
+                        hist_cid
+                            .as_str()
+                            .get(..8)
+                            .unwrap_or(hist_cid.as_str())
+                            .to_string(),
+                        muted,
+                    ));
+                }
+            }
+
+            // Current commit
+            crumbs.push(Span::styled(" → ", muted));
+            if let Some(cid) = &app.annotate.commit_id {
+                if let Some(info) = app.annotate.commit_info.get(cid) {
+                    let id = &info.change_id;
+                    let p = id.display[..id.prefix_len.min(id.display.len())].to_string();
+                    let s = id.display[id.prefix_len.min(id.display.len())..].to_string();
+                    crumbs.push(Span::styled(
+                        p,
+                        Style::default()
+                            .fg(theme.change_id)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    if !s.is_empty() {
+                        crumbs.push(Span::styled(s, muted));
+                    }
+                }
+            }
+            crumbs.push(Span::styled(" (current)", muted));
+
+            header.push(Line::from(crumbs));
         }
     }
     frame.render_widget(Paragraph::new(header), area);
