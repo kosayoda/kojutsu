@@ -2494,7 +2494,7 @@ fn syntax_assets() -> &'static (syntect::parsing::SyntaxSet, syntect::highlighti
     use syntect::highlighting::Color;
     static ASSETS: LazyLock<(syntect::parsing::SyntaxSet, syntect::highlighting::Theme)> =
         LazyLock::new(|| {
-            let ss = syntect::parsing::SyntaxSet::load_defaults_newlines();
+            let ss = two_face::syntax::extra_newlines();
             let ansi = |idx: u8| Color {
                 r: idx,
                 g: 0,

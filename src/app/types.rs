@@ -206,6 +206,8 @@ pub struct AnnotateState {
     pub target_line: Option<usize>,
     /// Time-travel history stack: (commit_id, line_number) for backtracking with `f`.
     pub history: Vec<(CommitId, usize)>,
+    /// Show separator lines between groups of lines from different commits.
+    pub show_commit_separators: bool,
 }
 
 impl AnnotateState {
@@ -218,6 +220,7 @@ impl AnnotateState {
             unfolded_lines: HashSet::new(),
             target_line: None,
             history: Vec::new(),
+            show_commit_separators: false,
         }
     }
 

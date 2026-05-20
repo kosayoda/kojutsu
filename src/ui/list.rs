@@ -612,16 +612,23 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     render_simple_diff_line(diff_line, row_search.as_ref(), theme, &tab_spaces)
                 }
                 DisplayRow::AnnotateLine { line_idx } => {
-                    let line = app
-                        .annotate
-                        .lines
-                        .loaded()
-                        .and_then(|lines| lines.get(line_idx.raw()));
+                    let lines_data = app.annotate.lines.loaded();
+                    let line = lines_data.and_then(|lines| lines.get(line_idx.raw()));
                     if let Some(line) = line {
                         let same_commit = annotate_highlight_commit
                             .as_ref()
                             .is_some_and(|c| *c == line.commit_id);
                         let is_cursor = row_idx == app.cursor.raw();
+
+                        let prev_commit = if line_idx.raw() > 0 {
+                            lines_data
+                                .and_then(|l| l.get(line_idx.raw() - 1))
+                                .map(|l| &l.commit_id)
+                        } else {
+                            None
+                        };
+                        let is_boundary = prev_commit.is_some_and(|pc| *pc != line.commit_id);
+
                         let mut spans = vec![];
                         if is_cursor {
                             spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
@@ -650,9 +657,10 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                                 format!("{:<15}", line.relative_time)
                             };
                         spans.push(Span::styled(
-                            format!("{:<12}", line.relative_time),
+                            format!("{time_display} "),
                             Style::default().fg(theme.muted),
                         ));
+                        let gutter_end = spans.len();
                         spans.push(Span::styled(
                             format!("{:>5}: ", line.line_number),
                             Style::default().fg(theme.muted),
@@ -679,15 +687,29 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             }
                         }
                         if is_cursor {
+                            // Pad to full screen width so bg covers the entire row.
+                            let used: usize = spans.iter().map(|s| s.width()).sum();
+                            if used < max_w {
+                                spans
+                                    .push(Span::styled(" ".repeat(max_w - used), Style::default()));
+                            }
                             for span in &mut spans {
                                 span.style = span.style.bg(theme.selection_bg_strong);
                             }
                         } else if same_commit {
-                            for span in &mut spans {
+                            for span in &mut spans[..gutter_end] {
                                 span.style = span.style.bg(theme.selection_bg);
                             }
                         }
-                        vec![Line::from(spans)]
+                        let mut result = Vec::new();
+                        if is_boundary && app.annotate.show_commit_separators {
+                            result.push(Line::styled(
+                                "─".repeat(max_w),
+                                Style::default().fg(theme.muted),
+                            ));
+                        }
+                        result.push(Line::from(spans));
+                        result
                     } else {
                         vec![Line::raw("")]
                     }
@@ -827,14 +849,18 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         })
         .collect();
 
+    let highlight = if app.active_view == crate::app::ActiveView::Annotate {
+        // Annotate view handles its own cursor/same-commit highlighting per-span.
+        Style::default()
+    } else {
+        Style::default()
+            .bg(theme.selection_bg)
+            .add_modifier(Modifier::BOLD)
+    };
     let list = List::new(items)
         .block(Block::default().borders(Borders::NONE))
         .scroll_padding(2)
-        .highlight_style(
-            Style::default()
-                .bg(theme.selection_bg)
-                .add_modifier(Modifier::BOLD),
-        );
+        .highlight_style(highlight);
 
     app.list_state.select(Some(app.cursor.raw()));
     frame.render_stateful_widget(list, area, &mut app.list_state);

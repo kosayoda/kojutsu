@@ -433,7 +433,8 @@ impl App {
                 | DisplayRow::GraphLink { .. }
                 | DisplayRow::OpLogItem { .. }
                 | DisplayRow::OpLogGraphLink { .. }
-                | DisplayRow::OpLogLoadMore => break,
+                | DisplayRow::OpLogLoadMore
+                | DisplayRow::AnnotateLine { .. } => break,
                 _ => last_child = idx,
             }
         }

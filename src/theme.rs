@@ -348,7 +348,7 @@ fn default_selection_bg() -> Color {
     Color::Rgb(50, 50, 60)
 }
 fn default_selection_bg_strong() -> Color {
-    Color::Rgb(100, 100, 120)
+    Color::Rgb(60, 60, 75)
 }
 fn default_tag() -> Color {
     Color::Magenta

@@ -1452,6 +1452,18 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             }
             Action::None
         }
+        AppAction::AnnotateCycleCommitColors => {
+            if app.active_view == crate::app::ActiveView::Annotate {
+                app.annotate.show_commit_separators = !app.annotate.show_commit_separators;
+                let label = if app.annotate.show_commit_separators {
+                    "on"
+                } else {
+                    "off"
+                };
+                app.set_status(format!("commit separators: {label}"));
+            }
+            Action::None
+        }
         AppAction::AnnotateForward => {
             if let Some((prev_commit, prev_line)) = app.annotate.history.pop() {
                 app.annotate_navigate(prev_commit, prev_line);

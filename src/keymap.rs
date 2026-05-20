@@ -175,6 +175,7 @@ pub enum AppAction {
     AnnotateGoToCommit,
     AnnotateTimeTravel,
     AnnotateForward,
+    AnnotateCycleCommitColors,
     // Op log view actions
     OpLogRestore,
     OpLogRevert,
@@ -363,6 +364,12 @@ fn shared_bindings() -> Vec<(Node, KeymapNode)> {
                 bind("3", AppAction::SwitchPreset(2), "preset 3", G),
                 bind("4", AppAction::SwitchPreset(3), "preset 4", G),
                 bind("5", AppAction::SwitchPreset(4), "preset 5", G),
+                bind(
+                    "s",
+                    AppAction::AnnotateCycleCommitColors,
+                    "show separator lines",
+                    G,
+                ),
             ],
         ),
     ]
@@ -919,7 +926,8 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::ResolveMergeTool => &[File],
         AppAction::AnnotateGoToCommit
         | AppAction::AnnotateTimeTravel
-        | AppAction::AnnotateForward => &[Commit],
+        | AppAction::AnnotateForward
+        | AppAction::AnnotateCycleCommitColors => &[Commit],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }
@@ -980,7 +988,8 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::FileAnnotate
         | AppAction::AnnotateGoToCommit
         | AppAction::AnnotateTimeTravel
-        | AppAction::AnnotateForward => "annotate",
+        | AppAction::AnnotateForward
+        | AppAction::AnnotateCycleCommitColors => "annotate",
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",
