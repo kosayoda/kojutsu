@@ -81,6 +81,10 @@ pub(super) fn handle_normal_key(
                     return Action::None;
                 }
             }
+            // Block file prefix when not on a file-bearing row.
+            if label == keymap::FILE_PREFIX && extract_file_and_line(app).is_none() {
+                return Action::None;
+            }
             if app.selection_active() {
                 let kind = app.selection_kind();
                 let has_supported_action = children.iter().any(|(_, node)| match node {
@@ -1378,57 +1382,12 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             })
         }
         AppAction::FileAnnotate => {
-            let info = match app.rows.get(app.cursor.raw()) {
-                // DAG view: file change or diff line
-                Some(DisplayRow::FileChange {
-                    entry_idx,
-                    file_idx,
-                })
-                | Some(DisplayRow::DiffLine {
-                    entry_idx,
-                    file_idx,
-                    ..
-                }) => {
-                    let commit_id = app.nodes[*entry_idx].commit.graph_id.clone();
-                    let path = app
-                        .files_for_entry(*entry_idx)
-                        .and_then(|f| f.get(file_idx.raw()))
-                        .map(|f| f.path.clone());
-                    path.map(|p| (commit_id, p))
+            if let Some((path, _)) = extract_file_and_line(app) {
+                if let Some(cid) = extract_commit_id(app) {
+                    app.enter_annotate_view(cid, path);
+                } else {
+                    app.set_error("select a file to annotate");
                 }
-                // Evolog view: file change or diff line
-                Some(DisplayRow::EvoLogFileChange {
-                    evolog_idx,
-                    file_idx,
-                })
-                | Some(DisplayRow::EvoLogFileDiffLine {
-                    evolog_idx,
-                    file_idx,
-                    ..
-                }) => app.evolog.entries.get(evolog_idx.raw()).and_then(|entry| {
-                    let cid = &entry.commit_id;
-                    app.evolog
-                        .files
-                        .get(cid)
-                        .and_then(|l| l.loaded())
-                        .and_then(|files| files.get(file_idx.raw()))
-                        .map(|f| (cid.clone(), f.path.clone()))
-                }),
-                // Interdiff view: file change or diff line
-                Some(DisplayRow::InterdiffFileChange { file_idx })
-                | Some(DisplayRow::InterdiffDiffLine { file_idx, .. }) => {
-                    app.interdiff.to_commit_id.as_ref().and_then(|cid| {
-                        app.interdiff
-                            .files
-                            .loaded()
-                            .and_then(|files| files.get(file_idx.raw()))
-                            .map(|f| (cid.clone(), f.path.clone()))
-                    })
-                }
-                _ => None,
-            };
-            if let Some((commit_id, path)) = info {
-                app.enter_annotate_view(commit_id, path);
             } else {
                 app.set_error("select a file to annotate");
             }
@@ -1468,6 +1427,42 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             if let Some((prev_commit, prev_line)) = app.annotate.history.pop() {
                 app.annotate_navigate(prev_commit, prev_line);
             }
+            Action::None
+        }
+        AppAction::EditFileWorkingCopy => {
+            if let Some((path, line)) = extract_file_and_line(app) {
+                return Action::EditWorkingCopyFile {
+                    path: path.as_str().to_string(),
+                    line,
+                };
+            }
+            app.set_error("select a file to edit");
+            Action::None
+        }
+        AppAction::EditFileAtRevision => {
+            if let Some((path, line)) = extract_file_and_line(app) {
+                if let Some(cid) = extract_commit_id(app) {
+                    return Action::EditFileAtRevision {
+                        commit_id: cid,
+                        path,
+                        line,
+                    };
+                }
+            }
+            app.set_error("select a file to edit");
+            Action::None
+        }
+        AppAction::CheckoutAndEditFile => {
+            if let Some((path, line)) = extract_file_and_line(app) {
+                if let Some(cid) = extract_commit_id(app) {
+                    return Action::CheckoutAndEdit {
+                        commit_id: cid,
+                        path: path.as_str().to_string(),
+                        line,
+                    };
+                }
+            }
+            app.set_error("select a file to edit");
             Action::None
         }
         AppAction::AnnotateGoToCommit => {
@@ -1537,6 +1532,102 @@ fn jump_to_commit_in_dag(
 }
 
 /// Show a FollowUp prompt offering to widen the revset to include a commit.
+/// Whether the current cursor row has a file context (for help panel greying).
+pub fn has_file_context(app: &App) -> bool {
+    extract_file_and_line(app).is_some()
+}
+
+/// Extract the file path and line number from the current cursor position.
+/// Works across DAG, evolog, interdiff, and annotate views.
+fn extract_file_and_line(app: &App) -> Option<(crate::types::RepoPath, usize)> {
+    match app.rows.get(app.cursor.raw())? {
+        // DAG view
+        DisplayRow::FileChange {
+            entry_idx,
+            file_idx,
+        } => {
+            let file = app.files_for_entry(*entry_idx)?.get(file_idx.raw())?;
+            Some((file.path.clone(), 1))
+        }
+        DisplayRow::DiffLine {
+            entry_idx,
+            file_idx,
+            line_idx,
+        } => {
+            let file = app.files_for_entry(*entry_idx)?.get(file_idx.raw())?;
+            let line = app
+                .diff_lines(*entry_idx, *file_idx)
+                .and_then(|lines| lines.get(line_idx.raw()))
+                .and_then(|dl| dl.new_line)
+                .unwrap_or(1) as usize;
+            Some((file.path.clone(), line))
+        }
+        // Evolog view
+        DisplayRow::EvoLogFileChange {
+            evolog_idx,
+            file_idx,
+        }
+        | DisplayRow::EvoLogFileDiffLine {
+            evolog_idx,
+            file_idx,
+            ..
+        } => {
+            let entry = app.evolog.entries.get(evolog_idx.raw())?;
+            let file = app
+                .evolog
+                .files
+                .get(&entry.commit_id)?
+                .loaded()?
+                .get(file_idx.raw())?;
+            Some((file.path.clone(), 1))
+        }
+        // Interdiff view
+        DisplayRow::InterdiffFileChange { file_idx }
+        | DisplayRow::InterdiffDiffLine { file_idx, .. } => {
+            let file = app.interdiff.files.loaded()?.get(file_idx.raw())?;
+            Some((file.path.clone(), 1))
+        }
+        // Annotate view
+        DisplayRow::AnnotateLine { line_idx } => {
+            let path = app.annotate.path.clone()?;
+            let line = app
+                .annotate
+                .lines
+                .loaded()
+                .and_then(|l| l.get(line_idx.raw()))
+                .map(|l| l.line_number)
+                .unwrap_or(1);
+            Some((path, line))
+        }
+        _ => None,
+    }
+}
+
+/// Extract the commit ID for the current cursor row.
+fn extract_commit_id(app: &App) -> Option<CommitId> {
+    match app.rows.get(app.cursor.raw())? {
+        DisplayRow::FileChange { entry_idx, .. } | DisplayRow::DiffLine { entry_idx, .. } => {
+            Some(app.nodes[*entry_idx].commit.graph_id.clone())
+        }
+        DisplayRow::EvoLogFileChange { evolog_idx, .. }
+        | DisplayRow::EvoLogFileDiffLine { evolog_idx, .. } => app
+            .evolog
+            .entries
+            .get(evolog_idx.raw())
+            .map(|e| e.commit_id.clone()),
+        DisplayRow::InterdiffFileChange { .. } | DisplayRow::InterdiffDiffLine { .. } => {
+            app.interdiff.to_commit_id.clone()
+        }
+        DisplayRow::AnnotateLine { line_idx } => app
+            .annotate
+            .lines
+            .loaded()
+            .and_then(|l| l.get(line_idx.raw()))
+            .map(|l| l.commit_id.clone()),
+        _ => None,
+    }
+}
+
 fn offer_widen_revset(app: &mut App, id: &str) {
     app.mode = AppMode::FollowUp {
         prompt: "commit not in current revset".into(),

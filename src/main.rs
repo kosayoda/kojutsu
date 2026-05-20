@@ -259,6 +259,42 @@ fn main() -> Result<()> {
                 edit_revset_in_editor(&mut app, &mut terminal);
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
             }
+            Action::EditWorkingCopyFile { path, line } => {
+                terminal_events.stop();
+                open_file_in_editor(&repo_path, &path, line, &mut terminal);
+                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+            }
+            Action::EditFileAtRevision {
+                commit_id,
+                path,
+                line,
+                ..
+            } => {
+                terminal_events.stop();
+                open_revision_in_editor(&repo_path, &commit_id, &path, line, &mut terminal);
+                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+            }
+            Action::CheckoutAndEdit {
+                commit_id,
+                path,
+                line,
+            } => {
+                let cmd = JJCommand {
+                    kind: kojutsu::jj_command::JJCommandKind::New {
+                        change_ids: smallvec::smallvec![kojutsu::types::ChangeId::new(
+                            commit_id.as_str()
+                        )],
+                        insert: None,
+                    },
+                    flags: kojutsu::keymap::CommandFlags::empty(),
+                };
+                terminal_events.stop();
+                let success = suspend_and_run(&mut app, &repo_path, &mut terminal, cmd);
+                if success {
+                    open_file_in_editor(&repo_path, &path, line, &mut terminal);
+                }
+                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+            }
             Action::None => {}
         }
         flush_repo_requests(&mut app, &repo_requests);
@@ -289,7 +325,7 @@ fn suspend_and_run(
     repo_path: &std::path::Path,
     terminal: &mut kojutsu::terminal::Term,
     cmd: JJCommand,
-) {
+) -> bool {
     // Store the jump target before running (cmd is consumed).
     let jump = cmd.jump_target();
 
@@ -331,6 +367,7 @@ fn suspend_and_run(
             retry,
         };
     }
+    result.success
 }
 
 fn update_revset(app: &mut App, revset_str: String) {
@@ -528,6 +565,67 @@ fn init_tracing() {
 }
 
 /// Find the nearest ancestor directory containing a `.jj/` workspace.
+fn open_file_in_editor(
+    repo_path: &std::path::Path,
+    file_path: &str,
+    line: usize,
+    terminal: &mut kojutsu::terminal::Term,
+) {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    let full_path = repo_path.join(file_path);
+    let _ = kojutsu::terminal::restore();
+    let _ = std::process::Command::new(&editor)
+        .arg(format!("+{line}"))
+        .arg(&full_path)
+        .status();
+    *terminal = kojutsu::terminal::init().expect("failed to re-init terminal");
+}
+
+fn open_revision_in_editor(
+    repo_path: &std::path::Path,
+    commit_id: &kojutsu::types::CommitId,
+    file_path: &kojutsu::types::RepoPath,
+    line: usize,
+    terminal: &mut kojutsu::terminal::Term,
+) {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+
+    // Extract file extension for the temp file name.
+    let ext = file_path.as_str().rsplit('.').next().unwrap_or("txt");
+    let name = file_path.as_str().rsplit('/').next().unwrap_or("file");
+
+    let content = (|| -> color_eyre::Result<Vec<u8>> {
+        let _ = JjRepo::snapshot(repo_path);
+        let jj = JjRepo::open(repo_path)?;
+        jj.get_file_at_commit(commit_id, file_path)
+    })();
+
+    match content {
+        Ok(bytes) => {
+            let mut tmpfile = match tempfile::Builder::new()
+                .prefix(name)
+                .suffix(&format!(".{ext}"))
+                .tempfile()
+            {
+                Ok(f) => f,
+                Err(_) => return,
+            };
+            use std::io::Write;
+            let _ = tmpfile.write_all(&bytes);
+            let _ = tmpfile.flush();
+            let _ = kojutsu::terminal::restore();
+            let _ = std::process::Command::new(&editor)
+                .arg(format!("+{line}"))
+                .arg(tmpfile.path())
+                .status();
+            *terminal = kojutsu::terminal::init().expect("failed to re-init terminal");
+        }
+        Err(e) => {
+            tracing::warn!("failed to get file at revision: {e}");
+        }
+    }
+}
+
 /// Matches jj CLI behavior (`cli_util.rs::find_workspace_dir`).
 fn find_workspace_dir(cwd: &std::path::Path) -> &std::path::Path {
     cwd.ancestors()

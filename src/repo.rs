@@ -2064,6 +2064,41 @@ impl JjRepo {
         self.trees_file_diff(&rebased_tree, &to_tree, path)
     }
 
+    /// Get the raw content of a file at a specific commit.
+    pub fn get_file_at_commit(
+        &self,
+        commit_id: &UiCommitId,
+        file_path: &RepoPath,
+    ) -> Result<Vec<u8>> {
+        let repo = self.repo.as_ref();
+        let backend_id = BackendCommitId::try_from_hex(commit_id.as_str())
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit id hex"))?;
+        let commit = repo.store().get_commit(&backend_id)?;
+        let tree = commit.tree();
+        let repo_path = RepoPathBuf::from_internal_string(file_path.as_str())
+            .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
+        let value = tree.path_value(&repo_path).block_on()?;
+        let labels = ConflictLabels::unlabeled();
+        let materialized =
+            materialize_tree_value(repo.store(), &repo_path, value, &labels).block_on()?;
+        match materialized {
+            jj_lib::conflicts::MaterializedTreeValue::File(mut file) => {
+                let buf = file.read_all(&repo_path).block_on()?;
+                Ok(buf)
+            }
+            jj_lib::conflicts::MaterializedTreeValue::FileConflict(conflict) => {
+                let options = default_materialize_options();
+                let result = jj_lib::conflicts::materialize_merge_result_to_bytes(
+                    &conflict.contents,
+                    &conflict.labels,
+                    &options,
+                );
+                Ok(result.into())
+            }
+            _ => color_eyre::eyre::bail!("path is not a regular file"),
+        }
+    }
+
     /// Compute line-by-line annotation (blame) for a file at a specific commit.
     pub fn file_annotate(
         &self,

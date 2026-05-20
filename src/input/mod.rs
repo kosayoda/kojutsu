@@ -3,6 +3,8 @@ mod bookmark;
 mod list;
 mod modal;
 
+pub use action::has_file_context;
+
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
 };
@@ -29,6 +31,20 @@ pub enum Action {
     UpdateRevset(String),
     /// Suspend TUI and open $EDITOR to edit the revset.
     EditRevsetInEditor,
+    /// Suspend TUI and open $EDITOR on a working copy file at a line.
+    EditWorkingCopyFile { path: String, line: usize },
+    /// Suspend TUI, export file at a revision to a temp file, open in $EDITOR.
+    EditFileAtRevision {
+        commit_id: crate::types::CommitId,
+        path: crate::types::RepoPath,
+        line: usize,
+    },
+    /// Run `jj new <commit>`, then open $EDITOR on the file, then refresh.
+    CheckoutAndEdit {
+        commit_id: crate::types::CommitId,
+        path: String,
+        line: usize,
+    },
 }
 
 /// Handle a key press, dispatching through the keymap trie and app mode.

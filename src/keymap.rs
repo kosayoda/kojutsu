@@ -21,6 +21,7 @@ impl SelectionKindSet {
 
 /// Label used for the conflict prefix submenu.
 pub const CONFLICT_PREFIX: &str = "conflict";
+pub const FILE_PREFIX: &str = "file";
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -176,6 +177,9 @@ pub enum AppAction {
     AnnotateTimeTravel,
     AnnotateForward,
     ToggleAnnotateSeparator,
+    EditFileWorkingCopy,
+    EditFileAtRevision,
+    CheckoutAndEditFile,
     // Op log view actions
     OpLogRestore,
     OpLogRevert,
@@ -399,11 +403,12 @@ impl Default for Keymaps {
             bind("f", AppAction::Fix, "fix", C),
             prefix(
                 "shift-f",
-                "file",
+                FILE_PREFIX,
                 C,
                 vec![
                     bind("u", AppAction::FileUntrack, "untrack", C),
                     bind("a", AppAction::FileAnnotate, "annotate", C),
+                    edit_file_prefix(),
                 ],
             ),
             prefix(
@@ -693,9 +698,12 @@ impl Default for Keymaps {
             bind("n", AppAction::EvoLogNew, "new from", C),
             prefix(
                 "shift-f",
-                "file",
+                FILE_PREFIX,
                 C,
-                vec![bind("a", AppAction::FileAnnotate, "annotate", C)],
+                vec![
+                    bind("a", AppAction::FileAnnotate, "annotate", C),
+                    edit_file_prefix(),
+                ],
             ),
         ]);
 
@@ -703,9 +711,12 @@ impl Default for Keymaps {
         let mut interdiff_root = shared_bindings();
         interdiff_root.push(prefix(
             "shift-f",
-            "file",
+            FILE_PREFIX,
             C,
-            vec![bind("a", AppAction::FileAnnotate, "annotate", C)],
+            vec![
+                bind("a", AppAction::FileAnnotate, "annotate", C),
+                edit_file_prefix(),
+            ],
         ));
 
         let mut annotate_root = shared_bindings();
@@ -718,6 +729,7 @@ impl Default for Keymaps {
                 C,
             ),
             bind("f", AppAction::AnnotateForward, "forward (undo blame)", C),
+            edit_file_prefix(),
         ]);
 
         Keymaps {
@@ -771,6 +783,21 @@ pub fn prefix(
             group,
             children,
         },
+    )
+}
+
+/// The "edit" sub-prefix shared across file-bearing views.
+fn edit_file_prefix() -> (Node, KeymapNode) {
+    use HelpGroup::Commands as C;
+    prefix(
+        "e",
+        "edit",
+        C,
+        vec![
+            bind("e", AppAction::EditFileWorkingCopy, "working copy", C),
+            bind("r", AppAction::EditFileAtRevision, "view at revision", C),
+            bind("c", AppAction::CheckoutAndEditFile, "checkout and edit", C),
+        ],
     )
 }
 
@@ -873,6 +900,8 @@ pub struct HelpEntry {
     pub selection_support: SelectionKindSet,
     /// Only show/activate when cursor is on a conflict row.
     pub requires_conflict: bool,
+    /// Only show/activate when cursor is on a file-bearing row.
+    pub requires_file: bool,
 }
 
 pub fn action_supported_selection_kinds(action: AppAction) -> &'static [SelectionKind] {
@@ -928,6 +957,9 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         | AppAction::AnnotateTimeTravel
         | AppAction::AnnotateForward
         | AppAction::ToggleAnnotateSeparator => &[Commit],
+        AppAction::EditFileWorkingCopy
+        | AppAction::EditFileAtRevision
+        | AppAction::CheckoutAndEditFile => &[Commit, File],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }
@@ -990,6 +1022,9 @@ pub fn action_label(action: AppAction) -> &'static str {
         | AppAction::AnnotateTimeTravel
         | AppAction::AnnotateForward
         | AppAction::ToggleAnnotateSeparator => "annotate",
+        AppAction::EditFileWorkingCopy
+        | AppAction::EditFileAtRevision
+        | AppAction::CheckoutAndEditFile => "edit",
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",
@@ -1075,6 +1110,7 @@ pub fn help_entries(
                         },
                     ),
                     requires_conflict: *label == CONFLICT_PREFIX,
+                    requires_file: *label == FILE_PREFIX,
                 });
             }
             KeymapNode::Toggle { .. } => {} // toggles don't appear at root
@@ -1100,6 +1136,7 @@ pub fn help_entries(
                 group,
                 selection_support: selection_kind_set_for_action(action),
                 requires_conflict: false,
+                requires_file: false,
             }
         })
         .collect();
@@ -1140,6 +1177,7 @@ pub fn select_mode_help_entries() -> Vec<(HelpGroup, Vec<HelpEntry>)> {
             group,
             selection_support: SelectionKindSet::ALL,
             requires_conflict: false,
+            requires_file: false,
         }
     }
 

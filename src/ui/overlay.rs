@@ -116,6 +116,7 @@ fn render_help_column(
                     | crate::types::DisplayRow::DiffLine { .. }
             )
         );
+        let on_file = crate::input::has_file_context(app);
         for entry in entries.iter() {
             let desc = if entry.description.len() > desc_width && desc_width > 1 {
                 format!("{}…", &entry.description[..desc_width - 1])
@@ -123,7 +124,8 @@ fn render_help_column(
                 entry.description.clone()
             };
             let blocked = (selection_active && !entry.selection_support.contains(required))
-                || (entry.requires_conflict && !on_conflict);
+                || (entry.requires_conflict && !on_conflict)
+                || (entry.requires_file && !on_file);
             let key_style = if blocked {
                 key_style
                     .fg(theme.muted)
