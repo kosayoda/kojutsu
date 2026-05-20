@@ -1452,7 +1452,7 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             }
             Action::None
         }
-        AppAction::AnnotateCycleCommitColors => {
+        AppAction::ToggleAnnotateSeparator => {
             if app.active_view == crate::app::ActiveView::Annotate {
                 app.annotate.show_commit_separators = !app.annotate.show_commit_separators;
                 let label = if app.annotate.show_commit_separators {

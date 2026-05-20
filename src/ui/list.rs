@@ -804,8 +804,23 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
             .add_modifier(Modifier::BOLD);
         for (row_idx, label) in &jump_labels {
             if let Some(lines) = raw_items.get_mut(row_idx.raw()) {
-                if let Some(first_line) = lines.first_mut() {
-                    if let Some(first_span) = first_line.spans.first_mut() {
+                // For items with a prepended separator line, target the
+                // content line (last) instead of the separator (first).
+                let target_line = if lines.len() > 1 {
+                    let first_is_separator = lines[0]
+                        .spans
+                        .first()
+                        .is_some_and(|s| s.content.starts_with('─'));
+                    if first_is_separator {
+                        lines.last_mut()
+                    } else {
+                        lines.first_mut()
+                    }
+                } else {
+                    lines.first_mut()
+                };
+                if let Some(target_line) = target_line {
+                    if let Some(first_span) = target_line.spans.first_mut() {
                         let remaining = &label[jump_input_len..];
                         // Pad to 2 chars so gutter width stays constant.
                         let display = if remaining.len() >= 2 {

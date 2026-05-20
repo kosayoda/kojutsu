@@ -7,7 +7,10 @@ impl App {
     /// Whether a row should be skipped during navigation.
     /// Skips graph links and context diff lines (not actionable).
     fn is_row_skippable(&self, row_idx: RowIdx) -> bool {
-        match &self.rows[row_idx.raw()] {
+        let Some(row) = self.rows.get(row_idx.raw()) else {
+            return true;
+        };
+        match row {
             DisplayRow::GraphLink { .. }
             | DisplayRow::DescriptionLine { .. }
             | DisplayRow::ConflictContext { .. } => true,
@@ -83,7 +86,10 @@ impl App {
 
     /// Number of display lines a row occupies.
     fn row_display_lines(&self, row_idx: usize) -> usize {
-        match &self.rows[row_idx] {
+        let Some(row) = self.rows.get(row_idx) else {
+            return 1;
+        };
+        match row {
             DisplayRow::CommitNode { .. }
             | DisplayRow::OpLogItem { .. }
             | DisplayRow::EvoLogItem { .. } => 2,
@@ -232,17 +238,8 @@ impl App {
             }
         }
 
-        let commit_level = self.is_commit_level_jump();
         for j in (0..self.cursor.raw()).rev() {
-            let target = if commit_level {
-                matches!(self.rows[j], DisplayRow::CommitNode { .. })
-            } else {
-                matches!(
-                    self.rows[j],
-                    DisplayRow::FileChange { .. } | DisplayRow::CommitNode { .. }
-                )
-            };
-            if target {
+            if self.is_section_boundary(j) {
                 return Some(RowIdx::new(j));
             }
         }
@@ -257,21 +254,71 @@ impl App {
             }
         }
 
-        let commit_level = self.is_commit_level_jump();
         for j in (self.cursor.raw() + 1)..self.rows.len() {
-            let target = if commit_level {
-                matches!(self.rows[j], DisplayRow::CommitNode { .. })
-            } else {
-                matches!(
-                    self.rows[j],
-                    DisplayRow::FileChange { .. } | DisplayRow::CommitNode { .. }
-                )
-            };
-            if target {
+            if self.is_section_boundary(j) {
                 return Some(RowIdx::new(j));
             }
         }
         None
+    }
+
+    /// Whether a row is a section boundary for J/K navigation.
+    fn is_section_boundary(&self, j: usize) -> bool {
+        let Some(row) = self.rows.get(j) else {
+            return false;
+        };
+        match self.active_view {
+            crate::app::ActiveView::Dag => {
+                let commit_level = self.is_commit_level_jump();
+                if commit_level {
+                    matches!(row, DisplayRow::CommitNode { .. })
+                } else {
+                    matches!(
+                        row,
+                        DisplayRow::FileChange { .. } | DisplayRow::CommitNode { .. }
+                    )
+                }
+            }
+            crate::app::ActiveView::Bookmarks => matches!(row, DisplayRow::BookmarkItem { .. }),
+            crate::app::ActiveView::Tags => matches!(row, DisplayRow::TagItem { .. }),
+            crate::app::ActiveView::Operations => matches!(row, DisplayRow::OpLogItem { .. }),
+            crate::app::ActiveView::Workspaces => matches!(row, DisplayRow::WorkspaceItem { .. }),
+            crate::app::ActiveView::Evolog => {
+                matches!(
+                    row,
+                    DisplayRow::EvoLogItem { .. } | DisplayRow::EvoLogFileChange { .. }
+                )
+            }
+            crate::app::ActiveView::CommandLog => {
+                matches!(row, DisplayRow::CommandLogItem { .. })
+            }
+            crate::app::ActiveView::Interdiff => {
+                matches!(row, DisplayRow::InterdiffFileChange { .. })
+            }
+            crate::app::ActiveView::Annotate => {
+                // Jump between commit boundaries in annotate view.
+                if j == 0 {
+                    return true;
+                }
+                let prev_commit = self.annotate.lines.loaded().and_then(|lines| {
+                    // Find the line_idx for row j and j-1.
+                    let cur_li = match row {
+                        DisplayRow::AnnotateLine { line_idx } => Some(line_idx.raw()),
+                        _ => None,
+                    }?;
+                    let prev_row = self.rows.get(j - 1)?;
+                    let prev_li = match prev_row {
+                        DisplayRow::AnnotateLine { line_idx } => Some(line_idx.raw()),
+                        DisplayRow::AnnotateDetail { line_idx, .. } => Some(line_idx.raw()),
+                        _ => None,
+                    }?;
+                    let cur_cid = &lines.get(cur_li)?.commit_id;
+                    let prev_cid = &lines.get(prev_li)?.commit_id;
+                    Some(cur_cid != prev_cid)
+                });
+                matches!(row, DisplayRow::AnnotateLine { .. }) && prev_commit.unwrap_or(false)
+            }
+        }
     }
 
     pub fn move_up_section(&mut self) {

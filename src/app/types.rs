@@ -229,13 +229,17 @@ impl AnnotateState {
     pub fn clear_keep_history(&mut self) {
         let history = std::mem::take(&mut self.history);
         let commit_info = std::mem::take(&mut self.commit_info);
+        let show_commit_separators = self.show_commit_separators;
         *self = Self::new();
         self.history = history;
         self.commit_info = commit_info;
+        self.show_commit_separators = show_commit_separators;
     }
 
     pub fn clear(&mut self) {
+        let show_commit_separators = self.show_commit_separators;
         *self = Self::new();
+        self.show_commit_separators = show_commit_separators;
     }
 }
 
@@ -287,6 +291,8 @@ pub struct PersistedState {
     pub active_preset: Option<usize>,
     #[serde(default)]
     pub git_diff: bool,
+    #[serde(default)]
+    pub annotate_separators: bool,
 }
 
 pub fn load_persisted_state() -> PersistedState {

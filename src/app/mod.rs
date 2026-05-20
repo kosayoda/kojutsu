@@ -929,7 +929,8 @@ impl App {
                     | DisplayRow::CommandLogItem { .. }
                     | DisplayRow::FileChange { .. }
                     | DisplayRow::EvoLogFileChange { .. }
-                    | DisplayRow::InterdiffFileChange { .. } => Some(idx),
+                    | DisplayRow::InterdiffFileChange { .. }
+                    | DisplayRow::AnnotateLine { .. } => Some(idx),
                     _ if self.is_hunk_header(idx) => Some(idx),
                     _ => None,
                 }
@@ -1024,6 +1025,7 @@ impl App {
             view_search_scopes: Default::default(),
             active_preset: self.revset.active_preset,
             git_diff: self.diff_format == DiffFormat::Git,
+            annotate_separators: self.annotate.show_commit_separators,
         }
     }
 
@@ -1039,6 +1041,7 @@ impl App {
         } else {
             DiffFormat::ColorWords
         };
+        self.annotate.show_commit_separators = state.annotate_separators;
         self.revset.active_preset = state
             .active_preset
             .filter(|&i| i < self.revset.presets.len());

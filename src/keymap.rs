@@ -175,7 +175,7 @@ pub enum AppAction {
     AnnotateGoToCommit,
     AnnotateTimeTravel,
     AnnotateForward,
-    AnnotateCycleCommitColors,
+    ToggleAnnotateSeparator,
     // Op log view actions
     OpLogRestore,
     OpLogRevert,
@@ -359,17 +359,17 @@ fn shared_bindings() -> Vec<(Node, KeymapNode)> {
                 bind("p", AppAction::SelectPreset, "switch preset", G),
                 bind("l", AppAction::ToggleLineNumbers, "toggle line numbers", G),
                 bind("g", AppAction::ToggleGitDiff, "toggle diff style", G),
+                bind(
+                    "s",
+                    AppAction::ToggleAnnotateSeparator,
+                    "toggle separator lines",
+                    G,
+                ),
                 bind("1", AppAction::SwitchPreset(0), "preset 1", G),
                 bind("2", AppAction::SwitchPreset(1), "preset 2", G),
                 bind("3", AppAction::SwitchPreset(2), "preset 3", G),
                 bind("4", AppAction::SwitchPreset(3), "preset 4", G),
                 bind("5", AppAction::SwitchPreset(4), "preset 5", G),
-                bind(
-                    "s",
-                    AppAction::AnnotateCycleCommitColors,
-                    "show separator lines",
-                    G,
-                ),
             ],
         ),
     ]
@@ -927,7 +927,7 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
         AppAction::AnnotateGoToCommit
         | AppAction::AnnotateTimeTravel
         | AppAction::AnnotateForward
-        | AppAction::AnnotateCycleCommitColors => &[Commit],
+        | AppAction::ToggleAnnotateSeparator => &[Commit],
         // Everything else (squash, restore, split, commit, etc.) supports all levels.
         _ => &[Commit, File, Line],
     }
@@ -989,7 +989,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         | AppAction::AnnotateGoToCommit
         | AppAction::AnnotateTimeTravel
         | AppAction::AnnotateForward
-        | AppAction::AnnotateCycleCommitColors => "annotate",
+        | AppAction::ToggleAnnotateSeparator => "annotate",
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         _ => "action",
