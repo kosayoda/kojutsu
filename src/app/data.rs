@@ -626,6 +626,21 @@ impl App {
                     self.set_error(msg);
                 }
             },
+            RepoResult::FileList { commit_id, result } => match result {
+                Ok(files) => {
+                    let items: Vec<String> = files.iter().map(|p| p.as_str().to_string()).collect();
+                    self.mode = super::AppMode::select_from_list(
+                        "files",
+                        items,
+                        false,
+                        crate::types::PendingSelection::FileListAnnotate { commit_id },
+                        true,
+                    );
+                }
+                Err(error) => {
+                    self.set_error(format!("file list: {}", error.message));
+                }
+            },
             RepoResult::BackgroundError { error } => {
                 let msg = format!("background task failed: {}", error.message);
                 self.push_command_log(

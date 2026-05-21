@@ -186,6 +186,7 @@ pub enum AppAction {
     OpLogAbandon,
     OpLogFilterWorkspace,
     CommandMode,
+    FileList,
 }
 
 /// A node in the keymap trie.
@@ -410,6 +411,7 @@ impl Default for Keymaps {
                 vec![
                     bind("u", AppAction::FileUntrack, "untrack", C),
                     bind("a", AppAction::FileAnnotate, "annotate", C),
+                    bind("l", AppAction::FileList, "file list", C),
                     edit_file_prefix(),
                 ],
             ),
@@ -704,6 +706,7 @@ impl Default for Keymaps {
                 C,
                 vec![
                     bind("a", AppAction::FileAnnotate, "annotate", C),
+                    bind("l", AppAction::FileList, "file list", C),
                     edit_file_prefix(),
                 ],
             ),
@@ -717,6 +720,7 @@ impl Default for Keymaps {
             C,
             vec![
                 bind("a", AppAction::FileAnnotate, "annotate", C),
+                bind("l", AppAction::FileList, "file list", C),
                 edit_file_prefix(),
             ],
         ));
@@ -967,6 +971,29 @@ pub fn action_supported_selection_kinds(action: AppAction) -> &'static [Selectio
     }
 }
 
+pub fn action_requires_file(action: AppAction) -> bool {
+    matches!(
+        action,
+        AppAction::FileAnnotate
+            | AppAction::FileUntrack
+            | AppAction::EditFileWorkingCopy
+            | AppAction::EditFileAtRevision
+            | AppAction::CheckoutAndEditFile
+    )
+}
+
+pub fn action_requires_conflict(action: AppAction) -> bool {
+    matches!(
+        action,
+        AppAction::ResolveOurs
+            | AppAction::ResolveTheirs
+            | AppAction::ResolveMergeTool
+            | AppAction::ConflictPickOurs
+            | AppAction::ConflictPickTheirs
+            | AppAction::ConflictPickBase
+    )
+}
+
 pub fn action_label(action: AppAction) -> &'static str {
     match action {
         AppAction::Abandon => "abandon",
@@ -1111,8 +1138,8 @@ pub fn help_entries(
                             _ => acc,
                         },
                     ),
-                    requires_conflict: *label == CONFLICT_PREFIX,
-                    requires_file: *label == FILE_PREFIX,
+                    requires_conflict: children.iter().all(|(_, c)| matches!(c, KeymapNode::Action { action, .. } if action_requires_conflict(*action))),
+                    requires_file: children.iter().all(|(_, c)| matches!(c, KeymapNode::Action { action, .. } if action_requires_file(*action))),
                 });
             }
             KeymapNode::Toggle { .. } => {} // toggles don't appear at root

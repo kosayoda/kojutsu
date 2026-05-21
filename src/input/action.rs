@@ -66,25 +66,6 @@ pub(super) fn handle_normal_key(
         }
         LookupResult::Prefix { label, children } => {
             app.status_message = None;
-            // Block conflict prefix when not on a conflict-relevant row.
-            if label == keymap::CONFLICT_PREFIX {
-                let on_conflict_row = matches!(
-                    app.rows.get(app.cursor.raw()),
-                    Some(
-                        DisplayRow::ConflictHeader { .. }
-                            | DisplayRow::ConflictSide { .. }
-                            | DisplayRow::FileChange { .. }
-                            | DisplayRow::DiffLine { .. }
-                    )
-                );
-                if !on_conflict_row {
-                    return Action::None;
-                }
-            }
-            // Block file prefix when not on a file-bearing row.
-            if label == keymap::FILE_PREFIX && extract_file_and_line(app).is_none() {
-                return Action::None;
-            }
             if app.selection_active() {
                 let kind = app.selection_kind();
                 let has_supported_action = children.iter().any(|(_, node)| match node {
@@ -1496,6 +1477,14 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             app.mode = AppMode::text_input(":", "", PendingCommand::RawCommand);
             Action::None
         }
+        AppAction::FileList => {
+            if let Some(cid) = extract_commit_id(app) {
+                app.request_file_list(cid);
+            } else {
+                app.set_error("select a commit to list files");
+            }
+            Action::None
+        }
     }
 }
 
@@ -1610,7 +1599,9 @@ fn extract_file_and_line(app: &App) -> Option<(crate::types::RepoPath, usize)> {
 /// Extract the commit ID for the current cursor row.
 fn extract_commit_id(app: &App) -> Option<CommitId> {
     match app.rows.get(app.cursor.raw())? {
-        DisplayRow::FileChange { entry_idx, .. } | DisplayRow::DiffLine { entry_idx, .. } => {
+        DisplayRow::CommitNode { entry_idx }
+        | DisplayRow::FileChange { entry_idx, .. }
+        | DisplayRow::DiffLine { entry_idx, .. } => {
             Some(app.nodes[*entry_idx].commit.graph_id.clone())
         }
         DisplayRow::EvoLogFileChange { evolog_idx, .. }

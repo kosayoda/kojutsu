@@ -72,6 +72,9 @@ enum RepoRequestKind {
         commit_id: CommitId,
         path: RepoPath,
     },
+    FileList {
+        commit_id: CommitId,
+    },
 }
 
 #[derive(Clone)]
@@ -190,6 +193,10 @@ pub enum RepoResult {
     Annotate {
         result: Result<crate::dag::AnnotateResult, RepoError>,
     },
+    FileList {
+        commit_id: CommitId,
+        result: Result<Vec<RepoPath>, RepoError>,
+    },
     /// A background computation thread panicked or failed.
     BackgroundError { error: RepoError },
 }
@@ -300,6 +307,13 @@ impl RepoRequest {
             kind: RepoRequestKind::Annotate { commit_id, path },
         }
     }
+
+    pub fn load_file_list(commit_id: CommitId) -> Self {
+        Self {
+            epoch: 0,
+            kind: RepoRequestKind::FileList { commit_id },
+        }
+    }
 }
 
 impl RepoService {
@@ -336,7 +350,8 @@ impl RepoRequestHandle {
             | RepoRequestKind::EvoLogFileDiff { .. }
             | RepoRequestKind::InterdiffDetails { .. }
             | RepoRequestKind::InterdiffFileDiff { .. }
-            | RepoRequestKind::Annotate { .. } => self.current_epoch.load(Ordering::SeqCst),
+            | RepoRequestKind::Annotate { .. }
+            | RepoRequestKind::FileList { .. } => self.current_epoch.load(Ordering::SeqCst),
         };
         let _ = self.request_tx.send(request);
     }
@@ -477,6 +492,9 @@ impl RepoServiceState {
             }
             RepoRequestKind::Annotate { commit_id, path } => {
                 self.handle_file_annotate(epoch, commit_id, path);
+            }
+            RepoRequestKind::FileList { commit_id } => {
+                self.handle_file_list(epoch, commit_id);
             }
         }
     }
@@ -1107,6 +1125,38 @@ impl RepoServiceState {
                     RepoResult::Annotate {
                         result: Err(RepoError {
                             kind: RepoErrorKind::AnnotateAccess,
+                            message: format!("{err:#}"),
+                        }),
+                    },
+                );
+            }
+        }
+    }
+
+    fn handle_file_list(&mut self, epoch: u64, commit_id: CommitId) {
+        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::FileList {
+            commit_id: commit_id.clone(),
+            result: Err(error),
+        }) else {
+            return;
+        };
+        match repo.list_files(&commit_id) {
+            Ok(files) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::FileList {
+                        commit_id,
+                        result: Ok(files),
+                    },
+                );
+            }
+            Err(err) => {
+                self.send_if_current(
+                    epoch,
+                    RepoResult::FileList {
+                        commit_id,
+                        result: Err(RepoError {
+                            kind: RepoErrorKind::CommitAccess,
                             message: format!("{err:#}"),
                         }),
                     },

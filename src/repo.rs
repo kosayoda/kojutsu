@@ -2101,6 +2101,19 @@ impl JjRepo {
     }
 
     /// Compute line-by-line annotation (blame) for a file at a specific commit.
+    pub fn list_files(&self, commit_id: &UiCommitId) -> Result<Vec<RepoPath>> {
+        let repo = self.repo.as_ref();
+        let backend_id = BackendCommitId::try_from_hex(commit_id.as_str())
+            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit id hex"))?;
+        let commit = repo.store().get_commit(&backend_id)?;
+        let tree = commit.tree();
+        let mut paths = Vec::new();
+        for (path, _value) in tree.entries() {
+            paths.push(RepoPath::new(path.as_internal_file_string()));
+        }
+        Ok(paths)
+    }
+
     pub fn file_annotate(
         &self,
         commit_id: &UiCommitId,

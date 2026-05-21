@@ -9,7 +9,7 @@ use ratatui::Frame;
 use crate::app::App;
 use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, KeymapNode};
 use crate::theme::Theme;
-use crate::types::{scope_specs_for_view, FollowUpOption, SearchFocus, SelectionContext};
+use crate::types::{scope_specs_for_view, FollowUpOption, SearchFocus, SelectionKind};
 
 /// A plain block with only a top border (used by several simple overlay panels).
 fn top_border(theme: &Theme) -> Block<'static> {
@@ -165,7 +165,10 @@ pub(super) fn draw_submenu(
     children: &[(keymap_parser::Node, KeymapNode)],
     flags: CommandFlags,
     selection_suffix: Option<String>,
-    selection: &SelectionContext,
+    selection_active: bool,
+    selection_kind: SelectionKind,
+    has_file_context: bool,
+    has_conflict_context: bool,
     theme: &Theme,
 ) {
     // Build toggle indicators for the title bar.
@@ -230,9 +233,11 @@ pub(super) fn draw_submenu(
                 description,
                 ..
             } => {
-                let blocked = selection.is_active()
+                let blocked = (selection_active
                     && !keymap::action_supported_selection_kinds(*action)
-                        .contains(&selection.kind());
+                        .contains(&selection_kind))
+                    || (keymap::action_requires_file(*action) && !has_file_context)
+                    || (keymap::action_requires_conflict(*action) && !has_conflict_context);
                 (*description, blocked)
             }
             KeymapNode::Prefix { label, .. } => (*label, false),

@@ -373,6 +373,11 @@ pub(super) fn resolve_selection(
             app.rebuild_rows();
             Action::None
         }
+        PendingSelection::FileListAnnotate { commit_id } => {
+            let path = names.into_iter().next().unwrap_or_default();
+            app.enter_annotate_view(commit_id, crate::types::RepoPath::new(path));
+            Action::None
+        }
         PendingSelection::CommandCompletion { input } => {
             let selected = names.into_iter().next().unwrap_or_default();
             // The item format is "value  description" — extract just the value.

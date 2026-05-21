@@ -1,4 +1,4 @@
-use super::id::{BookmarkName, ChangeId, SmallVec, TagName, WorkspaceName};
+use super::id::{BookmarkName, ChangeId, CommitId, SmallVec, TagName, WorkspaceName};
 use super::operations::{ChangeSelection, RebaseSource, SplitKind, SquashKind, SquashTarget};
 use crate::keymap::CommandFlags;
 
@@ -50,6 +50,9 @@ pub enum PendingSelection {
     OpLogWorkspaceFilter,
     CommandCompletion {
         input: String,
+    },
+    FileListAnnotate {
+        commit_id: CommitId,
     },
     /// Select a remote for git fetch.
     GitRemoteForFetch {

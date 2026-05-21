@@ -457,6 +457,11 @@ impl App {
     }
 
     /// Enter the annotate (blame) view for a file at a specific commit.
+    pub fn request_file_list(&mut self, commit_id: CommitId) {
+        self.pending_repo_requests
+            .push(crate::repo_service::RepoRequest::load_file_list(commit_id));
+    }
+
     pub fn enter_annotate_view(&mut self, commit_id: CommitId, path: crate::types::RepoPath) {
         self.annotate.clear();
         self.annotate.commit_id = Some(commit_id.clone());
