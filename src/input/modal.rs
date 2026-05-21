@@ -47,6 +47,12 @@ pub(super) fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
                         };
                         Action::None
                     }
+                    PendingCommand::RawCommand => {
+                        match PendingCommand::RawCommand.into_jj_command(text) {
+                            Some(jj_cmd) => Action::SuspendAndRunJj(jj_cmd),
+                            None => Action::None,
+                        }
+                    }
                     cmd => match cmd.into_jj_command(text) {
                         Some(jj_cmd) => Action::RunJj(jj_cmd),
                         None => Action::None,

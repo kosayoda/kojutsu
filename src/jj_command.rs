@@ -204,6 +204,11 @@ pub enum JJCommandKind {
         path: Str,
         tool: ResolveTool,
     },
+    /// Raw pass-through command from `:` command mode.
+    /// Args are the user's input split by shell lexing rules.
+    Raw {
+        args: Vec<Str>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -800,6 +805,7 @@ impl JJCommand {
                 args.push(path.clone());
                 args
             }
+            JJCommandKind::Raw { args } => return args.clone(),
         };
 
         // Append global flags (ignore-immutable, etc.) once at the end.
@@ -875,6 +881,8 @@ impl JJCommand {
             }
             JJCommandKind::Split { .. } => true,
             JJCommandKind::Resolve { tool, .. } => matches!(tool, ResolveTool::Default),
+            // Raw commands always get a full terminal (lazygit-style).
+            JJCommandKind::Raw { .. } => true,
             _ => false,
         }
     }
@@ -1341,6 +1349,18 @@ impl PendingCommand {
                 },
                 flags,
             }),
+            PendingCommand::RawCommand => {
+                let args = match shlex::split(&text) {
+                    Some(args) if !args.is_empty() => args,
+                    _ => return None,
+                };
+                Some(JJCommand {
+                    kind: JJCommandKind::Raw {
+                        args: args.into_iter().map(Str::from).collect(),
+                    },
+                    flags: CommandFlags::empty(),
+                })
+            }
         }
     }
 }

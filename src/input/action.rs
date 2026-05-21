@@ -1492,6 +1492,10 @@ fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Act
             );
             Action::None
         }
+        AppAction::CommandMode => {
+            app.mode = AppMode::text_input(":", "", PendingCommand::RawCommand);
+            Action::None
+        }
     }
 }
 

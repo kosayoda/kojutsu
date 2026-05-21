@@ -185,6 +185,8 @@ pub enum AppAction {
     OpLogRevert,
     OpLogAbandon,
     OpLogFilterWorkspace,
+    /// Vim-style `:` command mode — run an arbitrary jj command.
+    CommandMode,
 }
 
 /// A node in the keymap trie.
@@ -346,6 +348,8 @@ fn shared_bindings() -> Vec<(Node, KeymapNode)> {
         bind("shift-d", AppAction::ToggleDebug, "toggle debug", G),
         // Refresh
         bind("ctrl-r", AppAction::Refresh, "refresh", N),
+        // Command mode (vim-style :)
+        bind(":", AppAction::CommandMode, "command mode", N),
         // Command palette
         prefix(
             ";",

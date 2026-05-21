@@ -118,6 +118,8 @@ pub enum PendingCommand {
     WorkspaceAddName { path: String, flags: CommandFlags },
     /// Rename current workspace. Text = new name.
     WorkspaceRename { flags: CommandFlags },
+    /// Raw jj command (pass-through from `:` command mode). Text = args.
+    RawCommand,
 }
 
 /// What kind of two-commit target selection we're doing.
