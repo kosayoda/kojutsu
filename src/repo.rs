@@ -1403,18 +1403,19 @@ impl JjRepo {
 
     /// Build an `IdPrefixContext` using the `revsets.short-prefixes` config.
     fn build_id_prefix_context(&self, context: &RevsetParseContext<'_>) -> IdPrefixContext {
+        let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
         let short_prefixes_str = self
             .settings
             .config()
             .get::<String>("revsets.short-prefixes")
-            .unwrap_or_else(|_| self.default_revset());
-        let mut diag = RevsetDiagnostics::new();
-        let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
-        if let Ok(expression) = jj_lib::revset::parse(&mut diag, &short_prefixes_str, context) {
-            ctx.disambiguate_within(expression)
-        } else {
-            ctx
+            .ok();
+        if let Some(revset_str) = short_prefixes_str {
+            let mut diag = RevsetDiagnostics::new();
+            if let Ok(expression) = jj_lib::revset::parse(&mut diag, &revset_str, context) {
+                return ctx.disambiguate_within(expression);
+            }
         }
+        ctx
     }
 
     /// Build a `ShortId` for a commit's change ID using the prefix index.

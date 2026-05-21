@@ -43,10 +43,13 @@ impl App {
             self.rows
                 .push(DisplayRow::BookmarkItem { bookmark_idx: bi });
 
-            // Emit detail rows unless this bookmark is folded.
-            let name = &self.views.bookmark_entries[idx].name;
-            if !self.views.folded_bookmarks.contains(name) {
-                if let Some(details) = self.views.bookmark_details.get(name) {
+            // Emit detail rows only for local/tracking bookmarks (not
+            // remote-only entries which share the same base name and would
+            // incorrectly show the local bookmark's remote tracking info).
+            let entry = &self.views.bookmark_entries[idx];
+            let is_remote_only = entry.kind.remote().is_some();
+            if !is_remote_only && !self.views.folded_bookmarks.contains(&entry.name) {
+                if let Some(details) = self.views.bookmark_details.get(&entry.name) {
                     for ti in 0..details.conflict_targets.len() {
                         self.rows.push(DisplayRow::BookmarkConflictTarget {
                             bookmark_idx: bi,
