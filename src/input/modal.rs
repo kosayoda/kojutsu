@@ -66,6 +66,57 @@ pub(super) fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
             app.mode = AppMode::Normal;
             Action::None
         }
+        KeyCode::Tab => {
+            if let AppMode::TextInput {
+                input, on_submit, ..
+            } = &mut app.mode
+            {
+                if matches!(on_submit, PendingCommand::RawCommand) {
+                    let text = input.to_string();
+                    let repo_path = std::path::PathBuf::from(&app.repo_root);
+                    let completions = crate::jj_command::complete(&repo_path, &text);
+
+                    if completions.len() == 1 {
+                        // Single match: replace and add trailing space.
+                        let new_text = crate::jj_command::replace_current_token(
+                            &text,
+                            &completions[0].value,
+                            true,
+                        );
+                        *input = tui_input::Input::new(new_text);
+                    } else if completions.len() > 1 {
+                        // Multiple matches: extend to common prefix if possible.
+                        let prefix = crate::jj_command::common_prefix(&completions);
+                        let (_, current) = crate::jj_command::split_for_completion(&text);
+                        if prefix.len() > current.len() {
+                            let new_text =
+                                crate::jj_command::replace_current_token(&text, prefix, false);
+                            *input = tui_input::Input::new(new_text);
+                        } else {
+                            // Already at common prefix — show completion list.
+                            let items: Vec<String> = completions
+                                .iter()
+                                .map(|c| {
+                                    if c.description.is_empty() {
+                                        c.value.clone()
+                                    } else {
+                                        format!("{}  {}", c.value, c.description)
+                                    }
+                                })
+                                .collect();
+                            app.mode = AppMode::select_from_list(
+                                "completions",
+                                items,
+                                false,
+                                crate::types::PendingSelection::CommandCompletion { input: text },
+                                true,
+                            );
+                        }
+                    }
+                }
+            }
+            Action::None
+        }
         _ => {
             if let AppMode::TextInput { input, .. } = &mut app.mode {
                 input.handle_event(&Event::Key(key));

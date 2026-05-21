@@ -373,5 +373,13 @@ pub(super) fn resolve_selection(
             app.rebuild_rows();
             Action::None
         }
+        PendingSelection::CommandCompletion { input } => {
+            let selected = names.into_iter().next().unwrap_or_default();
+            // The item format is "value  description" — extract just the value.
+            let value = selected.split_whitespace().next().unwrap_or(&selected);
+            let new_text = crate::jj_command::replace_current_token(&input, value, true);
+            app.mode = AppMode::text_input(":", new_text, crate::types::PendingCommand::RawCommand);
+            Action::None
+        }
     }
 }

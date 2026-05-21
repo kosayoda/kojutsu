@@ -25,26 +25,42 @@ pub enum PendingSelection {
         flags: CommandFlags,
     },
     /// Forget a workspace (text is the workspace name from the list).
-    WorkspaceForget { flags: CommandFlags },
+    WorkspaceForget {
+        flags: CommandFlags,
+    },
     /// Track remote bookmarks.
-    BookmarkTrack { flags: CommandFlags },
+    BookmarkTrack {
+        flags: CommandFlags,
+    },
     /// Untrack remote bookmarks.
-    BookmarkUntrack { flags: CommandFlags },
+    BookmarkUntrack {
+        flags: CommandFlags,
+    },
     /// Push bookmarks to remote.
-    GitPushBookmark { flags: CommandFlags },
+    GitPushBookmark {
+        flags: CommandFlags,
+    },
     /// Delete a tag.
-    TagDelete { flags: CommandFlags },
+    TagDelete {
+        flags: CommandFlags,
+    },
     /// Switch to a named revset preset.
     PresetSelect,
     /// Filter op log by workspace.
     OpLogWorkspaceFilter,
+    CommandCompletion {
+        input: String,
+    },
     /// Select a remote for git fetch.
     GitRemoteForFetch {
         all_remotes: bool,
         flags: CommandFlags,
     },
     /// Select a remote for git push.
-    GitRemoteForPush { all: bool, flags: CommandFlags },
+    GitRemoteForPush {
+        all: bool,
+        flags: CommandFlags,
+    },
     /// Select a remote for git push bookmark (bookmarks already chosen).
     GitRemoteForPushBookmark {
         bookmarks: SmallVec<BookmarkName>,
@@ -111,14 +127,23 @@ pub enum PendingCommand {
         flags: CommandFlags,
     },
     /// Set tag to a change ID (name already known, text is change ID).
-    TagSetByName { name: TagName, flags: CommandFlags },
+    TagSetByName {
+        name: TagName,
+        flags: CommandFlags,
+    },
     /// Workspace add step 1: collecting path. Text = path.
-    WorkspaceAddPath { flags: CommandFlags },
+    WorkspaceAddPath {
+        flags: CommandFlags,
+    },
     /// Workspace add step 2: path collected, collecting name. Text = name.
-    WorkspaceAddName { path: String, flags: CommandFlags },
+    WorkspaceAddName {
+        path: String,
+        flags: CommandFlags,
+    },
     /// Rename current workspace. Text = new name.
-    WorkspaceRename { flags: CommandFlags },
-    /// Raw jj command (pass-through from `:` command mode). Text = args.
+    WorkspaceRename {
+        flags: CommandFlags,
+    },
     RawCommand,
 }
 

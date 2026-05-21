@@ -14,10 +14,6 @@ struct LineSelection {
 }
 
 impl App {
-    // -----------------------------------------------------------------------
-    // Shared lifecycle
-    // -----------------------------------------------------------------------
-
     /// Whether any visual mode is active (line or commit).
     pub fn in_visual_mode(&self) -> bool {
         self.visual.mode.is_some()
@@ -134,10 +130,6 @@ impl App {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // Movement (dispatches based on variant)
-    // -----------------------------------------------------------------------
-
     pub fn visual_move_down(&mut self) {
         match &self.visual.mode {
             Some(VisualMode::Lines { .. }) => self.line_visual_move_down(),
@@ -153,10 +145,6 @@ impl App {
             None => {}
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Range queries (for rendering)
-    // -----------------------------------------------------------------------
 
     /// Check if a diff line is in the visual range (active or persistent).
     pub fn is_in_visual_range(
@@ -210,10 +198,6 @@ impl App {
         }
         false
     }
-
-    // -----------------------------------------------------------------------
-    // Line visual mode internals
-    // -----------------------------------------------------------------------
 
     fn visual_line_file(&self) -> Option<(EntryIdx, FileIdx)> {
         let Some(VisualMode::Lines { anchor }) = &self.visual.mode else {
@@ -415,10 +399,6 @@ impl App {
             }
         }
     }
-
-    // -----------------------------------------------------------------------
-    // Commit visual mode internals
-    // -----------------------------------------------------------------------
 
     fn commit_visual_move_down(&mut self) {
         let Some(VisualMode::Commits { anchor, path }) = &self.visual.mode else {
