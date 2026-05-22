@@ -107,15 +107,7 @@ fn render_help_column(
         let desc_width = area.width.saturating_sub(20) as usize;
         let required = app.selection_kind().as_bitset();
         let selection_active = app.selection_active();
-        let on_conflict = matches!(
-            app.rows.get(app.cursor.raw()),
-            Some(
-                crate::types::DisplayRow::ConflictHeader { .. }
-                    | crate::types::DisplayRow::ConflictSide { .. }
-                    | crate::types::DisplayRow::FileChange { .. }
-                    | crate::types::DisplayRow::DiffLine { .. }
-            )
-        );
+        let on_conflict = crate::input::has_conflict_context(app);
         let on_file = crate::input::has_file_context(app);
         for entry in entries.iter() {
             let desc = if entry.description.len() > desc_width && desc_width > 1 {
@@ -483,6 +475,7 @@ pub(super) fn draw_select_list(
     title: &str,
     items: &[String],
     filtered_indices: &[usize],
+    match_positions: &[Vec<usize>],
     cursor: usize,
     scroll_offset: &mut usize,
     marked: &HashSet<usize>,
@@ -555,6 +548,7 @@ pub(super) fn draw_select_list(
         .take(list_h)
         .map(|(filter_idx, &orig_idx)| {
             let item = &items[orig_idx];
+            let positions = match_positions.get(filter_idx).map(|v| v.as_slice());
             let is_cursor = filter_idx == cursor;
             let is_marked = marked.contains(&orig_idx);
             let prefix = if multi {
@@ -569,7 +563,7 @@ pub(super) fn draw_select_list(
             } else {
                 "  "
             };
-            let style = if is_cursor {
+            let base_style = if is_cursor {
                 Style::default()
                     .fg(theme.selection)
                     .add_modifier(Modifier::BOLD)
@@ -578,7 +572,33 @@ pub(super) fn draw_select_list(
             } else {
                 Style::default().fg(theme.text)
             };
-            Line::from(Span::styled(format!("{prefix}{item}"), style))
+            let highlight_style = base_style.fg(theme.accent).add_modifier(Modifier::BOLD);
+            let mut spans = vec![Span::styled(prefix.to_string(), base_style)];
+            if let Some(pos) = positions.filter(|p| !p.is_empty()) {
+                let mut current_run = String::new();
+                let mut current_style = base_style;
+                for (i, ch) in item.char_indices() {
+                    let style = if pos.binary_search(&i).is_ok() {
+                        highlight_style
+                    } else {
+                        base_style
+                    };
+                    if style != current_style && !current_run.is_empty() {
+                        spans.push(Span::styled(
+                            std::mem::take(&mut current_run),
+                            current_style,
+                        ));
+                    }
+                    current_style = style;
+                    current_run.push(ch);
+                }
+                if !current_run.is_empty() {
+                    spans.push(Span::styled(current_run, current_style));
+                }
+            } else {
+                spans.push(Span::styled(item.clone(), base_style));
+            }
+            Line::from(spans)
         })
         .collect();
 

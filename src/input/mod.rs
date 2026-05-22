@@ -3,7 +3,7 @@ mod bookmark;
 mod list;
 mod modal;
 
-pub use action::has_file_context;
+pub use action::{has_conflict_context, has_file_context};
 
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,

@@ -84,8 +84,8 @@ pub(super) fn push_searchable(
 }
 
 /// `needle` must already be lowercased when `case_sensitive` is false.
-pub(super) fn push_highlighted<'a>(
-    out: &mut Vec<Span<'a>>,
+pub(super) fn push_highlighted(
+    out: &mut Vec<Span<'static>>,
     text: &str,
     needle: &str,
     base: Style,
@@ -103,21 +103,12 @@ pub(super) fn push_highlighted<'a>(
         hay_lower = text.to_lowercase();
         &hay_lower
     };
-    if let Some(start) = hay.find(needle) {
-        let end = start + needle.len();
-        if start > 0 {
-            out.push(Span::styled(text[..start].to_string(), base));
-        }
-        out.push(Span::styled(
-            text[start..end].to_string(),
-            base.add_modifier(Modifier::REVERSED),
-        ));
-        if end < text.len() {
-            out.push(Span::styled(text[end..].to_string(), base));
-        }
-    } else {
+    let Some(start) = hay.find(needle) else {
         out.push(Span::styled(text.to_string(), base));
-    }
+        return;
+    };
+    let highlight = start..start + needle.len();
+    push_span_with_highlight(out, text.to_string(), base, &highlight, 0);
 }
 
 /// Push a single text span, splitting it at a highlight range and applying
@@ -175,18 +166,16 @@ pub(super) fn push_tokens_with_search(
     tab_spaces: &str,
     search: Option<&SearchRender<'_>>,
 ) {
-    let search = search
-        .filter(|s| s.scopes.contains(SearchScopes::LINE) && s.row_state != SearchRowState::None);
-
-    if search.is_none() {
+    let Some(s) = search
+        .filter(|s| s.scopes.contains(SearchScopes::LINE) && s.row_state != SearchRowState::None)
+    else {
         for t in tokens {
             let text = super::list::expand_tabs(&t.text, tab_spaces);
             let style = Style::default().fg(Color::Indexed(t.color_idx));
             out.push(Span::styled(text, style));
         }
         return;
-    }
-    let s = search.unwrap();
+    };
 
     let expanded: Vec<(String, Style)> = tokens
         .iter()

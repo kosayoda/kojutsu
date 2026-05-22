@@ -58,15 +58,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
 
     // Compute context flags before borrowing app.mode mutably.
     let has_file_context = crate::input::has_file_context(app);
-    let has_conflict_context = matches!(
-        app.rows.get(app.cursor.raw()),
-        Some(
-            crate::types::DisplayRow::ConflictHeader { .. }
-                | crate::types::DisplayRow::ConflictSide { .. }
-                | crate::types::DisplayRow::FileChange { .. }
-                | crate::types::DisplayRow::DiffLine { .. }
-        )
-    );
+    let has_conflict_context = crate::input::has_conflict_context(app);
     let submenu_suffix = app.selection.submenu_suffix();
     let selection_active = app.selection.is_active();
     let selection_kind = app.selection.kind();
@@ -210,6 +202,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
             title,
             items,
             filtered_indices,
+            match_positions,
             cursor,
             scroll_offset,
             marked,
@@ -229,6 +222,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
                 title,
                 items,
                 filtered_indices,
+                match_positions,
                 *cursor,
                 scroll_offset,
                 marked,

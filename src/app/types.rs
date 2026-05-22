@@ -681,19 +681,14 @@ pub enum AppMode {
     SelectFromList {
         title: String,
         items: Vec<String>,
-        /// Indices into `items` that match the current filter.
         filtered_indices: Vec<usize>,
-        /// Cursor position within `filtered_indices`.
+        /// Matched character positions for each entry in `filtered_indices`.
+        match_positions: Vec<Vec<usize>>,
         cursor: usize,
-        /// Scroll offset for the list viewport.
         scroll_offset: usize,
-        /// Indices of toggled items in original `items` (multiselect only).
         marked: HashSet<usize>,
-        /// Whether multiselect is enabled.
         multi: bool,
-        /// Current filter text (empty = no filter active).
         filter: String,
-        /// Whether the filter input is focused.
         filtering: bool,
         on_select: PendingSelection,
     },
@@ -721,11 +716,12 @@ impl AppMode {
         on_select: PendingSelection,
         focus_filter: bool,
     ) -> Self {
-        let filtered_indices = (0..items.len()).collect();
+        let count = items.len();
         AppMode::SelectFromList {
             title: title.into(),
             items,
-            filtered_indices,
+            filtered_indices: (0..count).collect(),
+            match_positions: vec![vec![]; count],
             cursor: 0,
             scroll_offset: 0,
             marked: HashSet::new(),

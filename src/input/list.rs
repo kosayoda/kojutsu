@@ -1,3 +1,5 @@
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::TargetMode;
@@ -10,18 +12,24 @@ use crate::types::{
 
 use super::{Action, PAGE_SIZE};
 
-/// Recompute which items match the filter.
-fn recompute_list_filter(items: &[String], filter: &str) -> Vec<usize> {
+fn recompute_list_filter(items: &[String], filter: &str) -> (Vec<usize>, Vec<Vec<usize>>) {
     if filter.is_empty() {
-        return (0..items.len()).collect();
+        return ((0..items.len()).collect(), vec![vec![]; items.len()]);
     }
-    let lower = filter.to_lowercase();
-    items
+    let matcher = SkimMatcherV2::default().ignore_case();
+    let mut scored: Vec<(usize, i64, Vec<usize>)> = items
         .iter()
         .enumerate()
-        .filter(|(_, item)| item.to_lowercase().contains(&lower))
-        .map(|(i, _)| i)
-        .collect()
+        .filter_map(|(i, item)| {
+            matcher
+                .fuzzy_indices(item, filter)
+                .map(|(score, indices)| (i, score, indices))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    let indices = scored.iter().map(|(i, _, _)| *i).collect();
+    let positions = scored.into_iter().map(|(_, _, pos)| pos).collect();
+    (indices, positions)
 }
 
 /// Move the list cursor by `delta` rows (positive = down, negative = up).
@@ -77,13 +85,16 @@ pub(super) fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
                     filter,
                     items,
                     filtered_indices,
+                    match_positions,
                     cursor,
                     scroll_offset,
                     ..
                 } = &mut app.mode
                 {
                     filter.push(c);
-                    *filtered_indices = recompute_list_filter(items, filter);
+                    let (idx, pos) = recompute_list_filter(items, filter);
+                    *filtered_indices = idx;
+                    *match_positions = pos;
                     *cursor = 0;
                     *scroll_offset = 0;
                 }
@@ -94,13 +105,16 @@ pub(super) fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
                     filter,
                     items,
                     filtered_indices,
+                    match_positions,
                     cursor,
                     scroll_offset,
                     ..
                 } = &mut app.mode
                 {
                     filter.pop();
-                    *filtered_indices = recompute_list_filter(items, filter);
+                    let (idx, pos) = recompute_list_filter(items, filter);
+                    *filtered_indices = idx;
+                    *match_positions = pos;
                     *cursor = (*cursor).min(filtered_indices.len().saturating_sub(1));
                     *scroll_offset = 0;
                 }

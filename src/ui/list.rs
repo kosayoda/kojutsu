@@ -65,8 +65,8 @@ pub(super) fn expand_tabs(s: &str, tab_spaces: &str) -> String {
 }
 
 fn pad_or_truncate(s: &str, width: usize) -> String {
-    if s.len() > width {
-        s[..width].to_string()
+    if s.chars().count() > width {
+        s.chars().take(width).collect()
     } else {
         format!("{s:<width$}")
     }

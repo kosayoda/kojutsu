@@ -1530,6 +1530,18 @@ pub fn has_file_context(app: &App) -> bool {
     extract_file_and_line(app).is_some()
 }
 
+pub fn has_conflict_context(app: &App) -> bool {
+    matches!(
+        app.rows.get(app.cursor.raw()),
+        Some(
+            DisplayRow::ConflictHeader { .. }
+                | DisplayRow::ConflictSide { .. }
+                | DisplayRow::FileChange { .. }
+                | DisplayRow::DiffLine { .. }
+        )
+    )
+}
+
 /// Extract the file path and line number from the current cursor position.
 /// Works across DAG, evolog, interdiff, and annotate views.
 fn extract_file_and_line(app: &App) -> Option<(crate::types::RepoPath, usize)> {
