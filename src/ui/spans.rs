@@ -111,6 +111,8 @@ pub(super) fn push_highlighted_short_id(
     case_sensitive: bool,
     theme: &Theme,
 ) {
+    use super::search::push_span_with_highlight;
+
     let prefix = &id.display[..id.prefix_len.min(id.display.len())];
     let suffix = &id.display[id.prefix_len.min(id.display.len())..];
     let extra = extra_suffix.unwrap_or_default();
@@ -123,46 +125,28 @@ pub(super) fn push_highlighted_short_id(
         hay_lower = text.to_lowercase();
         hay_lower.as_str()
     };
-    let match_range = hay.find(needle).map(|start| start..start + needle.len());
-
-    let mut push_part = |part: &str, style: Style, global_start: usize| {
-        if part.is_empty() {
-            return;
+    let Some(start) = hay.find(needle) else {
+        // No match — render normally.
+        push_short_id(spans, id, color, theme);
+        if !extra.is_empty() {
+            spans.push(Span::styled(extra, Style::default().fg(color)));
         }
-        if let Some(range) = &match_range {
-            let part_start = global_start;
-            let part_end = global_start + part.len();
-            let overlap_start = range.start.max(part_start);
-            let overlap_end = range.end.min(part_end);
-            if overlap_start < overlap_end {
-                let local_start = overlap_start - part_start;
-                let local_end = overlap_end - part_start;
-                if local_start > 0 {
-                    spans.push(Span::styled(part[..local_start].to_string(), style));
-                }
-                spans.push(Span::styled(
-                    part[local_start..local_end].to_string(),
-                    style.add_modifier(Modifier::REVERSED),
-                ));
-                if local_end < part.len() {
-                    spans.push(Span::styled(part[local_end..].to_string(), style));
-                }
-                return;
-            }
-        }
-        spans.push(Span::styled(part.to_string(), style));
+        return;
     };
+    let highlight = start..start + needle.len();
 
     let prefix_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
     let suffix_style = Style::default().fg(theme.muted);
     let extra_style = Style::default().fg(color);
 
     let mut pos = 0;
-    push_part(prefix, prefix_style, pos);
+    push_span_with_highlight(spans, prefix.to_string(), prefix_style, &highlight, pos);
     pos += prefix.len();
-    push_part(suffix, suffix_style, pos);
+    push_span_with_highlight(spans, suffix.to_string(), suffix_style, &highlight, pos);
     pos += suffix.len();
-    push_part(&extra, extra_style, pos);
+    if !extra.is_empty() {
+        push_span_with_highlight(spans, extra, extra_style, &highlight, pos);
+    }
 }
 
 /// Render structured command parts as syntax-highlighted spans.

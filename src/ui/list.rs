@@ -56,11 +56,19 @@ struct RenderFlags {
 }
 
 /// Expand tab characters to spaces.
-fn expand_tabs(s: &str, tab_spaces: &str) -> String {
+pub(super) fn expand_tabs(s: &str, tab_spaces: &str) -> String {
     if s.contains('\t') {
         s.replace('\t', tab_spaces)
     } else {
         s.to_string()
+    }
+}
+
+fn pad_or_truncate(s: &str, width: usize) -> String {
+    if s.len() > width {
+        s[..width].to_string()
+    } else {
+        format!("{s:<width$}")
     }
 }
 
@@ -639,25 +647,13 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         spans.push(Span::raw("  "));
                         push_short_id(&mut spans, &line.change_id, theme.change_id, theme);
                         spans.push(Span::raw(" "));
-                        let author_display: String = if line.author.chars().count() > 15 {
-                            let truncated: String = line.author.chars().take(15).collect();
-                            truncated
-                        } else {
-                            format!("{:<15}", line.author)
-                        };
                         spans.push(Span::styled(
-                            author_display,
+                            pad_or_truncate(&line.author, 15),
                             Style::default().fg(theme.selection),
                         ));
                         spans.push(Span::raw(" "));
-                        let time_display: String =
-                            if line.relative_time.chars().count() > 15 {
-                                line.relative_time.chars().take(15).collect()
-                            } else {
-                                format!("{:<15}", line.relative_time)
-                            };
                         spans.push(Span::styled(
-                            format!("{time_display} "),
+                            format!("{} ", pad_or_truncate(&line.relative_time, 15)),
                             Style::default().fg(theme.muted),
                         ));
                         let gutter_end = spans.len();
@@ -665,10 +661,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             format!("{:>5}: ", line.line_number),
                             Style::default().fg(theme.muted),
                         ));
-                        let search_active = row_search
-                            .as_ref()
-                            .is_some_and(|s| s.row_state != SearchRowState::None);
-                        if line.syntax_tokens.is_empty() || search_active {
+                        if line.syntax_tokens.is_empty() {
                             let content = expand_tabs(&line.content, &tab_spaces);
                             push_searchable(
                                 &mut spans,
@@ -678,13 +671,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                                 row_search.as_ref(),
                             );
                         } else {
-                            for token in &line.syntax_tokens {
-                                let text = expand_tabs(&token.text, &tab_spaces);
-                                spans.push(Span::styled(
-                                    text,
-                                    Style::default().fg(Color::Indexed(token.color_idx)),
-                                ));
-                            }
+                            push_tokens_with_search(
+                                &mut spans,
+                                &line.syntax_tokens,
+                                &tab_spaces,
+                                row_search.as_ref(),
+                            );
                         }
                         if is_cursor {
                             // Pad to full screen width so bg covers the entire row.
