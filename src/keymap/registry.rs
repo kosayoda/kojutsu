@@ -65,6 +65,15 @@ impl ActionRegistry {
         self.get(id).map(|m| m.requires_conflict).unwrap_or(false)
     }
 
+    pub fn find_by_name(&self, name: &str) -> Option<ActionId> {
+        for &action in self.builtins.keys() {
+            if super::action_label(action) == name {
+                return Some(ActionId::Builtin(action));
+            }
+        }
+        None
+    }
+
     fn register_builtins(&mut self) {
         use AppAction::*;
 

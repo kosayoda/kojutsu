@@ -245,6 +245,8 @@ pub struct App {
     pub diff_format: DiffFormat,
     /// Transient status notice shown in the status bar.
     pub status_message: Option<(String, StatusLevel)>,
+    /// Label of the last dispatched action (for Lua post-hooks).
+    pub last_action_label: Option<&'static str>,
     /// Mode to restore after an overlay (search/help) is dismissed.
     /// Used when search or help is entered from TargetSelect/CommitSelect.
     pub pre_overlay_mode: Option<AppMode>,
@@ -319,6 +321,7 @@ impl App {
             toggles: CommandFlags::empty(),
             diff_format: DiffFormat::ColorWords,
             status_message: None,
+            last_action_label: None,
             pre_overlay_mode: None,
             show_line_numbers: false,
             selection: SelectionContext::new(),

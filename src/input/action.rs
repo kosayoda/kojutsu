@@ -64,7 +64,7 @@ pub(super) fn handle_normal_key(
     match keymap.lookup(node) {
         LookupResult::Action(ActionId::Builtin(action)) => {
             app.status_message = None;
-            dispatch_action(app, registry, action, CommandFlags::empty())
+            dispatch_action(app, registry, lua, action, CommandFlags::empty())
         }
         LookupResult::Action(ActionId::Lua(id)) => {
             app.status_message = None;
@@ -118,7 +118,7 @@ pub(super) fn handle_submenu_key(
     match result {
         LookupResult::Action(ActionId::Builtin(action)) => {
             app.mode = AppMode::Normal;
-            dispatch_action(app, registry, action, flags)
+            dispatch_action(app, registry, lua, action, flags)
         }
         LookupResult::Action(ActionId::Lua(id)) => {
             app.mode = AppMode::Normal;
@@ -150,9 +150,20 @@ pub(super) fn handle_submenu_key(
 fn dispatch_action(
     app: &mut App,
     registry: &ActionRegistry,
+    lua: &crate::lua::LuaEngine,
     action: AppAction,
     flags: CommandFlags,
 ) -> Action {
+    let label = action_label(action);
+
+    // Run pre-hooks — they can cancel the action.
+    if matches!(
+        lua.run_pre_hooks(label, app),
+        crate::lua::HookResult::Cancel
+    ) {
+        return Action::None;
+    }
+
     // Merge global toggles into the command flags.
     let flags = flags | app.toggles;
 
@@ -203,6 +214,8 @@ fn dispatch_action(
             }
         }
     }
+
+    app.last_action_label = Some(label);
 
     match action {
         AppAction::Quit => Action::Quit,

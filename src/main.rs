@@ -249,12 +249,22 @@ fn main() -> Result<()> {
         match breaking_action.unwrap_or(Action::None) {
             Action::Quit => break,
             Action::RunJj(cmd) => {
+                let action_label = app.last_action_label.take();
                 run_jj_command(&mut app, &repo_path, cmd);
+                if let Some(label) = action_label {
+                    let success =
+                        matches!(&app.mode, AppMode::CommandOutput { success, .. } if *success);
+                    lua_engine.run_post_hooks(label, &app, success);
+                }
             }
             Action::SuspendAndRunJj(cmd) => {
+                let action_label = app.last_action_label.take();
                 terminal_events.stop();
-                suspend_and_run(&mut app, &repo_path, &mut terminal, cmd);
+                let success = suspend_and_run(&mut app, &repo_path, &mut terminal, cmd);
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+                if let Some(label) = action_label {
+                    lua_engine.run_post_hooks(label, &app, success);
+                }
             }
             Action::Refresh => {
                 refresh_app(&mut app);
