@@ -48,7 +48,12 @@ pub enum Action {
 }
 
 /// Handle a key press, dispatching through the keymap trie and app mode.
-pub fn handle_key(app: &mut App, keymaps: &crate::keymap::Keymaps, key: KeyEvent) -> Action {
+pub fn handle_key(
+    app: &mut App,
+    keymaps: &crate::keymap::Keymaps,
+    lua: &crate::lua::LuaEngine,
+    key: KeyEvent,
+) -> Action {
     let Some(node) = keymap::key_event_to_node(&key) else {
         return Action::None;
     };
@@ -57,13 +62,13 @@ pub fn handle_key(app: &mut App, keymaps: &crate::keymap::Keymaps, key: KeyEvent
     let registry = &keymaps.registry;
 
     match &app.mode {
-        AppMode::Normal => action::handle_normal_key(app, registry, keymap, &node),
+        AppMode::Normal => action::handle_normal_key(app, registry, lua, keymap, &node),
         AppMode::Submenu {
             children, flags, ..
         } => {
             let children = children.clone();
             let flags = *flags;
-            action::handle_submenu_key(app, registry, &children, flags, &node)
+            action::handle_submenu_key(app, registry, lua, &children, flags, &node)
         }
         AppMode::CommandOutput { .. } => {
             // Take ownership so we can inspect retry options.
@@ -81,7 +86,7 @@ pub fn handle_key(app: &mut App, keymaps: &crate::keymap::Keymaps, key: KeyEvent
                 };
                 Action::None
             } else {
-                action::handle_normal_key(app, registry, keymap, &node)
+                action::handle_normal_key(app, registry, lua, keymap, &node)
             }
         }
         AppMode::Help { .. } => {
@@ -108,7 +113,9 @@ pub fn handle_key(app: &mut App, keymaps: &crate::keymap::Keymaps, key: KeyEvent
                 Key::Char(_) => {
                     app.mode = app.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
                     match &app.mode {
-                        AppMode::Normal => action::handle_normal_key(app, registry, keymap, &node),
+                        AppMode::Normal => {
+                            action::handle_normal_key(app, registry, lua, keymap, &node)
+                        }
                         AppMode::TargetSelect { .. } => modal::handle_target_select(app, key),
                         AppMode::CommitSelect { .. } => modal::handle_commit_select(app, key),
                         _ => Action::None,

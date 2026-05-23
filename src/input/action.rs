@@ -52,6 +52,7 @@ pub(super) fn build_change_selection(app: &App) -> ChangeSelection {
 pub(super) fn handle_normal_key(
     app: &mut App,
     registry: &ActionRegistry,
+    lua: &crate::lua::LuaEngine,
     keymap: &Keymap,
     node: &keymap_parser::Node,
 ) -> Action {
@@ -65,7 +66,10 @@ pub(super) fn handle_normal_key(
             app.status_message = None;
             dispatch_action(app, registry, action, CommandFlags::empty())
         }
-        LookupResult::Action(ActionId::Lua(_id)) => Action::None,
+        LookupResult::Action(ActionId::Lua(id)) => {
+            app.status_message = None;
+            lua.execute_command(id, app, CommandFlags::empty())
+        }
         LookupResult::Prefix { label, children } => {
             app.status_message = None;
             if app.selection_active() {
@@ -99,6 +103,7 @@ pub(super) fn handle_normal_key(
 pub(super) fn handle_submenu_key(
     app: &mut App,
     registry: &ActionRegistry,
+    lua: &crate::lua::LuaEngine,
     children: &[(keymap_parser::Node, TrieNode)],
     flags: CommandFlags,
     node: &keymap_parser::Node,
@@ -115,9 +120,9 @@ pub(super) fn handle_submenu_key(
             app.mode = AppMode::Normal;
             dispatch_action(app, registry, action, flags)
         }
-        LookupResult::Action(ActionId::Lua(_id)) => {
+        LookupResult::Action(ActionId::Lua(id)) => {
             app.mode = AppMode::Normal;
-            Action::None
+            lua.execute_command(id, app, flags)
         }
         LookupResult::Toggle(flag) => {
             if let AppMode::Submenu { flags, .. } = &mut app.mode {

@@ -6,6 +6,7 @@ pub mod idx;
 pub mod input;
 pub mod jj_command;
 pub mod keymap;
+pub mod lua;
 pub mod repo;
 pub mod repo_service;
 pub mod selection;

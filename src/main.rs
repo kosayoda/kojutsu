@@ -124,9 +124,12 @@ fn main() -> Result<()> {
 
     let config: &'static kojutsu::theme::Config =
         Box::leak(Box::new(kojutsu::theme::load_config()));
-    let registry = keymap::ActionRegistry::new();
-    let specs = keymap::default_bindings();
+    let mut registry = keymap::ActionRegistry::new();
+    let mut lua_engine = kojutsu::lua::LuaEngine::new(&repo_path, &mut registry);
+    let mut specs = keymap::default_bindings();
+    specs.extend(lua_engine.take_extra_bindings());
     let keymaps = Keymaps::build(specs, registry);
+    let lua_init_error = lua_engine.init_error.clone();
     let (event_tx, event_rx) = mpsc::channel();
     let (repo_requests, repo_responses) = RepoService::spawn(repo_path.clone());
     let _repo_forwarder =
@@ -164,6 +167,10 @@ fn main() -> Result<()> {
         let commit_id = kojutsu::types::CommitId::new(&commit_hex);
         let path = kojutsu::types::RepoPath::new(&internal_path);
         app.enter_annotate_view(commit_id, path);
+    }
+
+    if let Some(err) = lua_init_error {
+        app.set_error(format!("init.lua: {err}"));
     }
 
     flush_repo_requests(&mut app, &repo_requests);
@@ -207,7 +214,7 @@ fn main() -> Result<()> {
                 AppEvent::Terminal(ev) => match ev {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         dirty = true;
-                        input::handle_key(&mut app, &keymaps, key)
+                        input::handle_key(&mut app, &keymaps, &lua_engine, key)
                     }
                     Event::Mouse(mouse) => {
                         dirty = true;
