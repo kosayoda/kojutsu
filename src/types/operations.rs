@@ -14,7 +14,7 @@ pub struct SplitTarget {
     pub kind: SplitKind,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SquashKind {
     Into,
     Onto,

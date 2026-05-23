@@ -12,7 +12,7 @@ use crate::keymap::{self, Keymaps};
 use crate::theme::Config;
 
 /// Render the full UI into the frame.
-pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config: &Config) {
+pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config) {
     let theme = &config.theme;
     // Use a single-line header if both repo and revset fit on one line.
     let single_line_len = "repository: ".len()
@@ -75,12 +75,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
             let inner_width = overlay_base.width.saturating_sub(2).max(1) as usize;
             let pair_widths: Vec<usize> = children
                 .iter()
-                .filter(|(_, child)| !matches!(child, keymap::KeymapNode::Toggle { .. }))
+                .filter(|(_, child)| !matches!(child, keymap::TrieNode::Toggle { .. }))
                 .map(|(key_node, child)| {
                     let key_str = keymap::display_key(key_node);
                     let desc = match child {
-                        keymap::KeymapNode::Action { description, .. } => *description,
-                        keymap::KeymapNode::Prefix { label, .. } => *label,
+                        keymap::TrieNode::Action { description, .. } => description.as_str(),
+                        keymap::TrieNode::Prefix { label, .. } => label.as_str(),
                         _ => "",
                     };
                     // "(key) desc"
@@ -107,6 +107,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
                 label,
                 children,
                 *flags,
+                &keymaps.registry,
                 submenu_suffix,
                 selection_active,
                 selection_kind,
@@ -143,7 +144,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &'static Keymaps, config:
                 Some(AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. }) => {
                     keymap::select_mode_help_entries()
                 }
-                _ => keymap::help_entries(keymaps.for_view(app.active_view), app.revset.presets),
+                _ => keymap::help_entries(
+                    keymaps.for_view(app.active_view),
+                    &keymaps.registry,
+                    app.revset.presets,
+                ),
             };
             let (left, right) = overlay::balance_help_groups(&groups);
             let left_h: usize = left.iter().map(|(_, e)| e.len() + 1).sum();

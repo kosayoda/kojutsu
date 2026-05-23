@@ -7,8 +7,8 @@ use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind};
 use crate::keymap::{
-    self, action_label, action_supported_selection_kinds, AppAction, CommandFlags, Keymap,
-    LookupResult,
+    self, action_label, ActionId, ActionRegistry, AppAction, CommandFlags, Keymap, LookupResult,
+    TrieNode,
 };
 use crate::types::ChangeSelection;
 use crate::types::{
@@ -51,7 +51,8 @@ pub(super) fn build_change_selection(app: &App) -> ChangeSelection {
 
 pub(super) fn handle_normal_key(
     app: &mut App,
-    keymap: &'static Keymap,
+    registry: &ActionRegistry,
+    keymap: &Keymap,
     node: &keymap_parser::Node,
 ) -> Action {
     if node.key == keymap_parser::Key::Esc && app.search.is_some() {
@@ -60,17 +61,18 @@ pub(super) fn handle_normal_key(
     }
 
     match keymap.lookup(node) {
-        LookupResult::Action(action) => {
+        LookupResult::Action(ActionId::Builtin(action)) => {
             app.status_message = None;
-            dispatch_action(app, action, CommandFlags::empty())
+            dispatch_action(app, registry, action, CommandFlags::empty())
         }
+        LookupResult::Action(ActionId::Lua(_id)) => Action::None,
         LookupResult::Prefix { label, children } => {
             app.status_message = None;
             if app.selection_active() {
                 let kind = app.selection_kind();
-                let has_supported_action = children.iter().any(|(_, node)| match node {
-                    keymap::KeymapNode::Action { action, .. } => {
-                        action_supported_selection_kinds(*action).contains(&kind)
+                let has_supported_action = children.iter().any(|(_, n)| match n {
+                    TrieNode::Action { id, .. } => {
+                        registry.selection_support(*id).contains(kind.as_bitset())
                     }
                     _ => false,
                 });
@@ -86,7 +88,7 @@ pub(super) fn handle_normal_key(
             };
             Action::None
         }
-        LookupResult::Toggle(_) => Action::None, // toggles only work inside submenus
+        LookupResult::Toggle(_) => Action::None,
         LookupResult::Unbound => {
             app.set_error(format!("unknown key: {}", keymap::display_key(node)));
             Action::None
@@ -96,7 +98,8 @@ pub(super) fn handle_normal_key(
 
 pub(super) fn handle_submenu_key(
     app: &mut App,
-    children: &'static [(keymap_parser::Node, keymap::KeymapNode)],
+    registry: &ActionRegistry,
+    children: &[(keymap_parser::Node, TrieNode)],
     flags: CommandFlags,
     node: &keymap_parser::Node,
 ) -> Action {
@@ -108,9 +111,13 @@ pub(super) fn handle_submenu_key(
     let result = Keymap::lookup_in(children, node);
 
     match result {
-        LookupResult::Action(action) => {
+        LookupResult::Action(ActionId::Builtin(action)) => {
             app.mode = AppMode::Normal;
-            dispatch_action(app, action, flags)
+            dispatch_action(app, registry, action, flags)
+        }
+        LookupResult::Action(ActionId::Lua(_id)) => {
+            app.mode = AppMode::Normal;
+            Action::None
         }
         LookupResult::Toggle(flag) => {
             if let AppMode::Submenu { flags, .. } = &mut app.mode {
@@ -135,12 +142,19 @@ pub(super) fn handle_submenu_key(
     }
 }
 
-fn dispatch_action(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
+fn dispatch_action(
+    app: &mut App,
+    registry: &ActionRegistry,
+    action: AppAction,
+    flags: CommandFlags,
+) -> Action {
     // Merge global toggles into the command flags.
     let flags = flags | app.toggles;
 
     if app.selection_active()
-        && !action_supported_selection_kinds(action).contains(&app.selection_kind())
+        && !registry
+            .selection_support(ActionId::Builtin(action))
+            .contains(app.selection_kind().as_bitset())
     {
         let kind = app.selection_kind();
         let kind_label = match kind {

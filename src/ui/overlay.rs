@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 use ratatui::Frame;
 
 use crate::app::App;
-use crate::keymap::{self, CommandFlags, HelpEntry, HelpGroup, KeymapNode};
+use crate::keymap::{self, ActionRegistry, CommandFlags, HelpEntry, HelpGroup, TrieNode};
 use crate::theme::Theme;
 use crate::types::{scope_specs_for_view, FollowUpOption, SearchFocus, SelectionKind};
 
@@ -154,8 +154,9 @@ pub(super) fn draw_submenu(
     area: Rect,
     key: &str,
     label: &str,
-    children: &[(keymap_parser::Node, KeymapNode)],
+    children: &[(keymap_parser::Node, TrieNode)],
     flags: CommandFlags,
+    registry: &ActionRegistry,
     selection_suffix: Option<String>,
     selection_active: bool,
     selection_kind: SelectionKind,
@@ -166,7 +167,7 @@ pub(super) fn draw_submenu(
     // Build toggle indicators for the title bar.
     let mut toggle_spans: Vec<Span> = Vec::new();
     for (key_node, child) in children.iter() {
-        if let KeymapNode::Toggle { flag, description } = child {
+        if let TrieNode::Toggle { flag, description } = child {
             let active = flags.contains(*flag);
             let key_str = keymap::display_key(key_node);
             let style = if active {
@@ -220,20 +221,19 @@ pub(super) fn draw_submenu(
 
     for (key_node, child) in children.iter() {
         let (desc, blocked) = match child {
-            KeymapNode::Action {
-                action,
-                description,
-                ..
+            TrieNode::Action {
+                id, description, ..
             } => {
                 let blocked = (selection_active
-                    && !keymap::action_supported_selection_kinds(*action)
-                        .contains(&selection_kind))
-                    || (keymap::action_requires_file(*action) && !has_file_context)
-                    || (keymap::action_requires_conflict(*action) && !has_conflict_context);
-                (*description, blocked)
+                    && !registry
+                        .selection_support(*id)
+                        .contains(selection_kind.as_bitset()))
+                    || (registry.requires_file(*id) && !has_file_context)
+                    || (registry.requires_conflict(*id) && !has_conflict_context);
+                (description.as_str(), blocked)
             }
-            KeymapNode::Prefix { label, .. } => (*label, false),
-            KeymapNode::Toggle { .. } => continue,
+            TrieNode::Prefix { label, .. } => (label.as_str(), false),
+            TrieNode::Toggle { .. } => continue,
         };
         let key_str = keymap::display_key(key_node);
         let key_style = if blocked {

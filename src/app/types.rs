@@ -4,7 +4,11 @@ use tui_input::Input;
 
 use crate::idx::{EntryIdx, RowIdx};
 
-use crate::keymap::{CommandFlags, KeymapNode};
+use std::sync::Arc;
+
+use compact_str::CompactString;
+
+use crate::keymap::{CommandFlags, TrieNode};
 use crate::types::{
     BookmarkName, ChangeId, CommitId, FollowUpOption, GlobalToggle, OperationId, PendingCommand,
     PendingCommitSelect, PendingSelection, RemoteName, RepoPath, SearchScopes, Str, TagName,
@@ -351,7 +355,7 @@ pub enum ActiveView {
 }
 
 impl ActiveView {
-    pub(super) const fn idx(self) -> usize {
+    pub const fn idx(self) -> usize {
         self as usize
     }
 
@@ -616,12 +620,11 @@ pub enum AppMode {
     /// Normal browsing.
     Normal,
     /// A prefix key was pressed; showing submenu options in the bottom bar.
-    /// References point into the leaked `&'static Keymap`.
     Submenu {
         /// Display string for the prefix key (e.g., "s", "b", "g").
         key: String,
-        label: &'static str,
-        children: &'static [(keymap_parser::Node, KeymapNode)],
+        label: CompactString,
+        children: Arc<[(keymap_parser::Node, TrieNode)]>,
         flags: CommandFlags,
     },
     /// Showing the result of a shell command. Dismissed on next keypress.
