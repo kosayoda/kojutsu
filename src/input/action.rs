@@ -154,11 +154,11 @@ fn dispatch_action(
     action: AppAction,
     flags: CommandFlags,
 ) -> Action {
-    let label = action_label(action);
+    let id_name = crate::keymap::action_id_name(action);
 
     // Run pre-hooks — they can cancel the action.
     if matches!(
-        lua.run_pre_hooks(label, app),
+        lua.run_pre_hooks(id_name, app),
         crate::lua::HookResult::Cancel
     ) {
         return Action::None;
@@ -215,7 +215,7 @@ fn dispatch_action(
         }
     }
 
-    app.last_action_label = Some(label);
+    app.last_action_label = Some(id_name);
 
     match action {
         AppAction::Quit => Action::Quit,

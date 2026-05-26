@@ -39,6 +39,10 @@ struct Cli {
     #[arg(long)]
     print_default_config: bool,
 
+    /// Print Lua type definitions (EmmyLua annotations) to stdout and exit.
+    #[arg(long)]
+    generate_lua_types: bool,
+
     /// Internal: apply diff selection as a diff tool (invoked by jj).
     #[arg(long, hide = true)]
     apply_diff: Option<PathBuf>,
@@ -76,6 +80,11 @@ fn main() -> Result<()> {
 
     if cli.print_default_config {
         print!("{}", kojutsu::theme::DEFAULT_CONFIG);
+        return Ok(());
+    }
+
+    if cli.generate_lua_types {
+        print!("{}", kojutsu::lua::generate_type_definitions());
         return Ok(());
     }
 

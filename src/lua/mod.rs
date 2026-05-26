@@ -494,10 +494,188 @@ fn parse_keys(
     }
 }
 
+pub fn generate_type_definitions() -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    writeln!(out, "---@meta").unwrap();
+    writeln!(out).unwrap();
+
+    // Action constants
+    writeln!(out, "---@class KojutsuAction").unwrap();
+    for &action in crate::keymap::ALL_ACTIONS {
+        let name = crate::keymap::action_id_name(action);
+        writeln!(out, "---@field {name} string").unwrap();
+    }
+    writeln!(out).unwrap();
+
+    // Scope constants
+    writeln!(out, "---@class KojutsuScope").unwrap();
+    for name in [
+        "all",
+        "dag",
+        "bookmarks",
+        "tags",
+        "operations",
+        "workspaces",
+        "evolog",
+        "command_log",
+        "interdiff",
+        "annotate",
+    ] {
+        writeln!(out, "---@field {name} string").unwrap();
+    }
+    writeln!(out).unwrap();
+
+    // Phase constants
+    writeln!(out, "---@class KojutsuPhase").unwrap();
+    writeln!(out, "---@field pre string").unwrap();
+    writeln!(out, "---@field post string").unwrap();
+    writeln!(out).unwrap();
+
+    // Selection constants
+    writeln!(out, "---@class KojutsuSelection").unwrap();
+    for name in ["all", "commit", "file", "line"] {
+        writeln!(out, "---@field {name} string").unwrap();
+    }
+    writeln!(out).unwrap();
+
+    // Context
+    writeln!(out, "---@class KojutsuCtx").unwrap();
+    writeln!(out, "---@field change_id string?").unwrap();
+    writeln!(out, "---@field commit_id string?").unwrap();
+    writeln!(out, "---@field description string?").unwrap();
+    writeln!(out, "---@field bookmarks string[]?").unwrap();
+    writeln!(out, "---@field view string").unwrap();
+    writeln!(out, "---@field revset string").unwrap();
+    writeln!(out, "---@field repo_root string").unwrap();
+    writeln!(out).unwrap();
+
+    // JJ result
+    writeln!(out, "---@class JJResult").unwrap();
+    writeln!(out, "---@field ok boolean").unwrap();
+    writeln!(out, "---@field output string").unwrap();
+    writeln!(out).unwrap();
+
+    // UI
+    writeln!(out, "---@class KojutsuUi").unwrap();
+    writeln!(out, "---@field flash fun(msg: string)").unwrap();
+    writeln!(out, "---@field error fun(msg: string)").unwrap();
+    writeln!(out).unwrap();
+
+    // Nav
+    writeln!(out, "---@class KojutsuNav").unwrap();
+    writeln!(out, "---@field refresh fun()").unwrap();
+    writeln!(out, "---@field set_revset fun(revset: string)").unwrap();
+    writeln!(out).unwrap();
+
+    // Command opts
+    writeln!(out, "---@class CommandOpts").unwrap();
+    writeln!(out, "---@field desc string?").unwrap();
+    writeln!(out, "---@field scope string?").unwrap();
+    writeln!(out, "---@field key string?").unwrap();
+    writeln!(out, "---@field seq string?").unwrap();
+    writeln!(out, "---@field group string?").unwrap();
+    writeln!(out, "---@field selection string?").unwrap();
+    writeln!(out).unwrap();
+
+    // Bind opts
+    writeln!(out, "---@class BindOpts").unwrap();
+    writeln!(out, "---@field action string").unwrap();
+    writeln!(out, "---@field scope string?").unwrap();
+    writeln!(out, "---@field key string?").unwrap();
+    writeln!(out, "---@field seq string?").unwrap();
+    writeln!(out, "---@field desc string?").unwrap();
+    writeln!(out).unwrap();
+
+    // Unbind opts
+    writeln!(out, "---@class UnbindOpts").unwrap();
+    writeln!(out, "---@field scope string?").unwrap();
+    writeln!(out, "---@field key string?").unwrap();
+    writeln!(out, "---@field seq string?").unwrap();
+    writeln!(out).unwrap();
+
+    // Hook context
+    writeln!(out, "---@class HookContext").unwrap();
+    writeln!(out, "---@field change_id string?").unwrap();
+    writeln!(out, "---@field change_ids string[]").unwrap();
+    writeln!(out, "---@field view string").unwrap();
+    writeln!(out).unwrap();
+
+    // Hook result
+    writeln!(out, "---@class HookResultTable").unwrap();
+    writeln!(out, "---@field ok boolean").unwrap();
+    writeln!(out).unwrap();
+
+    // Main kojutsu table
+    writeln!(out, "---@class Kojutsu").unwrap();
+    writeln!(out, "---@field action KojutsuAction").unwrap();
+    writeln!(out, "---@field scope KojutsuScope").unwrap();
+    writeln!(out, "---@field phase KojutsuPhase").unwrap();
+    writeln!(out, "---@field selection KojutsuSelection").unwrap();
+    writeln!(out, "---@field ctx KojutsuCtx").unwrap();
+    writeln!(out, "---@field ui KojutsuUi").unwrap();
+    writeln!(out, "---@field nav KojutsuNav").unwrap();
+    writeln!(out, "---@field jj fun(args: string[]): JJResult").unwrap();
+    writeln!(out, "---@field jj_interactive fun(args: string[])").unwrap();
+    writeln!(
+        out,
+        "---@field command fun(name: string, fn: fun(ctx: KojutsuCtx), opts: CommandOpts)"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "---@field hook fun(action: string, phase: string, fn: fun(ctx: HookContext, result: HookResultTable?)): boolean?"
+    )
+    .unwrap();
+    writeln!(out, "---@field bind fun(opts: BindOpts)").unwrap();
+    writeln!(out, "---@field unbind fun(opts: UnbindOpts)").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "---@type Kojutsu").unwrap();
+    writeln!(out, "kojutsu = {{}}").unwrap();
+
+    out
+}
+
 fn register_globals(lua: &Lua) -> mlua::Result<()> {
     let kojutsu = lua.create_table()?;
     kojutsu.set("ui", lua.create_table()?)?;
     kojutsu.set("nav", lua.create_table()?)?;
+
+    let action_table = lua.create_table()?;
+    for &action in crate::keymap::ALL_ACTIONS {
+        let name = crate::keymap::action_id_name(action);
+        action_table.set(name, name)?;
+    }
+    kojutsu.set("action", action_table)?;
+
+    let scope_table = lua.create_table()?;
+    for name in [
+        "all",
+        "dag",
+        "bookmarks",
+        "tags",
+        "operations",
+        "workspaces",
+        "evolog",
+        "command_log",
+        "interdiff",
+        "annotate",
+    ] {
+        scope_table.set(name, name)?;
+    }
+    kojutsu.set("scope", scope_table)?;
+
+    let phase_table = lua.create_table()?;
+    phase_table.set("pre", "pre")?;
+    phase_table.set("post", "post")?;
+    kojutsu.set("phase", phase_table)?;
+
+    let selection_table = lua.create_table()?;
+    for name in ["all", "commit", "file", "line"] {
+        selection_table.set(name, name)?;
+    }
+    kojutsu.set("selection", selection_table)?;
+
     lua.globals().set("kojutsu", kojutsu)?;
     Ok(())
 }

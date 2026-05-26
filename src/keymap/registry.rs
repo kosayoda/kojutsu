@@ -66,8 +66,8 @@ impl ActionRegistry {
     }
 
     pub fn find_by_name(&self, name: &str) -> Option<ActionId> {
-        for &action in self.builtins.keys() {
-            if super::action_label(action) == name {
+        for &action in super::ALL_ACTIONS {
+            if super::action_id_name(action) == name {
                 return Some(ActionId::Builtin(action));
             }
         }
