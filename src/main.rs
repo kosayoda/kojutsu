@@ -134,8 +134,9 @@ fn main() -> Result<()> {
     let config: &'static kojutsu::theme::Config =
         Box::leak(Box::new(kojutsu::theme::load_config()));
     let mut registry = keymap::ActionRegistry::new();
-    let mut lua_engine = kojutsu::lua::LuaEngine::new(&repo_path, &mut registry);
-    let mut specs = keymap::default_bindings();
+    let default_specs = keymap::default_bindings();
+    let mut lua_engine = kojutsu::lua::LuaEngine::new(&repo_path, &mut registry, &default_specs);
+    let mut specs = default_specs;
     specs.extend(lua_engine.take_extra_bindings());
     let keymaps = Keymaps::build(specs, registry);
     let lua_init_error = lua_engine.init_error.clone();

@@ -42,7 +42,11 @@ pub struct LuaEngine {
 }
 
 impl LuaEngine {
-    pub fn new(repo_path: &Path, registry: &mut ActionRegistry) -> Self {
+    pub fn new(
+        repo_path: &Path,
+        registry: &mut ActionRegistry,
+        default_specs: &[BindingSpec],
+    ) -> Self {
         let lua = Lua::new();
         let mut engine = LuaEngine {
             lua,
@@ -58,7 +62,7 @@ impl LuaEngine {
             return engine;
         }
 
-        engine.load_init_script(registry);
+        engine.load_init_script(registry, default_specs);
         engine
     }
 
@@ -244,7 +248,7 @@ impl LuaEngine {
         }
     }
 
-    fn load_init_script(&mut self, registry: &mut ActionRegistry) {
+    fn load_init_script(&mut self, registry: &mut ActionRegistry, default_specs: &[BindingSpec]) {
         let Some(config_dir) = dirs::config_dir() else {
             return;
         };
@@ -359,7 +363,28 @@ impl LuaEngine {
                     key,
                     seq,
                     desc,
+                    warn_shadow: true,
                 });
+                Ok(())
+            })?;
+
+            let rebind_bindings_clone = reg_bindings.clone();
+            let rebind_fn = self.lua.create_function(move |_lua, opts: mlua::Table| {
+                let action: String = opts.get("action")?;
+                let scope: String = opts.get::<String>("scope").unwrap_or_else(|_| "all".into());
+                let key: Option<String> = opts.get("key").ok();
+                let seq: Option<String> = opts.get("seq").ok();
+                let desc: Option<String> = opts.get("desc").ok();
+                rebind_bindings_clone
+                    .borrow_mut()
+                    .push(PendingBinding::Bind {
+                        action,
+                        scope,
+                        key,
+                        seq,
+                        desc,
+                        warn_shadow: false,
+                    });
                 Ok(())
             })?;
 
@@ -378,6 +403,7 @@ impl LuaEngine {
             kojutsu.set("command", command_fn)?;
             kojutsu.set("hook", hook_fn)?;
             kojutsu.set("bind", bind_fn)?;
+            kojutsu.set("rebind", rebind_fn)?;
             kojutsu.set("unbind", unbind_fn)?;
             Ok(())
         })() {
@@ -449,6 +475,7 @@ impl LuaEngine {
                     key,
                     seq,
                     desc,
+                    warn_shadow,
                 } => {
                     let Some(action_id) = registry.find_by_name(&action) else {
                         tracing::warn!("kojutsu.bind: unknown action '{action}'");
@@ -457,6 +484,16 @@ impl LuaEngine {
                     let Some(keys) = parse_keys(key.as_ref(), seq.as_ref()) else {
                         continue;
                     };
+                    if warn_shadow {
+                        let parsed_scope = parse_scope(&scope);
+                        if shadows_default(default_specs, &keys, &parsed_scope) {
+                            let key_display = key.as_deref().or(seq.as_deref()).unwrap_or("?");
+                            tracing::warn!(
+                                "kojutsu.bind: '{key_display}' shadows an existing binding \
+                                 (use kojutsu.rebind to suppress this warning)"
+                            );
+                        }
+                    }
                     let description = desc.unwrap_or_else(|| action.clone());
                     self.extra_bindings.push(BindingSpec {
                         keys,
@@ -481,6 +518,25 @@ impl LuaEngine {
             }
         }
     }
+}
+
+fn shadows_default(
+    default_specs: &[BindingSpec],
+    keys: &[keymap_parser::Node],
+    scope: &Scope,
+) -> bool {
+    default_specs.iter().any(|spec| {
+        if spec.keys.as_slice() != keys {
+            return false;
+        }
+        if matches!(&spec.target, BindTarget::Unbind) {
+            return false;
+        }
+        match (&spec.scope, scope) {
+            (Scope::All, _) | (_, Scope::All) => true,
+            (Scope::Views(a), Scope::Views(b)) => a.iter().any(|v| b.contains(v)),
+        }
+    })
 }
 
 fn parse_keys(
@@ -628,6 +684,7 @@ pub fn generate_type_definitions() -> String {
     )
     .unwrap();
     writeln!(out, "---@field bind fun(opts: BindOpts)").unwrap();
+    writeln!(out, "---@field rebind fun(opts: BindOpts)").unwrap();
     writeln!(out, "---@field unbind fun(opts: UnbindOpts)").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "---@type Kojutsu").unwrap();
@@ -697,6 +754,7 @@ enum PendingBinding {
         key: Option<String>,
         seq: Option<String>,
         desc: Option<String>,
+        warn_shadow: bool,
     },
     Unbind {
         scope: String,
