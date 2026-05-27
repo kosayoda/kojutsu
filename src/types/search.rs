@@ -235,7 +235,6 @@ pub struct SearchState {
     pub matches: Vec<RowIdx>,
     pub current_match: Option<usize>,
     pub restore_cursor: RowIdx,
-    pub scopes: SearchScopes,
     pub focus: SearchFocus,
 }
 
@@ -246,7 +245,6 @@ impl SearchState {
             matches: Vec::new(),
             current_match: None,
             restore_cursor,
-            scopes: SearchScopes::DEFAULT,
             focus: SearchFocus::Query,
         }
     }

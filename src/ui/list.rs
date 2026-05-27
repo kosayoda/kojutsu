@@ -106,9 +106,9 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
             s.query().to_lowercase()
         }
     });
-    let search_ctx = app.search.as_ref().map(|s| SearchRender {
+    let search_ctx = app.search.as_ref().map(|_| SearchRender {
         query_lower: query_lowered.as_deref().unwrap_or(""),
-        scopes: s.scopes,
+        scopes: app.search_scopes(),
         case_sensitive: search_case_sensitive,
         row_state: SearchRowState::None,
     });

@@ -13,9 +13,7 @@ impl App {
                 search.focus = SearchFocus::Query;
             }
             None => {
-                let mut s = SearchState::new(restore_cursor);
-                s.scopes = self.search_scopes;
-                self.search = Some(s);
+                self.search = Some(SearchState::new(restore_cursor));
             }
         }
         self.recompute_search_matches();
@@ -89,22 +87,22 @@ impl App {
     }
 
     pub fn toggle_search_scope(&mut self, flag: SearchScopes) {
-        if let Some(search) = &mut self.search {
-            search.scopes.toggle(flag);
+        if self.search.is_some() {
+            self.search_scopes_mut().toggle(flag);
             self.recompute_search_matches();
         }
     }
 
     pub fn reset_search_scopes(&mut self) {
-        if let Some(search) = &mut self.search {
-            search.scopes = self.default_search_scopes;
+        if self.search.is_some() {
+            *self.search_scopes_mut() = self.default_search_scopes;
             self.recompute_search_matches();
         }
     }
 
     pub fn enable_all_search_scopes(&mut self) {
-        if let Some(search) = &mut self.search {
-            search.scopes = SearchScopes::all();
+        if self.search.is_some() {
+            *self.search_scopes_mut() = SearchScopes::all();
             self.recompute_search_matches();
         }
     }
@@ -151,7 +149,7 @@ impl App {
             return;
         };
         let query = search.query().to_string();
-        let scopes = search.scopes;
+        let scopes = self.search_scopes();
 
         let mut matches = Vec::new();
         if !query.is_empty() && !scopes.is_empty() {

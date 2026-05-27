@@ -259,8 +259,6 @@ pub struct App {
     pub visual: VisualState,
     /// Active search state. Search remains active after closing the input.
     pub search: Option<SearchState>,
-    /// Last-used search scopes (persisted across restarts).
-    pub search_scopes: SearchScopes,
     /// Where to jump the cursor after the next DAG refresh.
     pub jump_after_refresh: Option<JumpTarget>,
 }
@@ -327,7 +325,6 @@ impl App {
             selection: SelectionContext::new(),
             visual: VisualState::new(),
             search: None,
-            search_scopes: SearchScopes::DEFAULT, // overwritten by apply_persisted_state or config
             jump_after_refresh: None,
         };
         app.rebuild_rows();
@@ -340,6 +337,16 @@ impl App {
 
     pub fn set_error(&mut self, msg: impl Into<String>) {
         self.status_message = Some((msg.into(), StatusLevel::Error));
+    }
+
+    /// Search scopes for the active view (single source of truth in ViewState).
+    pub fn search_scopes(&self) -> SearchScopes {
+        self.view_states[self.active_view.idx()].search_scopes
+    }
+
+    /// Mutably access search scopes for the active view.
+    pub fn search_scopes_mut(&mut self) -> &mut SearchScopes {
+        &mut self.view_states[self.active_view.idx()].search_scopes
     }
 
     pub fn push_command_log(
@@ -388,7 +395,6 @@ impl App {
         vs.cursor = self.cursor;
         vs.scroll_offset = offset;
         vs.h_scroll = self.h_scroll;
-        vs.search_scopes = self.search_scopes;
 
         self.active_view = view;
         // Trigger lazy load of operation log data.
@@ -420,7 +426,6 @@ impl App {
         let vs = &self.view_states[view.idx()];
         self.cursor = RowIdx::new(vs.cursor.raw().min(self.rows.len().saturating_sub(1)));
         *self.list_state.offset_mut() = vs.scroll_offset;
-        self.search_scopes = vs.search_scopes;
         self.h_scroll = vs.h_scroll;
     }
 
@@ -1025,12 +1030,16 @@ impl App {
     }
 
     pub fn to_persisted_state(&self) -> PersistedState {
+        let mut view_search_scopes = [0u8; <ActiveView as strum::EnumCount>::COUNT];
+        for (i, vs) in self.view_states.iter().enumerate() {
+            view_search_scopes[i] = vs.search_scopes.bits();
+        }
         PersistedState {
             show_line_numbers: self.show_line_numbers,
             ignore_immutable: self.toggles.contains(CommandFlags::IGNORE_IMMUTABLE),
             ignore_working_copy: self.toggles.contains(CommandFlags::IGNORE_WORKING_COPY),
             debug: self.toggles.contains(CommandFlags::DEBUG),
-            view_search_scopes: Default::default(),
+            view_search_scopes,
             active_preset: self.revset.active_preset,
             git_diff: self.diff_format == DiffFormat::Git,
             annotate_separators: self.annotate.show_commit_separators,
@@ -1053,6 +1062,13 @@ impl App {
         self.revset.active_preset = state
             .active_preset
             .filter(|&i| i < self.revset.presets.len());
+        for (i, &bits) in state.view_search_scopes.iter().enumerate() {
+            if let Some(scopes) = SearchScopes::from_bits(bits) {
+                if !scopes.is_empty() {
+                    self.view_states[i].search_scopes = scopes;
+                }
+            }
+        }
     }
 
     /// Get the scroll offset from the list state.

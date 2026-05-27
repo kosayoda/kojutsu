@@ -334,7 +334,7 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App, theme:
     };
     let mut scope_spans: Vec<Span> = Vec::new();
     for spec in scope_specs_for_view(app.active_view).iter() {
-        let enabled = search.scopes.contains(spec.flag);
+        let enabled = app.search_scopes().contains(spec.flag);
         let mut style = if enabled {
             Style::default()
                 .fg(theme.selection)
