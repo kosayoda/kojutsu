@@ -421,14 +421,7 @@ impl App {
                     self.op_log.details.clear();
                     self.op_log.unfolded.clear();
                     let msg = format!("failed to load operation log: {error}");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        &msg,
-                        None,
-                        Vec::new(),
-                        false,
-                    );
-                    self.set_error(msg);
+                    self.log_background_error(msg);
                 }
             },
             RepoResult::OpDiff { op_id, result } => match result {
@@ -446,14 +439,7 @@ impl App {
                         .details
                         .insert(op_id, super::Loadable::Failed(error.clone()));
                     let msg = format!("failed to load op diff: {error}");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        &msg,
-                        None,
-                        Vec::new(),
-                        false,
-                    );
-                    self.set_error(msg);
+                    self.log_background_error(msg);
                 }
             },
             RepoResult::ConflictHunks {
@@ -481,14 +467,7 @@ impl App {
                         }
                     }
                     let msg = format!("failed to load conflict hunks for {path}: {error}");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        &msg,
-                        None,
-                        Vec::new(),
-                        false,
-                    );
-                    self.set_error(msg);
+                    self.log_background_error(msg);
                 }
             },
             RepoResult::EvoLog { result } => match result {
@@ -502,14 +481,7 @@ impl App {
                 Err(error) => {
                     self.evolog.clear();
                     let msg = format!("failed to load evolog: {error}");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        &msg,
-                        None,
-                        Vec::new(),
-                        false,
-                    );
-                    self.set_error(msg);
+                    self.log_background_error(msg);
                 }
             },
             RepoResult::EvoLogDetails { commit_id, result } => match result {
@@ -524,14 +496,7 @@ impl App {
                 }
                 Err(error) => {
                     let msg = format!("failed to load evolog details: {error}");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        &msg,
-                        None,
-                        Vec::new(),
-                        false,
-                    );
-                    self.set_error(msg);
+                    self.log_background_error(msg);
                 }
             },
             RepoResult::EvoLogFileDiff {
@@ -551,14 +516,7 @@ impl App {
                 }
                 Err(error) => {
                     let msg = format!("failed to load evolog file diff: {error}");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        &msg,
-                        None,
-                        Vec::new(),
-                        false,
-                    );
-                    self.set_error(msg);
+                    self.log_background_error(msg);
                 }
             },
             RepoResult::InterdiffDetails { result } => match result {
@@ -571,14 +529,7 @@ impl App {
                 Err(error) => {
                     self.interdiff.files = Loadable::Failed(error.clone());
                     let msg = format!("failed to load interdiff: {error}");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        &msg,
-                        None,
-                        Vec::new(),
-                        false,
-                    );
-                    self.set_error(msg);
+                    self.log_background_error(msg);
                 }
             },
             RepoResult::InterdiffFileDiff { path, result } => match result {
@@ -596,14 +547,7 @@ impl App {
                         .file_diffs
                         .insert(path, Loadable::Failed(error.clone()));
                     let msg = format!("failed to load interdiff file diff: {error}");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        &msg,
-                        None,
-                        Vec::new(),
-                        false,
-                    );
-                    self.set_error(msg);
+                    self.log_background_error(msg);
                 }
             },
             RepoResult::Annotate { result } => match result {
@@ -617,14 +561,7 @@ impl App {
                 Err(error) => {
                     self.annotate.lines = Loadable::Failed(error.clone());
                     let msg = format!("failed to annotate file: {error}");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        &msg,
-                        None,
-                        Vec::new(),
-                        false,
-                    );
-                    self.set_error(msg);
+                    self.log_background_error(msg);
                 }
             },
             RepoResult::FileList { commit_id, result } => match result {
@@ -644,14 +581,7 @@ impl App {
             },
             RepoResult::BackgroundError { error } => {
                 let msg = format!("background task failed: {}", error.message);
-                self.push_command_log(
-                    super::CommandLogKind::Background,
-                    &msg,
-                    None,
-                    Vec::new(),
-                    false,
-                );
-                self.set_error(msg);
+                self.log_background_error(msg);
             }
         }
         deferred

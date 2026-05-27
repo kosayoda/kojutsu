@@ -381,15 +381,10 @@ pub(super) fn handle_commit_select(app: &mut App, key: KeyEvent) -> Action {
 }
 
 pub(super) fn handle_jump(app: &mut App, key: KeyEvent) -> Action {
-    let (mut labels, mut input, restore_mode) =
-        match std::mem::replace(&mut app.mode, AppMode::Normal) {
-            AppMode::Jump {
-                labels,
-                input,
-                restore_mode,
-            } => (labels, input, restore_mode),
-            _ => unreachable!(),
-        };
+    let (mut labels, mut input, restore_mode) = app
+        .mode
+        .take_jump()
+        .expect("handle_jump called outside Jump mode");
 
     let exit = |app: &mut App, restore: Option<Box<AppMode>>| {
         app.mode = restore.map_or(AppMode::Normal, |m| *m);

@@ -83,31 +83,18 @@ pub struct RepoRequest {
     kind: RepoRequestKind,
 }
 
-/// Structured error from the repository service layer.
+/// Error from the repository service layer.
 #[derive(Clone, Debug)]
 pub struct RepoError {
-    pub kind: RepoErrorKind,
     pub message: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RepoErrorKind {
-    /// Failed to open or re-open the jj repository.
-    RepoOpen,
-    /// Revset parse, resolve, or evaluation failure.
-    RevsetEvaluation,
-    /// Failed to load commit details, file diff, or conflict hunks.
-    CommitAccess,
-    /// Failed to load operation log or op diff.
-    OpLogAccess,
-    /// Failed to load evolution log, details, or file diff.
-    EvoLogAccess,
-    /// Failed to load interdiff details or file diff.
-    InterdiffAccess,
-    /// Failed to annotate file.
-    AnnotateAccess,
-    /// A background thread panicked.
-    BackgroundPanic,
+impl RepoError {
+    pub fn new(msg: impl Into<String>) -> Self {
+        Self {
+            message: msg.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for RepoError {
@@ -115,6 +102,8 @@ impl std::fmt::Display for RepoError {
         f.write_str(&self.message)
     }
 }
+
+impl std::error::Error for RepoError {}
 
 pub struct RevsetData {
     pub revset: String,
@@ -520,7 +509,6 @@ impl RepoServiceState {
                             RepoResult::Revset {
                                 revset: requested_revset,
                                 result: Err(RepoError {
-                                    kind: RepoErrorKind::RepoOpen,
                                     message: format!(
                                         "workspace is stale and update-stale failed:\n{update_err}"
                                     ),
@@ -540,7 +528,6 @@ impl RepoServiceState {
                     RepoResult::Revset {
                         revset: requested_revset,
                         result: Err(RepoError {
-                            kind: RepoErrorKind::RepoOpen,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -682,7 +669,6 @@ impl RepoServiceState {
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
                                     error: RepoError {
-                                        kind: RepoErrorKind::BackgroundPanic,
                                         message: format!("prefix lengths: {e:#}"),
                                     },
                                 });
@@ -696,7 +682,6 @@ impl RepoServiceState {
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
                                     error: RepoError {
-                                        kind: RepoErrorKind::BackgroundPanic,
                                         message: format!("prefix lengths: {e:#}"),
                                     },
                                 });
@@ -720,7 +705,6 @@ impl RepoServiceState {
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
                                     error: RepoError {
-                                        kind: RepoErrorKind::BackgroundPanic,
                                         message: format!("detail prefix lengths: {e:#}"),
                                     },
                                 });
@@ -735,7 +719,6 @@ impl RepoServiceState {
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
                                     error: RepoError {
-                                        kind: RepoErrorKind::BackgroundPanic,
                                         message: format!("detail prefix lengths: {e:#}"),
                                     },
                                 });
@@ -751,7 +734,6 @@ impl RepoServiceState {
                     RepoResult::Revset {
                         revset: effective_revset,
                         result: Err(RepoError {
-                            kind: RepoErrorKind::RevsetEvaluation,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -774,7 +756,6 @@ impl RepoServiceState {
                 RepoResult::CommitDetails {
                     commit_id,
                     result: Err(RepoError {
-                        kind: RepoErrorKind::CommitAccess,
                         message: "repository not loaded yet".to_string(),
                     }),
                 },
@@ -795,7 +776,6 @@ impl RepoServiceState {
                 RepoResult::CommitDetails {
                     commit_id: commit_id.clone(),
                     result: Err(RepoError {
-                        kind: RepoErrorKind::CommitAccess,
                         message: format!("{err:#}"),
                     }),
                 },
@@ -826,7 +806,6 @@ impl RepoServiceState {
                     commit_id,
                     path,
                     result: Err(RepoError {
-                        kind: RepoErrorKind::CommitAccess,
                         message: "repository not loaded yet".to_string(),
                     }),
                 },
@@ -849,7 +828,6 @@ impl RepoServiceState {
                     commit_id: commit_id.clone(),
                     path: path.clone(),
                     result: Err(RepoError {
-                        kind: RepoErrorKind::CommitAccess,
                         message: format!("{err:#}"),
                     }),
                 },
@@ -882,7 +860,6 @@ impl RepoServiceState {
                     epoch,
                     RepoResult::Operations {
                         result: Err(RepoError {
-                            kind: RepoErrorKind::OpLogAccess,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -920,7 +897,6 @@ impl RepoServiceState {
                         commit_id,
                         path,
                         result: Err(RepoError {
-                            kind: RepoErrorKind::CommitAccess,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -955,7 +931,6 @@ impl RepoServiceState {
                     RepoResult::OpDiff {
                         op_id,
                         result: Err(RepoError {
-                            kind: RepoErrorKind::OpLogAccess,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -992,7 +967,6 @@ impl RepoServiceState {
                     RepoResult::EvoLogDetails {
                         commit_id: to_commit_id,
                         result: Err(RepoError {
-                            kind: RepoErrorKind::EvoLogAccess,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -1033,7 +1007,6 @@ impl RepoServiceState {
                         commit_id: to_commit_id,
                         path,
                         result: Err(RepoError {
-                            kind: RepoErrorKind::EvoLogAccess,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -1062,7 +1035,6 @@ impl RepoServiceState {
                     epoch,
                     RepoResult::InterdiffDetails {
                         result: Err(RepoError {
-                            kind: RepoErrorKind::InterdiffAccess,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -1100,7 +1072,6 @@ impl RepoServiceState {
                     RepoResult::InterdiffFileDiff {
                         path,
                         result: Err(RepoError {
-                            kind: RepoErrorKind::InterdiffAccess,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -1124,7 +1095,6 @@ impl RepoServiceState {
                     epoch,
                     RepoResult::Annotate {
                         result: Err(RepoError {
-                            kind: RepoErrorKind::AnnotateAccess,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -1156,7 +1126,6 @@ impl RepoServiceState {
                     RepoResult::FileList {
                         commit_id,
                         result: Err(RepoError {
-                            kind: RepoErrorKind::CommitAccess,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -1184,7 +1153,6 @@ impl RepoServiceState {
                     epoch,
                     RepoResult::EvoLog {
                         result: Err(RepoError {
-                            kind: RepoErrorKind::EvoLogAccess,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -1207,7 +1175,6 @@ impl RepoServiceState {
                     self.send_if_current(
                         epoch,
                         on_error(RepoError {
-                            kind: RepoErrorKind::RepoOpen,
                             message: format!("{err:#}"),
                         }),
                     );
@@ -1237,10 +1204,7 @@ fn spawn_background(err_tx: Sender<RepoResult>, f: impl FnOnce() + Send + 'stati
                 .or_else(|| e.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "unknown panic".to_string());
             let _ = err_tx.send(RepoResult::BackgroundError {
-                error: RepoError {
-                    kind: RepoErrorKind::BackgroundPanic,
-                    message: msg,
-                },
+                error: RepoError { message: msg },
             });
         }
     });

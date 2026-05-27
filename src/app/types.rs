@@ -729,4 +729,30 @@ impl AppMode {
             on_select,
         })
     }
+
+    /// Take the `retry` field out of a `CommandOutput` mode, replacing `self` with `Normal`.
+    pub fn take_command_retry(&mut self) -> Vec<crate::types::FollowUpOption> {
+        match std::mem::replace(self, AppMode::Normal) {
+            AppMode::CommandOutput { retry, .. } => retry,
+            other => {
+                *self = other;
+                Vec::new()
+            }
+        }
+    }
+
+    /// Take the fields out of a `Jump` mode, replacing `self` with `Normal`.
+    pub fn take_jump(&mut self) -> Option<(Vec<(String, RowIdx)>, String, Option<Box<AppMode>>)> {
+        match std::mem::replace(self, AppMode::Normal) {
+            AppMode::Jump {
+                labels,
+                input,
+                restore_mode,
+            } => Some((labels, input, restore_mode)),
+            other => {
+                *self = other;
+                None
+            }
+        }
+    }
 }

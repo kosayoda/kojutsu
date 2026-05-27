@@ -21,6 +21,18 @@ macro_rules! define_str_newtype {
             pub fn new(s: impl Into<Str>) -> Self { Self(s.into()) }
             pub fn as_str(&self) -> &str { self.0.as_str() }
         }
+
+        impl PartialEq<String> for $name {
+            fn eq(&self, other: &String) -> bool {
+                self.as_str() == other.as_str()
+            }
+        }
+
+        impl PartialEq<str> for $name {
+            fn eq(&self, other: &str) -> bool {
+                self.as_str() == other
+            }
+        }
     };
 }
 
@@ -32,28 +44,6 @@ define_str_newtype!(pub RemoteName);
 define_str_newtype!(pub RepoPath);
 define_str_newtype!(pub OperationId);
 define_str_newtype!(pub WorkspaceName);
-
-// Extra PartialEq impls for ID types used in comparisons with raw strings.
-impl PartialEq<String> for CommitId {
-    fn eq(&self, other: &String) -> bool {
-        self.as_str() == other.as_str()
-    }
-}
-impl PartialEq<str> for CommitId {
-    fn eq(&self, other: &str) -> bool {
-        self.as_str() == other
-    }
-}
-impl PartialEq<String> for ChangeId {
-    fn eq(&self, other: &String) -> bool {
-        self.as_str() == other.as_str()
-    }
-}
-impl PartialEq<str> for ChangeId {
-    fn eq(&self, other: &str) -> bool {
-        self.as_str() == other
-    }
-}
 
 /// A reference to a file associated with a change_id
 #[derive(Clone, PartialEq, Eq, Hash)]

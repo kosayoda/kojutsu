@@ -340,6 +340,13 @@ impl App {
         self.status_message = Some((msg.into(), StatusLevel::Error));
     }
 
+    /// Log a background error and show it in the status bar.
+    pub fn log_background_error(&mut self, summary: impl Into<String>) {
+        let msg = summary.into();
+        self.push_command_log(CommandLogKind::Background, &msg, None, Vec::new(), false);
+        self.set_error(msg);
+    }
+
     /// Search scopes for the active view (single source of truth in ViewState).
     pub fn search_scopes(&self) -> SearchScopes {
         self.view_states[self.active_view.idx()].search_scopes

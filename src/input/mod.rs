@@ -71,12 +71,7 @@ pub fn handle_key(
             action::handle_submenu_key(app, registry, lua, &children, flags, &node)
         }
         AppMode::CommandOutput { .. } => {
-            // Take ownership so we can inspect retry options.
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            let retry = match mode {
-                AppMode::CommandOutput { retry, .. } => retry,
-                _ => unreachable!(),
-            };
+            let retry = app.mode.take_command_retry();
             if node.key == keymap_parser::Key::Esc {
                 Action::None
             } else if !retry.is_empty() {
