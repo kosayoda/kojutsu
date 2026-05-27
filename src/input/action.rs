@@ -1693,7 +1693,7 @@ pub(super) fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action
         }
         FollowUpAction::WidenRevset { change_id } => {
             let new_revset = format!("({}) | {}", app.revset.current, change_id);
-            app.jump_after_refresh = Some(crate::app::JumpTarget::ChangeId(change_id));
+            app.jump_after_refresh = Some(crate::app::JumpTarget::Prefix(change_id));
             app.switch_view(crate::app::ActiveView::Dag);
             app.revset.active_preset = None;
             Action::UpdateRevset(new_revset)

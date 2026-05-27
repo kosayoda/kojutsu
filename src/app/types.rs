@@ -603,8 +603,8 @@ pub enum JumpTarget {
     WorkingCopy,
     /// Jump to the commit that has this local bookmark.
     Bookmark(BookmarkName),
-    /// Jump to a commit by change ID prefix.
-    ChangeId(String),
+    /// Jump to a commit by change ID or commit ID prefix.
+    Prefix(String),
 }
 
 /// State for the select-from-list overlay (e.g. picking a bookmark).

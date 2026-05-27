@@ -532,7 +532,7 @@ impl App {
             change_id,
             Self::ANCESTOR_EXPAND_COUNT,
         );
-        self.jump_after_refresh = Some(JumpTarget::ChangeId(change_id.to_string()));
+        self.jump_after_refresh = Some(JumpTarget::Prefix(change_id.to_string()));
         self.revset.load_state = Loadable::Loading;
         self.revset.pending = Some(new_revset.clone().into());
         self.pending_repo_requests

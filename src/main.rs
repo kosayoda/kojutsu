@@ -546,7 +546,7 @@ fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
     if result.success {
         // Decide whether to switch to DAG before moving jump into app state.
         let switch_to_dag = match &jump {
-            Some(JumpTarget::WorkingCopy | JumpTarget::ChangeId(_)) => true,
+            Some(JumpTarget::WorkingCopy | JumpTarget::Prefix(_)) => true,
             Some(JumpTarget::Bookmark(_)) => false,
             None => app.active_view == kojutsu::app::ActiveView::Evolog,
         };

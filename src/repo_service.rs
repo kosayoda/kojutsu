@@ -9,7 +9,7 @@ use jj_lib::repo::Repo as _;
 use pollster::FutureExt as _;
 
 use crate::dag::{CommitDetails, DagEntry, DivergenceUpdate, PrefixLengthUpdate};
-use crate::repo::JjRepo;
+use crate::repo::{JjRepo, SnapshotError};
 use crate::types::{BookmarkName, CommitId, OperationId, RemoteName, RepoPath, TagName};
 
 pub struct RepoService;
@@ -495,7 +495,7 @@ impl RepoServiceState {
         self.repo = None;
 
         if let Err(err) = JjRepo::snapshot(&self.repo_path) {
-            if err.contains("stale") {
+            if matches!(err, SnapshotError::Stale(_)) {
                 match JjRepo::update_stale(&self.repo_path) {
                     Ok(()) => {
                         let _ = self.result_tx.send(RepoResult::WorkspaceUpdatedStale {
@@ -840,103 +840,40 @@ impl RepoServiceState {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
-        // Op log needs a repo; open one if not already loaded.
-        let Some(repo) =
-            self.ensure_repo(epoch, |error| RepoResult::Operations { result: Err(error) })
-        else {
-            return;
-        };
-        match repo.operation_log(limit) {
-            Ok((entries, has_more)) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::Operations {
-                        result: Ok((entries, has_more)),
-                    },
-                );
-            }
-            Err(err) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::Operations {
-                        result: Err(RepoError {
-                            message: format!("{err:#}"),
-                        }),
-                    },
-                );
-            }
-        }
+        self.repo_op(
+            epoch,
+            |repo| repo.operation_log(limit),
+            |result| RepoResult::Operations { result },
+        );
     }
 
     fn handle_conflict_hunks(&mut self, epoch: u64, commit_id: CommitId, path: RepoPath) {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::ConflictHunks {
-            commit_id: commit_id.clone(),
-            path: path.clone(),
-            result: Err(error),
-        }) else {
-            return;
-        };
-        match repo.conflict_hunks(&commit_id, &path) {
-            Ok(hunks) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::ConflictHunks {
-                        commit_id,
-                        path,
-                        result: Ok(hunks),
-                    },
-                );
-            }
-            Err(err) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::ConflictHunks {
-                        commit_id,
-                        path,
-                        result: Err(RepoError {
-                            message: format!("{err:#}"),
-                        }),
-                    },
-                );
-            }
-        }
+        self.repo_op(
+            epoch,
+            |repo| repo.conflict_hunks(&commit_id, &path),
+            |result| RepoResult::ConflictHunks {
+                commit_id: commit_id.clone(),
+                path: path.clone(),
+                result,
+            },
+        );
     }
 
     fn handle_op_diff(&mut self, epoch: u64, op_id: OperationId) {
         if epoch != self.current_epoch.load(Ordering::SeqCst) {
             return;
         }
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::OpDiff {
-            op_id: op_id.clone(),
-            result: Err(error),
-        }) else {
-            return;
-        };
-        match repo.op_diff(op_id.as_str()) {
-            Ok(lines) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::OpDiff {
-                        op_id,
-                        result: Ok(lines),
-                    },
-                );
-            }
-            Err(err) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::OpDiff {
-                        op_id,
-                        result: Err(RepoError {
-                            message: format!("{err:#}"),
-                        }),
-                    },
-                );
-            }
-        }
+        self.repo_op(
+            epoch,
+            |repo| repo.op_diff(op_id.as_str()),
+            |result| RepoResult::OpDiff {
+                op_id: op_id.clone(),
+                result,
+            },
+        );
     }
 
     fn handle_evolog_details(
@@ -945,34 +882,14 @@ impl RepoServiceState {
         from_commit_id: CommitId,
         to_commit_id: CommitId,
     ) {
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::EvoLogDetails {
-            commit_id: to_commit_id.clone(),
-            result: Err(error),
-        }) else {
-            return;
-        };
-        match repo.inter_commit_details(from_commit_id.as_str(), to_commit_id.as_str()) {
-            Ok(files) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::EvoLogDetails {
-                        commit_id: to_commit_id,
-                        result: Ok(files),
-                    },
-                );
-            }
-            Err(err) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::EvoLogDetails {
-                        commit_id: to_commit_id,
-                        result: Err(RepoError {
-                            message: format!("{err:#}"),
-                        }),
-                    },
-                );
-            }
-        }
+        self.repo_op(
+            epoch,
+            |repo| repo.inter_commit_details(from_commit_id.as_str(), to_commit_id.as_str()),
+            |result| RepoResult::EvoLogDetails {
+                commit_id: to_commit_id.clone(),
+                result,
+            },
+        );
     }
 
     fn handle_evolog_file_diff(
@@ -982,37 +899,17 @@ impl RepoServiceState {
         to_commit_id: CommitId,
         path: RepoPath,
     ) {
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::EvoLogFileDiff {
-            commit_id: to_commit_id.clone(),
-            path: path.clone(),
-            result: Err(error),
-        }) else {
-            return;
-        };
-        match repo.inter_commit_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path) {
-            Ok(result) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::EvoLogFileDiff {
-                        commit_id: to_commit_id,
-                        path,
-                        result: Ok(result),
-                    },
-                );
-            }
-            Err(err) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::EvoLogFileDiff {
-                        commit_id: to_commit_id,
-                        path,
-                        result: Err(RepoError {
-                            message: format!("{err:#}"),
-                        }),
-                    },
-                );
-            }
-        }
+        self.repo_op(
+            epoch,
+            |repo| {
+                repo.inter_commit_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path)
+            },
+            |result| RepoResult::EvoLogFileDiff {
+                commit_id: to_commit_id.clone(),
+                path: path.clone(),
+                result,
+            },
+        );
     }
 
     fn handle_interdiff_details(
@@ -1021,26 +918,11 @@ impl RepoServiceState {
         from_commit_id: CommitId,
         to_commit_id: CommitId,
     ) {
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::InterdiffDetails {
-            result: Err(error),
-        }) else {
-            return;
-        };
-        match repo.interdiff_details(from_commit_id.as_str(), to_commit_id.as_str()) {
-            Ok(files) => {
-                self.send_if_current(epoch, RepoResult::InterdiffDetails { result: Ok(files) });
-            }
-            Err(err) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::InterdiffDetails {
-                        result: Err(RepoError {
-                            message: format!("{err:#}"),
-                        }),
-                    },
-                );
-            }
-        }
+        self.repo_op(
+            epoch,
+            |repo| repo.interdiff_details(from_commit_id.as_str(), to_commit_id.as_str()),
+            |result| RepoResult::InterdiffDetails { result },
+        );
     }
 
     fn handle_interdiff_file_diff(
@@ -1050,115 +932,41 @@ impl RepoServiceState {
         to_commit_id: CommitId,
         path: RepoPath,
     ) {
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::InterdiffFileDiff {
-            path: path.clone(),
-            result: Err(error),
-        }) else {
-            return;
-        };
-        match repo.interdiff_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path) {
-            Ok(result) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::InterdiffFileDiff {
-                        path,
-                        result: Ok(result),
-                    },
-                );
-            }
-            Err(err) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::InterdiffFileDiff {
-                        path,
-                        result: Err(RepoError {
-                            message: format!("{err:#}"),
-                        }),
-                    },
-                );
-            }
-        }
+        self.repo_op(
+            epoch,
+            |repo| repo.interdiff_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path),
+            |result| RepoResult::InterdiffFileDiff {
+                path: path.clone(),
+                result,
+            },
+        );
     }
 
     fn handle_file_annotate(&mut self, epoch: u64, commit_id: CommitId, path: RepoPath) {
-        let Some(repo) =
-            self.ensure_repo(epoch, |error| RepoResult::Annotate { result: Err(error) })
-        else {
-            return;
-        };
-        match repo.file_annotate(&commit_id, &path) {
-            Ok(lines) => {
-                self.send_if_current(epoch, RepoResult::Annotate { result: Ok(lines) });
-            }
-            Err(err) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::Annotate {
-                        result: Err(RepoError {
-                            message: format!("{err:#}"),
-                        }),
-                    },
-                );
-            }
-        }
+        self.repo_op(
+            epoch,
+            |repo| repo.file_annotate(&commit_id, &path),
+            |result| RepoResult::Annotate { result },
+        );
     }
 
     fn handle_file_list(&mut self, epoch: u64, commit_id: CommitId) {
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::FileList {
-            commit_id: commit_id.clone(),
-            result: Err(error),
-        }) else {
-            return;
-        };
-        match repo.list_files(&commit_id) {
-            Ok(files) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::FileList {
-                        commit_id,
-                        result: Ok(files),
-                    },
-                );
-            }
-            Err(err) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::FileList {
-                        commit_id,
-                        result: Err(RepoError {
-                            message: format!("{err:#}"),
-                        }),
-                    },
-                );
-            }
-        }
+        self.repo_op(
+            epoch,
+            |repo| repo.list_files(&commit_id),
+            |result| RepoResult::FileList {
+                commit_id: commit_id.clone(),
+                result,
+            },
+        );
     }
 
     fn handle_evolution_log(&mut self, epoch: u64, commit_id: CommitId) {
-        let Some(repo) = self.ensure_repo(epoch, |error| RepoResult::EvoLog { result: Err(error) })
-        else {
-            return;
-        };
-        match repo.evolution_log(commit_id.as_str()) {
-            Ok(entries) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::EvoLog {
-                        result: Ok(entries),
-                    },
-                );
-            }
-            Err(err) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::EvoLog {
-                        result: Err(RepoError {
-                            message: format!("{err:#}"),
-                        }),
-                    },
-                );
-            }
-        }
+        self.repo_op(
+            epoch,
+            |repo| repo.evolution_log(commit_id.as_str()),
+            |result| RepoResult::EvoLog { result },
+        );
     }
 
     /// Ensure the repo is open, opening it if needed. On failure, sends the
@@ -1189,6 +997,21 @@ impl RepoServiceState {
         if epoch == self.current_epoch.load(Ordering::SeqCst) {
             let _ = self.result_tx.send(result);
         }
+    }
+
+    /// Ensure repo is loaded, call a fallible operation, and send the result.
+    /// `wrap` converts `Result<T, RepoError>` into the appropriate `RepoResult` variant.
+    fn repo_op<T>(
+        &mut self,
+        epoch: u64,
+        op: impl FnOnce(&crate::repo::JjRepo) -> color_eyre::Result<T>,
+        wrap: impl Fn(Result<T, RepoError>) -> RepoResult,
+    ) {
+        let Some(repo) = self.ensure_repo(epoch, |e| wrap(Err(e))) else {
+            return;
+        };
+        let result = op(repo).map_err(|err| RepoError::new(format!("{err:#}")));
+        self.send_if_current(epoch, wrap(result));
     }
 }
 

@@ -170,7 +170,7 @@ impl App {
             match target {
                 JumpTarget::WorkingCopy => self.jump_to_working_copy(),
                 JumpTarget::Bookmark(ref name) => self.jump_to_bookmark(name),
-                JumpTarget::ChangeId(ref prefix) => self.jump_to_change_id(prefix),
+                JumpTarget::Prefix(ref prefix) => self.jump_to_change_id(prefix),
             }
         }
 
