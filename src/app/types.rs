@@ -340,7 +340,9 @@ pub const OP_LOG_BATCH_SIZE: usize = 200;
     serde::Serialize,
     serde::Deserialize,
     strum::EnumCount,
+    strum::FromRepr,
 )]
+#[repr(usize)]
 pub enum ActiveView {
     #[default]
     Dag,
@@ -395,17 +397,7 @@ impl ViewState {
 }
 
 pub(super) fn default_view_states() -> [ViewState; <ActiveView as strum::EnumCount>::COUNT] {
-    [
-        ViewState::new(ActiveView::Dag.default_scopes()),
-        ViewState::new(ActiveView::Bookmarks.default_scopes()),
-        ViewState::new(ActiveView::Tags.default_scopes()),
-        ViewState::new(ActiveView::Operations.default_scopes()),
-        ViewState::new(ActiveView::Workspaces.default_scopes()),
-        ViewState::new(ActiveView::Evolog.default_scopes()),
-        ViewState::new(ActiveView::CommandLog.default_scopes()),
-        ViewState::new(ActiveView::Interdiff.default_scopes()),
-        ViewState::new(ActiveView::Annotate.default_scopes()),
-    ]
+    std::array::from_fn(|i| ViewState::new(ActiveView::from_repr(i).unwrap().default_scopes()))
 }
 
 /// Discriminant for the 4 mutually exclusive bookmark states.

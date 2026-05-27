@@ -22,6 +22,42 @@ impl SearchScopes {
     pub const DEFAULT_TAG: Self = Self::TAG.union(Self::DESCRIPTION);
     pub const DEFAULT_OP_LOG: Self = Self::DESCRIPTION;
     pub const DEFAULT_ANNOTATE: Self = Self::CHANGE_ID.union(Self::LINE);
+
+    pub const fn spec(self) -> SearchScopeSpec {
+        SearchScopeSpec {
+            flag: self,
+            hint: self.default_hint(),
+            label: self.default_label(),
+        }
+    }
+
+    const fn default_hint(self) -> &'static str {
+        match self {
+            Self::CHANGE_ID => "c",
+            Self::COMMIT_ID => "i",
+            Self::DESCRIPTION => "d",
+            Self::BOOKMARK => "b",
+            Self::AUTHOR => "a",
+            Self::PATH_COMMAND => "p",
+            Self::LINE => "l",
+            Self::TAG => "t",
+            _ => "",
+        }
+    }
+
+    const fn default_label(self) -> &'static str {
+        match self {
+            Self::CHANGE_ID => "change-id",
+            Self::COMMIT_ID => "commit-id",
+            Self::DESCRIPTION => "description",
+            Self::BOOKMARK => "bookmark",
+            Self::AUTHOR => "author",
+            Self::PATH_COMMAND => "path",
+            Self::LINE => "line",
+            Self::TAG => "tag",
+            _ => "",
+        }
+    }
 }
 
 pub struct SearchScopeSpec {
@@ -30,199 +66,85 @@ pub struct SearchScopeSpec {
     pub label: &'static str,
 }
 
-pub const SEARCH_SCOPE_SPECS: &[SearchScopeSpec] = &[
-    SearchScopeSpec {
-        flag: SearchScopes::CHANGE_ID,
-        hint: "c",
-        label: "change-id",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::COMMIT_ID,
-        hint: "i",
-        label: "commit-id",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::DESCRIPTION,
-        hint: "d",
-        label: "description",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::BOOKMARK,
-        hint: "b",
-        label: "bookmark",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::AUTHOR,
-        hint: "a",
-        label: "author",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::PATH_COMMAND,
-        hint: "p",
-        label: "path",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::LINE,
-        hint: "l",
-        label: "line",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::TAG,
-        hint: "t",
-        label: "tag",
-    },
-];
+use crate::app::ActiveView;
 
-pub const BOOKMARK_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
-    SearchScopeSpec {
-        flag: SearchScopes::BOOKMARK,
-        hint: "b",
-        label: "bookmark",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::DESCRIPTION,
-        hint: "d",
-        label: "description",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::CHANGE_ID,
-        hint: "c",
-        label: "change-id",
-    },
-];
-
-pub const TAG_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
-    SearchScopeSpec {
-        flag: SearchScopes::TAG,
-        hint: "t",
-        label: "tag",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::DESCRIPTION,
-        hint: "d",
-        label: "description",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::CHANGE_ID,
-        hint: "c",
-        label: "change-id",
-    },
-];
-
-pub const OP_LOG_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
-    SearchScopeSpec {
-        flag: SearchScopes::DESCRIPTION,
-        hint: "d",
-        label: "description",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::PATH_COMMAND,
-        hint: "c",
-        label: "command",
-    },
-];
-
-pub fn scope_specs_for_view(view: crate::app::ActiveView) -> &'static [SearchScopeSpec] {
+pub fn scope_specs_for_view(view: ActiveView) -> &'static [SearchScopeSpec] {
+    use SearchScopes as S;
     match view {
-        crate::app::ActiveView::Dag => SEARCH_SCOPE_SPECS,
-        crate::app::ActiveView::Bookmarks => BOOKMARK_VIEW_SCOPE_SPECS,
-        crate::app::ActiveView::Tags => TAG_VIEW_SCOPE_SPECS,
-        crate::app::ActiveView::Operations => OP_LOG_VIEW_SCOPE_SPECS,
-        crate::app::ActiveView::Evolog => EVOLOG_VIEW_SCOPE_SPECS,
-        crate::app::ActiveView::Workspaces => WORKSPACE_VIEW_SCOPE_SPECS,
-        crate::app::ActiveView::CommandLog => COMMAND_LOG_VIEW_SCOPE_SPECS,
-        crate::app::ActiveView::Interdiff => INTERDIFF_VIEW_SCOPE_SPECS,
-        crate::app::ActiveView::Annotate => ANNOTATE_VIEW_SCOPE_SPECS,
+        ActiveView::Dag => {
+            const V: &[SearchScopeSpec] = &[
+                S::CHANGE_ID.spec(),
+                S::COMMIT_ID.spec(),
+                S::DESCRIPTION.spec(),
+                S::BOOKMARK.spec(),
+                S::AUTHOR.spec(),
+                S::PATH_COMMAND.spec(),
+                S::LINE.spec(),
+                S::TAG.spec(),
+            ];
+            V
+        }
+        ActiveView::Bookmarks => {
+            const V: &[SearchScopeSpec] = &[
+                S::BOOKMARK.spec(),
+                S::DESCRIPTION.spec(),
+                S::CHANGE_ID.spec(),
+            ];
+            V
+        }
+        ActiveView::Tags => {
+            const V: &[SearchScopeSpec] =
+                &[S::TAG.spec(), S::DESCRIPTION.spec(), S::CHANGE_ID.spec()];
+            V
+        }
+        ActiveView::Operations => {
+            const V: &[SearchScopeSpec] = &[
+                S::DESCRIPTION.spec(),
+                SearchScopeSpec {
+                    flag: S::PATH_COMMAND,
+                    hint: "c",
+                    label: "command",
+                },
+            ];
+            V
+        }
+        ActiveView::Workspaces => {
+            const V: &[SearchScopeSpec] = &[S::DESCRIPTION.spec(), S::CHANGE_ID.spec()];
+            V
+        }
+        ActiveView::Evolog => {
+            const V: &[SearchScopeSpec] = &[
+                S::CHANGE_ID.spec(),
+                S::DESCRIPTION.spec(),
+                S::AUTHOR.spec(),
+                S::PATH_COMMAND.spec(),
+            ];
+            V
+        }
+        ActiveView::CommandLog => {
+            const V: &[SearchScopeSpec] = &[S::DESCRIPTION.spec()];
+            V
+        }
+        ActiveView::Interdiff => {
+            const V: &[SearchScopeSpec] = &[
+                S::DESCRIPTION.spec(),
+                S::PATH_COMMAND.spec(),
+                S::LINE.spec(),
+            ];
+            V
+        }
+        ActiveView::Annotate => {
+            const V: &[SearchScopeSpec] = &[
+                S::CHANGE_ID.spec(),
+                S::DESCRIPTION.spec(),
+                S::AUTHOR.spec(),
+                S::LINE.spec(),
+                S::PATH_COMMAND.spec(),
+            ];
+            V
+        }
     }
 }
-
-pub const WORKSPACE_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
-    SearchScopeSpec {
-        flag: SearchScopes::DESCRIPTION,
-        hint: "d",
-        label: "description",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::CHANGE_ID,
-        hint: "c",
-        label: "change-id",
-    },
-];
-
-pub const COMMAND_LOG_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[SearchScopeSpec {
-    flag: SearchScopes::DESCRIPTION,
-    hint: "d",
-    label: "description",
-}];
-
-pub const EVOLOG_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
-    SearchScopeSpec {
-        flag: SearchScopes::CHANGE_ID,
-        hint: "c",
-        label: "change-id",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::DESCRIPTION,
-        hint: "d",
-        label: "description",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::AUTHOR,
-        hint: "a",
-        label: "author",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::PATH_COMMAND,
-        hint: "p",
-        label: "path",
-    },
-];
-
-pub const INTERDIFF_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
-    SearchScopeSpec {
-        flag: SearchScopes::DESCRIPTION,
-        hint: "d",
-        label: "description",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::PATH_COMMAND,
-        hint: "p",
-        label: "path",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::LINE,
-        hint: "l",
-        label: "line",
-    },
-];
-
-pub const ANNOTATE_VIEW_SCOPE_SPECS: &[SearchScopeSpec] = &[
-    SearchScopeSpec {
-        flag: SearchScopes::CHANGE_ID,
-        hint: "c",
-        label: "change-id",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::DESCRIPTION,
-        hint: "d",
-        label: "description",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::AUTHOR,
-        hint: "a",
-        label: "author",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::LINE,
-        hint: "l",
-        label: "line",
-    },
-    SearchScopeSpec {
-        flag: SearchScopes::PATH_COMMAND,
-        hint: "p",
-        label: "path",
-    },
-];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SearchFocus {
