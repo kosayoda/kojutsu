@@ -99,8 +99,8 @@ impl std::fmt::Debug for DagNode {
 
 impl DagNode {
     /// Get the loaded diff lines for a file in the given format.
-    pub fn diff(&self, fi: usize, format: DiffFormat) -> Option<&Vec<DiffLine>> {
-        let result = self.diffs.get(fi)?.loaded()?;
+    pub fn diff(&self, fi: FileIdx, format: DiffFormat) -> Option<&Vec<DiffLine>> {
+        let result = self.diffs.get(fi.raw())?.loaded()?;
         Some(match format {
             DiffFormat::Git => &result.git,
             DiffFormat::ColorWords => &result.color_words,
@@ -108,46 +108,49 @@ impl DagNode {
     }
 
     /// Get the raw diff result state for a file.
-    pub fn diff_result(&self, fi: usize) -> Option<&Loadable<crate::dag::DiffResult>> {
-        self.diffs.get(fi)
+    pub fn diff_result(&self, fi: FileIdx) -> Option<&Loadable<crate::dag::DiffResult>> {
+        self.diffs.get(fi.raw())
     }
 
     /// Get loaded conflict hunks for a file.
     pub fn conflict_hunks(
         &self,
-        fi: usize,
+        fi: FileIdx,
     ) -> Option<&Loadable<Vec<crate::dag::ConflictHunkKind>>> {
-        self.conflict_hunks.get(fi)
+        self.conflict_hunks.get(fi.raw())
     }
 
     /// Get mutable conflict hunks for a file.
     pub fn conflict_hunks_mut(
         &mut self,
-        fi: usize,
+        fi: FileIdx,
     ) -> Option<&mut Loadable<Vec<crate::dag::ConflictHunkKind>>> {
-        self.conflict_hunks.get_mut(fi)
+        self.conflict_hunks.get_mut(fi.raw())
     }
 
     /// Set the diff result for a file, growing the vector if needed.
-    pub fn set_diff(&mut self, fi: usize, result: crate::dag::DiffResult) {
-        self.ensure_diffs(fi + 1);
-        self.diffs[fi] = Loadable::Loaded(result);
+    pub fn set_diff(&mut self, fi: FileIdx, result: crate::dag::DiffResult) {
+        let i = fi.raw();
+        self.ensure_diffs(i + 1);
+        self.diffs[i] = Loadable::Loaded(result);
     }
 
     /// Set the diff state for a file (e.g. Loading/Failed).
-    pub fn set_diff_state(&mut self, fi: usize, state: Loadable<crate::dag::DiffResult>) {
-        self.ensure_diffs(fi + 1);
-        self.diffs[fi] = state;
+    pub fn set_diff_state(&mut self, fi: FileIdx, state: Loadable<crate::dag::DiffResult>) {
+        let i = fi.raw();
+        self.ensure_diffs(i + 1);
+        self.diffs[i] = state;
     }
 
     /// Set the conflict hunks state for a file, growing the vector if needed.
     pub fn set_conflict_hunks(
         &mut self,
-        fi: usize,
+        fi: FileIdx,
         state: Loadable<Vec<crate::dag::ConflictHunkKind>>,
     ) {
-        self.ensure_conflict_hunks(fi + 1);
-        self.conflict_hunks[fi] = state;
+        let i = fi.raw();
+        self.ensure_conflict_hunks(i + 1);
+        self.conflict_hunks[i] = state;
     }
 
     /// Extract and take ownership of cached diffs (used during DAG refresh).
@@ -161,14 +164,16 @@ impl DagNode {
     }
 
     /// Check if a diff should be requested for a file.
-    pub fn diff_should_request(&self, fi: usize) -> bool {
-        self.diffs.get(fi).is_none_or(Loadable::should_request)
+    pub fn diff_should_request(&self, fi: FileIdx) -> bool {
+        self.diffs
+            .get(fi.raw())
+            .is_none_or(Loadable::should_request)
     }
 
     /// Check if conflict hunks should be requested for a file.
-    pub fn conflict_hunks_should_request(&self, fi: usize) -> bool {
+    pub fn conflict_hunks_should_request(&self, fi: FileIdx) -> bool {
         self.conflict_hunks
-            .get(fi)
+            .get(fi.raw())
             .is_none_or(Loadable::should_request)
     }
 
@@ -624,15 +629,14 @@ impl App {
         hunk_idx: crate::idx::ConflictHunkIdx,
         side: usize,
     ) -> ConflictPickResult {
-        let fi = file_idx.raw();
         let hi = hunk_idx.raw();
-        let Some(hunks) = self.nodes[entry_idx]
-            .conflict_hunks
-            .get_mut(fi)
-            .and_then(|l| match l {
-                Loadable::Loaded(h) => Some(h),
-                _ => None,
-            })
+        let Some(hunks) =
+            self.nodes[entry_idx]
+                .conflict_hunks_mut(file_idx)
+                .and_then(|l| match l {
+                    Loadable::Loaded(h) => Some(h),
+                    _ => None,
+                })
         else {
             return ConflictPickResult::Pending;
         };
@@ -682,7 +686,7 @@ impl App {
             // Return the resolved content for the caller to write.
             if let Some(path) = self
                 .files_for_entry(entry_idx)
-                .and_then(|f| f.get(fi))
+                .and_then(|f| f.get(file_idx.raw()))
                 .map(|f| f.path.clone())
             {
                 ConflictPickResult::FileResolved { path, content }
@@ -846,7 +850,7 @@ impl App {
 
     pub fn diff_lines(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<&Vec<DiffLine>> {
         let format = self.diff_format();
-        self.nodes[entry_idx].diff(file_idx.raw(), format)
+        self.nodes[entry_idx].diff(file_idx, format)
     }
 
     pub fn evolog_diff_lines(

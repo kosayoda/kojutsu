@@ -455,7 +455,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let hunks = app
                         .nodes
                         .get(*entry_idx)
-                        .and_then(|n| n.conflict_hunks(file_idx.raw()))
+                        .and_then(|n| n.conflict_hunks(*file_idx))
                         .and_then(|l| l.loaded());
                     let total = hunks
                         .map(|h: &Vec<crate::dag::ConflictHunkKind>| {
@@ -496,7 +496,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let text = app
                         .nodes
                         .get(*entry_idx)
-                        .and_then(|n| n.conflict_hunks(file_idx.raw()))
+                        .and_then(|n| n.conflict_hunks(*file_idx))
                         .and_then(|l| l.loaded())
                         .and_then(|hunks: &Vec<crate::dag::ConflictHunkKind>| {
                             hunks.get(hunk_idx.raw())
@@ -550,7 +550,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let text = app
                         .nodes
                         .get(*entry_idx)
-                        .and_then(|n| n.conflict_hunks(file_idx.raw()))
+                        .and_then(|n| n.conflict_hunks(*file_idx))
                         .and_then(|l| l.loaded())
                         .and_then(|hunks: &Vec<crate::dag::ConflictHunkKind>| {
                             hunks.get(hunk_idx.raw())

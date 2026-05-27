@@ -277,7 +277,7 @@ impl App {
                         // If this file is unfolded, show diff lines or conflict hunks.
                         if self.is_file_unfolded(entry_idx, file_idx) {
                             if let Some(hunks) = self.nodes[entry_idx]
-                                .conflict_hunks(file_idx_raw)
+                                .conflict_hunks(file_idx)
                                 .and_then(|l| l.loaded())
                             {
                                 // Show conflict hunks instead of diff.
@@ -633,18 +633,17 @@ impl App {
             }
             self.visual.mode = None;
         } else {
-            let fi = file_idx.raw();
             let file_info = self
                 .files_for_entry(entry_idx)
-                .and_then(|f| f.get(fi))
+                .and_then(|f| f.get(file_idx.raw()))
                 .map(|f| (f.path.clone(), f.old_path.clone(), f.has_conflict));
 
             if let Some((path, old_path, has_conflict)) = file_info {
                 let commit_id = self.commit_id(entry_idx).clone();
 
                 // Request diff lines if needed.
-                if self.nodes[entry_idx].diff_should_request(fi) {
-                    self.nodes[entry_idx].set_diff_state(fi, Loadable::Loading);
+                if self.nodes[entry_idx].diff_should_request(file_idx) {
+                    self.nodes[entry_idx].set_diff_state(file_idx, Loadable::Loading);
                     self.pending_repo_requests.push(RepoRequest::load_file_diff(
                         commit_id.clone(),
                         path.clone(),
@@ -654,8 +653,8 @@ impl App {
 
                 // Also request conflict hunks if the file is conflicted.
                 if has_conflict {
-                    if self.nodes[entry_idx].conflict_hunks_should_request(fi) {
-                        self.nodes[entry_idx].set_conflict_hunks(fi, Loadable::Loading);
+                    if self.nodes[entry_idx].conflict_hunks_should_request(file_idx) {
+                        self.nodes[entry_idx].set_conflict_hunks(file_idx, Loadable::Loading);
                         self.pending_repo_requests
                             .push(RepoRequest::load_conflict_hunks(commit_id, path));
                     }

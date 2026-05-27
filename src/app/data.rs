@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use super::{App, AppMode, DeferredWork, JumpTarget, Loadable};
 use crate::dag::DagEntry;
-use crate::idx::{EntryIdx, IndexVec, RowIdx};
+use crate::idx::{EntryIdx, FileIdx, IndexVec, RowIdx};
 use crate::repo_service::{RepoRequest, RepoResult};
 use crate::types::{ChangeId, CommitId, DisplayRow};
 
@@ -253,13 +253,14 @@ impl App {
                     // Re-request diffs for files that were previously unfolded.
                     let change_id = self.change_id(idx);
                     for (fi, file) in details.files.iter().enumerate() {
+                        let file_idx = FileIdx::new(fi);
                         let fold_key = super::FileFoldKey {
                             change_id: change_id.clone(),
                             path: file.path.clone(),
                         };
                         if self.unfolded_files.contains(&fold_key) {
-                            if self.nodes[idx].diff_should_request(fi) {
-                                self.nodes[idx].set_diff_state(fi, Loadable::Loading);
+                            if self.nodes[idx].diff_should_request(file_idx) {
+                                self.nodes[idx].set_diff_state(file_idx, Loadable::Loading);
                                 self.pending_repo_requests.push(RepoRequest::load_file_diff(
                                     commit_id.clone(),
                                     file.path.clone(),
@@ -307,8 +308,7 @@ impl App {
                     self.status_message = None;
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                         if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
-                            let fi = file_idx.raw();
-                            self.nodes[idx].set_diff(fi, diff_result);
+                            self.nodes[idx].set_diff(file_idx, diff_result);
                         }
                     }
                     deferred.rebuild = true;
@@ -317,8 +317,8 @@ impl App {
                 Err(error) => {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                         if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
-                            let fi = file_idx.raw();
-                            self.nodes[idx].set_diff_state(fi, Loadable::Failed(error.clone()));
+                            self.nodes[idx]
+                                .set_diff_state(file_idx, Loadable::Failed(error.clone()));
                         }
                     }
                     let summary = format!("load diff for {path}");
@@ -464,8 +464,8 @@ impl App {
                 Ok(hunks) => {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                         if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
-                            let fi = file_idx.raw();
-                            self.nodes[idx].set_conflict_hunks(fi, super::Loadable::Loaded(hunks));
+                            self.nodes[idx]
+                                .set_conflict_hunks(file_idx, super::Loadable::Loaded(hunks));
                         }
                     }
                     deferred.rebuild = true;
@@ -474,9 +474,10 @@ impl App {
                 Err(error) => {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                         if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
-                            let fi = file_idx.raw();
-                            self.nodes[idx]
-                                .set_conflict_hunks(fi, super::Loadable::Failed(error.clone()));
+                            self.nodes[idx].set_conflict_hunks(
+                                file_idx,
+                                super::Loadable::Failed(error.clone()),
+                            );
                         }
                     }
                     let msg = format!("failed to load conflict hunks for {path}: {error}");
