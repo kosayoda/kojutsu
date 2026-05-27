@@ -1311,7 +1311,7 @@ impl JjRepo {
     /// Extract rich bookmark details: conflict targets and remote tracking info.
     /// Called during revset load in the background service thread.
     pub fn extract_bookmark_details(&self) -> HashMap<BookmarkName, crate::dag::BookmarkDetails> {
-        use crate::dag::{BookmarkDetails, ConflictTargetKind};
+        use crate::dag::{BookmarkDetails, DiffKind};
 
         let repo = self.repo.as_ref();
         let view = repo.view();
@@ -1343,15 +1343,12 @@ impl JjRepo {
             // Conflict targets: removed (-) then added (+).
             if target.has_conflict() {
                 for removed_id in target.removed_ids() {
-                    if let Some(ct) =
-                        self.make_conflict_target(removed_id, ConflictTargetKind::Removed)
-                    {
+                    if let Some(ct) = self.make_conflict_target(removed_id, DiffKind::Removed) {
                         details.conflict_targets.push(ct);
                     }
                 }
                 for added_id in target.added_ids() {
-                    if let Some(ct) = self.make_conflict_target(added_id, ConflictTargetKind::Added)
-                    {
+                    if let Some(ct) = self.make_conflict_target(added_id, DiffKind::Added) {
                         details.conflict_targets.push(ct);
                     }
                 }
@@ -1509,7 +1506,7 @@ impl JjRepo {
     fn make_conflict_target(
         &self,
         commit_id: &BackendCommitId,
-        kind: crate::dag::ConflictTargetKind,
+        kind: crate::dag::DiffKind,
     ) -> Option<crate::dag::BookmarkConflictTarget> {
         let info = self.commit_detail_info(commit_id)?;
         Some(crate::dag::BookmarkConflictTarget {
@@ -2239,9 +2236,8 @@ impl JjRepo {
 
     /// Compute the diff between an operation and its parent.
     pub fn op_diff(&self, op_id_hex: &str) -> Result<Vec<crate::app::OpDetailLine>> {
-        use crate::app::{
-            OpDetailLine, OpDiffBookmark, OpDiffCommit, OpDiffKind, OpDiffWorkingCopy,
-        };
+        use crate::app::{OpDetailLine, OpDiffBookmark, OpDiffCommit, OpDiffWorkingCopy};
+        use crate::dag::DiffKind;
 
         let op_store = self.repo.op_store();
         let prefix = jj_lib::object_id::HexPrefix::try_from_hex(op_id_hex)
@@ -2323,7 +2319,7 @@ impl JjRepo {
                     change_id,
                     commit_id,
                     description: desc,
-                    kind: OpDiffKind::Added,
+                    kind: DiffKind::Added,
                 }));
             }
             for commit_id in &removed_commits {
@@ -2333,7 +2329,7 @@ impl JjRepo {
                     change_id,
                     commit_id,
                     description: desc,
-                    kind: OpDiffKind::Removed,
+                    kind: DiffKind::Removed,
                 }));
             }
         }

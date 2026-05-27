@@ -100,11 +100,7 @@ impl std::fmt::Debug for DagNode {
 impl DagNode {
     /// Get the loaded diff lines for a file in the given format.
     pub fn diff(&self, fi: FileIdx, format: DiffFormat) -> Option<&Vec<DiffLine>> {
-        let result = self.diffs.get(fi.raw())?.loaded()?;
-        Some(match format {
-            DiffFormat::Git => &result.git,
-            DiffFormat::ColorWords => &result.color_words,
-        })
+        Some(self.diffs.get(fi.raw())?.loaded()?.lines(format))
     }
 
     /// Get the raw diff result state for a file.
@@ -443,10 +439,12 @@ impl App {
         to_label: crate::types::Str,
     ) {
         self.interdiff.clear();
-        self.interdiff.from_commit_id = Some(from.clone());
-        self.interdiff.to_commit_id = Some(to.clone());
-        self.interdiff.from_label = from_label;
-        self.interdiff.to_label = to_label;
+        self.interdiff.target = Some(crate::app::types::InterdiffTarget {
+            from_commit_id: from.clone(),
+            to_commit_id: to.clone(),
+            from_label,
+            to_label,
+        });
         self.interdiff.files = Loadable::Loading;
         self.pending_repo_requests
             .push(crate::repo_service::RepoRequest::load_interdiff_details(
@@ -463,10 +461,7 @@ impl App {
         let files = self.interdiff.files.loaded()?;
         let file = files.get(file_idx.raw())?;
         let diff = self.interdiff.file_diffs.get(&file.path)?.loaded()?;
-        Some(match self.diff_format {
-            DiffFormat::Git => &diff.git,
-            DiffFormat::ColorWords => &diff.color_words,
-        })
+        Some(diff.lines(self.diff_format))
     }
 
     /// Enter the annotate (blame) view for a file at a specific commit.
@@ -477,8 +472,10 @@ impl App {
 
     pub fn enter_annotate_view(&mut self, commit_id: CommitId, path: crate::types::RepoPath) {
         self.annotate.clear();
-        self.annotate.commit_id = Some(commit_id.clone());
-        self.annotate.path = Some(path.clone());
+        self.annotate.target = Some(crate::app::types::AnnotateTarget {
+            commit_id: commit_id.clone(),
+            path: path.clone(),
+        });
         self.annotate.lines = Loadable::Loading;
         self.pending_repo_requests
             .push(crate::repo_service::RepoRequest::load_file_annotate(
@@ -490,19 +487,20 @@ impl App {
     /// Navigate to a different commit within the annotate view (time travel).
     /// Preserves the history stack for backtracking.
     pub fn annotate_navigate(&mut self, commit_id: CommitId, target_line: usize) {
-        let Some(path) = self.annotate.path.clone() else {
+        let Some(path) = self.annotate.target.as_ref().map(|t| t.path.clone()) else {
             return;
         };
         self.annotate.clear_keep_history();
-        self.annotate.commit_id = Some(commit_id.clone());
+        self.annotate.target = Some(crate::app::types::AnnotateTarget {
+            commit_id: commit_id.clone(),
+            path: path.clone(),
+        });
         self.annotate.lines = Loadable::Loading;
         self.annotate.target_line = Some(target_line);
         self.pending_repo_requests
             .push(crate::repo_service::RepoRequest::load_file_annotate(
-                commit_id,
-                path.clone(),
+                commit_id, path,
             ));
-        self.annotate.path = Some(path);
         self.rebuild_rows();
     }
 
@@ -863,10 +861,7 @@ impl App {
         let file = files.get(file_idx.raw())?;
         let key = (entry.commit_id.clone(), file.path.clone());
         let result = self.evolog.file_diffs.get(&key)?.loaded()?;
-        Some(match self.diff_format {
-            DiffFormat::Git => &result.git,
-            DiffFormat::ColorWords => &result.color_words,
-        })
+        Some(result.lines(self.diff_format))
     }
 
     pub fn commit_stats(&self, entry_idx: EntryIdx) -> Option<LineStats> {

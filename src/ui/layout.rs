@@ -89,14 +89,14 @@ pub(super) fn draw_header(
     }
     if app.active_view == crate::app::ActiveView::Annotate {
         let mut spans = Vec::new();
-        if let Some(path) = &app.annotate.path {
+        if let Some(target) = &app.annotate.target {
             spans.push(Span::styled("annotate: ", Style::default().fg(theme.muted)));
             spans.push(Span::styled(
-                path.as_str().to_string(),
+                target.path.as_str().to_string(),
                 Style::default().fg(theme.text),
             ));
         }
-        if let Some(cid) = &app.annotate.commit_id {
+        if let Some(cid) = app.annotate.target.as_ref().map(|t| &t.commit_id) {
             if let Some(info) = app.annotate.commit_info.get(cid) {
                 spans.push(Span::styled("  ", Style::default()));
                 push_short_id(&mut spans, &info.change_id, theme.change_id, theme);
@@ -173,7 +173,7 @@ pub(super) fn draw_header(
 
             // Current commit
             crumbs.push(Span::styled(" → ", muted));
-            if let Some(cid) = &app.annotate.commit_id {
+            if let Some(cid) = app.annotate.target.as_ref().map(|t| &t.commit_id) {
                 if let Some(info) = app.annotate.commit_info.get(cid) {
                     let id = &info.change_id;
                     let p = id.display[..id.prefix_len.min(id.display.len())].to_string();

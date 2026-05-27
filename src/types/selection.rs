@@ -195,16 +195,16 @@ impl SelectionContext {
         }
     }
 
-    pub fn insert(&mut self, kind: SelectionKind, selection: Selection) {
-        self.ensure_kind(kind);
+    pub fn insert(&mut self, selection: Selection) {
+        self.ensure_kind(SelectionKind::from(&selection));
         if self.explicit.insert(selection) {
             self.recompute_summary();
         }
     }
 
-    pub fn toggle(&mut self, kind: SelectionKind, selection: Selection) {
+    pub fn toggle(&mut self, selection: Selection) {
         if !self.remove(&selection) {
-            self.insert(kind, selection);
+            self.insert(selection);
         }
     }
 

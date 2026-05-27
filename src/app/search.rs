@@ -360,7 +360,11 @@ impl App {
             }
             DisplayRow::InterdiffHeader => {
                 scopes.contains(SearchScopes::DESCRIPTION)
-                    && (contains(&self.interdiff.from_label) || contains(&self.interdiff.to_label))
+                    && self
+                        .interdiff
+                        .target
+                        .as_ref()
+                        .is_some_and(|t| contains(&t.from_label) || contains(&t.to_label))
             }
             DisplayRow::InterdiffFileChange { file_idx } => {
                 scopes.contains(SearchScopes::PATH_COMMAND)

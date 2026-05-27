@@ -173,16 +173,16 @@ pub struct CommitSummary {
     pub description: Option<String>,
 }
 
-/// Whether a conflict target was added or removed.
+/// Whether something was added or removed (used for op diffs, conflict targets, etc.).
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ConflictTargetKind {
+pub enum DiffKind {
     Added,
     Removed,
 }
 
 /// A single conflict target for a conflicted bookmark.
 pub struct BookmarkConflictTarget {
-    pub kind: ConflictTargetKind,
+    pub kind: DiffKind,
     /// Commit metadata.
     pub summary: CommitSummary,
     /// Whether the commit is hidden (superseded).
@@ -398,6 +398,15 @@ pub struct DiffResult {
     pub git: Vec<DiffLine>,
     /// Color-words format with inline removed/added tokens.
     pub color_words: Vec<DiffLine>,
+}
+
+impl DiffResult {
+    pub fn lines(&self, format: crate::app::DiffFormat) -> &Vec<DiffLine> {
+        match format {
+            crate::app::DiffFormat::Git => &self.git,
+            crate::app::DiffFormat::ColorWords => &self.color_words,
+        }
+    }
 }
 
 /// Per-commit metadata for the annotate detail expansion.

@@ -203,20 +203,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
             frame.render_widget(ratatui::widgets::Clear, area);
             overlay::draw_follow_up(frame, area, prompt, options, theme);
         }
-        AppMode::SelectFromList {
-            title,
-            items,
-            filtered_indices,
-            match_positions,
-            cursor,
-            scroll_offset,
-            marked,
-            multi,
-            filter,
-            filtering,
-            ..
-        } => {
-            let height = (filtered_indices.len() as u16 + 2)
+        AppMode::SelectFromList(ref mut s) => {
+            let height = (s.filtered_indices.len() as u16 + 2)
                 .min(overlay_base.height / 2)
                 .max(3);
             let area = overlay_area(overlay_base, height);
@@ -224,16 +212,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
             overlay::draw_select_list(
                 frame,
                 area,
-                title,
-                items,
-                filtered_indices,
-                match_positions,
-                *cursor,
-                scroll_offset,
-                marked,
-                *multi,
-                filter,
-                *filtering,
+                &s.title,
+                &s.items,
+                &s.filtered_indices,
+                &s.match_positions,
+                s.cursor,
+                &mut s.scroll_offset,
+                &s.marked,
+                s.multi,
+                &s.filter,
+                s.filtering,
                 theme,
             );
         }

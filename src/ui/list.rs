@@ -11,8 +11,8 @@ use crate::idx::RowIdx;
 use std::collections::{HashMap, HashSet};
 
 use crate::app::{
-    App, AppMode, BookmarkViewEntry, EvoLogEntry, OpDetailLine, OpDiffKind, OpLogEntry,
-    TagViewEntry, TargetMode, WorkspaceViewEntry,
+    App, AppMode, BookmarkViewEntry, EvoLogEntry, OpDetailLine, OpLogEntry, TagViewEntry,
+    TargetMode, WorkspaceViewEntry,
 };
 use crate::dag::{
     CommitInfo, DiffLine, DiffLineKind, DiffTokenKind, FileChange, FileStatus, LineStats,
@@ -568,8 +568,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     ])]
                 }
                 DisplayRow::InterdiffHeader => {
-                    let from = app.interdiff.from_label.to_string();
-                    let to = app.interdiff.to_label.to_string();
+                    let (from, to) = app
+                        .interdiff
+                        .target
+                        .as_ref()
+                        .map(|t| (t.from_label.to_string(), t.to_label.to_string()))
+                        .unwrap_or_default();
                     let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
                     spans.push(Span::styled(
                         "  interdiff: ",
@@ -1552,12 +1556,12 @@ fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> Vec<Li
         ])],
         OpDetailLine::Commit(c) => {
             let (indicator, change_color, commit_color) = match c.kind {
-                OpDiffKind::Added => (
+                crate::dag::DiffKind::Added => (
                     Span::styled("      + ", Style::default().fg(theme.added)),
                     theme.change_id,
                     theme.commit_id,
                 ),
-                OpDiffKind::Removed => (
+                crate::dag::DiffKind::Removed => (
                     Span::styled("      - ", Style::default().fg(theme.error)),
                     theme.muted,
                     theme.muted,
@@ -1574,8 +1578,8 @@ fn render_op_detail_line(detail: Option<&OpDetailLine>, theme: &Theme) -> Vec<Li
                 spans.push(Span::styled(
                     desc.clone(),
                     match c.kind {
-                        OpDiffKind::Added => Style::default().fg(theme.text),
-                        OpDiffKind::Removed => muted,
+                        crate::dag::DiffKind::Added => Style::default().fg(theme.text),
+                        crate::dag::DiffKind::Removed => muted,
                     },
                 ));
             }
@@ -1988,8 +1992,8 @@ fn render_bookmark_conflict_target(
 
     // Gutter-width blank + conflict-indicator-width blank + indent + kind.
     let (indicator, color) = match target.kind {
-        crate::dag::ConflictTargetKind::Added => ("      + ", theme.added),
-        crate::dag::ConflictTargetKind::Removed => ("      - ", theme.error),
+        crate::dag::DiffKind::Added => ("      + ", theme.added),
+        crate::dag::DiffKind::Removed => ("      - ", theme.error),
     };
     spans.push(Span::styled(indicator, Style::default().fg(color)));
 

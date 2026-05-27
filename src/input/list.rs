@@ -34,27 +34,17 @@ fn recompute_list_filter(items: &[String], filter: &str) -> (Vec<usize>, Vec<Vec
 
 /// Move the list cursor by `delta` rows (positive = down, negative = up).
 fn list_move(app: &mut App, delta: isize) {
-    if let AppMode::SelectFromList {
-        cursor,
-        filtered_indices,
-        ..
-    } = &mut app.mode
-    {
-        let max = filtered_indices.len().saturating_sub(1);
-        *cursor = (*cursor as isize + delta).clamp(0, max as isize) as usize;
+    if let AppMode::SelectFromList(s) = &mut app.mode {
+        let max = s.filtered_indices.len().saturating_sub(1);
+        s.cursor = (s.cursor as isize + delta).clamp(0, max as isize) as usize;
     }
 }
 
 /// Jump the list cursor to start (false) or end (true).
 fn list_jump(app: &mut App, to_end: bool) {
-    if let AppMode::SelectFromList {
-        cursor,
-        filtered_indices,
-        ..
-    } = &mut app.mode
-    {
-        *cursor = if to_end {
-            filtered_indices.len().saturating_sub(1)
+    if let AppMode::SelectFromList(s) = &mut app.mode {
+        s.cursor = if to_end {
+            s.filtered_indices.len().saturating_sub(1)
         } else {
             0
         };
@@ -71,52 +61,28 @@ pub(super) fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
     let node_key = node.map(|n| n.key);
 
     // While filtering, intercept all keys except Tab/Esc/Enter.
-    let is_filtering = matches!(
-        &app.mode,
-        AppMode::SelectFromList {
-            filtering: true,
-            ..
-        }
-    );
+    let is_filtering = matches!(&app.mode, AppMode::SelectFromList(s) if s.filtering);
     if is_filtering {
         match key.code {
             ratatui::crossterm::event::KeyCode::Char(c) if !ctrl => {
-                if let AppMode::SelectFromList {
-                    filter,
-                    items,
-                    filtered_indices,
-                    match_positions,
-                    cursor,
-                    scroll_offset,
-                    ..
-                } = &mut app.mode
-                {
-                    filter.push(c);
-                    let (idx, pos) = recompute_list_filter(items, filter);
-                    *filtered_indices = idx;
-                    *match_positions = pos;
-                    *cursor = 0;
-                    *scroll_offset = 0;
+                if let AppMode::SelectFromList(s) = &mut app.mode {
+                    s.filter.push(c);
+                    let (idx, pos) = recompute_list_filter(&s.items, &s.filter);
+                    s.filtered_indices = idx;
+                    s.match_positions = pos;
+                    s.cursor = 0;
+                    s.scroll_offset = 0;
                 }
                 return Action::None;
             }
             ratatui::crossterm::event::KeyCode::Backspace => {
-                if let AppMode::SelectFromList {
-                    filter,
-                    items,
-                    filtered_indices,
-                    match_positions,
-                    cursor,
-                    scroll_offset,
-                    ..
-                } = &mut app.mode
-                {
-                    filter.pop();
-                    let (idx, pos) = recompute_list_filter(items, filter);
-                    *filtered_indices = idx;
-                    *match_positions = pos;
-                    *cursor = (*cursor).min(filtered_indices.len().saturating_sub(1));
-                    *scroll_offset = 0;
+                if let AppMode::SelectFromList(s) = &mut app.mode {
+                    s.filter.pop();
+                    let (idx, pos) = recompute_list_filter(&s.items, &s.filter);
+                    s.filtered_indices = idx;
+                    s.match_positions = pos;
+                    s.cursor = s.cursor.min(s.filtered_indices.len().saturating_sub(1));
+                    s.scroll_offset = 0;
                 }
                 return Action::None;
             }
@@ -180,26 +146,19 @@ pub(super) fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             Action::None
         }
         Some(Key::Tab) => {
-            if let AppMode::SelectFromList { filtering, .. } = &mut app.mode {
-                *filtering = !*filtering;
+            if let AppMode::SelectFromList(s) = &mut app.mode {
+                s.filtering = !s.filtering;
             }
             Action::None
         }
         Some(Key::Space) => {
-            if let AppMode::SelectFromList {
-                cursor,
-                filtered_indices,
-                marked,
-                multi,
-                ..
-            } = &mut app.mode
-            {
-                if *multi {
-                    if let Some(&orig_idx) = filtered_indices.get(*cursor) {
-                        if marked.contains(&orig_idx) {
-                            marked.remove(&orig_idx);
+            if let AppMode::SelectFromList(s) = &mut app.mode {
+                if s.multi {
+                    if let Some(&orig_idx) = s.filtered_indices.get(s.cursor) {
+                        if s.marked.contains(&orig_idx) {
+                            s.marked.remove(&orig_idx);
                         } else {
-                            marked.insert(orig_idx);
+                            s.marked.insert(orig_idx);
                         }
                     }
                 }
@@ -208,37 +167,28 @@ pub(super) fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
         }
         Some(Key::Enter) => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::SelectFromList {
-                items,
-                filtered_indices,
-                cursor,
-                marked,
-                multi,
-                on_select,
-                ..
-            } = mode
-            {
-                let names: Vec<String> = if multi && !marked.is_empty() {
-                    let mut indices: Vec<usize> = marked.into_iter().collect();
+            if let AppMode::SelectFromList(s) = mode {
+                let names: Vec<String> = if s.multi && !s.marked.is_empty() {
+                    let mut indices: Vec<usize> = s.marked.into_iter().collect();
                     indices.sort();
                     indices
                         .into_iter()
-                        .filter_map(|i| items.get(i).cloned())
+                        .filter_map(|i| s.items.get(i).cloned())
                         .collect()
                 } else {
-                    let orig_idx = filtered_indices.get(cursor).copied().unwrap_or(0);
-                    vec![items.into_iter().nth(orig_idx).unwrap_or_default()]
+                    let orig_idx = s.filtered_indices.get(s.cursor).copied().unwrap_or(0);
+                    vec![s.items.into_iter().nth(orig_idx).unwrap_or_default()]
                 };
-                resolve_selection(app, on_select, names.into())
+                resolve_selection(app, s.on_select, names.into())
             } else {
                 Action::None
             }
         }
         Some(Key::Esc) => {
             // If filtering, just exit filter focus — keep the filter text.
-            if let AppMode::SelectFromList { filtering, .. } = &mut app.mode {
-                if *filtering {
-                    *filtering = false;
+            if let AppMode::SelectFromList(s) = &mut app.mode {
+                if s.filtering {
+                    s.filtering = false;
                     return Action::None;
                 }
             }

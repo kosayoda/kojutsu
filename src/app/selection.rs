@@ -44,7 +44,7 @@ impl App {
             .retain(|s| !matches!(s, Selection::Line { file_ref: f, .. } if f.path == path));
 
         let sel = Selection::File(FileRef { change_id, path });
-        self.selection.toggle(SelectionKind::File, sel);
+        self.selection.toggle(sel);
     }
 
     /// Toggle commit selection. Behavior depends on fold state:
@@ -56,8 +56,7 @@ impl App {
         } else {
             let change_id = self.nodes[entry_idx].commit.unique_change_id();
             self.selection.ensure_kind(SelectionKind::Commit);
-            self.selection
-                .toggle(SelectionKind::Commit, Selection::Commit(change_id));
+            self.selection.toggle(Selection::Commit(change_id));
         }
     }
 
@@ -113,13 +112,10 @@ impl App {
         } else {
             self.selection.clear();
             for p in file_paths {
-                self.selection.insert(
-                    SelectionKind::File,
-                    Selection::File(FileRef {
-                        change_id: change_id.clone(),
-                        path: p,
-                    }),
-                );
+                self.selection.insert(Selection::File(FileRef {
+                    change_id: change_id.clone(),
+                    path: p,
+                }));
             }
         }
     }
@@ -163,7 +159,7 @@ impl App {
             old_line,
             new_line,
         };
-        self.selection.toggle(SelectionKind::Line, sel);
+        self.selection.toggle(sel);
     }
 
     /// Toggle all added/removed lines in a hunk (triggered by space on a header line).
@@ -217,7 +213,7 @@ impl App {
             }
         } else {
             for s in hunk_lines {
-                self.selection.insert(SelectionKind::Line, s);
+                self.selection.insert(s);
             }
         }
     }

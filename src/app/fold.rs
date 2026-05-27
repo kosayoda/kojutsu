@@ -125,7 +125,7 @@ impl App {
         for idx in (0..self.command_log.entries.len()).rev() {
             let li = CommandLogIdx::new(idx);
             self.rows.push(DisplayRow::CommandLogItem { log_idx: li });
-            if self.command_log.unfolded.contains(&idx) {
+            if self.command_log.unfolded.contains(&li) {
                 let output = &self.command_log.entries[idx].output;
                 if !output.is_empty() {
                     let text = String::from_utf8_lossy(output);
@@ -218,10 +218,7 @@ impl App {
                                 .file_diffs
                                 .get(&key)
                                 .and_then(|l| l.loaded())
-                                .map(|r| match self.diff_format {
-                                    super::DiffFormat::Git => &r.git,
-                                    super::DiffFormat::ColorWords => &r.color_words,
-                                })
+                                .map(|r| r.lines(self.diff_format))
                             {
                                 for li in 0..lines.len() {
                                     self.rows.push(DisplayRow::EvoLogFileDiffLine {
@@ -515,17 +512,15 @@ impl App {
                 self.toggle_evolog_file_fold(*evolog_idx, *file_idx);
             }
             Some(DisplayRow::CommandLogItem { log_idx }) => {
-                let idx = log_idx.raw();
-                if self.command_log.unfolded.contains(&idx) {
-                    self.command_log.unfolded.remove(&idx);
+                if self.command_log.unfolded.contains(log_idx) {
+                    self.command_log.unfolded.remove(log_idx);
                 } else {
-                    self.command_log.unfolded.insert(idx);
+                    self.command_log.unfolded.insert(*log_idx);
                 }
                 self.rebuild_rows();
             }
             Some(DisplayRow::CommandLogDetail { log_idx, .. }) => {
-                let idx = log_idx.raw();
-                self.command_log.unfolded.remove(&idx);
+                self.command_log.unfolded.remove(log_idx);
                 self.rebuild_rows();
             }
             Some(DisplayRow::BookmarkItem { bookmark_idx }) => {
@@ -572,19 +567,19 @@ impl App {
                 self.toggle_interdiff_file_fold(*file_idx);
             }
             Some(DisplayRow::AnnotateLine { line_idx }) => {
-                let idx = line_idx.raw();
-                if self.annotate.unfolded_lines.contains(&idx) {
-                    self.annotate.unfolded_lines.remove(&idx);
+                let li = *line_idx;
+                if self.annotate.unfolded_lines.contains(&li) {
+                    self.annotate.unfolded_lines.remove(&li);
                 } else {
-                    self.annotate.unfolded_lines.insert(idx);
+                    self.annotate.unfolded_lines.insert(li);
                 }
                 self.rebuild_rows();
-                if self.annotate.unfolded_lines.contains(&idx) {
+                if self.annotate.unfolded_lines.contains(&li) {
                     self.scroll_to_show_children();
                 }
             }
             Some(DisplayRow::AnnotateDetail { line_idx, .. }) => {
-                self.annotate.unfolded_lines.remove(&line_idx.raw());
+                self.annotate.unfolded_lines.remove(line_idx);
                 self.rebuild_rows();
             }
             _ => {}
@@ -765,10 +760,7 @@ impl App {
                         .file_diffs
                         .get(path)
                         .and_then(|l| l.loaded())
-                        .map(|r| match format {
-                            super::DiffFormat::Git => &r.git,
-                            super::DiffFormat::ColorWords => &r.color_words,
-                        })
+                        .map(|r| r.lines(format))
                     {
                         for li in 0..lines.len() {
                             self.rows.push(DisplayRow::InterdiffDiffLine {
@@ -793,7 +785,7 @@ impl App {
                 let line_idx = crate::idx::AnnotateLineIdx::new(li);
                 self.rows.push(DisplayRow::AnnotateLine { line_idx });
 
-                if self.annotate.unfolded_lines.contains(&li) {
+                if self.annotate.unfolded_lines.contains(&line_idx) {
                     if let Some(info) = self.annotate.commit_info.get(&lines[li].commit_id) {
                         for di in 0..info.detail_row_count() {
                             self.rows.push(DisplayRow::AnnotateDetail {
@@ -842,9 +834,8 @@ impl App {
                 .get(&path)
                 .is_none_or(Loadable::should_request)
             {
-                if let (Some(from), Some(to)) =
-                    (&self.interdiff.from_commit_id, &self.interdiff.to_commit_id)
-                {
+                if let Some(target) = &self.interdiff.target {
+                    let (from, to) = (&target.from_commit_id, &target.to_commit_id);
                     self.interdiff
                         .file_diffs
                         .insert(path.clone(), Loadable::Loading);

@@ -65,47 +65,18 @@ impl Keymap {
 }
 
 pub struct Keymaps {
-    pub dag: Keymap,
-    pub bookmarks: Keymap,
-    pub tags: Keymap,
-    pub operations: Keymap,
-    pub workspaces: Keymap,
-    pub evolog: Keymap,
-    pub command_log: Keymap,
-    pub interdiff: Keymap,
-    pub annotate: Keymap,
+    views: [Keymap; <ActiveView as strum::EnumCount>::COUNT],
     pub registry: ActionRegistry,
 }
 
 impl Keymaps {
     pub fn for_view(&self, view: ActiveView) -> &Keymap {
-        match view {
-            ActiveView::Dag => &self.dag,
-            ActiveView::Bookmarks => &self.bookmarks,
-            ActiveView::Tags => &self.tags,
-            ActiveView::Operations => &self.operations,
-            ActiveView::Evolog => &self.evolog,
-            ActiveView::Workspaces => &self.workspaces,
-            ActiveView::CommandLog => &self.command_log,
-            ActiveView::Interdiff => &self.interdiff,
-            ActiveView::Annotate => &self.annotate,
-        }
+        &self.views[view.idx()]
     }
 
     pub fn build(specs: Vec<BindingSpec>, registry: ActionRegistry) -> Self {
-        let all_views = [
-            ActiveView::Dag,
-            ActiveView::Bookmarks,
-            ActiveView::Tags,
-            ActiveView::Operations,
-            ActiveView::Workspaces,
-            ActiveView::Evolog,
-            ActiveView::CommandLog,
-            ActiveView::Interdiff,
-            ActiveView::Annotate,
-        ];
-
-        let mut per_view: Vec<Vec<&BindingSpec>> = vec![Vec::new(); all_views.len()];
+        let mut per_view: Vec<Vec<&BindingSpec>> =
+            vec![Vec::new(); <ActiveView as strum::EnumCount>::COUNT];
 
         for spec in &specs {
             match &spec.scope {
@@ -132,18 +103,8 @@ impl Keymaps {
             }
         };
 
-        Keymaps {
-            dag: build_keymap(&per_view[ActiveView::Dag.idx()]),
-            bookmarks: build_keymap(&per_view[ActiveView::Bookmarks.idx()]),
-            tags: build_keymap(&per_view[ActiveView::Tags.idx()]),
-            operations: build_keymap(&per_view[ActiveView::Operations.idx()]),
-            workspaces: build_keymap(&per_view[ActiveView::Workspaces.idx()]),
-            evolog: build_keymap(&per_view[ActiveView::Evolog.idx()]),
-            command_log: build_keymap(&per_view[ActiveView::CommandLog.idx()]),
-            interdiff: build_keymap(&per_view[ActiveView::Interdiff.idx()]),
-            annotate: build_keymap(&per_view[ActiveView::Annotate.idx()]),
-            registry,
-        }
+        let views = std::array::from_fn(|i| build_keymap(&per_view[i]));
+        Keymaps { views, registry }
     }
 }
 

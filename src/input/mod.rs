@@ -131,7 +131,7 @@ pub fn handle_key(
         AppMode::TargetSelect { .. } => modal::handle_target_select(app, key),
         AppMode::CommitSelect { .. } => modal::handle_commit_select(app, key),
         AppMode::FollowUp { .. } => modal::handle_follow_up(app, key),
-        AppMode::SelectFromList { .. } => list::handle_select_from_list(app, key),
+        AppMode::SelectFromList(_) => list::handle_select_from_list(app, key),
         AppMode::Jump { .. } => modal::handle_jump(app, key),
     }
 }
@@ -185,7 +185,7 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
         AppMode::TextInput { .. }
         | AppMode::SearchInput
         | AppMode::FollowUp { .. }
-        | AppMode::SelectFromList { .. } => Action::None,
+        | AppMode::SelectFromList(_) => Action::None,
         // Normal, Submenu, Help: standard DAG navigation.
         _ => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {

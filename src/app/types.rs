@@ -153,7 +153,7 @@ impl EvoLogState {
 /// State for the command log view.
 pub struct CommandLogState {
     pub entries: Vec<CommandLogEntry>,
-    pub unfolded: HashSet<usize>,
+    pub unfolded: HashSet<crate::idx::CommandLogIdx>,
 }
 
 impl CommandLogState {
@@ -165,12 +165,17 @@ impl CommandLogState {
     }
 }
 
-/// State for the interdiff view.
-pub struct InterdiffState {
-    pub from_commit_id: Option<CommitId>,
-    pub to_commit_id: Option<CommitId>,
+/// The two commits being compared in the interdiff view.
+pub struct InterdiffTarget {
+    pub from_commit_id: CommitId,
+    pub to_commit_id: CommitId,
     pub from_label: Str,
     pub to_label: Str,
+}
+
+/// State for the interdiff view.
+pub struct InterdiffState {
+    pub target: Option<InterdiffTarget>,
     pub files: Loadable<Vec<crate::dag::FileChange>>,
     pub unfolded_files: HashSet<RepoPath>,
     pub file_diffs: HashMap<RepoPath, Loadable<crate::dag::DiffResult>>,
@@ -179,10 +184,7 @@ pub struct InterdiffState {
 impl InterdiffState {
     pub fn new() -> Self {
         Self {
-            from_commit_id: None,
-            to_commit_id: None,
-            from_label: Str::default(),
-            to_label: Str::default(),
+            target: None,
             files: Loadable::NotRequested,
             unfolded_files: HashSet::new(),
             file_diffs: HashMap::new(),
@@ -194,18 +196,22 @@ impl InterdiffState {
     }
 }
 
+/// The commit + path being annotated.
+pub struct AnnotateTarget {
+    pub commit_id: CommitId,
+    pub path: RepoPath,
+}
+
 /// State for the annotate (blame) view.
 pub struct AnnotateState {
-    /// The commit being annotated.
-    pub commit_id: Option<CommitId>,
-    /// The file path being annotated.
-    pub path: Option<RepoPath>,
+    /// What is being annotated (None when view is inactive/cleared).
+    pub target: Option<AnnotateTarget>,
     /// Annotation lines.
     pub lines: Loadable<Vec<crate::dag::AnnotateLineData>>,
     /// Per-commit detail metadata for expansion.
     pub commit_info: HashMap<CommitId, crate::dag::AnnotateCommitInfo>,
     /// Line indices that are currently unfolded (showing details).
-    pub unfolded_lines: HashSet<usize>,
+    pub unfolded_lines: HashSet<crate::idx::AnnotateLineIdx>,
     /// After reload, jump cursor to this 1-based line number.
     pub target_line: Option<usize>,
     /// Time-travel history stack: (commit_id, line_number) for backtracking with `f`.
@@ -217,8 +223,7 @@ pub struct AnnotateState {
 impl AnnotateState {
     pub fn new() -> Self {
         Self {
-            commit_id: None,
-            path: None,
+            target: None,
             lines: Loadable::NotRequested,
             commit_info: HashMap::new(),
             unfolded_lines: HashSet::new(),
@@ -471,16 +476,11 @@ pub struct TagViewEntry {
     pub is_deleted: bool,
 }
 
-pub enum OpDiffKind {
-    Added,
-    Removed,
-}
-
 pub struct OpDiffCommit {
     pub change_id: crate::dag::ShortId,
     pub commit_id: crate::dag::ShortId,
     pub description: Option<String>,
-    pub kind: OpDiffKind,
+    pub kind: crate::dag::DiffKind,
 }
 
 pub struct OpDiffWorkingCopy {
@@ -607,6 +607,22 @@ pub enum JumpTarget {
     ChangeId(String),
 }
 
+/// State for the select-from-list overlay (e.g. picking a bookmark).
+pub struct SelectFromListState {
+    pub title: String,
+    pub items: Vec<String>,
+    pub filtered_indices: Vec<usize>,
+    /// Matched character positions for each entry in `filtered_indices`.
+    pub match_positions: Vec<Vec<usize>>,
+    pub cursor: usize,
+    pub scroll_offset: usize,
+    pub marked: HashSet<usize>,
+    pub multi: bool,
+    pub filter: String,
+    pub filtering: bool,
+    pub on_select: PendingSelection,
+}
+
 /// The current interaction mode.
 pub enum AppMode {
     /// Normal browsing.
@@ -673,20 +689,7 @@ pub enum AppMode {
         restore_mode: Option<Box<AppMode>>,
     },
     /// Selecting an item from a list (e.g. picking a bookmark).
-    SelectFromList {
-        title: String,
-        items: Vec<String>,
-        filtered_indices: Vec<usize>,
-        /// Matched character positions for each entry in `filtered_indices`.
-        match_positions: Vec<Vec<usize>>,
-        cursor: usize,
-        scroll_offset: usize,
-        marked: HashSet<usize>,
-        multi: bool,
-        filter: String,
-        filtering: bool,
-        on_select: PendingSelection,
-    },
+    SelectFromList(SelectFromListState),
 }
 
 impl AppMode {
@@ -712,7 +715,7 @@ impl AppMode {
         focus_filter: bool,
     ) -> Self {
         let count = items.len();
-        AppMode::SelectFromList {
+        AppMode::SelectFromList(SelectFromListState {
             title: title.into(),
             items,
             filtered_indices: (0..count).collect(),
@@ -724,6 +727,6 @@ impl AppMode {
             filter: String::new(),
             filtering: focus_filter,
             on_select,
-        }
+        })
     }
 }

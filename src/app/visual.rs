@@ -385,17 +385,14 @@ impl App {
                     change_id: ls.change_id.clone(),
                     path: ls.path.clone(),
                 }));
-                self.selection.insert(
-                    SelectionKind::Line,
-                    Selection::Line {
-                        file_ref: FileRef {
-                            change_id: ls.change_id,
-                            path: ls.path,
-                        },
-                        old_line: ls.old_line,
-                        new_line: ls.new_line,
+                self.selection.insert(Selection::Line {
+                    file_ref: FileRef {
+                        change_id: ls.change_id,
+                        path: ls.path,
                     },
-                );
+                    old_line: ls.old_line,
+                    new_line: ls.new_line,
+                });
             }
         }
     }
@@ -486,8 +483,7 @@ impl App {
         } else {
             for idx in &range {
                 let cid = self.nodes[*idx].commit.unique_change_id();
-                self.selection
-                    .insert(SelectionKind::Commit, Selection::Commit(cid));
+                self.selection.insert(Selection::Commit(cid));
             }
         }
     }

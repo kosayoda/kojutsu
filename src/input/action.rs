@@ -1412,11 +1412,13 @@ fn dispatch_action(
                 let line_number = line.line_number;
                 let same_commit = app
                     .annotate
-                    .commit_id
+                    .target
                     .as_ref()
-                    .is_some_and(|c| *c == new_commit);
+                    .is_some_and(|t| t.commit_id == new_commit);
                 if !same_commit {
-                    if let Some(current_commit) = app.annotate.commit_id.clone() {
+                    if let Some(current_commit) =
+                        app.annotate.target.as_ref().map(|t| t.commit_id.clone())
+                    {
                         app.annotate.history.push((current_commit, line_number));
                     }
                     app.annotate_navigate(new_commit, line_number);
@@ -1626,7 +1628,7 @@ fn extract_file_and_line(app: &App) -> Option<(crate::types::RepoPath, usize)> {
         }
         // Annotate view
         DisplayRow::AnnotateLine { line_idx } => {
-            let path = app.annotate.path.clone()?;
+            let path = app.annotate.target.as_ref()?.path.clone();
             let line = app
                 .annotate
                 .lines
@@ -1654,9 +1656,11 @@ fn extract_commit_id(app: &App) -> Option<CommitId> {
             .entries
             .get(evolog_idx.raw())
             .map(|e| e.commit_id.clone()),
-        DisplayRow::InterdiffFileChange { .. } | DisplayRow::InterdiffDiffLine { .. } => {
-            app.interdiff.to_commit_id.clone()
-        }
+        DisplayRow::InterdiffFileChange { .. } | DisplayRow::InterdiffDiffLine { .. } => app
+            .interdiff
+            .target
+            .as_ref()
+            .map(|t| t.to_commit_id.clone()),
         DisplayRow::AnnotateLine { line_idx } => app
             .annotate
             .lines
