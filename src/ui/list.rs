@@ -192,7 +192,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .as_ref()
                         .and_then(|d| d.lines().nth(line_idx.raw() + 1))
                         .unwrap_or("");
-                    let graph_cont = app.nodes[*entry_idx].graph.cont.as_str();
+                    let graph_cont = app.nodes[*entry_idx].graph.rest.as_str();
                     let selected = is_marked(*entry_idx);
                     let in_visual = app.is_in_visual_commit_range(*entry_idx);
                     let mut spans = vec![gutter_span(row_search.as_ref(), theme)];

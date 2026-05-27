@@ -4,10 +4,12 @@ use crate::dag::{DagEntry, Edge, EdgeKind};
 use crate::theme::GlyphChars;
 
 /// Sentinel characters used to identify line roles in the renderer output.
-/// We pass these as a 2-line "message" to the renderer, then identify which
-/// output line is the node line vs continuation line by looking for the sentinel.
+/// We pass these as a 3-line "message" to the renderer, then identify which
+/// output line is the node line, first continuation, or rest continuation
+/// by looking for the sentinel.
 const NODE_SENTINEL: char = '\x01';
 const CONT_SENTINEL: char = '\x02';
+const REST_SENTINEL: char = '\x03';
 
 /// Pre-rendered graph lines for a single commit node.
 ///
@@ -16,8 +18,10 @@ const CONT_SENTINEL: char = '\x02';
 pub struct GraphLines {
     /// Graph prefix for the node line (contains the glyph character).
     pub node: String,
-    /// Graph prefix for the continuation/description line.
+    /// Graph prefix for the first continuation line (may contain merge connectors).
     pub cont: String,
+    /// Graph prefix for subsequent continuation lines (plain vertical bars).
+    pub rest: String,
     /// Additional graph-only lines (link, pad, term lines between commits).
     pub extra: Vec<String>,
 }
@@ -71,11 +75,12 @@ pub fn render_generic(entries: &[(&str, &[Edge], char)]) -> Vec<GraphLines> {
                     .collect()
             };
 
-            let message = format!("{NODE_SENTINEL}\n{CONT_SENTINEL}");
+            let message = format!("{NODE_SENTINEL}\n{CONT_SENTINEL}\n{REST_SENTINEL}");
             let row = renderer.next_row(id.to_string(), parents, glyph.to_string(), message);
 
             let mut node = String::new();
             let mut cont = String::new();
+            let mut rest = String::new();
             let mut extra = Vec::new();
 
             for line in row.lines() {
@@ -83,12 +88,19 @@ pub fn render_generic(entries: &[(&str, &[Edge], char)]) -> Vec<GraphLines> {
                     node = line[..idx].to_string();
                 } else if let Some(idx) = line.find(CONT_SENTINEL) {
                     cont = line[..idx].to_string();
+                } else if let Some(idx) = line.find(REST_SENTINEL) {
+                    rest = line[..idx].to_string();
                 } else {
                     extra.push(line.trim_end().to_string());
                 }
             }
 
-            GraphLines { node, cont, extra }
+            GraphLines {
+                node,
+                cont,
+                rest,
+                extra,
+            }
         })
         .collect()
 }
