@@ -38,6 +38,8 @@ pub struct LuaEngine {
     commands: Vec<LuaCommand>,
     hooks: Vec<(CompactString, LuaHook)>,
     extra_bindings: Vec<BindingSpec>,
+    suspended_thread: RefCell<Option<(mlua::RegistryKey, CommandFlags)>>,
+    pending_action: Rc<RefCell<PendingAction>>,
     pub init_error: Option<String>,
     repo_path: PathBuf,
 }
@@ -49,16 +51,19 @@ impl LuaEngine {
         default_specs: &[BindingSpec],
     ) -> Self {
         let lua = Lua::new();
+        let pending_action = Rc::new(RefCell::new(PendingAction::None));
         let mut engine = LuaEngine {
             lua,
             commands: Vec::new(),
             hooks: Vec::new(),
             extra_bindings: Vec::new(),
+            suspended_thread: RefCell::new(None),
+            pending_action,
             init_error: None,
             repo_path: repo_path.to_path_buf(),
         };
 
-        if let Err(e) = register_globals(&engine.lua) {
+        if let Err(e) = engine.register_persistent_functions() {
             engine.init_error = Some(format!("failed to register Lua API: {e}"));
             return engine;
         }
@@ -69,6 +74,10 @@ impl LuaEngine {
 
     pub fn take_extra_bindings(&mut self) -> Vec<BindingSpec> {
         std::mem::take(&mut self.extra_bindings)
+    }
+
+    pub fn has_suspended_thread(&self) -> bool {
+        self.suspended_thread.borrow().is_some()
     }
 
     pub fn run_pre_hooks(&self, action_name: &str, app: &mut App) -> HookResult {
@@ -158,107 +167,6 @@ impl LuaEngine {
     pub fn execute_command(&self, id: u16, app: &mut App, flags: CommandFlags) -> Action {
         let cmd = &self.commands[id as usize];
         let cmd_name = cmd.name.clone();
-        let pending = Rc::new(RefCell::new(PendingAction::None));
-
-        self.lua
-            .scope(|scope| {
-                let pending_clone = pending.clone();
-                let repo_path = self.repo_path.clone();
-
-                let jj_fn = scope.create_function(move |lua, args: mlua::Table| {
-                    let cmd_args: Vec<String> = (1..=args.raw_len())
-                        .map(|i| args.raw_get(i))
-                        .collect::<mlua::Result<_>>()?;
-                    let result = JJCommand {
-                        kind: JJCommandKind::Raw {
-                            args: cmd_args.into_iter().map(Into::into).collect(),
-                        },
-                        flags: CommandFlags::empty(),
-                    }
-                    .run(&repo_path);
-                    let tbl = lua.create_table()?;
-                    tbl.set("ok", result.success)?;
-                    tbl.set(
-                        "output",
-                        String::from_utf8_lossy(&result.output).into_owned(),
-                    )?;
-                    Ok(tbl)
-                })?;
-
-                let pending_interactive = pending_clone.clone();
-                let jj_interactive_fn = scope.create_function(move |_lua, args: mlua::Table| {
-                    let cmd_args: Vec<String> = (1..=args.raw_len())
-                        .map(|i| args.raw_get(i))
-                        .collect::<mlua::Result<_>>()?;
-                    *pending_interactive.borrow_mut() = PendingAction::Interactive(cmd_args);
-                    Ok(())
-                })?;
-
-                let ctx_table = self.lua.create_table()?;
-                let change_id = app.selected_change_id();
-                let commit_id = change_id.as_ref().and_then(|cid| {
-                    app.commit_id_for_change(cid)
-                        .map(|id| CompactString::from(id.as_str()))
-                });
-                match &change_id {
-                    Some(id) => ctx_table.set("change_id", id.as_str())?,
-                    None => ctx_table.set("change_id", mlua::Value::Nil)?,
-                }
-                match &commit_id {
-                    Some(id) => ctx_table.set("commit_id", id.as_str())?,
-                    None => ctx_table.set("commit_id", mlua::Value::Nil)?,
-                }
-                if let Some(desc) = app.selected_description() {
-                    ctx_table.set("description", desc.to_string())?;
-                }
-                if let Some(bookmarks) = app.selected_bookmarks() {
-                    let bm_table = self.lua.create_table()?;
-                    for (i, b) in bookmarks.iter().enumerate() {
-                        bm_table.raw_set(i + 1, b.name.as_str())?;
-                    }
-                    ctx_table.set("bookmarks", bm_table)?;
-                }
-                ctx_table.set("view", view_name(app.active_view))?;
-                ctx_table.set("revset", app.revset.current.as_str())?;
-                ctx_table.set("repo_root", app.repo_root.as_str())?;
-
-                let pending_refresh = pending_clone.clone();
-                let refresh_fn = scope.create_function(move |_lua, ()| {
-                    let mut p = pending_refresh.borrow_mut();
-                    if matches!(*p, PendingAction::None) {
-                        *p = PendingAction::Refresh;
-                    }
-                    Ok(())
-                })?;
-
-                let pending_revset = pending_clone.clone();
-                let set_revset_fn = scope.create_function(move |_lua, revset: String| {
-                    *pending_revset.borrow_mut() = PendingAction::SetRevset(revset);
-                    Ok(())
-                })?;
-
-                let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
-                kojutsu.set("jj", jj_fn)?;
-                kojutsu.set("jj_interactive", jj_interactive_fn)?;
-                kojutsu.set("ctx", ctx_table)?;
-
-                let ui: mlua::Table = kojutsu.get("ui")?;
-                ui.set("flash", scope.create_function(|_lua, _msg: String| Ok(()))?)?;
-
-                let nav: mlua::Table = kojutsu.get("nav")?;
-                nav.set("refresh", refresh_fn)?;
-                nav.set("set_revset", set_revset_fn)?;
-
-                let func: mlua::Function = self.lua.registry_value(&cmd.callback)?;
-                if let Err(e) = func.call::<()>(()) {
-                    app.set_error(format!("lua: {e}"));
-                }
-
-                Ok(())
-            })
-            .unwrap_or_else(|e| {
-                app.set_error(format!("lua scope error: {e}"));
-            });
 
         app.push_command_log(
             crate::app::CommandLogKind::Command,
@@ -268,7 +176,153 @@ impl LuaEngine {
             true,
         );
 
-        match Rc::try_unwrap(pending).unwrap_or_default().into_inner() {
+        self.prepare_execution(app);
+
+        let func: mlua::Function = match self.lua.registry_value(&cmd.callback) {
+            Ok(f) => f,
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                return Action::None;
+            }
+        };
+        let thread = match self.lua.create_thread(func) {
+            Ok(t) => t,
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                return Action::None;
+            }
+        };
+
+        self.resume_thread(thread, mlua::Value::Nil, app, flags)
+    }
+
+    pub fn resume_command(&self, app: &mut App, value: Option<String>) -> Action {
+        let (thread_key, flags) = match self.suspended_thread.borrow_mut().take() {
+            Some(pair) => pair,
+            None => return Action::None,
+        };
+        let thread: mlua::Thread = match self.lua.registry_value(&thread_key) {
+            Ok(t) => t,
+            Err(e) => {
+                app.set_error(format!("plugin resume: {e}"));
+                return Action::None;
+            }
+        };
+        let _ = self.lua.remove_registry_value(thread_key);
+
+        self.prepare_execution(app);
+
+        let lua_value = match value {
+            Some(s) => match self.lua.create_string(&s) {
+                Ok(ls) => mlua::Value::String(ls),
+                Err(_) => mlua::Value::Nil,
+            },
+            None => mlua::Value::Nil,
+        };
+
+        self.resume_thread(thread, lua_value, app, flags)
+    }
+
+    pub fn cancel_suspended_thread(&self) {
+        if let Some((key, _)) = self.suspended_thread.borrow_mut().take() {
+            let _ = self.lua.remove_registry_value(key);
+        }
+    }
+
+    fn resume_thread(
+        &self,
+        thread: mlua::Thread,
+        arg: mlua::Value,
+        app: &mut App,
+        flags: CommandFlags,
+    ) -> Action {
+        match thread.resume::<mlua::Value>(arg) {
+            Ok(value) => {
+                if thread.status() == mlua::ThreadStatus::Resumable {
+                    self.handle_yield(thread, value, app, flags)
+                } else {
+                    self.take_pending_action(flags)
+                }
+            }
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                app.push_command_log(
+                    crate::app::CommandLogKind::Warning,
+                    "plugin: runtime error",
+                    None,
+                    e.to_string().into_bytes(),
+                    false,
+                );
+                Action::None
+            }
+        }
+    }
+
+    fn handle_yield(
+        &self,
+        thread: mlua::Thread,
+        value: mlua::Value,
+        app: &mut App,
+        flags: CommandFlags,
+    ) -> Action {
+        let table = match value {
+            mlua::Value::Table(t) => t,
+            _ => {
+                app.set_error("plugin: invalid yield (expected table)");
+                return Action::None;
+            }
+        };
+        let request_type: String = table.get("type").unwrap_or_default();
+
+        let mode = match request_type.as_str() {
+            "input" => {
+                let prompt: String = table.get("prompt").unwrap_or_default();
+                let default: String = table.get("default").unwrap_or_default();
+                crate::app::AppMode::text_input(
+                    &prompt,
+                    &default,
+                    crate::types::PendingCommand::LuaResume,
+                )
+            }
+            "choose" => {
+                let items: Vec<String> = table
+                    .get::<mlua::Table>("items")
+                    .map(|t| table_to_string_vec(&t))
+                    .unwrap_or_default();
+                if items.is_empty() {
+                    app.set_error("plugin: choose requires non-empty items");
+                    return Action::None;
+                }
+                let title: String = table.get("title").unwrap_or_default();
+                let multi: bool = table.get("multi").unwrap_or(false);
+                crate::app::AppMode::select_from_list(
+                    title,
+                    items,
+                    multi,
+                    crate::types::PendingSelection::LuaResume,
+                    false,
+                )
+            }
+            other => {
+                app.set_error(format!("plugin: unknown yield type '{other}'"));
+                return Action::None;
+            }
+        };
+
+        let key = match self.lua.create_registry_value(thread) {
+            Ok(k) => k,
+            Err(e) => {
+                app.set_error(format!("plugin: failed to store thread: {e}"));
+                return Action::None;
+            }
+        };
+        *self.suspended_thread.borrow_mut() = Some((key, flags));
+        app.mode = mode;
+        Action::None
+    }
+
+    fn take_pending_action(&self, flags: CommandFlags) -> Action {
+        match self.pending_action.replace(PendingAction::None) {
             PendingAction::None => Action::None,
             PendingAction::Refresh => Action::Refresh,
             PendingAction::SetRevset(revset) => Action::UpdateRevset(revset),
@@ -282,6 +336,122 @@ impl LuaEngine {
                 Action::SuspendAndRunJj(cmd)
             }
         }
+    }
+
+    fn prepare_execution(&self, app: &App) {
+        self.update_ctx(app);
+        self.pending_action.replace(PendingAction::None);
+    }
+
+    fn update_ctx(&self, app: &App) {
+        let Ok(kojutsu): Result<mlua::Table, _> = self.lua.globals().get("kojutsu") else {
+            return;
+        };
+        let Ok(ctx_table) = self.lua.create_table() else {
+            return;
+        };
+        let change_id = app.selected_change_id();
+        let commit_id = change_id.as_ref().and_then(|cid| {
+            app.commit_id_for_change(cid)
+                .map(|id| CompactString::from(id.as_str()))
+        });
+        let _ = match &change_id {
+            Some(id) => ctx_table.set("change_id", id.as_str()),
+            None => ctx_table.set("change_id", mlua::Value::Nil),
+        };
+        let _ = match &commit_id {
+            Some(id) => ctx_table.set("commit_id", id.as_str()),
+            None => ctx_table.set("commit_id", mlua::Value::Nil),
+        };
+        if let Some(desc) = app.selected_description() {
+            let _ = ctx_table.set("description", desc.to_string());
+        }
+        if let Some(bookmarks) = app.selected_bookmarks() {
+            if let Ok(bm_table) = self.lua.create_table() {
+                for (i, b) in bookmarks.iter().enumerate() {
+                    let _ = bm_table.raw_set(i + 1, b.name.as_str());
+                }
+                let _ = ctx_table.set("bookmarks", bm_table);
+            }
+        }
+        let _ = ctx_table.set("view", view_name(app.active_view));
+        let _ = ctx_table.set("revset", app.revset.current.as_str());
+        let _ = ctx_table.set("repo_root", app.repo_root.as_str());
+        let _ = kojutsu.set("ctx", ctx_table);
+    }
+
+    fn register_persistent_functions(&self) -> mlua::Result<()> {
+        register_globals(&self.lua)?;
+
+        let repo_path = self.repo_path.clone();
+        let jj_fn = self.lua.create_function(move |lua, args: mlua::Table| {
+            let cmd_args: Vec<String> = (1..=args.raw_len())
+                .map(|i| args.raw_get(i))
+                .collect::<mlua::Result<_>>()?;
+            let result = JJCommand {
+                kind: JJCommandKind::Raw {
+                    args: cmd_args.into_iter().map(Into::into).collect(),
+                },
+                flags: CommandFlags::empty(),
+            }
+            .run(&repo_path);
+            let tbl = lua.create_table()?;
+            tbl.set("ok", result.success)?;
+            tbl.set(
+                "output",
+                String::from_utf8_lossy(&result.output).into_owned(),
+            )?;
+            Ok(tbl)
+        })?;
+
+        let pending_interactive = self.pending_action.clone();
+        let jj_interactive_fn = self.lua.create_function(move |_lua, args: mlua::Table| {
+            let cmd_args: Vec<String> = (1..=args.raw_len())
+                .map(|i| args.raw_get(i))
+                .collect::<mlua::Result<_>>()?;
+            *pending_interactive.borrow_mut() = PendingAction::Interactive(cmd_args);
+            Ok(())
+        })?;
+
+        let pending_refresh = self.pending_action.clone();
+        let refresh_fn = self.lua.create_function(move |_lua, ()| {
+            let mut p = pending_refresh.borrow_mut();
+            if matches!(*p, PendingAction::None) {
+                *p = PendingAction::Refresh;
+            }
+            Ok(())
+        })?;
+
+        let pending_revset = self.pending_action.clone();
+        let set_revset_fn = self.lua.create_function(move |_lua, revset: String| {
+            *pending_revset.borrow_mut() = PendingAction::SetRevset(revset);
+            Ok(())
+        })?;
+
+        let flash_fn = self.lua.create_function(|_lua, _msg: String| Ok(()))?;
+
+        // Register ui.input and ui.choose as Lua functions that yield.
+        self.lua.load(r#"
+            function kojutsu.ui.input(prompt, default)
+                return coroutine.yield({type = "input", prompt = prompt or "", default = default or ""})
+            end
+            function kojutsu.ui.choose(title, items, multi)
+                return coroutine.yield({type = "choose", title = title or "", items = items or {}, multi = multi or false})
+            end
+        "#).exec()?;
+
+        let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
+        kojutsu.set("jj", jj_fn)?;
+        kojutsu.set("jj_interactive", jj_interactive_fn)?;
+
+        let ui: mlua::Table = kojutsu.get("ui")?;
+        ui.set("flash", flash_fn)?;
+
+        let nav: mlua::Table = kojutsu.get("nav")?;
+        nav.set("refresh", refresh_fn)?;
+        nav.set("set_revset", set_revset_fn)?;
+
+        Ok(())
     }
 
     fn load_init_script(&mut self, registry: &mut ActionRegistry, default_specs: &[BindingSpec]) {
@@ -501,7 +671,6 @@ impl LuaEngine {
         self.hooks
             .extend(Rc::try_unwrap(reg_hooks).unwrap_or_default().into_inner());
 
-        // Process bind/unbind overrides.
         let bindings = Rc::try_unwrap(reg_bindings)
             .unwrap_or_default()
             .into_inner();
@@ -594,7 +763,6 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@meta").unwrap();
     writeln!(out).unwrap();
 
-    // Action constants
     writeln!(out, "---@class KojutsuAction").unwrap();
     for &action in crate::keymap::ALL_ACTIONS {
         let name = crate::keymap::action_id_name(action);
@@ -602,7 +770,6 @@ pub fn generate_type_definitions() -> String {
     }
     writeln!(out).unwrap();
 
-    // Scope constants
     writeln!(out, "---@class KojutsuScope").unwrap();
     for name in [
         "all",
@@ -620,20 +787,17 @@ pub fn generate_type_definitions() -> String {
     }
     writeln!(out).unwrap();
 
-    // Phase constants
     writeln!(out, "---@class KojutsuPhase").unwrap();
     writeln!(out, "---@field pre string").unwrap();
     writeln!(out, "---@field post string").unwrap();
     writeln!(out).unwrap();
 
-    // Selection constants
     writeln!(out, "---@class KojutsuSelection").unwrap();
     for name in ["all", "commit", "file", "line"] {
         writeln!(out, "---@field {name} string").unwrap();
     }
     writeln!(out).unwrap();
 
-    // Context
     writeln!(out, "---@class KojutsuCtx").unwrap();
     writeln!(out, "---@field change_id string?").unwrap();
     writeln!(out, "---@field commit_id string?").unwrap();
@@ -644,25 +808,31 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field repo_root string").unwrap();
     writeln!(out).unwrap();
 
-    // JJ result
     writeln!(out, "---@class JJResult").unwrap();
     writeln!(out, "---@field ok boolean").unwrap();
     writeln!(out, "---@field output string").unwrap();
     writeln!(out).unwrap();
 
-    // UI
     writeln!(out, "---@class KojutsuUi").unwrap();
     writeln!(out, "---@field flash fun(msg: string)").unwrap();
     writeln!(out, "---@field error fun(msg: string)").unwrap();
+    writeln!(
+        out,
+        "---@field input fun(prompt: string, default: string?): string?"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "---@field choose fun(title: string, items: string[], multi: boolean?): string?"
+    )
+    .unwrap();
     writeln!(out).unwrap();
 
-    // Nav
     writeln!(out, "---@class KojutsuNav").unwrap();
     writeln!(out, "---@field refresh fun()").unwrap();
     writeln!(out, "---@field set_revset fun(revset: string)").unwrap();
     writeln!(out).unwrap();
 
-    // Command opts
     writeln!(out, "---@class CommandOpts").unwrap();
     writeln!(out, "---@field desc string?").unwrap();
     writeln!(out, "---@field scope string?").unwrap();
@@ -672,7 +842,6 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field selection string?").unwrap();
     writeln!(out).unwrap();
 
-    // Bind opts
     writeln!(out, "---@class BindOpts").unwrap();
     writeln!(out, "---@field action string").unwrap();
     writeln!(out, "---@field scope string?").unwrap();
@@ -681,27 +850,23 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field desc string?").unwrap();
     writeln!(out).unwrap();
 
-    // Unbind opts
     writeln!(out, "---@class UnbindOpts").unwrap();
     writeln!(out, "---@field scope string?").unwrap();
     writeln!(out, "---@field key string?").unwrap();
     writeln!(out, "---@field seq string?").unwrap();
     writeln!(out).unwrap();
 
-    // Hook context
     writeln!(out, "---@class HookContext").unwrap();
     writeln!(out, "---@field change_id string?").unwrap();
     writeln!(out, "---@field change_ids string[]").unwrap();
     writeln!(out, "---@field view string").unwrap();
     writeln!(out).unwrap();
 
-    // Hook result
     writeln!(out, "---@class HookResultTable").unwrap();
     writeln!(out, "---@field ok boolean").unwrap();
     writeln!(out, "---@field output string").unwrap();
     writeln!(out).unwrap();
 
-    // Main kojutsu table
     writeln!(out, "---@class Kojutsu").unwrap();
     writeln!(out, "---@field action KojutsuAction").unwrap();
     writeln!(out, "---@field scope KojutsuScope").unwrap();
@@ -810,6 +975,12 @@ enum PendingAction {
     Refresh,
     SetRevset(String),
     Interactive(Vec<String>),
+}
+
+fn table_to_string_vec(table: &mlua::Table) -> Vec<String> {
+    (1..=table.raw_len())
+        .filter_map(|i| table.raw_get(i).ok())
+        .collect()
 }
 
 fn view_name(view: crate::app::ActiveView) -> &'static str {

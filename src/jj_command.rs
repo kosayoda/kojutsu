@@ -1358,6 +1358,7 @@ impl PendingCommand {
                     flags: CommandFlags::empty(),
                 })
             }
+            PendingCommand::LuaResume => None,
         }
     }
 }

@@ -69,6 +69,7 @@ pub enum PendingSelection {
         bookmarks: SmallVec<BookmarkName>,
         flags: CommandFlags,
     },
+    LuaResume,
 }
 
 /// What to do after selecting a single commit in CommitSelect mode.
@@ -148,6 +149,7 @@ pub enum PendingCommand {
         flags: CommandFlags,
     },
     RawCommand,
+    LuaResume,
 }
 
 /// What kind of two-commit target selection we're doing.

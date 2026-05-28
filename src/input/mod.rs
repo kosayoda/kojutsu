@@ -121,12 +121,12 @@ pub fn handle_key(
                 _ => Action::None,
             }
         }
-        AppMode::TextInput { .. } => modal::handle_text_input(app, key),
+        AppMode::TextInput { .. } => modal::handle_text_input(app, lua, key),
         AppMode::SearchInput => modal::handle_search_input(app, key),
         AppMode::TargetSelect { .. } => modal::handle_target_select(app, key),
         AppMode::CommitSelect { .. } => modal::handle_commit_select(app, key),
         AppMode::FollowUp { .. } => modal::handle_follow_up(app, key),
-        AppMode::SelectFromList(_) => list::handle_select_from_list(app, key),
+        AppMode::SelectFromList(_) => list::handle_select_from_list(app, lua, key),
         AppMode::Jump { .. } => modal::handle_jump(app, key),
     }
 }

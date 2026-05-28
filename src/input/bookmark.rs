@@ -161,6 +161,7 @@ pub(super) fn enter_bookmark_text_input(
 
 pub(super) fn enter_bookmark_select(
     app: &mut App,
+    lua: &crate::lua::LuaEngine,
     flags: CommandFlags,
     kind: PendingSelectionKind,
 ) -> Action {
@@ -177,7 +178,7 @@ pub(super) fn enter_bookmark_select(
     let items: Vec<String> = bookmarks.iter().map(|b| b.name.to_string()).collect();
 
     if items.len() == 1 {
-        return super::list::resolve_selection(app, on_select, items.into());
+        return super::list::resolve_selection(app, lua, on_select, items.into());
     }
 
     app.mode = AppMode::select_from_list(kind.title(), items, kind.is_multi(), on_select, false);

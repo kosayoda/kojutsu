@@ -51,7 +51,11 @@ fn list_jump(app: &mut App, to_end: bool) {
     }
 }
 
-pub(super) fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
+pub(super) fn handle_select_from_list(
+    app: &mut App,
+    lua: &crate::lua::LuaEngine,
+    key: KeyEvent,
+) -> Action {
     use keymap_parser::Key;
 
     let node = keymap::key_event_to_node(&key);
@@ -179,7 +183,7 @@ pub(super) fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
                     let orig_idx = s.filtered_indices.get(s.cursor).copied().unwrap_or(0);
                     vec![s.items.into_iter().nth(orig_idx).unwrap_or_default()]
                 };
-                resolve_selection(app, s.on_select, names.into())
+                resolve_selection(app, lua, s.on_select, names.into())
             } else {
                 Action::None
             }
@@ -193,6 +197,9 @@ pub(super) fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
                 }
             }
             app.mode = AppMode::Normal;
+            if lua.has_suspended_thread() {
+                return lua.resume_command(app, None);
+            }
             Action::None
         }
         _ => Action::None,
@@ -202,6 +209,7 @@ pub(super) fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
 /// After item(s) have been selected from a list, decide what to do next.
 pub(super) fn resolve_selection(
     app: &mut App,
+    lua: &crate::lua::LuaEngine,
     on_select: PendingSelection,
     names: SmallVec<String>,
 ) -> Action {
@@ -349,6 +357,10 @@ pub(super) fn resolve_selection(
             let new_text = crate::jj_command::replace_current_token(&input, value, true);
             app.mode = AppMode::text_input(":", new_text, crate::types::PendingCommand::RawCommand);
             Action::None
+        }
+        PendingSelection::LuaResume => {
+            let selected = names.into_iter().next().map(|s| s.to_string());
+            lua.resume_command(app, selected)
         }
     }
 }

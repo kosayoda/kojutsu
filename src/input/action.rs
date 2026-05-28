@@ -771,14 +771,16 @@ fn dispatch_action(
             enter_bookmark_text_input(app, flags, "set bookmark: ", BookmarkTextAction::Set)
         }
         AppAction::BookmarkDelete => {
-            enter_bookmark_select(app, flags, PendingSelectionKind::Delete)
+            enter_bookmark_select(app, lua, flags, PendingSelectionKind::Delete)
         }
         AppAction::BookmarkForget => {
-            enter_bookmark_select(app, flags, PendingSelectionKind::Forget)
+            enter_bookmark_select(app, lua, flags, PendingSelectionKind::Forget)
         }
-        AppAction::BookmarkMove => enter_bookmark_select(app, flags, PendingSelectionKind::Move),
+        AppAction::BookmarkMove => {
+            enter_bookmark_select(app, lua, flags, PendingSelectionKind::Move)
+        }
         AppAction::BookmarkRename => {
-            enter_bookmark_select(app, flags, PendingSelectionKind::Rename)
+            enter_bookmark_select(app, lua, flags, PendingSelectionKind::Rename)
         }
         AppAction::BookmarkAdvance => enter_bookmark_advance(app, flags),
         AppAction::BookmarkTrack => {

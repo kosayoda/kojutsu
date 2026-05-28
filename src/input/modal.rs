@@ -7,7 +7,11 @@ use crate::types::PendingCommand;
 
 use super::{Action, PAGE_SIZE};
 
-pub(super) fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
+pub(super) fn handle_text_input(
+    app: &mut App,
+    lua: &crate::lua::LuaEngine,
+    key: KeyEvent,
+) -> Action {
     match key.code {
         KeyCode::Enter => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
@@ -17,6 +21,7 @@ pub(super) fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
             {
                 let text = input.to_string();
                 match on_submit {
+                    PendingCommand::LuaResume => lua.resume_command(app, Some(text)),
                     PendingCommand::Revset => {
                         app.revset.active_preset = None;
                         Action::UpdateRevset(text)
@@ -35,7 +40,6 @@ pub(super) fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
                         } else {
                             Some(crate::types::WorkspaceName::new(text))
                         };
-                        // CommitSelect needs the DAG view to navigate commits.
                         if app.active_view != crate::app::ActiveView::Dag {
                             app.switch_view(crate::app::ActiveView::Dag);
                         }
@@ -63,8 +67,13 @@ pub(super) fn handle_text_input(app: &mut App, key: KeyEvent) -> Action {
             }
         }
         KeyCode::Esc => {
-            app.mode = AppMode::Normal;
-            Action::None
+            if lua.has_suspended_thread() {
+                app.mode = AppMode::Normal;
+                lua.resume_command(app, None)
+            } else {
+                app.mode = AppMode::Normal;
+                Action::None
+            }
         }
         KeyCode::Tab => {
             if let AppMode::TextInput {
