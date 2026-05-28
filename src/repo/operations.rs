@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -527,58 +528,58 @@ pub fn millis_to_relative_time(millis: i64) -> Str {
     }
 }
 
-fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> String {
+fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> Cow<'static, str> {
     let now = chrono::Utc::now();
     let duration = now.signed_duration_since(dt);
 
     if duration.num_seconds() < 0 {
-        return "just now".to_string();
+        return "just now".into();
     }
 
     let secs = duration.num_seconds();
     if secs < 60 {
         return if secs == 1 {
-            "1 second ago".to_string()
+            "1 second ago".into()
         } else {
-            format!("{secs} seconds ago")
+            format!("{secs} seconds ago").into()
         };
     }
     let mins = duration.num_minutes();
     if mins < 60 {
         return if mins == 1 {
-            "1 minute ago".to_string()
+            "1 minute ago".into()
         } else {
-            format!("{mins} minutes ago")
+            format!("{mins} minutes ago").into()
         };
     }
     let hours = duration.num_hours();
     if hours < 24 {
         return if hours == 1 {
-            "1 hour ago".to_string()
+            "1 hour ago".into()
         } else {
-            format!("{hours} hours ago")
+            format!("{hours} hours ago").into()
         };
     }
     let days = duration.num_days();
     if days < 30 {
         return if days == 1 {
-            "1 day ago".to_string()
+            "1 day ago".into()
         } else {
-            format!("{days} days ago")
+            format!("{days} days ago").into()
         };
     }
     let months = days / 30;
     if months < 12 {
         return if months == 1 {
-            "1 month ago".to_string()
+            "1 month ago".into()
         } else {
-            format!("{months} months ago")
+            format!("{months} months ago").into()
         };
     }
     let years = days / 365;
     if years == 1 {
-        "1 year ago".to_string()
+        "1 year ago".into()
     } else {
-        format!("{years} years ago")
+        format!("{years} years ago").into()
     }
 }

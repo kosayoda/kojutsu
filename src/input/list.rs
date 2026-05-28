@@ -26,7 +26,7 @@ fn recompute_list_filter(items: &[String], filter: &str) -> (Vec<usize>, Vec<Vec
                 .map(|(score, indices)| (i, score, indices))
         })
         .collect();
-    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.sort_unstable_by(|a, b| b.1.cmp(&a.1));
     let indices = scored.iter().map(|(i, _, _)| *i).collect();
     let positions = scored.into_iter().map(|(_, _, pos)| pos).collect();
     (indices, positions)
@@ -170,7 +170,7 @@ pub(super) fn handle_select_from_list(app: &mut App, key: KeyEvent) -> Action {
             if let AppMode::SelectFromList(s) = mode {
                 let names: Vec<String> = if s.multi && !s.marked.is_empty() {
                     let mut indices: Vec<usize> = s.marked.into_iter().collect();
-                    indices.sort();
+                    indices.sort_unstable();
                     indices
                         .into_iter()
                         .filter_map(|i| s.items.get(i).cloned())

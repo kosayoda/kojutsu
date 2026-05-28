@@ -30,7 +30,7 @@ pub(super) fn draw_header(
             .iter()
             .map(|s| s.as_str())
             .collect();
-        names.sort();
+        names.sort_unstable();
         Some(Line::from(vec![
             Span::styled("workspace: ", Style::default().fg(theme.muted)),
             Span::styled(

@@ -1253,7 +1253,7 @@ fn dispatch_action(
                 .iter()
                 .filter_map(|e| e.workspace.as_ref().map(|w| w.to_string()))
                 .collect();
-            workspaces.sort();
+            workspaces.sort_unstable();
             workspaces.dedup();
             if workspaces.is_empty() {
                 app.set_error("no workspace info in operation log");

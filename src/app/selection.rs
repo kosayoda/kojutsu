@@ -314,7 +314,7 @@ impl App {
             .iter()
             .filter_map(|s| s.path().map(crate::types::Str::from))
             .collect();
-        paths.sort();
+        paths.sort_unstable();
         paths.dedup();
         paths
     }

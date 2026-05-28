@@ -679,7 +679,8 @@ impl App {
 
         // Sort: pure local → local tracking remote → tracked remote → untracked remote.
         // Within each group, alphabetical by name.
-        entries.sort_by(|a, b| a.kind.rank().cmp(&b.kind.rank()).then(a.name.cmp(&b.name)));
+        entries
+            .sort_unstable_by(|a, b| a.kind.rank().cmp(&b.kind.rank()).then(a.name.cmp(&b.name)));
 
         self.views.bookmark_entries = entries;
     }
@@ -750,7 +751,7 @@ impl App {
             }
         }
 
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         self.views.tag_entries = entries;
     }
 }

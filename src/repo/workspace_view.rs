@@ -42,7 +42,7 @@ impl JjRepo {
                 is_current,
             });
         }
-        entries.sort_by(|a, b| a.name.cmp(&b.name));
+        entries.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         entries
     }
 

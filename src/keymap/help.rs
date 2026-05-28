@@ -116,7 +116,7 @@ pub fn help_entries(
         .collect();
     entries.extend(prefix_entries);
 
-    entries.sort_by(|a, b| {
+    entries.sort_unstable_by(|a, b| {
         a.group
             .cmp(&b.group)
             .then(sort_key(&a.keys).cmp(&sort_key(&b.keys)))
@@ -166,14 +166,14 @@ pub fn select_mode_help_entries() -> Vec<(HelpGroup, Vec<HelpEntry>)> {
         h("ctrl-n", "next match", N),
         h("ctrl-p", "prev match", N),
     ];
-    nav.sort_by(|a, b| sort_key(&a.keys).cmp(&sort_key(&b.keys)));
+    nav.sort_unstable_by(|a, b| sort_key(&a.keys).cmp(&sort_key(&b.keys)));
 
     let mut general = vec![
         h("Enter", "confirm selection", G),
         h("Esc", "cancel", G),
         h("?", "help", G),
     ];
-    general.sort_by(|a, b| sort_key(&a.keys).cmp(&sort_key(&b.keys)));
+    general.sort_unstable_by(|a, b| sort_key(&a.keys).cmp(&sort_key(&b.keys)));
 
     vec![(N, nav), (G, general)]
 }
