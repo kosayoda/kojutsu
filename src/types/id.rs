@@ -3,6 +3,9 @@ pub type Str = compact_str::CompactString;
 /// A small vector optimized for the common 1-2 element case.
 pub type SmallVec<T> = smallvec::SmallVec<[T; 2]>;
 
+/// A non-empty [`SmallVec`]. Guarantees at least one element at the type level.
+pub type SmallVec1<T> = vec1::smallvec_v1::SmallVec1<[T; 2]>;
+
 /// Define a newtype wrapper around `Str` (CompactString) with standard impls.
 macro_rules! define_str_newtype {
     ($(#[$meta:meta])* $vis:vis $name:ident) => {

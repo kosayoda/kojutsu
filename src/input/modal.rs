@@ -272,7 +272,6 @@ pub(super) fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<
 
 pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
     use crate::app::TargetMode;
-    use smallvec::smallvec;
 
     match key.code {
         KeyCode::Char(' ') => {
@@ -302,20 +301,25 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
                 ..
             } = mode
             {
-                let targets = match target_mode {
+                let targets: crate::types::SmallVec1<crate::types::ChangeId> = match target_mode {
                     TargetMode::Multi { targets } if !targets.is_empty() => {
-                        targets.into_iter().collect()
+                        match crate::types::SmallVec1::try_from_smallvec(
+                            targets.into_iter().collect(),
+                        ) {
+                            Ok(v) => v,
+                            Err(_) => return Action::None,
+                        }
                     }
                     _ => {
                         let Some(target) = app.selected_change_id() else {
                             return Action::None;
                         };
-                        smallvec![target]
+                        crate::types::SmallVec1::new(target)
                     }
                 };
                 // Interdiff is handled directly (needs commit IDs from app state).
                 if matches!(operation, crate::types::TargetOperation::Interdiff) {
-                    let target = targets.into_iter().next().unwrap_or(source.clone());
+                    let target = targets.split_off_first().0;
                     // Resolve change IDs to commit IDs via the DAG index.
                     let from_commit = app.commit_id_for_change(&source);
                     let to_commit = app.commit_id_for_change(&target);

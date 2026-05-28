@@ -334,6 +334,8 @@ pub enum FileStatus {
     Deleted,
     Renamed,
     Copied,
+    /// Diff materialization failed for this file.
+    Error,
 }
 
 #[derive(Clone)]

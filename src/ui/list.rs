@@ -1207,6 +1207,7 @@ fn render_file_line(
             FileStatus::Deleted => ("D", theme.error),
             FileStatus::Renamed => ("R", theme.accent),
             FileStatus::Copied => ("C", theme.added),
+            FileStatus::Error => ("E", theme.error),
         }
     };
 
@@ -1731,6 +1732,7 @@ fn file_status_display(status: FileStatus, theme: &Theme) -> (&'static str, rata
             },
             theme.accent,
         ),
+        FileStatus::Error => ("E", theme.error),
     }
 }
 

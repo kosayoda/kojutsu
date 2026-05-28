@@ -68,14 +68,19 @@ impl JjRepo {
         let mut diff_stream =
             parent_tree.diff_stream_with_copies(&commit_tree, &EverythingMatcher, &copy_records);
 
-        let mut skipped_entries = 0u32;
         while let Some(entry) = diff_stream.next().block_on() {
             let target_path = entry.path.target().as_internal_file_string().to_string();
             let values = match entry.values {
                 Ok(v) => v,
                 Err(e) => {
-                    tracing::warn!("skipping diff entry for {target_path}: {e}");
-                    skipped_entries += 1;
+                    tracing::warn!("diff entry error for {target_path}: {e}");
+                    changes.push(FileChange {
+                        path: RepoPath::new(&target_path),
+                        old_path: None,
+                        status: FileStatus::Error,
+                        has_conflict: false,
+                        stats: LineStats::default(),
+                    });
                     continue;
                 }
             };
@@ -159,10 +164,6 @@ impl JjRepo {
             if let Some(fc) = changes.last_mut() {
                 fc.stats = file_stats;
             }
-        }
-
-        if skipped_entries > 0 {
-            tracing::warn!("skipped {skipped_entries} diff entries due to errors");
         }
 
         // Add any conflicted files not already found by the diff pass.

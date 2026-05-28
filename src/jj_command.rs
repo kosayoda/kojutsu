@@ -11,7 +11,7 @@ use strum::IntoEnumIterator;
 use crate::types::{
     BookmarkName, ChangeId, ChangeSelection, CommitId, MessageMode, OperationId, PendingCommand,
     PendingCommitSelect, ReadyCommand, RebaseKind, RebaseSource, RebaseTarget, RemoteName,
-    SmallVec, SplitTarget, SquashTarget, Str, TagName, TargetOperation, WorkspaceName,
+    SmallVec, SmallVec1, SplitTarget, SquashTarget, Str, TagName, TargetOperation, WorkspaceName,
 };
 
 /// Where to insert a new commit relative to its parent.
@@ -1366,7 +1366,7 @@ impl TargetOperation {
     pub fn follow_up(
         self,
         source: ChangeId,
-        targets: SmallVec<ChangeId>,
+        targets: SmallVec1<ChangeId>,
         flags: CommandFlags,
         selection: ChangeSelection,
     ) -> Vec<FollowUpOption> {
@@ -1374,7 +1374,7 @@ impl TargetOperation {
             TargetOperation::Squash(kind) => squash_follow_up(
                 source,
                 Some(SquashTarget {
-                    target: targets.into_iter().next().expect("target required"),
+                    target: targets.split_off_first().0,
                     kind,
                 }),
                 selection,
@@ -1386,7 +1386,7 @@ impl TargetOperation {
                     kind: JJCommandKind::Split {
                         change_id: source,
                         target: Some(SplitTarget {
-                            target: targets.into_iter().next().expect("target required"),
+                            target: targets.split_off_first().0,
                             kind,
                         }),
                         selection,
@@ -1397,12 +1397,12 @@ impl TargetOperation {
             TargetOperation::Rebase {
                 source_mode,
                 sources,
-            } => rebase_follow_up(sources, targets, source_mode, flags),
+            } => rebase_follow_up(sources, targets.into_smallvec(), source_mode, flags),
             TargetOperation::RestoreFrom => auto_follow_up(
                 "restore",
                 JJCommand {
                     kind: JJCommandKind::Restore {
-                        from: targets.into_iter().next(),
+                        from: Some(targets.split_off_first().0),
                         into: None,
                         changes_in: None,
                         selection,
@@ -1415,7 +1415,7 @@ impl TargetOperation {
                 JJCommand {
                     kind: JJCommandKind::Restore {
                         from: None,
-                        into: targets.into_iter().next(),
+                        into: Some(targets.split_off_first().0),
                         changes_in: None,
                         selection,
                     },
@@ -1427,7 +1427,7 @@ impl TargetOperation {
                 JJCommand {
                     kind: JJCommandKind::BookmarkMove {
                         name: bookmark_name.clone(),
-                        target: targets.into_iter().next().expect("target required"),
+                        target: targets.split_off_first().0,
                     },
                     flags,
                 },
@@ -1437,13 +1437,13 @@ impl TargetOperation {
                 JJCommand {
                     kind: JJCommandKind::Duplicate {
                         change_ids: smallvec::smallvec![source],
-                        onto: targets.into_iter().next(),
+                        onto: Some(targets.split_off_first().0),
                     },
                     flags,
                 },
             ),
             TargetOperation::Interdiff => {
-                let to = targets.into_iter().next().expect("target required");
+                let to = targets.split_off_first().0;
                 vec![FollowUpOption {
                     key: ' ',
                     label: "interdiff",
@@ -1463,7 +1463,7 @@ impl TargetOperation {
                         kind: JJCommandKind::Revert {
                             change_ids: sources.clone(),
                             dest: RebaseTarget {
-                                targets: targets.clone(),
+                                targets: targets.clone().into_smallvec(),
                                 kind,
                             },
                         },
