@@ -1306,6 +1306,16 @@ fn push_diff_tokens(
     }
 }
 
+/// Format diff line numbers as `"  OOOO NNNN "` in a single allocation.
+fn format_line_numbers(old: Option<u32>, new: Option<u32>) -> String {
+    match (old, new) {
+        (Some(o), Some(n)) => format!("  {o:>4} {n:>4} "),
+        (Some(o), None) => format!("  {o:>4}      "),
+        (None, Some(n)) => format!("       {n:>4} "),
+        (None, None) => "              ".to_string(),
+    }
+}
+
 fn render_diff_line(
     diff_line: &DiffLine,
     show_line_numbers: bool,
@@ -1334,19 +1344,7 @@ fn render_diff_line(
 
     let line_num_style = Style::default().fg(theme.muted);
     if show_line_numbers && diff_line.kind != DiffLineKind::Header {
-        use std::fmt::Write;
-        let mut nums = String::with_capacity(14);
-        write!(nums, "  ").unwrap();
-        match diff_line.old_line {
-            Some(n) => write!(nums, "{n:>4}").unwrap(),
-            None => write!(nums, "    ").unwrap(),
-        }
-        write!(nums, " ").unwrap();
-        match diff_line.new_line {
-            Some(n) => write!(nums, "{n:>4}").unwrap(),
-            None => write!(nums, "    ").unwrap(),
-        }
-        write!(nums, " ").unwrap();
+        let nums = format_line_numbers(diff_line.old_line, diff_line.new_line);
         spans.push(Span::styled(nums, line_num_style));
         spans.push(Span::styled(marker, style));
         push_diff_tokens(&mut spans, diff_line, style, search, theme, tab_str);
