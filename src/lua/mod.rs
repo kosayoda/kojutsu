@@ -352,7 +352,36 @@ impl LuaEngine {
     }
 
     fn flush_logs(&self, app: &mut App) {
-        for msg in self.pending_logs.borrow_mut().drain(..) {
+        let logs: Vec<String> = self.pending_logs.borrow_mut().drain(..).collect();
+        if logs.is_empty() {
+            return;
+        }
+
+        match &mut app.mode {
+            crate::app::AppMode::CommandOutput { output, .. } => {
+                output.extend_from_slice("\n── plugin ──\n".as_bytes());
+                for msg in &logs {
+                    output.extend_from_slice(msg.as_bytes());
+                    output.push(b'\n');
+                }
+            }
+            _ => {
+                let mut output = Vec::new();
+                for msg in &logs {
+                    output.extend_from_slice(msg.as_bytes());
+                    output.push(b'\n');
+                }
+                app.mode = crate::app::AppMode::CommandOutput {
+                    command: String::new(),
+                    command_parts: None,
+                    output,
+                    success: true,
+                    retry: Vec::new(),
+                };
+            }
+        }
+
+        for msg in logs {
             app.push_command_log(
                 crate::app::CommandLogKind::Background,
                 msg,
@@ -645,6 +674,7 @@ impl LuaEngine {
             return;
         }
 
+        // Verify registration functions are on the table.
         if let Err(e) = self
             .lua
             .load(&source)
@@ -655,9 +685,7 @@ impl LuaEngine {
             return;
         }
 
-        let registrations = Rc::try_unwrap(reg_commands)
-            .unwrap_or_default()
-            .into_inner();
+        let registrations = std::mem::take(&mut *reg_commands.borrow_mut());
 
         for reg in registrations {
             let selection_support = match reg.selection.as_str() {
@@ -696,11 +724,9 @@ impl LuaEngine {
         }
 
         self.hooks
-            .extend(Rc::try_unwrap(reg_hooks).unwrap_or_default().into_inner());
+            .extend(std::mem::take(&mut *reg_hooks.borrow_mut()));
 
-        let bindings = Rc::try_unwrap(reg_bindings)
-            .unwrap_or_default()
-            .into_inner();
+        let bindings = std::mem::take(&mut *reg_bindings.borrow_mut());
         for binding in bindings {
             match binding {
                 PendingBinding::Bind {
@@ -912,7 +938,7 @@ pub fn generate_type_definitions() -> String {
     .unwrap();
     writeln!(
         out,
-        "---@field hook fun(action: string, phase: string, fn: fun(ctx: HookContext, result: HookResultTable?)): boolean?"
+        "---@field hook fun(action: string, phase: string, fn: fun(ctx: HookContext, result: HookResultTable?): boolean?)"
     )
     .unwrap();
     writeln!(out, "---@field bind fun(opts: BindOpts)").unwrap();
