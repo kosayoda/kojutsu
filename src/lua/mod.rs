@@ -40,6 +40,7 @@ pub struct LuaEngine {
     extra_bindings: Vec<BindingSpec>,
     suspended_thread: RefCell<Option<(mlua::RegistryKey, CommandFlags)>>,
     pending_action: Rc<RefCell<PendingAction>>,
+    pending_logs: Rc<RefCell<Vec<String>>>,
     pub init_error: Option<String>,
     repo_path: PathBuf,
 }
@@ -52,6 +53,7 @@ impl LuaEngine {
     ) -> Self {
         let lua = Lua::new();
         let pending_action = Rc::new(RefCell::new(PendingAction::None));
+        let pending_logs = Rc::new(RefCell::new(Vec::new()));
         let mut engine = LuaEngine {
             lua,
             commands: Vec::new(),
@@ -59,6 +61,7 @@ impl LuaEngine {
             extra_bindings: Vec::new(),
             suspended_thread: RefCell::new(None),
             pending_action,
+            pending_logs,
             init_error: None,
             repo_path: repo_path.to_path_buf(),
         };
@@ -129,6 +132,7 @@ impl LuaEngine {
                 }
             }
         }
+        self.flush_logs(app);
         HookResult::Proceed
     }
 
@@ -162,6 +166,7 @@ impl LuaEngine {
                 app.set_error(format!("plugin: post-hook error - {action_name}: {e}"));
             }
         }
+        self.flush_logs(app);
     }
 
     pub fn execute_command(&self, id: u16, app: &mut App, flags: CommandFlags) -> Action {
@@ -241,10 +246,12 @@ impl LuaEngine {
                 if thread.status() == mlua::ThreadStatus::Resumable {
                     self.handle_yield(thread, value, app, flags)
                 } else {
+                    self.flush_logs(app);
                     self.take_pending_action(flags)
                 }
             }
             Err(e) => {
+                self.flush_logs(app);
                 app.set_error(format!("plugin: {e}"));
                 app.push_command_log(
                     crate::app::CommandLogKind::Warning,
@@ -341,6 +348,19 @@ impl LuaEngine {
     fn prepare_execution(&self, app: &App) {
         self.update_ctx(app);
         self.pending_action.replace(PendingAction::None);
+        self.pending_logs.borrow_mut().clear();
+    }
+
+    fn flush_logs(&self, app: &mut App) {
+        for msg in self.pending_logs.borrow_mut().drain(..) {
+            app.push_command_log(
+                crate::app::CommandLogKind::Background,
+                msg,
+                None,
+                Vec::new(),
+                true,
+            );
+        }
     }
 
     fn update_ctx(&self, app: &App) {
@@ -430,6 +450,12 @@ impl LuaEngine {
 
         let flash_fn = self.lua.create_function(|_lua, _msg: String| Ok(()))?;
 
+        let logs = self.pending_logs.clone();
+        let log_fn = self.lua.create_function(move |_lua, msg: String| {
+            logs.borrow_mut().push(msg);
+            Ok(())
+        })?;
+
         // Register ui.input and ui.choose as Lua functions that yield.
         self.lua.load(r#"
             function kojutsu.ui.input(prompt, default)
@@ -443,6 +469,7 @@ impl LuaEngine {
         let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
         kojutsu.set("jj", jj_fn)?;
         kojutsu.set("jj_interactive", jj_interactive_fn)?;
+        kojutsu.set("log", log_fn)?;
 
         let ui: mlua::Table = kojutsu.get("ui")?;
         ui.set("flash", flash_fn)?;
@@ -877,6 +904,7 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field nav KojutsuNav").unwrap();
     writeln!(out, "---@field jj fun(args: string[]): JJResult").unwrap();
     writeln!(out, "---@field jj_interactive fun(args: string[])").unwrap();
+    writeln!(out, "---@field log fun(msg: string)").unwrap();
     writeln!(
         out,
         "---@field command fun(name: string, fn: fun(ctx: KojutsuCtx), opts: CommandOpts)"
