@@ -142,6 +142,13 @@ where
         }
     }
 
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            vec: Vec::with_capacity(capacity),
+            _marker: PhantomData,
+        }
+    }
+
     pub fn from_vec(vec: Vec<T>) -> Self {
         Self {
             vec,
@@ -182,6 +189,10 @@ where
     /// Iterate with typed indices.
     pub fn iter_enumerated(&self) -> impl Iterator<Item = (I, &T)> {
         self.vec.iter().enumerate().map(|(i, v)| (I::from(i), v))
+    }
+
+    pub fn reserve(&mut self, additional: usize) {
+        self.vec.reserve(additional);
     }
 
     pub fn clear(&mut self) {

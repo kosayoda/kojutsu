@@ -52,7 +52,7 @@ impl App {
             Vec<Loadable<crate::dag::DiffResult>>,
         );
         // Collect old caches keyed by CommitId before replacing nodes.
-        let old_caches: HashMap<CommitId, NodeCache> = std::mem::take(&mut self.nodes)
+        let mut old_caches: HashMap<CommitId, NodeCache> = std::mem::take(&mut self.nodes)
             .into_vec()
             .into_iter()
             .map(|mut n| {
@@ -65,15 +65,15 @@ impl App {
 
         // Restore cached data for commits that survived the refresh.
         for node in nodes.iter_mut() {
-            if let Some((files, stats, diffs)) = old_caches.get(&node.commit.graph_id) {
+            if let Some((files, stats, diffs)) = old_caches.remove(&node.commit.graph_id) {
                 if !files.should_request() {
-                    node.files = files.clone();
+                    node.files = files;
                 }
                 if !stats.should_request() {
-                    node.stats = stats.clone();
+                    node.stats = stats;
                 }
                 if !diffs.is_empty() {
-                    node.restore_diffs(diffs.clone());
+                    node.restore_diffs(diffs);
                 }
             }
         }

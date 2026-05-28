@@ -5,17 +5,37 @@ use crate::idx::{
     FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, RowIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
-use crate::types::DisplayRow;
+use crate::types::{DisplayRow, SmallVec};
 
-/// Restore cursor position after a row rebuild. Tries each fallback key in
-/// order, returning the first matching row index. Falls back to clamping the
-/// current cursor within bounds.
+/// Restore cursor position after a row rebuild. Finds all fallback keys in a
+/// single pass over the rows, then picks the highest-priority match. Falls back
+/// to clamping the current cursor within bounds.
 fn restore_cursor(rows: &[DisplayRow], cursor: RowIdx, fallbacks: &[Option<DisplayRow>]) -> RowIdx {
-    fallbacks
+    // Collect the non-None fallbacks we're looking for.
+    let targets: SmallVec<(usize, DisplayRow)> = fallbacks
         .iter()
-        .flatten()
-        .find_map(|key| rows.iter().position(|r| *r == *key))
-        .map(RowIdx::new)
+        .enumerate()
+        .filter_map(|(pri, opt)| opt.map(|key| (pri, key)))
+        .collect();
+
+    if targets.is_empty() {
+        return RowIdx::new(cursor.raw().min(rows.len().saturating_sub(1)));
+    }
+
+    // Single pass: find the position of each target, keep best priority.
+    let mut best: Option<(usize, usize)> = None; // (priority, row_index)
+    for (row_idx, row) in rows.iter().enumerate() {
+        for &(pri, ref key) in &targets {
+            if *row == *key && best.as_ref().is_none_or(|b| pri < b.0) {
+                best = Some((pri, row_idx));
+                if pri == 0 {
+                    return RowIdx::new(row_idx);
+                }
+                break;
+            }
+        }
+    }
+    best.map(|(_, idx)| RowIdx::new(idx))
         .unwrap_or(RowIdx::new(cursor.raw().min(rows.len().saturating_sub(1))))
 }
 
