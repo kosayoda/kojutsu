@@ -85,8 +85,16 @@ impl LuaEngine {
 
     pub fn run_pre_hooks(&self, action_name: &str, app: &mut App) -> HookResult {
         for (name, hook) in &self.hooks {
-            if name.as_str() != action_name || hook.phase != HookPhase::Pre {
+            if hook.phase != HookPhase::Pre {
                 continue;
+            }
+            match hook_matches(&self.lua, name, action_name) {
+                Ok(false) => continue,
+                Err(e) => {
+                    tracing::warn!("hook pattern error for '{name}': {e}");
+                    continue;
+                }
+                Ok(true) => {}
             }
             let result: mlua::Result<bool> = (|| {
                 let func: mlua::Function = self.lua.registry_value(&hook.callback)?;
@@ -128,8 +136,16 @@ impl LuaEngine {
 
     pub fn run_post_hooks(&self, action_name: &str, app: &mut App, success: bool, output: &[u8]) {
         for (name, hook) in &self.hooks {
-            if name.as_str() != action_name || hook.phase != HookPhase::Post {
+            if hook.phase != HookPhase::Post {
                 continue;
+            }
+            match hook_matches(&self.lua, name, action_name) {
+                Ok(false) => continue,
+                Err(e) => {
+                    tracing::warn!("hook pattern error for '{name}': {e}");
+                    continue;
+                }
+                Ok(true) => {}
             }
             let result: mlua::Result<()> = (|| {
                 let func: mlua::Function = self.lua.registry_value(&hook.callback)?;
@@ -585,11 +601,19 @@ impl LuaEngine {
                 .create_function(move |lua, args: mlua::MultiValue| {
                     if args.len() < 3 {
                         return Err(mlua::Error::external(
-                            "kojutsu.hook requires 3 args: action_name, phase, fn",
+                            "kojutsu.hook requires 3 args: action(s), phase, fn",
                         ));
                     }
                     let mut iter = args.into_iter();
-                    let action_name: String = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
+                    let first = iter.next().unwrap();
+                    let action_names: Vec<String> =
+                        match first {
+                            mlua::Value::String(s) => vec![s.to_str()?.to_string()],
+                            mlua::Value::Table(t) => table_to_string_vec(&t),
+                            _ => return Err(mlua::Error::external(
+                                "first argument must be an action name or table of action names",
+                            )),
+                        };
                     let phase_str: String = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
                     let func: mlua::Function = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
                     let phase = match phase_str.as_str() {
@@ -601,10 +625,11 @@ impl LuaEngine {
                             )))
                         }
                     };
-                    let callback = lua.create_registry_value(func)?;
-                    hooks_clone
-                        .borrow_mut()
-                        .push((action_name.into(), LuaHook { phase, callback }));
+                    let mut hooks = hooks_clone.borrow_mut();
+                    for name in action_names {
+                        let callback = lua.create_registry_value(func.clone())?;
+                        hooks.push((name.into(), LuaHook { phase, callback }));
+                    }
                     Ok(())
                 })?;
 
@@ -933,7 +958,7 @@ pub fn generate_type_definitions() -> String {
     .unwrap();
     writeln!(
         out,
-        "---@field hook fun(action: string, phase: string, fn: fun(ctx: HookContext, result: HookResultTable?): boolean?)"
+        "---@field hook fun(action: string|string[], phase: string, fn: fun(ctx: HookContext, result: HookResultTable?): boolean?)"
     )
     .unwrap();
     writeln!(out, "---@field bind fun(opts: BindOpts)").unwrap();
@@ -1024,6 +1049,16 @@ enum PendingAction {
     Refresh,
     SetRevset(String),
     Interactive(Vec<String>),
+}
+
+fn hook_matches(lua: &Lua, pattern: &str, action_name: &str) -> mlua::Result<bool> {
+    if pattern == action_name {
+        return Ok(true);
+    }
+    let string_mod: mlua::Table = lua.globals().get("string")?;
+    let find_fn: mlua::Function = string_mod.get("find")?;
+    let result = find_fn.call::<mlua::Value>((action_name, format!("^{pattern}$")))?;
+    Ok(!matches!(result, mlua::Value::Nil))
 }
 
 fn table_to_string_vec(table: &mlua::Table) -> Vec<String> {
