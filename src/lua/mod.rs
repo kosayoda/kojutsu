@@ -105,7 +105,7 @@ impl LuaEngine {
         HookResult::Proceed
     }
 
-    pub fn run_post_hooks(&self, action_name: &str, app: &App, success: bool) {
+    pub fn run_post_hooks(&self, action_name: &str, app: &App, success: bool, output: &[u8]) {
         for (name, hook) in &self.hooks {
             if name.as_str() != action_name || hook.phase != HookPhase::Post {
                 continue;
@@ -119,6 +119,7 @@ impl LuaEngine {
                 ctx.set("view", view_name(app.active_view))?;
                 let result_table = self.lua.create_table()?;
                 result_table.set("ok", success)?;
+                result_table.set("output", String::from_utf8_lossy(output).into_owned())?;
                 func.call::<()>((ctx, result_table))?;
                 Ok(())
             })();
@@ -660,6 +661,7 @@ pub fn generate_type_definitions() -> String {
     // Hook result
     writeln!(out, "---@class HookResultTable").unwrap();
     writeln!(out, "---@field ok boolean").unwrap();
+    writeln!(out, "---@field output string").unwrap();
     writeln!(out).unwrap();
 
     // Main kojutsu table
