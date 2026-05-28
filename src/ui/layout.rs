@@ -5,8 +5,9 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use super::spans::push_short_id;
-use crate::app::{App, StatusLevel, GLOBAL_TOGGLES};
+use crate::app::{App, StatusLevel};
 use crate::theme::Theme;
+use crate::types::GLOBAL_TOGGLES;
 
 /// Minimum separator between repo and revset when on a single line.
 pub(super) const HEADER_SEP: &str = "  ";

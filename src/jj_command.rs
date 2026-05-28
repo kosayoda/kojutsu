@@ -3,9 +3,9 @@ use std::process::{Command, Output};
 
 use compact_str::format_compact;
 
-use crate::app::{JumpTarget, GLOBAL_TOGGLES};
 use crate::dag::BookmarkRef;
 use crate::keymap::CommandFlags;
+use crate::types::{JumpTarget, GLOBAL_TOGGLES};
 use strum::IntoEnumIterator;
 
 use crate::types::{

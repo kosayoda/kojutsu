@@ -298,3 +298,36 @@ pub struct GlobalToggle {
     /// CLI flag appended to jj commands (e.g., "--ignore-immutable").
     pub cli_flag: &'static str,
 }
+
+/// All global toggles. Single source of truth for status bar rendering,
+/// help display, and CLI arg generation.
+pub const GLOBAL_TOGGLES: &[GlobalToggle] = &[
+    GlobalToggle {
+        flag: CommandFlags::IGNORE_IMMUTABLE,
+        hint: "I",
+        label: "ignore-immutable",
+        cli_flag: "--ignore-immutable",
+    },
+    GlobalToggle {
+        flag: CommandFlags::IGNORE_WORKING_COPY,
+        hint: "W",
+        label: "ignore-working-copy",
+        cli_flag: "--ignore-working-copy",
+    },
+    GlobalToggle {
+        flag: CommandFlags::DEBUG,
+        hint: "D",
+        label: "debug",
+        cli_flag: "--debug",
+    },
+];
+
+/// Where to jump the cursor after the next DAG refresh.
+pub enum JumpTarget {
+    /// Jump to the working copy commit (@).
+    WorkingCopy,
+    /// Jump to the commit that has this local bookmark.
+    Bookmark(super::BookmarkName),
+    /// Jump to a commit by change ID or commit ID prefix.
+    Prefix(String),
+}

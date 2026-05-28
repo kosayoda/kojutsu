@@ -5,13 +5,14 @@ use clap::Parser;
 use color_eyre::Result;
 use crossterm::event::{Event, KeyEventKind};
 
-use kojutsu::app::{App, AppMode, DeferredWork, JumpTarget, Loadable};
+use kojutsu::app::{App, AppMode, DeferredWork, Loadable};
 use kojutsu::input::{self, Action};
 use kojutsu::jj_command::JJCommand;
 use kojutsu::keymap::{self, Keymaps};
 use kojutsu::repo::JjRepo;
 use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService};
 use kojutsu::terminal::spawn_terminal_events;
+use kojutsu::types::JumpTarget;
 use kojutsu::ui;
 
 enum AppEvent {

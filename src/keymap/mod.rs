@@ -11,8 +11,7 @@ pub use help::{help_entries, select_mode_help_entries, HelpEntry, HelpGroup};
 pub use registry::{ActionId, ActionRegistry};
 pub use trie::{Keymap, Keymaps, LookupResult, TrieNode};
 
-use crate::app::GLOBAL_TOGGLES;
-use crate::types::SquashKind;
+use crate::types::{SquashKind, GLOBAL_TOGGLES};
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

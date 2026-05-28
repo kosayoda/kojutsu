@@ -34,7 +34,8 @@ use crate::types::SmallVec;
 use crate::keymap::CommandFlags;
 use crate::repo_service::{RepoError, RepoRequest};
 use crate::types::{
-    ChangeId, CommitId, DisplayRow, RepoPath, SearchScopes, SearchState, SelectionContext,
+    ChangeId, CommitId, DisplayRow, JumpTarget, RepoPath, SearchScopes, SearchState,
+    SelectionContext,
 };
 
 #[derive(Clone, Debug)]

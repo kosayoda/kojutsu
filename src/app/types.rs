@@ -10,7 +10,7 @@ use compact_str::CompactString;
 
 use crate::keymap::{CommandFlags, TrieNode};
 use crate::types::{
-    BookmarkName, ChangeId, CommitId, FollowUpOption, GlobalToggle, OperationId, PendingCommand,
+    BookmarkName, ChangeId, CommitId, FollowUpOption, OperationId, PendingCommand,
     PendingCommitSelect, PendingSelection, RemoteName, RepoPath, SearchScopes, Str, TagName,
     TargetOperation, VisualRange, WorkspaceName,
 };
@@ -552,29 +552,6 @@ pub struct WorkspaceViewEntry {
     pub is_current: bool,
 }
 
-/// All global toggles. Single source of truth for status bar rendering,
-/// help display, and CLI arg generation.
-pub const GLOBAL_TOGGLES: &[GlobalToggle] = &[
-    GlobalToggle {
-        flag: CommandFlags::IGNORE_IMMUTABLE,
-        hint: "I",
-        label: "ignore-immutable",
-        cli_flag: "--ignore-immutable",
-    },
-    GlobalToggle {
-        flag: CommandFlags::IGNORE_WORKING_COPY,
-        hint: "W",
-        label: "ignore-working-copy",
-        cli_flag: "--ignore-working-copy",
-    },
-    GlobalToggle {
-        flag: CommandFlags::DEBUG,
-        hint: "D",
-        label: "debug",
-        cli_flag: "--debug",
-    },
-];
-
 /// Active visual selection mode.
 pub enum VisualMode {
     /// Visual selection of diff lines within one file.
@@ -595,16 +572,6 @@ pub enum VisualMode {
 pub enum PersistentVisualRange {
     Lines(VisualRange),
     Commits(Vec<EntryIdx>),
-}
-
-/// Where to jump the cursor after the next DAG refresh.
-pub enum JumpTarget {
-    /// Jump to the working copy commit (@).
-    WorkingCopy,
-    /// Jump to the commit that has this local bookmark.
-    Bookmark(BookmarkName),
-    /// Jump to a commit by change ID or commit ID prefix.
-    Prefix(String),
 }
 
 /// State for the select-from-list overlay (e.g. picking a bookmark).
