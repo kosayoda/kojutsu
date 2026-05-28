@@ -90,17 +90,7 @@ impl LuaEngine {
             }
             let result: mlua::Result<bool> = (|| {
                 let func: mlua::Function = self.lua.registry_value(&hook.callback)?;
-                let ctx = self.lua.create_table()?;
-                if let Some(id) = app.selected_change_id() {
-                    ctx.set("change_id", id.as_str())?;
-                }
-                let change_ids = app.selected_change_ids();
-                let ids_table = self.lua.create_table()?;
-                for (i, id) in change_ids.iter().enumerate() {
-                    ids_table.raw_set(i + 1, id.as_str())?;
-                }
-                ctx.set("change_ids", ids_table)?;
-                ctx.set("view", view_name(app.active_view))?;
+                let ctx = self.build_ctx_table(app)?;
                 let val = func.call::<mlua::Value>(ctx)?;
                 match val {
                     mlua::Value::Boolean(false) => Ok(false),
@@ -143,11 +133,7 @@ impl LuaEngine {
             }
             let result: mlua::Result<()> = (|| {
                 let func: mlua::Function = self.lua.registry_value(&hook.callback)?;
-                let ctx = self.lua.create_table()?;
-                if let Some(id) = app.selected_change_id() {
-                    ctx.set("change_id", id.as_str())?;
-                }
-                ctx.set("view", view_name(app.active_view))?;
+                let ctx = self.build_ctx_table(app)?;
                 let result_table = self.lua.create_table()?;
                 result_table.set("ok", success)?;
                 result_table.set("output", String::from_utf8_lossy(output).into_owned())?;
@@ -392,41 +378,50 @@ impl LuaEngine {
         }
     }
 
-    fn update_ctx(&self, app: &App) {
-        let Ok(kojutsu): Result<mlua::Table, _> = self.lua.globals().get("kojutsu") else {
-            return;
-        };
-        let Ok(ctx_table) = self.lua.create_table() else {
-            return;
-        };
+    fn build_ctx_table(&self, app: &App) -> mlua::Result<mlua::Table> {
+        let ctx = self.lua.create_table()?;
         let change_id = app.selected_change_id();
         let commit_id = change_id.as_ref().and_then(|cid| {
             app.commit_id_for_change(cid)
                 .map(|id| CompactString::from(id.as_str()))
         });
-        let _ = match &change_id {
-            Some(id) => ctx_table.set("change_id", id.as_str()),
-            None => ctx_table.set("change_id", mlua::Value::Nil),
-        };
-        let _ = match &commit_id {
-            Some(id) => ctx_table.set("commit_id", id.as_str()),
-            None => ctx_table.set("commit_id", mlua::Value::Nil),
-        };
+        match &change_id {
+            Some(id) => ctx.set("change_id", id.as_str())?,
+            None => ctx.set("change_id", mlua::Value::Nil)?,
+        }
+        match &commit_id {
+            Some(id) => ctx.set("commit_id", id.as_str())?,
+            None => ctx.set("commit_id", mlua::Value::Nil)?,
+        }
+        let change_ids = app.selected_change_ids();
+        let ids_table = self.lua.create_table()?;
+        for (i, id) in change_ids.iter().enumerate() {
+            ids_table.raw_set(i + 1, id.as_str())?;
+        }
+        ctx.set("change_ids", ids_table)?;
         if let Some(desc) = app.selected_description() {
-            let _ = ctx_table.set("description", desc.to_string());
+            ctx.set("description", desc.to_string())?;
         }
         if let Some(bookmarks) = app.selected_bookmarks() {
-            if let Ok(bm_table) = self.lua.create_table() {
-                for (i, b) in bookmarks.iter().enumerate() {
-                    let _ = bm_table.raw_set(i + 1, b.name.as_str());
-                }
-                let _ = ctx_table.set("bookmarks", bm_table);
+            let bm_table = self.lua.create_table()?;
+            for (i, b) in bookmarks.iter().enumerate() {
+                bm_table.raw_set(i + 1, b.name.as_str())?;
             }
+            ctx.set("bookmarks", bm_table)?;
         }
-        let _ = ctx_table.set("view", view_name(app.active_view));
-        let _ = ctx_table.set("revset", app.revset.current.as_str());
-        let _ = ctx_table.set("repo_root", app.repo_root.as_str());
-        let _ = kojutsu.set("ctx", ctx_table);
+        ctx.set("view", view_name(app.active_view))?;
+        ctx.set("revset", app.revset.current.as_str())?;
+        ctx.set("repo_root", app.repo_root.as_str())?;
+        Ok(ctx)
+    }
+
+    fn update_ctx(&self, app: &App) {
+        let Ok(kojutsu): Result<mlua::Table, _> = self.lua.globals().get("kojutsu") else {
+            return;
+        };
+        if let Ok(ctx) = self.build_ctx_table(app) {
+            let _ = kojutsu.set("ctx", ctx);
+        }
     }
 
     fn register_persistent_functions(&self) -> mlua::Result<()> {
