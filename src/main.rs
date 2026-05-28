@@ -333,6 +333,7 @@ fn main() -> Result<()> {
             }
             Action::None => {}
         }
+        lua_engine.flush_logs(&mut app);
         flush_repo_requests(&mut app, &repo_requests);
     }
 

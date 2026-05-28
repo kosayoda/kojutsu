@@ -130,7 +130,6 @@ impl LuaEngine {
                 }
             }
         }
-        self.flush_logs(app);
         HookResult::Proceed
     }
 
@@ -168,7 +167,6 @@ impl LuaEngine {
                 app.set_error(format!("plugin: post-hook error - {action_name}: {e}"));
             }
         }
-        self.flush_logs(app);
     }
 
     pub fn execute_command(&self, id: u16, app: &mut App, flags: CommandFlags) -> Action {
@@ -353,7 +351,7 @@ impl LuaEngine {
         self.pending_logs.borrow_mut().clear();
     }
 
-    fn flush_logs(&self, app: &mut App) {
+    pub fn flush_logs(&self, app: &mut App) {
         let logs: Vec<String> = self.pending_logs.borrow_mut().drain(..).collect();
         if logs.is_empty() {
             return;
