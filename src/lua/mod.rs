@@ -13,6 +13,7 @@ use crate::keymap::{
 };
 
 struct LuaCommand {
+    name: CompactString,
     callback: mlua::RegistryKey,
 }
 
@@ -70,7 +71,7 @@ impl LuaEngine {
         std::mem::take(&mut self.extra_bindings)
     }
 
-    pub fn run_pre_hooks(&self, action_name: &str, app: &App) -> HookResult {
+    pub fn run_pre_hooks(&self, action_name: &str, app: &mut App) -> HookResult {
         for (name, hook) in &self.hooks {
             if name.as_str() != action_name || hook.phase != HookPhase::Pre {
                 continue;
@@ -95,17 +96,34 @@ impl LuaEngine {
                 }
             })();
             match result {
-                Ok(false) => return HookResult::Cancel,
+                Ok(false) => {
+                    app.push_command_log(
+                        crate::app::CommandLogKind::Warning,
+                        format!("plugin: pre-hook cancelled - {action_name}"),
+                        None,
+                        Vec::new(),
+                        false,
+                    );
+                    return HookResult::Cancel;
+                }
                 Ok(true) => {}
                 Err(e) => {
                     tracing::warn!("pre-hook error for {action_name}: {e}");
+                    app.push_command_log(
+                        crate::app::CommandLogKind::Warning,
+                        format!("plugin: pre-hook error - {action_name}"),
+                        None,
+                        e.to_string().into_bytes(),
+                        false,
+                    );
+                    app.set_error(format!("plugin: pre-hook error - {action_name}: {e}"));
                 }
             }
         }
         HookResult::Proceed
     }
 
-    pub fn run_post_hooks(&self, action_name: &str, app: &App, success: bool, output: &[u8]) {
+    pub fn run_post_hooks(&self, action_name: &str, app: &mut App, success: bool, output: &[u8]) {
         for (name, hook) in &self.hooks {
             if name.as_str() != action_name || hook.phase != HookPhase::Post {
                 continue;
@@ -125,12 +143,21 @@ impl LuaEngine {
             })();
             if let Err(e) = result {
                 tracing::warn!("post-hook error for {action_name}: {e}");
+                app.push_command_log(
+                    crate::app::CommandLogKind::Warning,
+                    format!("plugin: post-hook error - {action_name}"),
+                    None,
+                    e.to_string().into_bytes(),
+                    false,
+                );
+                app.set_error(format!("plugin: post-hook error - {action_name}: {e}"));
             }
         }
     }
 
     pub fn execute_command(&self, id: u16, app: &mut App, flags: CommandFlags) -> Action {
         let cmd = &self.commands[id as usize];
+        let cmd_name = cmd.name.clone();
         let pending = Rc::new(RefCell::new(PendingAction::None));
 
         self.lua
@@ -233,6 +260,14 @@ impl LuaEngine {
                 app.set_error(format!("lua scope error: {e}"));
             });
 
+        app.push_command_log(
+            crate::app::CommandLogKind::Command,
+            format!("plugin: {cmd_name}"),
+            None,
+            Vec::new(),
+            true,
+        );
+
         match Rc::try_unwrap(pending).unwrap_or_default().into_inner() {
             PendingAction::None => Action::None,
             PendingAction::Refresh => Action::Refresh,
@@ -310,6 +345,7 @@ impl LuaEngine {
                     let callback_key = lua.create_registry_value(func)?;
 
                     reg_clone.borrow_mut().push(PendingRegistration {
+                        name: name.into(),
                         desc: desc.into(),
                         scope,
                         key,
@@ -436,6 +472,7 @@ impl LuaEngine {
             let action_id = registry.register_lua(selection_support, false, false);
 
             self.commands.push(LuaCommand {
+                name: reg.name.clone(),
                 callback: reg.callback_key,
             });
 
@@ -740,6 +777,7 @@ fn register_globals(lua: &Lua) -> mlua::Result<()> {
 }
 
 struct PendingRegistration {
+    name: CompactString,
     desc: CompactString,
     scope: String,
     key: Option<String>,

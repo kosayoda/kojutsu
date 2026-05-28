@@ -10,7 +10,7 @@ impl App {
     pub fn request_revset_load(&mut self, revset: Option<String>) {
         self.revset.load_state = Loadable::Loading;
         self.revset.pending = revset.clone().map(Into::into);
-        self.status_message = None;
+        self.clear_info_status();
         self.pending_repo_requests
             .push(RepoRequest::load_revset(revset));
     }
@@ -184,7 +184,7 @@ impl App {
         match result {
             RepoResult::Revset { revset, result } => match result {
                 Ok(data) => {
-                    self.status_message = None;
+                    self.clear_info_status();
                     self.revset.current = data.revset.into();
                     self.revset.draft = None;
                     self.revset.pending = None;
@@ -243,7 +243,7 @@ impl App {
             },
             RepoResult::CommitDetails { commit_id, result } => match result {
                 Ok(details) => {
-                    self.status_message = None;
+                    self.clear_info_status();
                     let Some(idx) = self.entry_by_commit_id(&commit_id) else {
                         return deferred;
                     };
@@ -305,7 +305,7 @@ impl App {
                 result,
             } => match result {
                 Ok(diff_result) => {
-                    self.status_message = None;
+                    self.clear_info_status();
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                         if let Some(file_idx) = self.file_idx_by_path(idx, &path) {
                             self.nodes[idx].set_diff(file_idx, diff_result);

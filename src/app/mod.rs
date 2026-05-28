@@ -341,6 +341,12 @@ impl App {
         self.status_message = Some((msg.into(), StatusLevel::Error));
     }
 
+    pub fn clear_info_status(&mut self) {
+        if matches!(self.status_message, Some((_, StatusLevel::Info))) {
+            self.status_message = None;
+        }
+    }
+
     /// Log a background error and show it in the status bar.
     pub fn log_background_error(&mut self, summary: impl Into<String>) {
         let msg = summary.into();

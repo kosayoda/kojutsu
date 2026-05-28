@@ -1831,7 +1831,7 @@ fn render_command_log_item(
     use crate::app::CommandLogKind;
 
     let (icon, icon_color) = match (entry.kind, entry.success) {
-        (CommandLogKind::Warning, _) => ("⚠  ", theme.warning),
+        (CommandLogKind::Warning, _) => ("!  ", theme.warning),
         (_, true) => ("✓  ", theme.added),
         (_, false) => ("✗  ", theme.error),
     };

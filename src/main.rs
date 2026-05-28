@@ -180,6 +180,13 @@ fn main() -> Result<()> {
     }
 
     if let Some(err) = lua_init_error {
+        app.push_command_log(
+            kojutsu::app::CommandLogKind::Warning,
+            "init.lua error",
+            None,
+            err.as_bytes().to_vec(),
+            false,
+        );
         app.set_error(format!("init.lua: {err}"));
     }
 
@@ -262,13 +269,8 @@ fn main() -> Result<()> {
                 let action_label = app.last_action_label.take();
                 run_jj_command(&mut app, &repo_path, cmd);
                 if let Some(label) = action_label {
-                    let (success, output) = match &app.mode {
-                        AppMode::CommandOutput {
-                            success, output, ..
-                        } => (*success, output.as_slice()),
-                        _ => (false, &[] as &[u8]),
-                    };
-                    lua_engine.run_post_hooks(label, &app, success, output);
+                    let (success, output) = extract_command_result(&app);
+                    lua_engine.run_post_hooks(label, &mut app, success, &output);
                 }
             }
             Action::SuspendAndRunJj(cmd) => {
@@ -277,13 +279,8 @@ fn main() -> Result<()> {
                 suspend_and_run(&mut app, &repo_path, &mut terminal, cmd);
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
                 if let Some(label) = action_label {
-                    let (success, output) = match &app.mode {
-                        AppMode::CommandOutput {
-                            success, output, ..
-                        } => (*success, output.as_slice()),
-                        _ => (false, &[] as &[u8]),
-                    };
-                    lua_engine.run_post_hooks(label, &app, success, output);
+                    let (success, output) = extract_command_result(&app);
+                    lua_engine.run_post_hooks(label, &mut app, success, &output);
                 }
             }
             Action::Refresh => {
@@ -343,6 +340,15 @@ fn main() -> Result<()> {
     terminal_events.stop();
     kojutsu::terminal::restore()?;
     Ok(())
+}
+
+fn extract_command_result(app: &App) -> (bool, Vec<u8>) {
+    match &app.mode {
+        AppMode::CommandOutput {
+            success, output, ..
+        } => (*success, output.clone()),
+        _ => (false, Vec::new()),
+    }
 }
 
 fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
