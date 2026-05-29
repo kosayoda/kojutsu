@@ -14,12 +14,14 @@ use crate::keymap::{
 
 struct LuaCommand {
     name: CompactString,
+    source: String,
     callback: mlua::RegistryKey,
 }
 
 struct LuaHook {
     phase: HookPhase,
     callback: mlua::RegistryKey,
+    source: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -66,7 +68,7 @@ impl LuaEngine {
         registry: &mut ActionRegistry,
         default_specs: &[BindingSpec],
     ) -> Self {
-        let lua = Lua::new();
+        let lua = unsafe { Lua::unsafe_new_with(mlua::StdLib::ALL_SAFE | mlua::StdLib::DEBUG, mlua::LuaOptions::default()) };
         let pending_action = Rc::new(RefCell::new(PendingAction::None));
         let pending_logs = Rc::new(RefCell::new(Vec::new()));
         let mut engine = LuaEngine {
@@ -113,15 +115,8 @@ impl LuaEngine {
                 }
                 Ok(true) => {}
             }
-            let func: mlua::Function = match self.lua.registry_value(&hook.callback) {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::warn!("pre-hook registry error for {action_name}: {e}");
-                    continue;
-                }
-            };
-            let header = lua_source_info(&self.lua, &func);
             let result: mlua::Result<bool> = (|| {
+                let func: mlua::Function = self.lua.registry_value(&hook.callback)?;
                 let ctx = self.build_ctx_table(app)?;
                 let val = func.call::<mlua::Value>(ctx)?;
                 match val {
@@ -129,7 +124,7 @@ impl LuaEngine {
                     _ => Ok(true),
                 }
             })();
-            self.collect_logs(header.clone(), LogPhase::Pre);
+            self.collect_logs(hook.source.clone(), LogPhase::Pre);
             match result {
                 Ok(false) => {
                     app.push_command_log(
@@ -171,15 +166,8 @@ impl LuaEngine {
                 }
                 Ok(true) => {}
             }
-            let func: mlua::Function = match self.lua.registry_value(&hook.callback) {
-                Ok(f) => f,
-                Err(e) => {
-                    tracing::warn!("post-hook registry error for {action_name}: {e}");
-                    continue;
-                }
-            };
-            let header = lua_source_info(&self.lua, &func);
             let result: mlua::Result<()> = (|| {
+                let func: mlua::Function = self.lua.registry_value(&hook.callback)?;
                 let ctx = self.build_ctx_table(app)?;
                 let result_table = self.lua.create_table()?;
                 result_table.set("ok", success)?;
@@ -187,7 +175,7 @@ impl LuaEngine {
                 func.call::<()>((ctx, result_table))?;
                 Ok(())
             })();
-            self.collect_logs(header, LogPhase::Post);
+            self.collect_logs(hook.source.clone(), LogPhase::Post);
             if let Err(e) = result {
                 tracing::warn!("post-hook error for {action_name}: {e}");
                 app.push_command_log(
@@ -223,7 +211,7 @@ impl LuaEngine {
                 return Action::None;
             }
         };
-        *self.current_header.borrow_mut() = lua_source_info(&self.lua, &func);
+        *self.current_header.borrow_mut() = cmd.source.clone();
         let thread = match self.lua.create_thread(func) {
             Ok(t) => t,
             Err(e) => {
@@ -576,7 +564,6 @@ impl LuaEngine {
             Ok(())
         })?;
 
-        // Register ui.input and ui.choose as Lua functions that yield.
         self.lua.load(r#"
             function kojutsu.ui.input(prompt, default)
                 return coroutine.yield({type = "input", prompt = prompt or "", default = default or ""})
@@ -602,15 +589,15 @@ impl LuaEngine {
     }
 
     fn load_init_script(&mut self, registry: &mut ActionRegistry, default_specs: &[BindingSpec]) {
-        let Some(config_dir) = dirs::config_dir() else {
+        let Some(config_dir) = crate::theme::kojutsu_config_dir() else {
             return;
         };
-        let init_path = config_dir.join("kojutsu/init.lua");
+        let init_path = config_dir.join("init.lua");
         if !init_path.exists() {
             return;
         }
 
-        let lua_dir = config_dir.join("kojutsu/lua");
+        let lua_dir = config_dir.join("lua");
         if lua_dir.is_dir() {
             let path_addition = format!("{}/?.lua", lua_dir.display());
             let _ = self
@@ -659,6 +646,7 @@ impl LuaEngine {
                         .get::<String>("selection")
                         .unwrap_or_else(|_| "all".into());
 
+                    let source = lua_source_info(lua, &func);
                     let callback_key = lua.create_registry_value(func)?;
 
                     reg_clone.borrow_mut().push(PendingRegistration {
@@ -669,6 +657,7 @@ impl LuaEngine {
                         seq,
                         group,
                         selection,
+                        source,
                         callback_key,
                     });
 
@@ -696,6 +685,7 @@ impl LuaEngine {
                         };
                     let phase_str: String = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
                     let func: mlua::Function = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
+                    let source = lua_source_info(lua, &func);
                     let phase = match phase_str.as_str() {
                         "pre" => HookPhase::Pre,
                         "post" => HookPhase::Post,
@@ -708,7 +698,14 @@ impl LuaEngine {
                     let mut hooks = hooks_clone.borrow_mut();
                     for name in action_names {
                         let callback = lua.create_registry_value(func.clone())?;
-                        hooks.push((name.into(), LuaHook { phase, callback }));
+                        hooks.push((
+                            name.into(),
+                            LuaHook {
+                                phase,
+                                callback,
+                                source: source.clone(),
+                            },
+                        ));
                     }
                     Ok(())
                 })?;
@@ -798,6 +795,7 @@ impl LuaEngine {
 
             self.commands.push(LuaCommand {
                 name: reg.name.clone(),
+                source: reg.source.clone(),
                 callback: reg.callback_key,
             });
 
@@ -1103,6 +1101,7 @@ struct PendingRegistration {
     seq: Option<String>,
     group: String,
     selection: String,
+    source: String,
     callback_key: mlua::RegistryKey,
 }
 
@@ -1135,11 +1134,19 @@ fn lua_source_info(lua: &Lua, func: &mlua::Function) -> String {
     let result: mlua::Result<String> = (|| {
         let debug: mlua::Table = lua.globals().get("debug")?;
         let getinfo: mlua::Function = debug.get("getinfo")?;
-        let info: mlua::Table = getinfo.call((func.clone(), "Sl"))?;
-        let source: String = info
-            .get::<String>("short_src")
-            .unwrap_or_else(|_| "?".into());
+        let info: mlua::Table = getinfo.call::<mlua::Table>((func.clone(), "Sl"))?;
+        let raw: String = info.get("short_src").unwrap_or_else(|_| "?".into());
         let line: i64 = info.get("linedefined").unwrap_or(0);
+        let unwrapped = raw
+            .strip_prefix("[string \"")
+            .and_then(|s| s.strip_suffix("\"]"))
+            .unwrap_or(&raw);
+        let source = crate::theme::kojutsu_config_dir()
+            .and_then(|d| {
+                let prefix = format!("{}/", d.display());
+                unwrapped.strip_prefix(&prefix).map(|s| s.to_string())
+            })
+            .unwrap_or_else(|| unwrapped.to_string());
         Ok(format!("{source}:{line}"))
     })();
     result.unwrap_or_else(|_| "?".into())

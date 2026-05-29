@@ -385,8 +385,12 @@ pub fn load_config() -> Config {
     }
 }
 
+pub fn kojutsu_config_dir() -> Option<PathBuf> {
+    Some(dirs::config_dir()?.join("kojutsu"))
+}
+
 fn config_path() -> Option<PathBuf> {
-    Some(dirs::config_dir()?.join("kojutsu/config.toml"))
+    Some(kojutsu_config_dir()?.join("config.toml"))
 }
 
 /// Path for user-wide persistent state (`~/.local/state/kojutsu/state.json`).
