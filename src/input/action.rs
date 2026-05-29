@@ -989,7 +989,13 @@ pub fn dispatch_action_after_hooks(
             },
             flags,
         }),
-        AppAction::DuplicateOnto => enter_target_select(app, TargetOperation::DuplicateOnto, flags),
+        AppAction::DuplicateOnto => {
+            let sources = app.selected_change_ids();
+            if sources.is_empty() {
+                return Action::None;
+            }
+            enter_target_select(app, TargetOperation::DuplicateOnto { sources }, flags)
+        }
 
         // Parallelize / Simplify parents / Revert
         AppAction::Parallelize => make_multi_command(app, |ids| JJCommand {

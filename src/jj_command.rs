@@ -1433,11 +1433,11 @@ impl TargetOperation {
                     flags,
                 },
             ),
-            TargetOperation::DuplicateOnto => auto_follow_up(
+            TargetOperation::DuplicateOnto { sources } => auto_follow_up(
                 "duplicate",
                 JJCommand {
                     kind: JJCommandKind::Duplicate {
-                        change_ids: smallvec::smallvec![source],
+                        change_ids: sources,
                         onto: Some(targets.split_off_first().0),
                     },
                     flags,

@@ -167,7 +167,9 @@ pub enum TargetOperation {
     BookmarkMove {
         bookmark_name: BookmarkName,
     },
-    DuplicateOnto,
+    DuplicateOnto {
+        sources: SmallVec<ChangeId>,
+    },
     Revert {
         sources: SmallVec<ChangeId>,
     },
@@ -201,7 +203,7 @@ impl TargetOperation {
             TargetOperation::RestoreFrom => "restore from",
             TargetOperation::RestoreInto => "restore into",
             TargetOperation::BookmarkMove { .. } => "move bookmark",
-            TargetOperation::DuplicateOnto => "duplicate onto",
+            TargetOperation::DuplicateOnto { .. } => "duplicate onto",
             TargetOperation::Revert { .. } => "revert",
             TargetOperation::Interdiff => "interdiff with",
         }
