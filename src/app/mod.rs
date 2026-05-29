@@ -533,13 +533,42 @@ impl App {
     /// Widen the revset to include ancestors of the given commit.
     pub fn expand_ancestors(&mut self, entry_idx: crate::idx::EntryIdx) {
         let change_id = self.change_id(entry_idx);
-        let new_revset = format!(
-            "({}) | ancestors({}, {})",
-            self.revset.current,
-            change_id,
-            Self::ANCESTOR_EXPAND_COUNT,
-        );
-        self.jump_after_refresh = Some(JumpTarget::Prefix(change_id.to_string()));
+        let change_str = change_id.to_string();
+        let pattern = format!("ancestors({change_str}, ");
+
+        let new_revset = if let Some(pos) = self.revset.current.find(&pattern) {
+            let after_prefix = &self.revset.current[pos + pattern.len()..];
+            if let Some(end) = after_prefix.find(')') {
+                if let Ok(current_count) = after_prefix[..end].parse::<usize>() {
+                    let new_count = current_count + Self::ANCESTOR_EXPAND_COUNT;
+                    let mut revset = self.revset.current.to_string();
+                    let num_start = pos + pattern.len();
+                    let num_end = num_start + end;
+                    revset.replace_range(num_start..num_end, &new_count.to_string());
+                    revset
+                } else {
+                    format!(
+                        "({}) | ancestors({change_str}, {})",
+                        self.revset.current,
+                        Self::ANCESTOR_EXPAND_COUNT,
+                    )
+                }
+            } else {
+                format!(
+                    "({}) | ancestors({change_str}, {})",
+                    self.revset.current,
+                    Self::ANCESTOR_EXPAND_COUNT,
+                )
+            }
+        } else {
+            format!(
+                "({}) | ancestors({change_str}, {})",
+                self.revset.current,
+                Self::ANCESTOR_EXPAND_COUNT,
+            )
+        };
+
+        self.jump_after_refresh = Some(JumpTarget::Prefix(change_str));
         self.revset.load_state = Loadable::Loading;
         self.revset.pending = Some(new_revset.clone().into());
         self.pending_repo_requests
