@@ -3,8 +3,8 @@ use crate::dag::BookmarkRef;
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::CommandFlags;
 use crate::types::{
-    BookmarkName, ChangeId, DisplayRow, FollowUpAction, FollowUpOption, PendingCommand,
-    PendingSelection, SmallVec, TagName,
+    BookmarkName, ChangeId, FollowUpAction, FollowUpOption, PendingCommand, PendingSelection,
+    SmallVec, TagName,
 };
 
 use super::Action;
@@ -69,40 +69,8 @@ pub(super) fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Acti
 
     // Check if the selected commit is the working copy.
     let is_wc = app.selected_bookmarks().is_some_and(|_| {
-        // Check via the entries
-        let entry_idx = match app.rows.get(app.cursor.raw()) {
-            Some(DisplayRow::CommitNode { entry_idx })
-            | Some(DisplayRow::DescriptionLine { entry_idx, .. })
-            | Some(DisplayRow::GraphLink { entry_idx, .. })
-            | Some(DisplayRow::FileChange { entry_idx, .. })
-            | Some(DisplayRow::DiffLine { entry_idx, .. }) => Some(*entry_idx),
-            Some(DisplayRow::BookmarkItem { .. })
-            | Some(DisplayRow::BookmarkConflictTarget { .. })
-            | Some(DisplayRow::BookmarkRemoteTarget { .. })
-            | Some(DisplayRow::TagItem { .. })
-            | Some(DisplayRow::TagRemoteTarget { .. })
-            | Some(DisplayRow::OpLogItem { .. })
-            | Some(DisplayRow::OpLogDetailLine { .. })
-            | Some(DisplayRow::OpLogGraphLink { .. })
-            | Some(DisplayRow::OpLogLoadMore)
-            | Some(DisplayRow::EvoLogItem { .. })
-            | Some(DisplayRow::EvoLogFileChange { .. })
-            | Some(DisplayRow::EvoLogFileDiffLine { .. })
-            | Some(DisplayRow::EvoLogGraphLink { .. })
-            | Some(DisplayRow::WorkspaceItem { .. })
-            | Some(DisplayRow::CommandLogItem { .. })
-            | Some(DisplayRow::CommandLogDetail { .. })
-            | Some(DisplayRow::ConflictHeader { .. })
-            | Some(DisplayRow::ConflictSide { .. })
-            | Some(DisplayRow::ConflictContext { .. })
-            | Some(DisplayRow::InterdiffHeader)
-            | Some(DisplayRow::InterdiffFileChange { .. })
-            | Some(DisplayRow::InterdiffDiffLine { .. })
-            | Some(DisplayRow::AnnotateLine { .. })
-            | Some(DisplayRow::AnnotateDetail { .. })
-            | None => None,
-        };
-        entry_idx.is_some_and(|idx| app.nodes[idx].commit.is_working_copy())
+        app.selected_entry_idx()
+            .is_some_and(|idx| app.nodes[idx].commit.is_working_copy())
     });
 
     if is_wc {

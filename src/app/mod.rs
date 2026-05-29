@@ -583,12 +583,7 @@ impl App {
     }
 
     pub fn selected_bookmark_entry(&self) -> Option<&BookmarkViewEntry> {
-        let bookmark_idx = match self.rows.get(self.cursor.raw())? {
-            DisplayRow::BookmarkItem { bookmark_idx }
-            | DisplayRow::BookmarkConflictTarget { bookmark_idx, .. }
-            | DisplayRow::BookmarkRemoteTarget { bookmark_idx, .. } => *bookmark_idx,
-            _ => return None,
-        };
+        let bookmark_idx = self.rows.get(self.cursor.raw())?.bookmark_idx()?;
         self.views.bookmark_entries.get(bookmark_idx.raw())
     }
 
@@ -652,12 +647,7 @@ impl App {
     }
 
     pub fn selected_tag_entry(&self) -> Option<&TagViewEntry> {
-        let tag_idx = match self.rows.get(self.cursor.raw())? {
-            DisplayRow::TagItem { tag_idx } | DisplayRow::TagRemoteTarget { tag_idx, .. } => {
-                *tag_idx
-            }
-            _ => return None,
-        };
+        let tag_idx = self.rows.get(self.cursor.raw())?.tag_idx()?;
         self.views.tag_entries.get(tag_idx.raw())
     }
 
@@ -743,67 +733,23 @@ impl App {
     }
 
     pub fn selected_op_log_entry(&self) -> Option<&OpLogEntry> {
-        let op_log_idx = match self.rows.get(self.cursor.raw())? {
-            DisplayRow::OpLogItem { op_log_idx }
-            | DisplayRow::OpLogDetailLine { op_log_idx, .. } => *op_log_idx,
-            _ => return None,
-        };
+        let op_log_idx = self.rows.get(self.cursor.raw())?.op_log_idx()?;
         self.op_log.entries.get(op_log_idx.raw())
     }
 
     pub fn selected_evolog_entry(&self) -> Option<&EvoLogEntry> {
-        let evolog_idx = match self.rows.get(self.cursor.raw())? {
-            DisplayRow::EvoLogItem { evolog_idx }
-            | DisplayRow::EvoLogFileChange { evolog_idx, .. }
-            | DisplayRow::EvoLogFileDiffLine { evolog_idx, .. }
-            | DisplayRow::EvoLogGraphLink { evolog_idx, .. } => *evolog_idx,
-            _ => return None,
-        };
+        let evolog_idx = self.rows.get(self.cursor.raw())?.evolog_idx()?;
         self.evolog.entries.get(evolog_idx.raw())
     }
 
     pub fn selected_workspace_entry(&self) -> Option<&WorkspaceViewEntry> {
-        let workspace_idx = match self.rows.get(self.cursor.raw())? {
-            DisplayRow::WorkspaceItem { workspace_idx } => *workspace_idx,
-            _ => return None,
-        };
+        let workspace_idx = self.rows.get(self.cursor.raw())?.workspace_idx()?;
         self.views.workspace_entries.get(workspace_idx.raw())
     }
 
     /// Get the entry idx the cursor is on.
     pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
-        let entry_idx = match self.rows.get(self.cursor.raw())? {
-            DisplayRow::CommitNode { entry_idx }
-            | DisplayRow::DescriptionLine { entry_idx, .. }
-            | DisplayRow::GraphLink { entry_idx, .. }
-            | DisplayRow::FileChange { entry_idx, .. }
-            | DisplayRow::DiffLine { entry_idx, .. } => *entry_idx,
-            DisplayRow::BookmarkItem { .. }
-            | DisplayRow::BookmarkConflictTarget { .. }
-            | DisplayRow::BookmarkRemoteTarget { .. }
-            | DisplayRow::TagItem { .. }
-            | DisplayRow::TagRemoteTarget { .. }
-            | DisplayRow::OpLogItem { .. }
-            | DisplayRow::OpLogDetailLine { .. }
-            | DisplayRow::OpLogGraphLink { .. }
-            | DisplayRow::OpLogLoadMore
-            | DisplayRow::EvoLogItem { .. }
-            | DisplayRow::EvoLogFileChange { .. }
-            | DisplayRow::EvoLogFileDiffLine { .. }
-            | DisplayRow::EvoLogGraphLink { .. }
-            | DisplayRow::WorkspaceItem { .. }
-            | DisplayRow::CommandLogItem { .. }
-            | DisplayRow::CommandLogDetail { .. }
-            | DisplayRow::ConflictHeader { .. }
-            | DisplayRow::ConflictSide { .. }
-            | DisplayRow::ConflictContext { .. }
-            | DisplayRow::InterdiffHeader
-            | DisplayRow::InterdiffFileChange { .. }
-            | DisplayRow::InterdiffDiffLine { .. }
-            | DisplayRow::AnnotateLine { .. }
-            | DisplayRow::AnnotateDetail { .. } => return None,
-        };
-        Some(entry_idx)
+        self.rows.get(self.cursor.raw())?.entry_idx()
     }
 
     /// Get the change ID (unique prefix) of the commit the cursor is on.

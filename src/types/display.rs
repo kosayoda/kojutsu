@@ -129,3 +129,108 @@ pub enum DisplayRow {
         detail_idx: AnnotateDetailIdx,
     },
 }
+
+impl DisplayRow {
+    /// The DAG entry index, if this row belongs to the DAG view.
+    pub fn entry_idx(self) -> Option<EntryIdx> {
+        match self {
+            Self::CommitNode { entry_idx }
+            | Self::DescriptionLine { entry_idx, .. }
+            | Self::GraphLink { entry_idx, .. }
+            | Self::FileChange { entry_idx, .. }
+            | Self::DiffLine { entry_idx, .. }
+            | Self::ConflictHeader { entry_idx, .. }
+            | Self::ConflictSide { entry_idx, .. }
+            | Self::ConflictContext { entry_idx, .. } => Some(entry_idx),
+            _ => None,
+        }
+    }
+
+    /// The DAG file index, if this row is a file or diff line in the DAG view.
+    pub fn dag_file(self) -> Option<(EntryIdx, FileIdx)> {
+        match self {
+            Self::FileChange {
+                entry_idx,
+                file_idx,
+            }
+            | Self::DiffLine {
+                entry_idx,
+                file_idx,
+                ..
+            }
+            | Self::ConflictHeader {
+                entry_idx,
+                file_idx,
+                ..
+            }
+            | Self::ConflictSide {
+                entry_idx,
+                file_idx,
+                ..
+            }
+            | Self::ConflictContext {
+                entry_idx,
+                file_idx,
+                ..
+            } => Some((entry_idx, file_idx)),
+            _ => None,
+        }
+    }
+
+    /// The bookmark index, if this row belongs to the bookmark view.
+    pub fn bookmark_idx(self) -> Option<BookmarkIdx> {
+        match self {
+            Self::BookmarkItem { bookmark_idx }
+            | Self::BookmarkConflictTarget { bookmark_idx, .. }
+            | Self::BookmarkRemoteTarget { bookmark_idx, .. } => Some(bookmark_idx),
+            _ => None,
+        }
+    }
+
+    /// The tag index, if this row belongs to the tag view.
+    pub fn tag_idx(self) -> Option<TagIdx> {
+        match self {
+            Self::TagItem { tag_idx } | Self::TagRemoteTarget { tag_idx, .. } => Some(tag_idx),
+            _ => None,
+        }
+    }
+
+    /// The operation log index, if this row belongs to the op log view.
+    pub fn op_log_idx(self) -> Option<OpLogIdx> {
+        match self {
+            Self::OpLogItem { op_log_idx }
+            | Self::OpLogDetailLine { op_log_idx, .. }
+            | Self::OpLogGraphLink { op_log_idx, .. } => Some(op_log_idx),
+            _ => None,
+        }
+    }
+
+    /// The evolog index, if this row belongs to the evolog view.
+    pub fn evolog_idx(self) -> Option<EvoLogIdx> {
+        match self {
+            Self::EvoLogItem { evolog_idx }
+            | Self::EvoLogFileChange { evolog_idx, .. }
+            | Self::EvoLogFileDiffLine { evolog_idx, .. }
+            | Self::EvoLogGraphLink { evolog_idx, .. } => Some(evolog_idx),
+            _ => None,
+        }
+    }
+
+    /// The workspace index, if this row is a workspace item.
+    pub fn workspace_idx(self) -> Option<WorkspaceIdx> {
+        match self {
+            Self::WorkspaceItem { workspace_idx } => Some(workspace_idx),
+            _ => None,
+        }
+    }
+
+    /// The command log index, if this row belongs to the command log view.
+    pub fn command_log_idx(self) -> Option<CommandLogIdx> {
+        match self {
+            Self::CommandLogItem { log_idx } | Self::CommandLogDetail { log_idx, .. } => {
+                Some(log_idx)
+            }
+            _ => None,
+        }
+    }
+}
