@@ -677,9 +677,23 @@ impl LuaEngine {
         let flash_fn = self.lua.create_function(|_lua, _msg: String| Ok(()))?;
 
         let copy_fn = self.lua.create_function(|_lua, text: String| {
-            arboard::Clipboard::new()
+            use base64::Engine;
+            use std::io::Write;
+
+            let osc52_ok = (|| -> std::io::Result<()> {
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&text);
+                write!(std::io::stdout(), "\x1b]52;c;{encoded}\x07")?;
+                std::io::stdout().flush()
+            })()
+            .is_ok();
+
+            let arboard_ok = arboard::Clipboard::new()
                 .and_then(|mut cb| cb.set_text(&text))
-                .map_err(|e| mlua::Error::external(format!("clipboard: {e}")))?;
+                .is_ok();
+
+            if !osc52_ok && !arboard_ok {
+                return Err(mlua::Error::external("no clipboard available"));
+            }
             Ok(())
         })?;
 
