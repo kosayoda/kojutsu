@@ -1,7 +1,14 @@
 mod action;
+mod annotate;
+mod bmview;
 mod bookmark;
+mod dag;
+mod evolog;
 mod list;
 mod modal;
+mod oplog;
+mod tgview;
+mod wsview;
 
 pub use action::{dispatch_action_after_hooks, has_conflict_context, has_file_context};
 

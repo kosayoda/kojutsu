@@ -1,0 +1,62 @@
+use crate::app::App;
+use crate::keymap::{AppAction, CommandFlags};
+
+use super::action::jump_to_commit_in_dag;
+use super::Action;
+
+pub(super) fn dispatch(app: &mut App, action: AppAction, _flags: CommandFlags) -> Action {
+    match action {
+        AppAction::AnnotateTimeTravel => {
+            if let Some(line) = app.selected_annotate_line() {
+                let new_commit = line.commit_id.clone();
+                let line_number = line.line_number;
+                let same_commit = app
+                    .annotate
+                    .target
+                    .as_ref()
+                    .is_some_and(|t| t.commit_id == new_commit);
+                if !same_commit {
+                    if let Some(current_commit) =
+                        app.annotate.target.as_ref().map(|t| t.commit_id.clone())
+                    {
+                        app.annotate.history.push((current_commit, line_number));
+                    }
+                    app.annotate_navigate(new_commit, line_number);
+                }
+            }
+            Action::None
+        }
+        AppAction::ToggleAnnotateSeparator => {
+            if app.active_view == crate::app::ActiveView::Annotate {
+                app.annotate.show_commit_separators = !app.annotate.show_commit_separators;
+                let label = if app.annotate.show_commit_separators {
+                    "on"
+                } else {
+                    "off"
+                };
+                app.set_status(format!("commit separators: {label}"));
+            }
+            Action::None
+        }
+        AppAction::AnnotateForward => {
+            if let Some((prev_commit, prev_line)) = app.annotate.history.pop() {
+                app.annotate_navigate(prev_commit, prev_line);
+            }
+            Action::None
+        }
+        AppAction::AnnotateGoToCommit => {
+            if let Some(line) = app.selected_annotate_line() {
+                let commit_id = line.commit_id.clone();
+                let change_id = line.change_id.clone();
+                jump_to_commit_in_dag(
+                    app,
+                    Some(&commit_id),
+                    Some(&change_id),
+                    "annotate line has no commit",
+                );
+            }
+            Action::None
+        }
+        _ => Action::None,
+    }
+}
