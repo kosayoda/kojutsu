@@ -22,6 +22,7 @@ struct LuaCommand {
 struct LuaHook {
     phase: HookPhase,
     callback: mlua::RegistryKey,
+    source: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -49,8 +50,11 @@ enum SuspendedKind {
     PreHooks {
         action: AppAction,
         flags: CommandFlags,
+        header: String,
     },
-    PostHooks,
+    PostHooks {
+        header: String,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -75,7 +79,7 @@ pub struct LuaEngine {
     current_header: RefCell<String>,
     pending_action: Rc<RefCell<PendingAction>>,
     pending_logs: Rc<RefCell<Vec<String>>>,
-    log_groups: RefCell<Vec<LogGroup>>,
+    log_groups: Rc<RefCell<Vec<LogGroup>>>,
     pub init_error: Option<String>,
     repo_path: PathBuf,
 }
@@ -102,7 +106,7 @@ impl LuaEngine {
             suspended_thread: RefCell::new(None),
             pending_action,
             pending_logs,
-            log_groups: RefCell::new(Vec::new()),
+            log_groups: Rc::new(RefCell::new(Vec::new())),
             current_header: RefCell::new(String::new()),
             init_error: None,
             repo_path: repo_path.to_path_buf(),
@@ -167,7 +171,11 @@ impl LuaEngine {
                     thread,
                     value,
                     app,
-                    SuspendedKind::PreHooks { action, flags },
+                    SuspendedKind::PreHooks {
+                        action,
+                        flags,
+                        header: action_name.to_string(),
+                    },
                 );
                 HookOutcome::Suspended
             }
@@ -244,7 +252,14 @@ impl LuaEngine {
         match thread.resume::<mlua::Value>((hooks_table, ctx, result_table)) {
             Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
                 self.collect_logs(action_name.to_string(), LogPhase::Post);
-                self.handle_yield(thread, value, app, SuspendedKind::PostHooks);
+                self.handle_yield(
+                    thread,
+                    value,
+                    app,
+                    SuspendedKind::PostHooks {
+                        header: action_name.to_string(),
+                    },
+                );
                 HookOutcome::Suspended
             }
             Ok(_) => {
@@ -328,16 +343,20 @@ impl LuaEngine {
                     self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
                     ResumeResult::Action(self.take_pending_action(flags))
                 }
-                SuspendedKind::PreHooks { action, flags } => {
-                    self.collect_logs(String::new(), LogPhase::Pre);
+                SuspendedKind::PreHooks {
+                    action,
+                    flags,
+                    header,
+                } => {
+                    self.collect_logs(header, LogPhase::Pre);
                     if matches!(value, mlua::Value::Boolean(false)) {
                         ResumeResult::Action(Action::None)
                     } else {
                         ResumeResult::DispatchAction { action, flags }
                     }
                 }
-                SuspendedKind::PostHooks => {
-                    self.collect_logs(String::new(), LogPhase::Post);
+                SuspendedKind::PostHooks { header } => {
+                    self.collect_logs(header, LogPhase::Post);
                     ResumeResult::Action(Action::None)
                 }
             },
@@ -403,7 +422,10 @@ impl LuaEngine {
         let table = self.lua.create_table().ok()?;
         for (i, hook) in matching.iter().enumerate() {
             let func: mlua::Function = self.lua.registry_value(&hook.callback).ok()?;
-            table.raw_set(i + 1, func).ok()?;
+            let entry = self.lua.create_table().ok()?;
+            entry.set("fn", func).ok()?;
+            entry.set("source", hook.source.as_str()).ok()?;
+            table.raw_set(i + 1, entry).ok()?;
         }
         Some(table)
     }
@@ -703,6 +725,25 @@ impl LuaEngine {
             Ok(())
         })?;
 
+        let collect_logs_pending = self.pending_logs.clone();
+        let collect_logs_groups = self.log_groups.clone();
+        let collect_logs_fn =
+            self.lua
+                .create_function(move |_lua, (header, phase_str): (String, String)| {
+                    let messages: Vec<String> = collect_logs_pending.borrow_mut().drain(..).collect();
+                    if !messages.is_empty() {
+                        let phase = match phase_str.as_str() {
+                            "pre" => LogPhase::Pre,
+                            "post" => LogPhase::Post,
+                            _ => LogPhase::Command,
+                        };
+                        collect_logs_groups
+                            .borrow_mut()
+                            .push(LogGroup { header, phase, messages });
+                    }
+                    Ok(())
+                })?;
+
         self.lua.load(r#"
             function kojutsu.ui.input(prompt, default)
                 return coroutine.yield({type = "input", prompt = prompt or "", default = default or ""})
@@ -711,10 +752,12 @@ impl LuaEngine {
                 return coroutine.yield({type = "choose", title = title or "", items = items or {}, multi = multi or false})
             end
             function kojutsu._run_pre_hooks(hooks, ctx)
-                for _, hook in ipairs(hooks) do
-                    local ok, result = pcall(hook, ctx)
+                for _, entry in ipairs(hooks) do
+                    local ok, result = pcall(entry.fn, ctx)
+                    kojutsu._collect_logs(entry.source, "pre")
                     if not ok then
                         kojutsu.log("hook error: " .. tostring(result))
+                        kojutsu._collect_logs(entry.source, "pre")
                     elseif result == false then
                         return false
                     end
@@ -722,10 +765,12 @@ impl LuaEngine {
                 return true
             end
             function kojutsu._run_post_hooks(hooks, ctx, result_table)
-                for _, hook in ipairs(hooks) do
-                    local ok, err = pcall(hook, ctx, result_table)
+                for _, entry in ipairs(hooks) do
+                    local ok, err = pcall(entry.fn, ctx, result_table)
+                    kojutsu._collect_logs(entry.source, "post")
                     if not ok then
                         kojutsu.log("hook error: " .. tostring(err))
+                        kojutsu._collect_logs(entry.source, "post")
                     end
                 end
             end
@@ -736,6 +781,7 @@ impl LuaEngine {
         kojutsu.set("jj_interactive", jj_interactive_fn)?;
         kojutsu.set("log", log_fn)?;
         kojutsu.set("copy", copy_fn)?;
+        kojutsu.set("_collect_logs", collect_logs_fn)?;
 
         let ui: mlua::Table = kojutsu.get("ui")?;
         ui.set("flash", flash_fn)?;
@@ -853,10 +899,11 @@ impl LuaEngine {
                             )))
                         }
                     };
+                    let source = lua_source_info(lua, &func);
                     let mut hooks = hooks_clone.borrow_mut();
                     for name in action_names {
                         let callback = lua.create_registry_value(func.clone())?;
-                        hooks.push((name.into(), LuaHook { phase, callback }));
+                        hooks.push((name.into(), LuaHook { phase, callback, source: source.clone() }));
                     }
                     Ok(())
                 })?;
