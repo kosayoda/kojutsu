@@ -21,7 +21,12 @@ pub(super) fn handle_text_input(
             {
                 let text = input.to_string();
                 match on_submit {
-                    PendingCommand::LuaResume => lua.resume_command(app, Some(text)),
+                    PendingCommand::LuaResume => match lua.resume_suspended(app, Some(text)) {
+                        crate::lua::ResumeResult::Action(a) => a,
+                        crate::lua::ResumeResult::DispatchAction { action, flags } => {
+                            Action::DeferredDispatch { action, flags }
+                        }
+                    },
                     PendingCommand::Revset => {
                         app.revset.active_preset = None;
                         Action::UpdateRevset(text)
@@ -69,7 +74,8 @@ pub(super) fn handle_text_input(
         KeyCode::Esc => {
             if lua.has_suspended_thread() {
                 app.mode = AppMode::Normal;
-                lua.resume_command(app, None)
+                lua.cancel_suspended_thread();
+                Action::None
             } else {
                 app.mode = AppMode::Normal;
                 Action::None

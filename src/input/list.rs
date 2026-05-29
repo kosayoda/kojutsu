@@ -198,7 +198,7 @@ pub(super) fn handle_select_from_list(
             }
             app.mode = AppMode::Normal;
             if lua.has_suspended_thread() {
-                return lua.resume_command(app, None);
+                lua.cancel_suspended_thread();
             }
             Action::None
         }
@@ -360,7 +360,12 @@ pub(super) fn resolve_selection(
         }
         PendingSelection::LuaResume => {
             let selected = names.into_iter().next().map(|s| s.to_string());
-            lua.resume_command(app, selected)
+            match lua.resume_suspended(app, selected) {
+                crate::lua::ResumeResult::Action(a) => a,
+                crate::lua::ResumeResult::DispatchAction { action, flags } => {
+                    Action::DeferredDispatch { action, flags }
+                }
+            }
         }
     }
 }

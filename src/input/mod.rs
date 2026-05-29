@@ -3,7 +3,7 @@ mod bookmark;
 mod list;
 mod modal;
 
-pub use action::{has_conflict_context, has_file_context};
+pub use action::{dispatch_action_after_hooks, has_conflict_context, has_file_context};
 
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -38,6 +38,11 @@ pub enum Action {
         commit_id: crate::types::CommitId,
         path: crate::types::RepoPath,
         line: usize,
+    },
+    /// Pre-hooks completed after yielding; dispatch the deferred action.
+    DeferredDispatch {
+        action: crate::keymap::AppAction,
+        flags: crate::keymap::CommandFlags,
     },
     /// Run `jj new <commit>`, then open $EDITOR on the file, then refresh.
     CheckoutAndEdit {

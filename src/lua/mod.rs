@@ -9,7 +9,8 @@ use crate::app::App;
 use crate::input::Action;
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{
-    ActionRegistry, BindTarget, BindingSpec, CommandFlags, HelpGroup, Scope, SelectionKindSet,
+    ActionRegistry, AppAction, BindTarget, BindingSpec, CommandFlags, HelpGroup, Scope,
+    SelectionKindSet,
 };
 
 struct LuaCommand {
@@ -21,7 +22,6 @@ struct LuaCommand {
 struct LuaHook {
     phase: HookPhase,
     callback: mlua::RegistryKey,
-    source: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -30,9 +30,27 @@ enum HookPhase {
     Post,
 }
 
-pub enum HookResult {
+pub enum HookOutcome {
     Proceed,
     Cancel,
+    Suspended,
+}
+
+pub enum ResumeResult {
+    Action(Action),
+    DispatchAction {
+        action: AppAction,
+        flags: CommandFlags,
+    },
+}
+
+enum SuspendedKind {
+    Command(CommandFlags),
+    PreHooks {
+        action: AppAction,
+        flags: CommandFlags,
+    },
+    PostHooks,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -53,7 +71,7 @@ pub struct LuaEngine {
     commands: Vec<LuaCommand>,
     hooks: Vec<(CompactString, LuaHook)>,
     extra_bindings: Vec<BindingSpec>,
-    suspended_thread: RefCell<Option<(mlua::RegistryKey, CommandFlags)>>,
+    suspended_thread: RefCell<Option<(mlua::RegistryKey, SuspendedKind)>>,
     current_header: RefCell<String>,
     pending_action: Rc<RefCell<PendingAction>>,
     pending_logs: Rc<RefCell<Vec<String>>>,
@@ -68,7 +86,12 @@ impl LuaEngine {
         registry: &mut ActionRegistry,
         default_specs: &[BindingSpec],
     ) -> Self {
-        let lua = unsafe { Lua::unsafe_new_with(mlua::StdLib::ALL_SAFE | mlua::StdLib::DEBUG, mlua::LuaOptions::default()) };
+        let lua = unsafe {
+            Lua::unsafe_new_with(
+                mlua::StdLib::ALL_SAFE | mlua::StdLib::DEBUG,
+                mlua::LuaOptions::default(),
+            )
+        };
         let pending_action = Rc::new(RefCell::new(PendingAction::None));
         let pending_logs = Rc::new(RefCell::new(Vec::new()));
         let mut engine = LuaEngine {
@@ -102,90 +125,136 @@ impl LuaEngine {
         self.suspended_thread.borrow().is_some()
     }
 
-    pub fn run_pre_hooks(&self, action_name: &str, app: &mut App) -> HookResult {
-        for (name, hook) in &self.hooks {
-            if hook.phase != HookPhase::Pre {
-                continue;
+    pub fn run_pre_hooks(
+        &self,
+        action_name: &str,
+        action: AppAction,
+        flags: CommandFlags,
+        app: &mut App,
+    ) -> HookOutcome {
+        let hooks_table = match self.collect_hook_functions(action_name, HookPhase::Pre) {
+            Some(t) => t,
+            None => return HookOutcome::Proceed,
+        };
+        let ctx = match self.build_ctx_table(app) {
+            Ok(t) => t,
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                return HookOutcome::Proceed;
             }
-            match hook_matches(&self.lua, name, action_name) {
-                Ok(false) => continue,
-                Err(e) => {
-                    tracing::warn!("hook pattern error for '{name}': {e}");
-                    continue;
-                }
-                Ok(true) => {}
+        };
+        let wrapper: mlua::Function = match (|| {
+            let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
+            kojutsu.get::<mlua::Function>("_run_pre_hooks")
+        })() {
+            Ok(f) => f,
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                return HookOutcome::Proceed;
             }
-            let result: mlua::Result<bool> = (|| {
-                let func: mlua::Function = self.lua.registry_value(&hook.callback)?;
-                let ctx = self.build_ctx_table(app)?;
-                let val = func.call::<mlua::Value>(ctx)?;
-                match val {
-                    mlua::Value::Boolean(false) => Ok(false),
-                    _ => Ok(true),
-                }
-            })();
-            self.collect_logs(hook.source.clone(), LogPhase::Pre);
-            match result {
-                Ok(false) => {
-                    app.push_command_log(
-                        crate::app::CommandLogKind::Warning,
-                        format!("plugin: pre-hook cancelled - {action_name}"),
-                        None,
-                        Vec::new(),
-                        false,
-                    );
-                    return HookResult::Cancel;
-                }
-                Ok(true) => {}
-                Err(e) => {
-                    tracing::warn!("pre-hook error for {action_name}: {e}");
-                    app.push_command_log(
-                        crate::app::CommandLogKind::Warning,
-                        format!("plugin: pre-hook error - {action_name}"),
-                        None,
-                        e.to_string().into_bytes(),
-                        false,
-                    );
-                    app.set_error(format!("plugin: pre-hook error - {action_name}: {e}"));
-                }
+        };
+        let thread = match self.lua.create_thread(wrapper) {
+            Ok(t) => t,
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                return HookOutcome::Proceed;
             }
-        }
-        HookResult::Proceed
-    }
-
-    pub fn run_post_hooks(&self, action_name: &str, app: &mut App, success: bool, output: &[u8]) {
-        for (name, hook) in &self.hooks {
-            if hook.phase != HookPhase::Post {
-                continue;
+        };
+        match thread.resume::<mlua::Value>((hooks_table, ctx)) {
+            Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
+                self.collect_logs(action_name.to_string(), LogPhase::Pre);
+                self.handle_yield(
+                    thread,
+                    value,
+                    app,
+                    SuspendedKind::PreHooks { action, flags },
+                );
+                HookOutcome::Suspended
             }
-            match hook_matches(&self.lua, name, action_name) {
-                Ok(false) => continue,
-                Err(e) => {
-                    tracing::warn!("hook pattern error for '{name}': {e}");
-                    continue;
-                }
-                Ok(true) => {}
-            }
-            let result: mlua::Result<()> = (|| {
-                let func: mlua::Function = self.lua.registry_value(&hook.callback)?;
-                let ctx = self.build_ctx_table(app)?;
-                let result_table = self.lua.create_table()?;
-                result_table.set("ok", success)?;
-                result_table.set("output", String::from_utf8_lossy(output).into_owned())?;
-                func.call::<()>((ctx, result_table))?;
-                Ok(())
-            })();
-            self.collect_logs(hook.source.clone(), LogPhase::Post);
-            if let Err(e) = result {
-                tracing::warn!("post-hook error for {action_name}: {e}");
+            Ok(mlua::Value::Boolean(false)) => {
+                self.collect_logs(action_name.to_string(), LogPhase::Pre);
                 app.push_command_log(
                     crate::app::CommandLogKind::Warning,
-                    format!("plugin: post-hook error - {action_name}"),
+                    format!("plugin: pre-hook cancelled - {action_name}"),
                     None,
-                    e.to_string().into_bytes(),
+                    Vec::new(),
                     false,
                 );
-                app.set_error(format!("plugin: post-hook error - {action_name}: {e}"));
+                HookOutcome::Cancel
+            }
+            Ok(_) => {
+                self.collect_logs(action_name.to_string(), LogPhase::Pre);
+                HookOutcome::Proceed
+            }
+            Err(e) => {
+                self.collect_logs(action_name.to_string(), LogPhase::Pre);
+                app.set_error(format!("plugin: pre-hook error: {e}"));
+                HookOutcome::Proceed
+            }
+        }
+    }
+
+    pub fn run_post_hooks(
+        &self,
+        action_name: &str,
+        app: &mut App,
+        success: bool,
+        output: &[u8],
+    ) -> HookOutcome {
+        let hooks_table = match self.collect_hook_functions(action_name, HookPhase::Post) {
+            Some(t) => t,
+            None => return HookOutcome::Proceed,
+        };
+        let ctx = match self.build_ctx_table(app) {
+            Ok(t) => t,
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                return HookOutcome::Proceed;
+            }
+        };
+        let result_table = match (|| {
+            let t = self.lua.create_table()?;
+            t.set("ok", success)?;
+            t.set("output", String::from_utf8_lossy(output).into_owned())?;
+            Ok::<_, mlua::Error>(t)
+        })() {
+            Ok(t) => t,
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                return HookOutcome::Proceed;
+            }
+        };
+        let wrapper: mlua::Function = match (|| {
+            let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
+            kojutsu.get::<mlua::Function>("_run_post_hooks")
+        })() {
+            Ok(f) => f,
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                return HookOutcome::Proceed;
+            }
+        };
+        let thread = match self.lua.create_thread(wrapper) {
+            Ok(t) => t,
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                return HookOutcome::Proceed;
+            }
+        };
+        match thread.resume::<mlua::Value>((hooks_table, ctx, result_table)) {
+            Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
+                self.collect_logs(action_name.to_string(), LogPhase::Post);
+                self.handle_yield(thread, value, app, SuspendedKind::PostHooks);
+                HookOutcome::Suspended
+            }
+            Ok(_) => {
+                self.collect_logs(action_name.to_string(), LogPhase::Post);
+                HookOutcome::Proceed
+            }
+            Err(e) => {
+                self.collect_logs(action_name.to_string(), LogPhase::Post);
+                app.set_error(format!("plugin: post-hook error: {e}"));
+                HookOutcome::Proceed
             }
         }
     }
@@ -220,26 +289,26 @@ impl LuaEngine {
             }
         };
 
-        let action = self.resume_thread(thread, mlua::Value::Nil, app, flags);
-        self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
-        action
+        self.resume_and_handle(thread, mlua::Value::Nil, app, SuspendedKind::Command(flags))
     }
 
-    pub fn resume_command(&self, app: &mut App, value: Option<String>) -> Action {
-        let (thread_key, flags) = match self.suspended_thread.borrow_mut().take() {
+    pub fn resume_suspended(&self, app: &mut App, value: Option<String>) -> ResumeResult {
+        let (thread_key, kind) = match self.suspended_thread.borrow_mut().take() {
             Some(pair) => pair,
-            None => return Action::None,
+            None => return ResumeResult::Action(Action::None),
         };
         let thread: mlua::Thread = match self.lua.registry_value(&thread_key) {
             Ok(t) => t,
             Err(e) => {
                 app.set_error(format!("plugin resume: {e}"));
-                return Action::None;
+                return ResumeResult::Action(Action::None);
             }
         };
         let _ = self.lua.remove_registry_value(thread_key);
 
-        self.prepare_execution(app);
+        self.update_ctx(app);
+        self.pending_action.replace(PendingAction::None);
+        self.pending_logs.borrow_mut().clear();
 
         let lua_value = match value {
             Some(s) => match self.lua.create_string(&s) {
@@ -249,9 +318,34 @@ impl LuaEngine {
             None => mlua::Value::Nil,
         };
 
-        let action = self.resume_thread(thread, lua_value, app, flags);
-        self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
-        action
+        match thread.resume::<mlua::Value>(lua_value) {
+            Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
+                self.handle_yield(thread, value, app, kind);
+                ResumeResult::Action(Action::None)
+            }
+            Ok(value) => match kind {
+                SuspendedKind::Command(flags) => {
+                    self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
+                    ResumeResult::Action(self.take_pending_action(flags))
+                }
+                SuspendedKind::PreHooks { action, flags } => {
+                    self.collect_logs(String::new(), LogPhase::Pre);
+                    if matches!(value, mlua::Value::Boolean(false)) {
+                        ResumeResult::Action(Action::None)
+                    } else {
+                        ResumeResult::DispatchAction { action, flags }
+                    }
+                }
+                SuspendedKind::PostHooks => {
+                    self.collect_logs(String::new(), LogPhase::Post);
+                    ResumeResult::Action(Action::None)
+                }
+            },
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                ResumeResult::Action(Action::None)
+            }
+        }
     }
 
     pub fn cancel_suspended_thread(&self) {
@@ -260,19 +354,24 @@ impl LuaEngine {
         }
     }
 
-    fn resume_thread(
+    fn resume_and_handle(
         &self,
         thread: mlua::Thread,
         arg: mlua::Value,
         app: &mut App,
-        flags: CommandFlags,
+        kind: SuspendedKind,
     ) -> Action {
         match thread.resume::<mlua::Value>(arg) {
-            Ok(value) => {
-                if thread.status() == mlua::ThreadStatus::Resumable {
-                    self.handle_yield(thread, value, app, flags)
-                } else {
+            Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
+                self.handle_yield(thread, value, app, kind);
+                Action::None
+            }
+            Ok(_) => {
+                if let SuspendedKind::Command(flags) = kind {
+                    self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
                     self.take_pending_action(flags)
+                } else {
+                    Action::None
                 }
             }
             Err(e) => {
@@ -289,18 +388,38 @@ impl LuaEngine {
         }
     }
 
+    fn collect_hook_functions(&self, action_name: &str, phase: HookPhase) -> Option<mlua::Table> {
+        let matching: Vec<&LuaHook> = self
+            .hooks
+            .iter()
+            .filter(|(name, hook)| {
+                hook.phase == phase && hook_matches(&self.lua, name, action_name).unwrap_or(false)
+            })
+            .map(|(_, hook)| hook)
+            .collect();
+        if matching.is_empty() {
+            return None;
+        }
+        let table = self.lua.create_table().ok()?;
+        for (i, hook) in matching.iter().enumerate() {
+            let func: mlua::Function = self.lua.registry_value(&hook.callback).ok()?;
+            table.raw_set(i + 1, func).ok()?;
+        }
+        Some(table)
+    }
+
     fn handle_yield(
         &self,
         thread: mlua::Thread,
         value: mlua::Value,
         app: &mut App,
-        flags: CommandFlags,
-    ) -> Action {
+        kind: SuspendedKind,
+    ) {
         let table = match value {
             mlua::Value::Table(t) => t,
             _ => {
                 app.set_error("plugin: invalid yield (expected table)");
-                return Action::None;
+                return;
             }
         };
         let request_type: String = table.get("type").unwrap_or_default();
@@ -322,7 +441,7 @@ impl LuaEngine {
                     .unwrap_or_default();
                 if items.is_empty() {
                     app.set_error("plugin: choose requires non-empty items");
-                    return Action::None;
+                    return;
                 }
                 let title: String = table.get("title").unwrap_or_default();
                 let multi: bool = table.get("multi").unwrap_or(false);
@@ -336,7 +455,7 @@ impl LuaEngine {
             }
             other => {
                 app.set_error(format!("plugin: unknown yield type '{other}'"));
-                return Action::None;
+                return;
             }
         };
 
@@ -344,12 +463,11 @@ impl LuaEngine {
             Ok(k) => k,
             Err(e) => {
                 app.set_error(format!("plugin: failed to store thread: {e}"));
-                return Action::None;
+                return;
             }
         };
-        *self.suspended_thread.borrow_mut() = Some((key, flags));
+        *self.suspended_thread.borrow_mut() = Some((key, kind));
         app.mode = mode;
-        Action::None
     }
 
     fn take_pending_action(&self, flags: CommandFlags) -> Action {
@@ -558,6 +676,13 @@ impl LuaEngine {
 
         let flash_fn = self.lua.create_function(|_lua, _msg: String| Ok(()))?;
 
+        let copy_fn = self.lua.create_function(|_lua, text: String| {
+            arboard::Clipboard::new()
+                .and_then(|mut cb| cb.set_text(&text))
+                .map_err(|e| mlua::Error::external(format!("clipboard: {e}")))?;
+            Ok(())
+        })?;
+
         let logs = self.pending_logs.clone();
         let log_fn = self.lua.create_function(move |_lua, msg: String| {
             logs.borrow_mut().push(msg);
@@ -571,12 +696,32 @@ impl LuaEngine {
             function kojutsu.ui.choose(title, items, multi)
                 return coroutine.yield({type = "choose", title = title or "", items = items or {}, multi = multi or false})
             end
+            function kojutsu._run_pre_hooks(hooks, ctx)
+                for _, hook in ipairs(hooks) do
+                    local ok, result = pcall(hook, ctx)
+                    if not ok then
+                        kojutsu.log("hook error: " .. tostring(result))
+                    elseif result == false then
+                        return false
+                    end
+                end
+                return true
+            end
+            function kojutsu._run_post_hooks(hooks, ctx, result_table)
+                for _, hook in ipairs(hooks) do
+                    local ok, err = pcall(hook, ctx, result_table)
+                    if not ok then
+                        kojutsu.log("hook error: " .. tostring(err))
+                    end
+                end
+            end
         "#).exec()?;
 
         let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
         kojutsu.set("jj", jj_fn)?;
         kojutsu.set("jj_interactive", jj_interactive_fn)?;
         kojutsu.set("log", log_fn)?;
+        kojutsu.set("copy", copy_fn)?;
 
         let ui: mlua::Table = kojutsu.get("ui")?;
         ui.set("flash", flash_fn)?;
@@ -685,7 +830,6 @@ impl LuaEngine {
                         };
                     let phase_str: String = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
                     let func: mlua::Function = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
-                    let source = lua_source_info(lua, &func);
                     let phase = match phase_str.as_str() {
                         "pre" => HookPhase::Pre,
                         "post" => HookPhase::Post,
@@ -698,14 +842,7 @@ impl LuaEngine {
                     let mut hooks = hooks_clone.borrow_mut();
                     for name in action_names {
                         let callback = lua.create_registry_value(func.clone())?;
-                        hooks.push((
-                            name.into(),
-                            LuaHook {
-                                phase,
-                                callback,
-                                source: source.clone(),
-                            },
-                        ));
+                        hooks.push((name.into(), LuaHook { phase, callback }));
                     }
                     Ok(())
                 })?;
@@ -1029,6 +1166,7 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field jj fun(args: string[]): JJResult").unwrap();
     writeln!(out, "---@field jj_interactive fun(args: string[])").unwrap();
     writeln!(out, "---@field log fun(msg: string)").unwrap();
+    writeln!(out, "---@field copy fun(text: string)").unwrap();
     writeln!(
         out,
         "---@field command fun(name: string, fn: fun(ctx: KojutsuCtx), opts: CommandOpts)"

@@ -156,13 +156,25 @@ fn dispatch_action(
 ) -> Action {
     let id_name = crate::keymap::action_id_name(action);
 
-    // Run pre-hooks — they can cancel the action.
-    if matches!(
-        lua.run_pre_hooks(id_name, app),
-        crate::lua::HookResult::Cancel
-    ) {
-        return Action::None;
+    match lua.run_pre_hooks(id_name, action, flags, app) {
+        crate::lua::HookOutcome::Cancel | crate::lua::HookOutcome::Suspended => {
+            return Action::None
+        }
+        crate::lua::HookOutcome::Proceed => {}
     }
+
+    dispatch_action_after_hooks(app, registry, lua, action, flags)
+}
+
+pub fn dispatch_action_after_hooks(
+    app: &mut App,
+    registry: &ActionRegistry,
+    lua: &crate::lua::LuaEngine,
+    action: AppAction,
+    flags: CommandFlags,
+) -> Action {
+    let id_name = crate::keymap::action_id_name(action);
+    app.last_action_label = Some(id_name);
 
     // Merge global toggles into the command flags.
     let flags = flags | app.toggles;
@@ -214,8 +226,6 @@ fn dispatch_action(
             }
         }
     }
-
-    app.last_action_label = Some(id_name);
 
     match action {
         AppAction::Quit => Action::Quit,

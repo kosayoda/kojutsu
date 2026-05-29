@@ -331,6 +331,40 @@ fn main() -> Result<()> {
                 }
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
             }
+            Action::DeferredDispatch { action, flags } => {
+                let result = input::dispatch_action_after_hooks(
+                    &mut app,
+                    &keymaps.registry,
+                    &lua_engine,
+                    action,
+                    flags,
+                );
+                // Re-process the resulting action.
+                match result {
+                    Action::RunJj(cmd) => {
+                        let action_label = app.last_action_label.take();
+                        run_jj_command(&mut app, &repo_path, cmd);
+                        if let Some(label) = action_label {
+                            let (success, output) = extract_command_result(&app);
+                            lua_engine.run_post_hooks(label, &mut app, success, &output);
+                        }
+                    }
+                    Action::SuspendAndRunJj(cmd) => {
+                        let action_label = app.last_action_label.take();
+                        terminal_events.stop();
+                        suspend_and_run(&mut app, &repo_path, &mut terminal, cmd);
+                        terminal_events =
+                            spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+                        if let Some(label) = action_label {
+                            let (success, output) = extract_command_result(&app);
+                            lua_engine.run_post_hooks(label, &mut app, success, &output);
+                        }
+                    }
+                    Action::Refresh => refresh_app(&mut app),
+                    Action::UpdateRevset(revset_str) => update_revset(&mut app, revset_str),
+                    _ => {}
+                }
+            }
             Action::None => {}
         }
         lua_engine.flush_logs(&mut app);
