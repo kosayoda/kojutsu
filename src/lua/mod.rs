@@ -33,14 +33,29 @@ pub enum HookResult {
     Cancel,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LogPhase {
+    Pre,
+    Post,
+    Command,
+}
+
+struct LogGroup {
+    header: String,
+    phase: LogPhase,
+    messages: Vec<String>,
+}
+
 pub struct LuaEngine {
     lua: Lua,
     commands: Vec<LuaCommand>,
     hooks: Vec<(CompactString, LuaHook)>,
     extra_bindings: Vec<BindingSpec>,
     suspended_thread: RefCell<Option<(mlua::RegistryKey, CommandFlags)>>,
+    current_header: RefCell<String>,
     pending_action: Rc<RefCell<PendingAction>>,
     pending_logs: Rc<RefCell<Vec<String>>>,
+    log_groups: RefCell<Vec<LogGroup>>,
     pub init_error: Option<String>,
     repo_path: PathBuf,
 }
@@ -62,6 +77,8 @@ impl LuaEngine {
             suspended_thread: RefCell::new(None),
             pending_action,
             pending_logs,
+            log_groups: RefCell::new(Vec::new()),
+            current_header: RefCell::new(String::new()),
             init_error: None,
             repo_path: repo_path.to_path_buf(),
         };
@@ -96,8 +113,15 @@ impl LuaEngine {
                 }
                 Ok(true) => {}
             }
+            let func: mlua::Function = match self.lua.registry_value(&hook.callback) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!("pre-hook registry error for {action_name}: {e}");
+                    continue;
+                }
+            };
+            let header = lua_source_info(&self.lua, &func);
             let result: mlua::Result<bool> = (|| {
-                let func: mlua::Function = self.lua.registry_value(&hook.callback)?;
                 let ctx = self.build_ctx_table(app)?;
                 let val = func.call::<mlua::Value>(ctx)?;
                 match val {
@@ -105,6 +129,7 @@ impl LuaEngine {
                     _ => Ok(true),
                 }
             })();
+            self.collect_logs(header.clone(), LogPhase::Pre);
             match result {
                 Ok(false) => {
                     app.push_command_log(
@@ -146,8 +171,15 @@ impl LuaEngine {
                 }
                 Ok(true) => {}
             }
+            let func: mlua::Function = match self.lua.registry_value(&hook.callback) {
+                Ok(f) => f,
+                Err(e) => {
+                    tracing::warn!("post-hook registry error for {action_name}: {e}");
+                    continue;
+                }
+            };
+            let header = lua_source_info(&self.lua, &func);
             let result: mlua::Result<()> = (|| {
-                let func: mlua::Function = self.lua.registry_value(&hook.callback)?;
                 let ctx = self.build_ctx_table(app)?;
                 let result_table = self.lua.create_table()?;
                 result_table.set("ok", success)?;
@@ -155,6 +187,7 @@ impl LuaEngine {
                 func.call::<()>((ctx, result_table))?;
                 Ok(())
             })();
+            self.collect_logs(header, LogPhase::Post);
             if let Err(e) = result {
                 tracing::warn!("post-hook error for {action_name}: {e}");
                 app.push_command_log(
@@ -190,6 +223,7 @@ impl LuaEngine {
                 return Action::None;
             }
         };
+        *self.current_header.borrow_mut() = lua_source_info(&self.lua, &func);
         let thread = match self.lua.create_thread(func) {
             Ok(t) => t,
             Err(e) => {
@@ -198,7 +232,9 @@ impl LuaEngine {
             }
         };
 
-        self.resume_thread(thread, mlua::Value::Nil, app, flags)
+        let action = self.resume_thread(thread, mlua::Value::Nil, app, flags);
+        self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
+        action
     }
 
     pub fn resume_command(&self, app: &mut App, value: Option<String>) -> Action {
@@ -225,7 +261,9 @@ impl LuaEngine {
             None => mlua::Value::Nil,
         };
 
-        self.resume_thread(thread, lua_value, app, flags)
+        let action = self.resume_thread(thread, lua_value, app, flags);
+        self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
+        action
     }
 
     pub fn cancel_suspended_thread(&self) {
@@ -246,12 +284,10 @@ impl LuaEngine {
                 if thread.status() == mlua::ThreadStatus::Resumable {
                     self.handle_yield(thread, value, app, flags)
                 } else {
-                    self.flush_logs(app);
                     self.take_pending_action(flags)
                 }
             }
             Err(e) => {
-                self.flush_logs(app);
                 app.set_error(format!("plugin: {e}"));
                 app.push_command_log(
                     crate::app::CommandLogKind::Warning,
@@ -349,27 +385,71 @@ impl LuaEngine {
         self.update_ctx(app);
         self.pending_action.replace(PendingAction::None);
         self.pending_logs.borrow_mut().clear();
+        self.log_groups.borrow_mut().clear();
+    }
+
+    fn collect_logs(&self, header: String, phase: LogPhase) {
+        let messages: Vec<String> = self.pending_logs.borrow_mut().drain(..).collect();
+        if messages.is_empty() {
+            return;
+        }
+        self.log_groups.borrow_mut().push(LogGroup {
+            header,
+            phase,
+            messages,
+        });
     }
 
     pub fn flush_logs(&self, app: &mut App) {
-        let logs: Vec<String> = self.pending_logs.borrow_mut().drain(..).collect();
-        if logs.is_empty() {
+        let mut groups: Vec<LogGroup> = self.log_groups.borrow_mut().drain(..).collect();
+        let stray: Vec<String> = self.pending_logs.borrow_mut().drain(..).collect();
+        if !stray.is_empty() {
+            groups.push(LogGroup {
+                header: String::new(),
+                phase: LogPhase::Command,
+                messages: stray,
+            });
+        }
+        if groups.is_empty() {
             return;
+        }
+
+        fn render_group(group: &LogGroup, out: &mut Vec<u8>) {
+            if !group.header.is_empty() {
+                out.extend_from_slice(format!("── {} ──\n", group.header).as_bytes());
+            }
+            for msg in &group.messages {
+                out.extend_from_slice(msg.as_bytes());
+                out.push(b'\n');
+            }
         }
 
         match &mut app.mode {
             crate::app::AppMode::CommandOutput { output, .. } => {
-                output.extend_from_slice("\n── plugin ──\n".as_bytes());
-                for msg in &logs {
-                    output.extend_from_slice(msg.as_bytes());
+                let pre: Vec<&LogGroup> =
+                    groups.iter().filter(|g| g.phase == LogPhase::Pre).collect();
+                if !pre.is_empty() {
+                    let mut pre_output = Vec::new();
+                    for g in &pre {
+                        render_group(g, &mut pre_output);
+                    }
+                    pre_output.push(b'\n');
+                    pre_output.extend_from_slice(output);
+                    *output = pre_output;
+                }
+                let post: Vec<&LogGroup> =
+                    groups.iter().filter(|g| g.phase != LogPhase::Pre).collect();
+                if !post.is_empty() {
                     output.push(b'\n');
+                    for g in &post {
+                        render_group(g, output);
+                    }
                 }
             }
             _ => {
                 let mut output = Vec::new();
-                for msg in &logs {
-                    output.extend_from_slice(msg.as_bytes());
-                    output.push(b'\n');
+                for g in &groups {
+                    render_group(g, &mut output);
                 }
                 app.mode = crate::app::AppMode::CommandOutput {
                     command: String::new(),
@@ -381,14 +461,16 @@ impl LuaEngine {
             }
         }
 
-        for msg in logs {
-            app.push_command_log(
-                crate::app::CommandLogKind::Background,
-                msg,
-                None,
-                Vec::new(),
-                true,
-            );
+        for group in groups {
+            for msg in group.messages {
+                app.push_command_log(
+                    crate::app::CommandLogKind::Background,
+                    msg,
+                    None,
+                    Vec::new(),
+                    true,
+                );
+            }
         }
     }
 
@@ -1047,6 +1129,20 @@ enum PendingAction {
     Refresh,
     SetRevset(String),
     Interactive(Vec<String>),
+}
+
+fn lua_source_info(lua: &Lua, func: &mlua::Function) -> String {
+    let result: mlua::Result<String> = (|| {
+        let debug: mlua::Table = lua.globals().get("debug")?;
+        let getinfo: mlua::Function = debug.get("getinfo")?;
+        let info: mlua::Table = getinfo.call((func.clone(), "Sl"))?;
+        let source: String = info
+            .get::<String>("short_src")
+            .unwrap_or_else(|_| "?".into());
+        let line: i64 = info.get("linedefined").unwrap_or(0);
+        Ok(format!("{source}:{line}"))
+    })();
+    result.unwrap_or_else(|_| "?".into())
 }
 
 fn hook_matches(lua: &Lua, pattern: &str, action_name: &str) -> mlua::Result<bool> {
