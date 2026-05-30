@@ -83,15 +83,34 @@ pub struct RepoRequest {
     kind: RepoRequestKind,
 }
 
+/// What subsystem produced the error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RepoErrorKind {
+    /// Repository could not be opened.
+    RepoOpen,
+    /// A revset expression failed to parse or evaluate.
+    Revset,
+    /// A jj operation failed (commit, diff, annotate, etc.).
+    Operation,
+    /// The workspace is stale and recovery failed.
+    WorkspaceStale,
+    /// A background task panicked or failed to open the repo.
+    Background,
+    /// The repository is not loaded yet (request arrived too early).
+    NotLoaded,
+}
+
 /// Error from the repository service layer.
 #[derive(Clone, Debug)]
 pub struct RepoError {
+    pub kind: RepoErrorKind,
     pub message: String,
 }
 
 impl RepoError {
-    pub fn new(msg: impl Into<String>) -> Self {
+    pub fn new(kind: RepoErrorKind, msg: impl Into<String>) -> Self {
         Self {
+            kind,
             message: msg.into(),
         }
     }
@@ -509,6 +528,7 @@ impl RepoServiceState {
                             RepoResult::Revset {
                                 revset: requested_revset,
                                 result: Err(RepoError {
+                                    kind: RepoErrorKind::WorkspaceStale,
                                     message: format!(
                                         "workspace is stale and update-stale failed:\n{update_err}"
                                     ),
@@ -528,6 +548,7 @@ impl RepoServiceState {
                     RepoResult::Revset {
                         revset: requested_revset,
                         result: Err(RepoError {
+                            kind: RepoErrorKind::RepoOpen,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -669,6 +690,7 @@ impl RepoServiceState {
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
                                     error: RepoError {
+                                        kind: RepoErrorKind::Background,
                                         message: format!("prefix lengths: {e:#}"),
                                     },
                                 });
@@ -682,6 +704,7 @@ impl RepoServiceState {
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
                                     error: RepoError {
+                                        kind: RepoErrorKind::Background,
                                         message: format!("prefix lengths: {e:#}"),
                                     },
                                 });
@@ -705,6 +728,7 @@ impl RepoServiceState {
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
                                     error: RepoError {
+                                        kind: RepoErrorKind::Background,
                                         message: format!("detail prefix lengths: {e:#}"),
                                     },
                                 });
@@ -719,6 +743,7 @@ impl RepoServiceState {
                             Err(e) => {
                                 let _ = tx.send(RepoResult::BackgroundError {
                                     error: RepoError {
+                                        kind: RepoErrorKind::Background,
                                         message: format!("detail prefix lengths: {e:#}"),
                                     },
                                 });
@@ -734,6 +759,7 @@ impl RepoServiceState {
                     RepoResult::Revset {
                         revset: effective_revset,
                         result: Err(RepoError {
+                            kind: RepoErrorKind::Revset,
                             message: format!("{err:#}"),
                         }),
                     },
@@ -756,6 +782,7 @@ impl RepoServiceState {
                 RepoResult::CommitDetails {
                     commit_id,
                     result: Err(RepoError {
+                        kind: RepoErrorKind::NotLoaded,
                         message: "repository not loaded yet".to_string(),
                     }),
                 },
@@ -776,6 +803,7 @@ impl RepoServiceState {
                 RepoResult::CommitDetails {
                     commit_id: commit_id.clone(),
                     result: Err(RepoError {
+                        kind: RepoErrorKind::Operation,
                         message: format!("{err:#}"),
                     }),
                 },
@@ -806,6 +834,7 @@ impl RepoServiceState {
                     commit_id,
                     path,
                     result: Err(RepoError {
+                        kind: RepoErrorKind::NotLoaded,
                         message: "repository not loaded yet".to_string(),
                     }),
                 },
@@ -828,6 +857,7 @@ impl RepoServiceState {
                     commit_id: commit_id.clone(),
                     path: path.clone(),
                     result: Err(RepoError {
+                        kind: RepoErrorKind::Operation,
                         message: format!("{err:#}"),
                     }),
                 },
@@ -983,6 +1013,7 @@ impl RepoServiceState {
                     self.send_if_current(
                         epoch,
                         on_error(RepoError {
+                            kind: RepoErrorKind::RepoOpen,
                             message: format!("{err:#}"),
                         }),
                     );
@@ -1010,7 +1041,8 @@ impl RepoServiceState {
         let Some(repo) = self.ensure_repo(epoch, |e| wrap(Err(e))) else {
             return;
         };
-        let result = op(repo).map_err(|err| RepoError::new(format!("{err:#}")));
+        let result =
+            op(repo).map_err(|err| RepoError::new(RepoErrorKind::Operation, format!("{err:#}")));
         self.send_if_current(epoch, wrap(result));
     }
 }
@@ -1027,7 +1059,10 @@ fn spawn_background(err_tx: Sender<RepoResult>, f: impl FnOnce() + Send + 'stati
                 .or_else(|| e.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "unknown panic".to_string());
             let _ = err_tx.send(RepoResult::BackgroundError {
-                error: RepoError { message: msg },
+                error: RepoError {
+                    kind: RepoErrorKind::Background,
+                    message: msg,
+                },
             });
         }
     });
