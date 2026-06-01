@@ -1387,23 +1387,13 @@ fn render_tag_item(
         spans.push(Span::styled(" (deleted)", Style::default().fg(theme.muted)));
     }
 
-    // Change ID (if available), with prefix highlighting.
-    if let Some(ref cid) = entry.change_id {
-        spans.push(dot(theme));
-        push_short_id(&mut spans, cid, theme.change_id, theme);
-    }
-
-    // Description.
-    if let Some(ref desc) = entry.description {
-        spans.push(dot(theme));
-        push_searchable(
-            &mut spans,
-            desc,
-            SearchScopes::DESCRIPTION,
-            Style::default().fg(theme.text),
-            search,
-        );
-    }
+    push_ref_entry_suffix(
+        &mut spans,
+        entry.change_id.as_ref(),
+        entry.description.as_deref(),
+        search,
+        theme,
+    );
 
     vec![Line::from(spans)]
 }
@@ -1802,23 +1792,13 @@ fn render_workspace_item(
         spans.push(Span::styled(" (current)", Style::default().fg(theme.muted)));
     }
 
-    // Change ID.
-    if let Some(ref cid) = entry.change_id {
-        spans.push(dot(theme));
-        push_short_id(&mut spans, cid, theme.change_id, theme);
-    }
-
-    // Description.
-    if let Some(ref desc) = entry.description {
-        spans.push(dot(theme));
-        push_searchable(
-            &mut spans,
-            desc,
-            SearchScopes::DESCRIPTION,
-            Style::default().fg(theme.text),
-            search,
-        );
-    }
+    push_ref_entry_suffix(
+        &mut spans,
+        entry.change_id.as_ref(),
+        entry.description.as_deref(),
+        search,
+        theme,
+    );
 
     vec![Line::from(spans)]
 }
@@ -1945,25 +1925,40 @@ fn render_bookmark_item(
         );
     }
 
-    // Change ID (if available), with prefix highlighting.
-    if let Some(ref cid) = entry.change_id {
-        spans.push(dot(theme));
-        push_short_id(&mut spans, cid, theme.change_id, theme);
-    }
+    push_ref_entry_suffix(
+        &mut spans,
+        entry.change_id.as_ref(),
+        entry.description.as_deref(),
+        search,
+        theme,
+    );
 
-    // Description.
-    if let Some(ref desc) = entry.description {
+    vec![Line::from(spans)]
+}
+
+/// Append the shared change-ID + description suffix used by bookmark, tag,
+/// and workspace item rows.
+fn push_ref_entry_suffix(
+    spans: &mut Vec<Span<'static>>,
+    change_id: Option<&crate::dag::ShortId>,
+    description: Option<&str>,
+    search: Option<&SearchRender<'_>>,
+    theme: &Theme,
+) {
+    if let Some(cid) = change_id {
+        spans.push(dot(theme));
+        push_short_id(spans, cid, theme.change_id, theme);
+    }
+    if let Some(desc) = description {
         spans.push(dot(theme));
         push_searchable(
-            &mut spans,
+            spans,
             desc,
             SearchScopes::DESCRIPTION,
             Style::default().fg(theme.text),
             search,
         );
     }
-
-    vec![Line::from(spans)]
 }
 
 /// Push a ShortId with an optional divergence suffix (e.g., `/2`).

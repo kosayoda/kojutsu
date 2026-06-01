@@ -4,6 +4,19 @@ use super::{App, AppMode};
 use crate::idx::RowIdx;
 use crate::types::{DisplayRow, SearchFocus, SearchScopes, SearchState};
 
+/// Match the description and change_id fields shared by bookmark, tag, and
+/// workspace entries.
+fn ref_entry_matches(
+    description: Option<&str>,
+    change_id: Option<&crate::dag::ShortId>,
+    scopes: SearchScopes,
+    contains: &dyn Fn(&str) -> bool,
+) -> bool {
+    (scopes.contains(SearchScopes::DESCRIPTION) && description.is_some_and(contains))
+        || (scopes.contains(SearchScopes::CHANGE_ID)
+            && change_id.is_some_and(|c| contains(&c.display)))
+}
+
 impl App {
     pub fn begin_search(&mut self) {
         let restore_cursor = self.cursor;
@@ -257,13 +270,12 @@ impl App {
                 (scopes.contains(SearchScopes::BOOKMARK)
                     && (contains(entry.name.as_str())
                         || entry.kind.remote().is_some_and(|r| contains(r.as_str()))))
-                    || (scopes.contains(SearchScopes::DESCRIPTION)
-                        && entry.description.as_deref().is_some_and(contains))
-                    || (scopes.contains(SearchScopes::CHANGE_ID)
-                        && entry
-                            .change_id
-                            .as_ref()
-                            .is_some_and(|c| contains(&c.display)))
+                    || ref_entry_matches(
+                        entry.description.as_deref(),
+                        entry.change_id.as_ref(),
+                        scopes,
+                        &contains,
+                    )
             }
             DisplayRow::BookmarkConflictTarget { .. } | DisplayRow::BookmarkRemoteTarget { .. } => {
                 false
@@ -273,13 +285,12 @@ impl App {
                     return false;
                 };
                 (scopes.contains(SearchScopes::TAG) && contains(entry.name.as_str()))
-                    || (scopes.contains(SearchScopes::DESCRIPTION)
-                        && entry.description.as_deref().is_some_and(contains))
-                    || (scopes.contains(SearchScopes::CHANGE_ID)
-                        && entry
-                            .change_id
-                            .as_ref()
-                            .is_some_and(|c| contains(&c.display)))
+                    || ref_entry_matches(
+                        entry.description.as_deref(),
+                        entry.change_id.as_ref(),
+                        scopes,
+                        &contains,
+                    )
             }
             DisplayRow::OpLogItem { op_log_idx } => {
                 let Some(entry) = self.op_log.entries.get(op_log_idx.raw()) else {
@@ -343,14 +354,13 @@ impl App {
                 let Some(entry) = self.views.workspace_entries.get(workspace_idx.raw()) else {
                     return false;
                 };
-                (scopes.contains(SearchScopes::DESCRIPTION)
-                    && (contains(entry.name.as_str())
-                        || entry.description.as_deref().is_some_and(contains)))
-                    || (scopes.contains(SearchScopes::CHANGE_ID)
-                        && entry
-                            .change_id
-                            .as_ref()
-                            .is_some_and(|c| contains(&c.display)))
+                (scopes.contains(SearchScopes::DESCRIPTION) && contains(entry.name.as_str()))
+                    || ref_entry_matches(
+                        entry.description.as_deref(),
+                        entry.change_id.as_ref(),
+                        scopes,
+                        &contains,
+                    )
             }
             DisplayRow::CommandLogItem { log_idx } => {
                 let Some(entry) = self.command_log.entries.get(log_idx.raw()) else {
