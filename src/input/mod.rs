@@ -113,12 +113,12 @@ pub fn handle_key(
                 }
                 // Dismiss without forwarding.
                 Key::Esc | Key::Char('q') | Key::Char('?') => {
-                    app.mode = app.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
+                    app.exit_overlay();
                     Action::None
                 }
                 // Dismiss and forward printable keys to the underlying mode.
                 Key::Char(_) => {
-                    app.mode = app.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
+                    app.exit_overlay();
                     match &app.mode {
                         AppMode::Normal => {
                             action::handle_normal_key(app, registry, lua, keymap, &node)

@@ -30,15 +30,11 @@ impl App {
             }
         }
         self.recompute_search_matches();
-        let old_mode = std::mem::replace(&mut self.mode, AppMode::SearchInput);
-        self.pre_overlay_mode = match old_mode {
-            AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. } => Some(old_mode),
-            _ => None,
-        };
+        self.enter_overlay(AppMode::SearchInput);
     }
 
     fn restore_mode(&mut self) {
-        self.mode = self.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
+        self.exit_overlay();
     }
 
     pub fn cancel_search(&mut self) {

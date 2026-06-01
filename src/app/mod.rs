@@ -69,7 +69,8 @@ pub struct DagNode {
     /// Resolved child entry indices (reverse edges, filled in second pass).
     pub children: SmallVec<EntryIdx>,
     /// Row index of this commit's `CommitNode` in the display rows.
-    pub row: usize,
+    /// Only valid immediately after `rebuild_rows()`. Use `row_of_commit()` externally.
+    pub(super) row: usize,
     /// Lazily loaded file changes for this commit.
     pub files: Loadable<Vec<FileChange>>,
     /// Lazily loaded per-commit line stats.
@@ -375,6 +376,22 @@ impl App {
             success: false,
             retry: vec![],
         };
+    }
+
+    /// Enter an overlay mode (search, help) that may need to restore the
+    /// previous mode on exit. Saves TargetSelect/CommitSelect modes so they
+    /// survive the overlay; Normal/Submenu are discarded.
+    pub fn enter_overlay(&mut self, overlay: AppMode) {
+        let old = std::mem::replace(&mut self.mode, overlay);
+        self.pre_overlay_mode = match old {
+            AppMode::Normal | AppMode::Submenu { .. } => None,
+            other => Some(other),
+        };
+    }
+
+    /// Exit an overlay mode, restoring the previous mode if one was saved.
+    pub fn exit_overlay(&mut self) {
+        self.mode = self.pre_overlay_mode.take().unwrap_or(AppMode::Normal);
     }
 
     /// Search scopes for the active view (single source of truth in ViewState).

@@ -277,8 +277,7 @@ pub(super) fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<
             Some(Action::None)
         }
         (Key::Char('?'), _, _) => {
-            let old_mode = std::mem::replace(&mut app.mode, AppMode::Help { scroll: 0 });
-            app.pre_overlay_mode = Some(old_mode);
+            app.enter_overlay(AppMode::Help { scroll: 0 });
             Some(Action::None)
         }
         _ => None,
