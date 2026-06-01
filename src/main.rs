@@ -419,7 +419,13 @@ fn suspend_and_run(
         cmd.run_suspend_captured(repo_path)
     };
     // Re-enter the TUI.
-    *terminal = kojutsu::terminal::init().expect("failed to re-init terminal");
+    *terminal = match kojutsu::terminal::init() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("fatal: failed to re-init terminal: {e}");
+            std::process::exit(1);
+        }
+    };
 
     app.push_command_log(
         kojutsu::app::CommandLogKind::Command,
@@ -480,7 +486,13 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
     // Suspend TUI and open editor.
     let _ = kojutsu::terminal::restore();
     let status = std::process::Command::new(&editor).arg(&path).status();
-    *terminal = kojutsu::terminal::init().expect("failed to re-init terminal");
+    *terminal = match kojutsu::terminal::init() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("fatal: failed to re-init terminal: {e}");
+            std::process::exit(1);
+        }
+    };
 
     match status {
         Ok(s) if s.success() => {
@@ -658,7 +670,13 @@ fn open_file_in_editor(
         .arg(format!("+{line}"))
         .arg(&full_path)
         .status();
-    *terminal = kojutsu::terminal::init().expect("failed to re-init terminal");
+    *terminal = match kojutsu::terminal::init() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("fatal: failed to re-init terminal: {e}");
+            std::process::exit(1);
+        }
+    };
 }
 
 fn open_revision_in_editor(
@@ -698,7 +716,13 @@ fn open_revision_in_editor(
                 .arg(format!("+{line}"))
                 .arg(tmpfile.path())
                 .status();
-            *terminal = kojutsu::terminal::init().expect("failed to re-init terminal");
+            *terminal = match kojutsu::terminal::init() {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("fatal: failed to re-init terminal: {e}");
+                    std::process::exit(1);
+                }
+            };
         }
         Err(e) => {
             tracing::warn!("failed to get file at revision: {e}");

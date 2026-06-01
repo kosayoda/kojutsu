@@ -32,12 +32,16 @@ pub(super) fn build_change_selection(app: &App) -> ChangeSelection {
             }
         }
         SelectionKind::Line => {
-            let path = crate::selection::serialize_selections(
-                app.explicit_selection()
-                    .expect("line selection should be explicit"),
-            )
-            .expect("failed to serialize selections");
-            ChangeSelection::Lines(path)
+            let Some(selections) = app.explicit_selection() else {
+                return ChangeSelection::All;
+            };
+            match crate::selection::serialize_selections(selections) {
+                Ok(path) => ChangeSelection::Lines(path),
+                Err(e) => {
+                    tracing::warn!("failed to serialize line selections: {e}");
+                    ChangeSelection::All
+                }
+            }
         }
     }
 }

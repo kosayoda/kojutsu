@@ -730,16 +730,19 @@ impl LuaEngine {
         let collect_logs_fn =
             self.lua
                 .create_function(move |_lua, (header, phase_str): (String, String)| {
-                    let messages: Vec<String> = collect_logs_pending.borrow_mut().drain(..).collect();
+                    let messages: Vec<String> =
+                        collect_logs_pending.borrow_mut().drain(..).collect();
                     if !messages.is_empty() {
                         let phase = match phase_str.as_str() {
                             "pre" => LogPhase::Pre,
                             "post" => LogPhase::Post,
                             _ => LogPhase::Command,
                         };
-                        collect_logs_groups
-                            .borrow_mut()
-                            .push(LogGroup { header, phase, messages });
+                        collect_logs_groups.borrow_mut().push(LogGroup {
+                            header,
+                            phase,
+                            messages,
+                        });
                     }
                     Ok(())
                 })?;
@@ -903,7 +906,14 @@ impl LuaEngine {
                     let mut hooks = hooks_clone.borrow_mut();
                     for name in action_names {
                         let callback = lua.create_registry_value(func.clone())?;
-                        hooks.push((name.into(), LuaHook { phase, callback, source: source.clone() }));
+                        hooks.push((
+                            name.into(),
+                            LuaHook {
+                                phase,
+                                callback,
+                                source: source.clone(),
+                            },
+                        ));
                     }
                     Ok(())
                 })?;
@@ -1395,6 +1405,13 @@ fn parse_scope(s: &str) -> Scope {
         "command_log" => Scope::Views(smallvec::smallvec![ActiveView::CommandLog]),
         "interdiff" => Scope::Views(smallvec::smallvec![ActiveView::Interdiff]),
         "annotate" => Scope::Views(smallvec::smallvec![ActiveView::Annotate]),
-        _ => Scope::All,
+        other => {
+            tracing::warn!(
+                "unknown scope '{other}', defaulting to 'all' \
+                 (valid: all, dag, bookmarks, tags, operations, workspaces, \
+                 evolog, command_log, interdiff, annotate)"
+            );
+            Scope::All
+        }
     }
 }

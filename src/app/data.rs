@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use super::{App, AppMode, DeferredWork, JumpTarget, Loadable};
+use super::{App, DeferredWork, JumpTarget, Loadable};
 use crate::dag::DagEntry;
 use crate::idx::{EntryIdx, FileIdx, IndexVec, RowIdx};
 use crate::repo_service::{RepoRequest, RepoResult};
@@ -225,20 +225,7 @@ impl App {
                     self.revset.draft = Some(revset.into());
                     self.revset.load_state = Loadable::Failed(error.clone());
                     self.set_error("failed to load revset");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        "revset error",
-                        None,
-                        error.message.as_bytes().to_vec(),
-                        false,
-                    );
-                    self.mode = AppMode::CommandOutput {
-                        command_parts: None,
-                        command: "revset error".to_string(),
-                        output: error.message.into_bytes(),
-                        success: false,
-                        retry: vec![],
-                    };
+                    self.show_error_overlay("revset error", error);
                 }
             },
             RepoResult::CommitDetails { commit_id, result } => match result {
@@ -281,21 +268,7 @@ impl App {
                         self.nodes[idx].files = Loadable::Failed(error.clone());
                         self.nodes[idx].stats = Loadable::Failed(error.clone());
                     }
-                    let summary = format!("load files for {commit_id}");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        &summary,
-                        None,
-                        error.message.as_bytes().to_vec(),
-                        false,
-                    );
-                    self.mode = AppMode::CommandOutput {
-                        command_parts: None,
-                        command: summary,
-                        output: error.message.into_bytes(),
-                        success: false,
-                        retry: vec![],
-                    };
+                    self.show_error_overlay(format!("load files for {commit_id}"), error);
                     deferred.rebuild = true;
                 }
             },
@@ -321,21 +294,7 @@ impl App {
                                 .set_diff_state(file_idx, Loadable::Failed(error.clone()));
                         }
                     }
-                    let summary = format!("load diff for {path}");
-                    self.push_command_log(
-                        super::CommandLogKind::Background,
-                        &summary,
-                        None,
-                        error.message.as_bytes().to_vec(),
-                        false,
-                    );
-                    self.mode = AppMode::CommandOutput {
-                        command_parts: None,
-                        command: summary,
-                        output: error.message.into_bytes(),
-                        success: false,
-                        retry: vec![],
-                    };
+                    self.show_error_overlay(format!("load diff for {path}"), error);
                     deferred.rebuild = true;
                 }
             },

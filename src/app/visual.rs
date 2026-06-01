@@ -1,17 +1,7 @@
 use super::{App, PersistentVisualRange, VisualMode};
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, RowIdx};
-use crate::types::{
-    ChangeId, DisplayRow, FileRef, RepoPath, Selection, SelectionKind, VisualRange,
-};
-
-/// A single line within a visual selection range (used during toggle).
-struct LineSelection {
-    change_id: ChangeId,
-    path: RepoPath,
-    old_line: Option<u32>,
-    new_line: Option<u32>,
-}
+use crate::types::{DisplayRow, FileRef, Selection, SelectionKind, VisualRange};
 
 impl App {
     /// Whether any visual mode is active (line or commit).
@@ -318,7 +308,7 @@ impl App {
         };
         let vr = vr.clone();
 
-        let line_data: Vec<LineSelection> = self
+        let line_data: Vec<Selection> = self
             .nodes
             .iter()
             .filter_map(|node| {
@@ -337,9 +327,11 @@ impl App {
                         idx >= vr.start_line && idx <= vr.end_line
                     })
                     .filter(|(_, dl)| dl.kind.is_selectable())
-                    .map(|(_, dl)| LineSelection {
-                        change_id: vr.change_id.clone(),
-                        path: vr.path.clone(),
+                    .map(|(_, dl)| Selection::Line {
+                        file_ref: FileRef {
+                            change_id: vr.change_id.clone(),
+                            path: vr.path.clone(),
+                        },
                         old_line: dl.old_line,
                         new_line: dl.new_line,
                     })
@@ -353,46 +345,22 @@ impl App {
             return;
         }
 
-        let all_selected = line_data.iter().all(|ls| {
-            self.selection.contains(&Selection::Line {
-                file_ref: FileRef {
-                    change_id: ls.change_id.clone(),
-                    path: ls.path.clone(),
-                },
-                old_line: ls.old_line,
-                new_line: ls.new_line,
-            })
-        });
+        let all_selected = line_data.iter().all(|s| self.selection.contains(s));
 
         if all_selected {
-            for ls in &line_data {
-                self.selection.remove(&Selection::Line {
-                    file_ref: FileRef {
-                        change_id: ls.change_id.clone(),
-                        path: ls.path.clone(),
-                    },
-                    old_line: ls.old_line,
-                    new_line: ls.new_line,
-                });
+            for s in &line_data {
+                self.selection.remove(s);
             }
         } else {
-            if let Some(ls) = line_data.first() {
-                self.clear_other_commits(&ls.change_id);
+            if let Some(Selection::Line { file_ref, .. }) = line_data.first() {
+                self.clear_other_commits(&file_ref.change_id);
             }
             self.selection.ensure_kind(SelectionKind::Line);
-            for ls in line_data {
-                self.selection.remove(&Selection::File(FileRef {
-                    change_id: ls.change_id.clone(),
-                    path: ls.path.clone(),
-                }));
-                self.selection.insert(Selection::Line {
-                    file_ref: FileRef {
-                        change_id: ls.change_id,
-                        path: ls.path,
-                    },
-                    old_line: ls.old_line,
-                    new_line: ls.new_line,
-                });
+            for s in line_data {
+                if let Selection::Line { ref file_ref, .. } = s {
+                    self.selection.remove(&Selection::File(file_ref.clone()));
+                }
+                self.selection.insert(s);
             }
         }
     }

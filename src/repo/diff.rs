@@ -371,7 +371,17 @@ impl JjRepo {
             let target_path = path.as_internal_file_string().to_string();
             let values = match entry.values {
                 Ok(v) => v,
-                Err(_) => continue,
+                Err(e) => {
+                    tracing::warn!("inter-commit diff entry error for {target_path}: {e}");
+                    changes.push(FileChange {
+                        path: RepoPath::new(&target_path),
+                        old_path: None,
+                        status: FileStatus::Error,
+                        has_conflict: false,
+                        stats: LineStats::default(),
+                    });
+                    continue;
+                }
             };
 
             let before_present = values.before.is_present();
@@ -546,7 +556,17 @@ impl JjRepo {
             let target_path = path.as_internal_file_string().to_string();
             let values = match entry.values {
                 Ok(v) => v,
-                Err(_) => continue,
+                Err(e) => {
+                    tracing::warn!("interdiff entry error for {target_path}: {e}");
+                    changes.push(FileChange {
+                        path: RepoPath::new(&target_path),
+                        old_path: None,
+                        status: FileStatus::Error,
+                        has_conflict: false,
+                        stats: LineStats::default(),
+                    });
+                    continue;
+                }
             };
 
             let before_present = values.before.is_present();

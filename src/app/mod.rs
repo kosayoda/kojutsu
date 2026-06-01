@@ -354,6 +354,29 @@ impl App {
         self.set_error(msg);
     }
 
+    /// Log an error and show it as a full-screen CommandOutput overlay.
+    pub fn show_error_overlay(
+        &mut self,
+        summary: impl Into<String>,
+        error: crate::repo_service::RepoError,
+    ) {
+        let summary = summary.into();
+        self.push_command_log(
+            CommandLogKind::Background,
+            &summary,
+            None,
+            error.message.as_bytes().to_vec(),
+            false,
+        );
+        self.mode = AppMode::CommandOutput {
+            command_parts: None,
+            command: summary,
+            output: error.message.into_bytes(),
+            success: false,
+            retry: vec![],
+        };
+    }
+
     /// Search scopes for the active view (single source of truth in ViewState).
     pub fn search_scopes(&self) -> SearchScopes {
         self.view_states[self.active_view.idx()].search_scopes
