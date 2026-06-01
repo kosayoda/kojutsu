@@ -562,12 +562,12 @@ impl App {
         use std::collections::HashSet as HS;
 
         let mut entries: Vec<BookmarkViewEntry> = Vec::new();
-        let mut seen: HS<BookmarkName> = HS::new();
+        let mut seen: HS<(BookmarkName, Option<crate::types::RemoteName>)> = HS::new();
 
         // Local + remote bookmarks from DAG nodes in a single pass.
         for node in self.nodes.iter() {
             for bm in &node.commit.bookmarks {
-                if seen.insert(bm.name.clone()) {
+                if seen.insert((bm.name.clone(), None)) {
                     let kind = if bm.is_tracking {
                         BookmarkKind::Tracking {
                             is_dirty: bm.is_dirty,
@@ -589,8 +589,7 @@ impl App {
                 }
             }
             for rb in &node.commit.remote_bookmarks {
-                let key = BookmarkName::new(format!("{}@{}", rb.name, rb.remote));
-                if seen.insert(key) {
+                if seen.insert((rb.name.clone(), Some(rb.remote.clone()))) {
                     let kind = if rb.is_tracked {
                         BookmarkKind::TrackedRemote {
                             remote: rb.remote.clone(),
@@ -613,8 +612,7 @@ impl App {
 
         // Remote bookmarks not attached to any visible DAG node.
         for rb in &self.views.remote_bookmarks {
-            let key = BookmarkName::new(format!("{}@{}", rb.name, rb.remote));
-            if seen.insert(key) {
+            if seen.insert((rb.name.clone(), Some(rb.remote.clone()))) {
                 let kind = if rb.is_tracked {
                     BookmarkKind::TrackedRemote {
                         remote: rb.remote.clone(),
