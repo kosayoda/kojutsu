@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use super::{parse_first_line_description, JjRepo, DISPLAY_ID_LEN};
 use crate::dag::{
-    AuthorInfo, BookmarkInfo, CommitInfo, DivergenceUpdate, PrefixLengthUpdate, RemoteBookmarkInfo,
+    AuthorInfo, BookmarkInfo, CommitInfo, DivergenceInfo, PrefixLengthUpdate, RemoteBookmarkInfo,
     ShortId,
 };
 use crate::types::{BookmarkName, CommitId as UiCommitId, TagName};
@@ -135,10 +135,6 @@ impl JjRepo {
         // deferred to a background thread (see compute_divergence_info)
         // because resolve_change_id() and is_hidden() are expensive
         // per-commit index lookups.
-        let is_divergent = false;
-        let is_hidden = false;
-        let change_id_suffix = None;
-
         // Full commit ID hex for graph rendering (stable key).
         let graph_id = UiCommitId::new(commit.id().hex());
 
@@ -154,9 +150,7 @@ impl JjRepo {
             is_merge,
             has_conflict,
             is_immutable,
-            is_divergent,
-            is_hidden,
-            change_id_suffix,
+            divergence: None,
             bookmarks,
             remote_bookmarks,
             tags,
@@ -237,7 +231,7 @@ impl JjRepo {
         repo: &Arc<ReadonlyRepo>,
         commit_ids: &[UiCommitId],
         cancel: &crate::repo_service::CancellationToken,
-    ) -> Vec<(UiCommitId, DivergenceUpdate)> {
+    ) -> Vec<(UiCommitId, DivergenceInfo)> {
         let mut results = Vec::new();
         for (i, id) in commit_ids.iter().enumerate() {
             if i % 100 == 0 && cancel.is_cancelled() {
@@ -265,10 +259,10 @@ impl JjRepo {
                 .and_then(|targets| targets.find_offset(commit.id()));
             results.push((
                 id.clone(),
-                DivergenceUpdate {
+                DivergenceInfo {
                     is_divergent,
                     is_hidden,
-                    change_id_suffix,
+                    suffix: change_id_suffix,
                 },
             ));
         }

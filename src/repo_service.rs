@@ -8,7 +8,7 @@ use std::thread;
 use jj_lib::repo::Repo as _;
 use pollster::FutureExt as _;
 
-use crate::dag::{CommitDetails, DagEntry, DivergenceUpdate, PrefixLengthUpdate};
+use crate::dag::{CommitDetails, DagEntry, DivergenceInfo, PrefixLengthUpdate};
 use crate::repo::{JjRepo, SnapshotError};
 use crate::types::{BookmarkName, CommitId, OperationId, RemoteName, RepoPath, TagName};
 
@@ -148,7 +148,7 @@ pub enum RepoResult {
     /// Background-computed is_empty for a single commit.
     CommitEmpty { commit_id: CommitId },
     DivergenceInfo {
-        updates: Vec<(CommitId, DivergenceUpdate)>,
+        updates: Vec<(CommitId, DivergenceInfo)>,
     },
     PrefixLengths {
         updates: Vec<(CommitId, PrefixLengthUpdate)>,

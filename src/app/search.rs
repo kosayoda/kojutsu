@@ -204,7 +204,7 @@ impl App {
                 let commit = &self.nodes[*entry_idx].commit;
                 (scopes.contains(SearchScopes::CHANGE_ID)
                     && (contains(commit.change_id.display.as_str())
-                        || commit.change_id_suffix.is_some_and(|n| {
+                        || commit.change_id_suffix().is_some_and(|n| {
                             contains(&format!("{}/{n}", commit.change_id.display))
                         })))
                     || (scopes.contains(SearchScopes::COMMIT_ID)

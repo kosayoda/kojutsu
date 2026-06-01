@@ -350,9 +350,7 @@ impl App {
             RepoResult::DivergenceInfo { updates } => {
                 for (commit_id, update) in updates {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                        self.nodes[idx].commit.is_divergent = update.is_divergent;
-                        self.nodes[idx].commit.is_hidden = update.is_hidden;
-                        self.nodes[idx].commit.change_id_suffix = update.change_id_suffix;
+                        self.nodes[idx].commit.divergence = Some(update);
                     }
                 }
             }

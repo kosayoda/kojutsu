@@ -960,14 +960,14 @@ fn render_commit_item<'a>(
     push_graph_node_spans(&mut line1, graph_node, graph_style, config);
 
     // Change ID (prefix bright, rest dimmed; red if divergent)
-    let change_color = if c.is_divergent {
+    let change_color = if c.is_divergent() {
         theme.error
-    } else if c.is_hidden {
+    } else if c.is_hidden() {
         theme.text
     } else {
         theme.change_id
     };
-    let change_id_text = if let Some(suffix) = c.change_id_suffix {
+    let change_id_text = if let Some(suffix) = c.change_id_suffix() {
         format!("{}/{}", c.change_id.display, suffix)
     } else {
         c.change_id.display.clone()
@@ -979,7 +979,7 @@ fn render_commit_item<'a>(
             push_highlighted_short_id(
                 &mut line1,
                 &c.change_id,
-                c.change_id_suffix.map(|s| format!("/{s}")),
+                c.change_id_suffix().map(|s| format!("/{s}")),
                 change_color,
                 search.query_lower,
                 search.case_sensitive,
@@ -987,7 +987,7 @@ fn render_commit_item<'a>(
             );
         } else {
             push_short_id(&mut line1, &c.change_id, change_color, theme);
-            if let Some(suffix) = c.change_id_suffix {
+            if let Some(suffix) = c.change_id_suffix() {
                 line1.push(Span::styled(
                     format!("/{suffix}"),
                     Style::default().fg(change_color),
@@ -996,14 +996,14 @@ fn render_commit_item<'a>(
         }
     } else {
         push_short_id(&mut line1, &c.change_id, change_color, theme);
-        if let Some(suffix) = c.change_id_suffix {
+        if let Some(suffix) = c.change_id_suffix() {
             line1.push(Span::styled(
                 format!("/{suffix}"),
                 Style::default().fg(change_color),
             ));
         }
     }
-    if c.is_divergent {
+    if c.is_divergent() {
         line1.push(Span::styled(
             " (divergent)",
             Style::default().fg(theme.error),
@@ -1124,7 +1124,7 @@ fn render_commit_item<'a>(
     }
 
     // Hidden indicator
-    if c.is_hidden {
+    if c.is_hidden() {
         line1.push(Span::styled(" (hidden)", Style::default().fg(theme.text)));
     }
 

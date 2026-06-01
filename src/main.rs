@@ -534,10 +534,10 @@ fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
         if c.has_conflict {
             flags.push("conflict");
         }
-        if c.is_divergent {
+        if c.is_divergent() {
             flags.push("divergent");
         }
-        if c.is_hidden {
+        if c.is_hidden() {
             flags.push("hidden");
         }
         let flags_str = if flags.is_empty() {
@@ -553,7 +553,7 @@ fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
         };
         let desc = c.description.as_deref().unwrap_or("(no description)");
         let suffix = c
-            .change_id_suffix
+            .change_id_suffix()
             .map(|n| format!("/{n}"))
             .unwrap_or_default();
         println!(

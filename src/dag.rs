@@ -52,13 +52,8 @@ pub struct CommitInfo {
     pub has_conflict: bool,
     /// Whether this commit is immutable (ancestor of immutable_heads).
     pub is_immutable: bool,
-    /// Whether this commit is divergent (multiple visible commits share the same change ID).
-    pub is_divergent: bool,
-    /// Whether this commit is hidden (superseded by a newer version with the same change ID).
-    pub is_hidden: bool,
-    /// Disambiguation suffix for the change ID (e.g., `5` in `ztmnmkvk/5`).
-    /// `Some(n)` when multiple commits share the same change ID prefix.
-    pub change_id_suffix: Option<usize>,
+    /// Divergence/hidden state. `None` for normal commits.
+    pub divergence: Option<DivergenceInfo>,
     /// Local bookmarks pointing at this commit.
     pub bookmarks: Vec<BookmarkInfo>,
     /// Remote bookmarks pointing at this commit (excluding those already
@@ -102,11 +97,14 @@ impl PrefixLengthUpdate {
     }
 }
 
-/// Divergence and hidden status for a commit.
-pub struct DivergenceUpdate {
+/// Divergence and hidden status for a commit. Present only when the commit
+/// is divergent (multiple visible commits share the same change ID) or hidden
+/// (superseded by a newer version).
+#[derive(Clone, Debug)]
+pub struct DivergenceInfo {
     pub is_divergent: bool,
     pub is_hidden: bool,
-    pub change_id_suffix: Option<usize>,
+    pub suffix: Option<usize>,
 }
 
 /// A local bookmark with its tracking status.
@@ -257,10 +255,22 @@ impl CommitInfo {
         }
     }
 
+    pub fn is_divergent(&self) -> bool {
+        self.divergence.as_ref().is_some_and(|d| d.is_divergent)
+    }
+
+    pub fn is_hidden(&self) -> bool {
+        self.divergence.as_ref().is_some_and(|d| d.is_hidden)
+    }
+
+    pub fn change_id_suffix(&self) -> Option<usize> {
+        self.divergence.as_ref().and_then(|d| d.suffix)
+    }
+
     /// A ChangeId that's unique even among divergent commits (includes suffix).
     /// Uses the full display string as the base.
     pub fn unique_change_id(&self) -> ChangeId {
-        match self.change_id_suffix {
+        match self.change_id_suffix() {
             Some(suffix) => ChangeId::new(format_compact!("{}/{suffix}", self.change_id.display)),
             None => self.change_id.change_id(),
         }
@@ -270,7 +280,7 @@ impl CommitInfo {
     pub fn unique_prefix(&self) -> ChangeId {
         let prefix =
             &self.change_id.display[..self.change_id.prefix_len.min(self.change_id.display.len())];
-        match self.change_id_suffix {
+        match self.change_id_suffix() {
             Some(suffix) => ChangeId::new(format_compact!("{prefix}/{suffix}")),
             None => ChangeId::new(prefix),
         }
