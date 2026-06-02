@@ -831,8 +831,10 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         }
     }
 
-    // Compute max content width across all visible lines, then clamp h_scroll.
+    // Compute max content width across viewport lines only, then clamp h_scroll.
     let max_content_width: usize = raw_items
+        .get(vis_start..vis_end)
+        .unwrap_or(&[])
         .iter()
         .flat_map(|lines| lines.iter().map(line_width))
         .max()
