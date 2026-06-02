@@ -286,7 +286,7 @@ impl LuaEngine {
             true,
         );
 
-        self.prepare_execution(app);
+        self.prepare_execution();
 
         let func: mlua::Function = match self.lua.registry_value(&cmd.callback) {
             Ok(f) => f,
@@ -304,7 +304,11 @@ impl LuaEngine {
             }
         };
 
-        self.resume_and_handle(thread, mlua::Value::Nil, app, SuspendedKind::Command(flags))
+        let ctx_arg = self
+            .build_ctx_table(app)
+            .map(mlua::Value::Table)
+            .unwrap_or(mlua::Value::Nil);
+        self.resume_and_handle(thread, ctx_arg, app, SuspendedKind::Command(flags))
     }
 
     pub fn resume_suspended(&self, app: &mut App, value: Option<String>) -> ResumeResult {
@@ -321,7 +325,6 @@ impl LuaEngine {
         };
         let _ = self.lua.remove_registry_value(thread_key);
 
-        self.update_ctx(app);
         self.pending_action.replace(PendingAction::None);
         self.pending_logs.borrow_mut().clear();
 
@@ -509,8 +512,7 @@ impl LuaEngine {
         }
     }
 
-    fn prepare_execution(&self, app: &App) {
-        self.update_ctx(app);
+    fn prepare_execution(&self) {
         self.pending_action.replace(PendingAction::None);
         self.pending_logs.borrow_mut().clear();
         self.log_groups.borrow_mut().clear();
@@ -639,14 +641,6 @@ impl LuaEngine {
         Ok(ctx)
     }
 
-    fn update_ctx(&self, app: &App) {
-        let Ok(kojutsu): Result<mlua::Table, _> = self.lua.globals().get("kojutsu") else {
-            return;
-        };
-        if let Ok(ctx) = self.build_ctx_table(app) {
-            let _ = kojutsu.set("ctx", ctx);
-        }
-    }
 
     fn register_persistent_functions(&self) -> mlua::Result<()> {
         register_globals(&self.lua)?;
