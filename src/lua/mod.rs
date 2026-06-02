@@ -79,6 +79,7 @@ pub struct LuaEngine {
     current_header: RefCell<String>,
     pending_action: Rc<RefCell<PendingAction>>,
     pending_logs: Rc<RefCell<Vec<String>>>,
+    pending_status: Rc<RefCell<Option<String>>>,
     log_groups: Rc<RefCell<Vec<LogGroup>>>,
     pub init_error: Option<String>,
     repo_path: PathBuf,
@@ -98,6 +99,7 @@ impl LuaEngine {
         };
         let pending_action = Rc::new(RefCell::new(PendingAction::None));
         let pending_logs = Rc::new(RefCell::new(Vec::new()));
+        let pending_status = Rc::new(RefCell::new(None));
         let mut engine = LuaEngine {
             lua,
             commands: Vec::new(),
@@ -106,6 +108,7 @@ impl LuaEngine {
             suspended_thread: RefCell::new(None),
             pending_action,
             pending_logs,
+            pending_status,
             log_groups: Rc::new(RefCell::new(Vec::new())),
             current_header: RefCell::new(String::new()),
             init_error: None,
@@ -344,7 +347,7 @@ impl LuaEngine {
             Ok(value) => match kind {
                 SuspendedKind::Command(flags) => {
                     self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
-                    ResumeResult::Action(self.take_pending_action(flags))
+                    ResumeResult::Action(self.take_pending_action(app, flags))
                 }
                 SuspendedKind::PreHooks {
                     action,
@@ -391,7 +394,7 @@ impl LuaEngine {
             Ok(_) => {
                 if let SuspendedKind::Command(flags) = kind {
                     self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
-                    self.take_pending_action(flags)
+                    self.take_pending_action(app, flags)
                 } else {
                     Action::None
                 }
@@ -495,7 +498,7 @@ impl LuaEngine {
         app.mode = mode;
     }
 
-    fn take_pending_action(&self, flags: CommandFlags) -> Action {
+    fn take_pending_action(&self, app: &mut App, flags: CommandFlags) -> Action {
         match self.pending_action.replace(PendingAction::None) {
             PendingAction::None => Action::None,
             PendingAction::Refresh => Action::Refresh,
@@ -508,6 +511,20 @@ impl LuaEngine {
                     flags,
                 };
                 Action::SuspendAndRunJj(cmd)
+            }
+            PendingAction::SwitchView(view) => {
+                app.switch_view(view);
+                Action::None
+            }
+            PendingAction::JumpTo(change_id) => {
+                if let Some(commit_id) = app.commit_id_for_change(&change_id) {
+                    if let Some(idx) = app.entry_by_commit_id(&commit_id) {
+                        if let Some(row) = app.row_of_commit(idx) {
+                            app.set_cursor(row);
+                        }
+                    }
+                }
+                Action::None
             }
         }
     }
@@ -531,6 +548,9 @@ impl LuaEngine {
     }
 
     pub fn flush_logs(&self, app: &mut App) {
+        if let Some(msg) = self.pending_status.borrow_mut().take() {
+            app.set_status(msg);
+        }
         let mut groups: Vec<LogGroup> = self.log_groups.borrow_mut().drain(..).collect();
         let stray: Vec<String> = self.pending_logs.borrow_mut().drain(..).collect();
         if !stray.is_empty() {
@@ -635,12 +655,24 @@ impl LuaEngine {
             }
             ctx.set("bookmarks", bm_table)?;
         }
+        if let Some(tags) = app.selected_tags() {
+            let tag_table = self.lua.create_table()?;
+            for (i, t) in tags.iter().enumerate() {
+                tag_table.raw_set(i + 1, t.as_str())?;
+            }
+            ctx.set("tags", tag_table)?;
+        }
+        if let Some(path) = app.selected_file_path() {
+            ctx.set("file_path", path.as_str())?;
+        }
+        ctx.set("is_working_copy", app.selected_is_working_copy())?;
+        ctx.set("is_empty", app.selected_is_empty())?;
+        ctx.set("has_conflict", app.selected_has_conflict())?;
         ctx.set("view", view_name(app.active_view))?;
         ctx.set("revset", app.revset.current.as_str())?;
         ctx.set("repo_root", app.repo_root.as_str())?;
         Ok(ctx)
     }
-
 
     fn register_persistent_functions(&self) -> mlua::Result<()> {
         register_globals(&self.lua)?;
@@ -690,7 +722,39 @@ impl LuaEngine {
             Ok(())
         })?;
 
-        let flash_fn = self.lua.create_function(|_lua, _msg: String| Ok(()))?;
+        let pending_switch = self.pending_action.clone();
+        let switch_view_fn = self.lua.create_function(move |_lua, view: String| {
+            use crate::app::ActiveView;
+            let av = match view.as_str() {
+                "dag" => ActiveView::Dag,
+                "bookmarks" => ActiveView::Bookmarks,
+                "tags" => ActiveView::Tags,
+                "operations" => ActiveView::Operations,
+                "workspaces" => ActiveView::Workspaces,
+                "evolog" => ActiveView::Evolog,
+                "command_log" => ActiveView::CommandLog,
+                "interdiff" => ActiveView::Interdiff,
+                "annotate" => ActiveView::Annotate,
+                other => {
+                    return Err(mlua::Error::external(format!("unknown view: {other}")));
+                }
+            };
+            *pending_switch.borrow_mut() = PendingAction::SwitchView(av);
+            Ok(())
+        })?;
+
+        let pending_jump = self.pending_action.clone();
+        let jump_to_fn = self.lua.create_function(move |_lua, change_id: String| {
+            *pending_jump.borrow_mut() =
+                PendingAction::JumpTo(crate::types::ChangeId::new(change_id));
+            Ok(())
+        })?;
+
+        let status_pending = self.pending_status.clone();
+        let status_fn = self.lua.create_function(move |_lua, msg: String| {
+            *status_pending.borrow_mut() = Some(msg);
+            Ok(())
+        })?;
 
         let copy_fn = self.lua.create_function(|_lua, text: String| {
             use base64::Engine;
@@ -748,6 +812,9 @@ impl LuaEngine {
             function kojutsu.ui.choose(title, items, multi)
                 return coroutine.yield({type = "choose", title = title or "", items = items or {}, multi = multi or false})
             end
+            function kojutsu.ui.confirm(prompt)
+                return kojutsu.ui.choose(prompt or "confirm?", {"yes", "no"}) == "yes"
+            end
             function kojutsu._run_pre_hooks(hooks, ctx)
                 for _, entry in ipairs(hooks) do
                     local ok, result = pcall(entry.fn, ctx)
@@ -781,11 +848,13 @@ impl LuaEngine {
         kojutsu.set("_collect_logs", collect_logs_fn)?;
 
         let ui: mlua::Table = kojutsu.get("ui")?;
-        ui.set("flash", flash_fn)?;
+        ui.set("status", status_fn)?;
 
         let nav: mlua::Table = kojutsu.get("nav")?;
         nav.set("refresh", refresh_fn)?;
         nav.set("set_revset", set_revset_fn)?;
+        nav.set("switch_view", switch_view_fn)?;
+        nav.set("jump_to", jump_to_fn)?;
 
         Ok(())
     }
@@ -1154,8 +1223,14 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@class KojutsuCtx").unwrap();
     writeln!(out, "---@field change_id string?").unwrap();
     writeln!(out, "---@field commit_id string?").unwrap();
+    writeln!(out, "---@field change_ids string[]").unwrap();
     writeln!(out, "---@field description string?").unwrap();
     writeln!(out, "---@field bookmarks string[]?").unwrap();
+    writeln!(out, "---@field tags string[]?").unwrap();
+    writeln!(out, "---@field file_path string?").unwrap();
+    writeln!(out, "---@field is_working_copy boolean").unwrap();
+    writeln!(out, "---@field is_empty boolean").unwrap();
+    writeln!(out, "---@field has_conflict boolean").unwrap();
     writeln!(out, "---@field view string").unwrap();
     writeln!(out, "---@field revset string").unwrap();
     writeln!(out, "---@field repo_root string").unwrap();
@@ -1167,7 +1242,8 @@ pub fn generate_type_definitions() -> String {
     writeln!(out).unwrap();
 
     writeln!(out, "---@class KojutsuUi").unwrap();
-    writeln!(out, "---@field flash fun(msg: string)").unwrap();
+    writeln!(out, "---@field status fun(msg: string)").unwrap();
+    writeln!(out, "---@field confirm fun(prompt: string?): boolean").unwrap();
     writeln!(out, "---@field error fun(msg: string)").unwrap();
     writeln!(
         out,
@@ -1184,6 +1260,8 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@class KojutsuNav").unwrap();
     writeln!(out, "---@field refresh fun()").unwrap();
     writeln!(out, "---@field set_revset fun(revset: string)").unwrap();
+    writeln!(out, "---@field switch_view fun(view: string)").unwrap();
+    writeln!(out, "---@field jump_to fun(change_id: string)").unwrap();
     writeln!(out).unwrap();
 
     writeln!(out, "---@class CommandOpts").unwrap();
@@ -1225,7 +1303,6 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field scope KojutsuScope").unwrap();
     writeln!(out, "---@field phase KojutsuPhase").unwrap();
     writeln!(out, "---@field selection KojutsuSelection").unwrap();
-    writeln!(out, "---@field ctx KojutsuCtx").unwrap();
     writeln!(out, "---@field ui KojutsuUi").unwrap();
     writeln!(out, "---@field nav KojutsuNav").unwrap();
     writeln!(out, "---@field jj fun(args: string[]): JJResult").unwrap();
@@ -1331,6 +1408,8 @@ enum PendingAction {
     Refresh,
     SetRevset(String),
     Interactive(Vec<String>),
+    SwitchView(crate::app::ActiveView),
+    JumpTo(crate::types::ChangeId),
 }
 
 fn lua_source_info(lua: &Lua, func: &mlua::Function) -> String {

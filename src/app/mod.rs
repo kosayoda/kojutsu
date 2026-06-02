@@ -822,6 +822,30 @@ impl App {
         self.nodes[entry_idx].commit.description.as_deref()
     }
 
+    /// Get the file path under the cursor (if on a file or diff line row).
+    pub fn selected_file_path(&self) -> Option<&crate::types::RepoPath> {
+        let (entry_idx, file_idx) = self.rows.get(self.cursor.raw())?.dag_file()?;
+        Some(&self.files_for_entry(entry_idx)?.get(file_idx.raw())?.path)
+    }
+
+    /// Whether the cursor is on a working copy commit.
+    pub fn selected_is_working_copy(&self) -> bool {
+        self.selected_entry_idx()
+            .is_some_and(|idx| self.nodes[idx].commit.is_working_copy())
+    }
+
+    /// Whether the cursor's commit has conflicts.
+    pub fn selected_has_conflict(&self) -> bool {
+        self.selected_entry_idx()
+            .is_some_and(|idx| self.nodes[idx].commit.has_conflict)
+    }
+
+    /// Whether the cursor's commit is empty.
+    pub fn selected_is_empty(&self) -> bool {
+        self.selected_entry_idx()
+            .is_some_and(|idx| self.nodes[idx].commit.is_empty)
+    }
+
     pub(crate) fn commit_id(&self, entry_idx: EntryIdx) -> &CommitId {
         &self.nodes[entry_idx].commit.graph_id
     }
