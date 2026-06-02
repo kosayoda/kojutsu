@@ -363,9 +363,7 @@ impl App {
                     }
                 }
                 for ws in &mut self.views.workspace_entries {
-                    if let (Some(ref cid), Some(ref mut change_id)) =
-                        (&ws.commit_id, &mut ws.change_id)
-                    {
+                    if let (Some(cid), Some(change_id)) = (&ws.commit_id, &mut ws.change_id) {
                         if let Some(u) = update_map.get(cid) {
                             change_id.display.clone_from(&u.change_display);
                             change_id.prefix_len = u.change_prefix_len;

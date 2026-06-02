@@ -203,7 +203,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
             frame.render_widget(ratatui::widgets::Clear, area);
             overlay::draw_follow_up(frame, area, prompt, options, theme);
         }
-        AppMode::SelectFromList(ref mut s) => {
+        AppMode::SelectFromList(s) => {
             let height = (s.filtered_indices.len() as u16 + 2)
                 .min(overlay_base.height / 2)
                 .max(3);
