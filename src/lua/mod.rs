@@ -70,6 +70,23 @@ struct LogGroup {
     messages: Vec<String>,
 }
 
+/// Shared mutable state accessed by Lua closures via `lua.app_data_ref()`.
+/// Stored as `RefCell<LuaState>` in the Lua instance's app data, eliminating
+/// the need for `Rc<RefCell<>>` on each field.
+#[derive(Default)]
+struct LuaState {
+    pending_action: PendingAction,
+    pending_logs: Vec<String>,
+    pending_status: Option<String>,
+    log_groups: Vec<LogGroup>,
+}
+
+macro_rules! lua_state {
+    ($lua:expr) => {
+        $lua.app_data_ref::<RefCell<LuaState>>().unwrap()
+    };
+}
+
 pub struct LuaEngine {
     lua: Lua,
     commands: Vec<LuaCommand>,
@@ -77,10 +94,6 @@ pub struct LuaEngine {
     extra_bindings: Vec<BindingSpec>,
     suspended_thread: RefCell<Option<(mlua::RegistryKey, SuspendedKind)>>,
     current_header: RefCell<String>,
-    pending_action: Rc<RefCell<PendingAction>>,
-    pending_logs: Rc<RefCell<Vec<String>>>,
-    pending_status: Rc<RefCell<Option<String>>>,
-    log_groups: Rc<RefCell<Vec<LogGroup>>>,
     pub init_error: Option<String>,
     repo_path: PathBuf,
 }
@@ -97,19 +110,13 @@ impl LuaEngine {
                 mlua::LuaOptions::default(),
             )
         };
-        let pending_action = Rc::new(RefCell::new(PendingAction::None));
-        let pending_logs = Rc::new(RefCell::new(Vec::new()));
-        let pending_status = Rc::new(RefCell::new(None));
+        lua.set_app_data(RefCell::new(LuaState::default()));
         let mut engine = LuaEngine {
             lua,
             commands: Vec::new(),
             hooks: Vec::new(),
             extra_bindings: Vec::new(),
             suspended_thread: RefCell::new(None),
-            pending_action,
-            pending_logs,
-            pending_status,
-            log_groups: Rc::new(RefCell::new(Vec::new())),
             current_header: RefCell::new(String::new()),
             init_error: None,
             repo_path: repo_path.to_path_buf(),
@@ -328,8 +335,12 @@ impl LuaEngine {
         };
         let _ = self.lua.remove_registry_value(thread_key);
 
-        self.pending_action.replace(PendingAction::None);
-        self.pending_logs.borrow_mut().clear();
+        {
+            let cell = lua_state!(self.lua);
+            let mut state = cell.borrow_mut();
+            state.pending_action = PendingAction::None;
+            state.pending_logs.clear();
+        }
 
         let lua_value = match value {
             Some(s) => match self.lua.create_string(&s) {
@@ -499,7 +510,8 @@ impl LuaEngine {
     }
 
     fn take_pending_action(&self, app: &mut App, flags: CommandFlags) -> Action {
-        match self.pending_action.replace(PendingAction::None) {
+        let action = std::mem::take(&mut lua_state!(self.lua).borrow_mut().pending_action);
+        match action {
             PendingAction::None => Action::None,
             PendingAction::Refresh => Action::Refresh,
             PendingAction::SetRevset(revset) => Action::UpdateRevset(revset),
@@ -530,17 +542,21 @@ impl LuaEngine {
     }
 
     fn prepare_execution(&self) {
-        self.pending_action.replace(PendingAction::None);
-        self.pending_logs.borrow_mut().clear();
-        self.log_groups.borrow_mut().clear();
+        let cell = lua_state!(self.lua);
+        let mut state = cell.borrow_mut();
+        state.pending_action = PendingAction::None;
+        state.pending_logs.clear();
+        state.log_groups.clear();
     }
 
     fn collect_logs(&self, header: String, phase: LogPhase) {
-        let messages: Vec<String> = self.pending_logs.borrow_mut().drain(..).collect();
+        let cell = lua_state!(self.lua);
+        let mut state = cell.borrow_mut();
+        let messages: Vec<String> = state.pending_logs.drain(..).collect();
         if messages.is_empty() {
             return;
         }
-        self.log_groups.borrow_mut().push(LogGroup {
+        state.log_groups.push(LogGroup {
             header,
             phase,
             messages,
@@ -548,11 +564,17 @@ impl LuaEngine {
     }
 
     pub fn flush_logs(&self, app: &mut App) {
-        if let Some(msg) = self.pending_status.borrow_mut().take() {
+        let (status_msg, mut groups, stray) = {
+            let cell = lua_state!(self.lua);
+            let mut state = cell.borrow_mut();
+            let status_msg = state.pending_status.take();
+            let groups: Vec<LogGroup> = state.log_groups.drain(..).collect();
+            let stray: Vec<String> = state.pending_logs.drain(..).collect();
+            (status_msg, groups, stray)
+        };
+        if let Some(msg) = status_msg {
             app.set_status(msg);
         }
-        let mut groups: Vec<LogGroup> = self.log_groups.borrow_mut().drain(..).collect();
-        let stray: Vec<String> = self.pending_logs.borrow_mut().drain(..).collect();
         if !stray.is_empty() {
             groups.push(LogGroup {
                 header: String::new(),
@@ -698,32 +720,29 @@ impl LuaEngine {
             Ok(tbl)
         })?;
 
-        let pending_interactive = self.pending_action.clone();
-        let jj_interactive_fn = self.lua.create_function(move |_lua, args: mlua::Table| {
+        let jj_interactive_fn = self.lua.create_function(|lua, args: mlua::Table| {
             let cmd_args: Vec<String> = (1..=args.raw_len())
                 .map(|i| args.raw_get(i))
                 .collect::<mlua::Result<_>>()?;
-            *pending_interactive.borrow_mut() = PendingAction::Interactive(cmd_args);
+            lua_state!(lua).borrow_mut().pending_action = PendingAction::Interactive(cmd_args);
             Ok(())
         })?;
 
-        let pending_refresh = self.pending_action.clone();
-        let refresh_fn = self.lua.create_function(move |_lua, ()| {
-            let mut p = pending_refresh.borrow_mut();
-            if matches!(*p, PendingAction::None) {
-                *p = PendingAction::Refresh;
+        let refresh_fn = self.lua.create_function(|lua, ()| {
+            let cell = lua_state!(lua);
+            let mut state = cell.borrow_mut();
+            if matches!(state.pending_action, PendingAction::None) {
+                state.pending_action = PendingAction::Refresh;
             }
             Ok(())
         })?;
 
-        let pending_revset = self.pending_action.clone();
-        let set_revset_fn = self.lua.create_function(move |_lua, revset: String| {
-            *pending_revset.borrow_mut() = PendingAction::SetRevset(revset);
+        let set_revset_fn = self.lua.create_function(|lua, revset: String| {
+            lua_state!(lua).borrow_mut().pending_action = PendingAction::SetRevset(revset);
             Ok(())
         })?;
 
-        let pending_switch = self.pending_action.clone();
-        let switch_view_fn = self.lua.create_function(move |_lua, view: String| {
+        let switch_view_fn = self.lua.create_function(|lua, view: String| {
             use crate::app::ActiveView;
             let av = match view.as_str() {
                 "dag" => ActiveView::Dag,
@@ -739,20 +758,18 @@ impl LuaEngine {
                     return Err(mlua::Error::external(format!("unknown view: {other}")));
                 }
             };
-            *pending_switch.borrow_mut() = PendingAction::SwitchView(av);
+            lua_state!(lua).borrow_mut().pending_action = PendingAction::SwitchView(av);
             Ok(())
         })?;
 
-        let pending_jump = self.pending_action.clone();
-        let jump_to_fn = self.lua.create_function(move |_lua, change_id: String| {
-            *pending_jump.borrow_mut() =
+        let jump_to_fn = self.lua.create_function(|lua, change_id: String| {
+            lua_state!(lua).borrow_mut().pending_action =
                 PendingAction::JumpTo(crate::types::ChangeId::new(change_id));
             Ok(())
         })?;
 
-        let status_pending = self.pending_status.clone();
-        let status_fn = self.lua.create_function(move |_lua, msg: String| {
-            *status_pending.borrow_mut() = Some(msg);
+        let status_fn = self.lua.create_function(|lua, msg: String| {
+            lua_state!(lua).borrow_mut().pending_status = Some(msg);
             Ok(())
         })?;
 
@@ -777,26 +794,24 @@ impl LuaEngine {
             Ok(())
         })?;
 
-        let logs = self.pending_logs.clone();
-        let log_fn = self.lua.create_function(move |_lua, msg: String| {
-            logs.borrow_mut().push(msg);
+        let log_fn = self.lua.create_function(|lua, msg: String| {
+            lua_state!(lua).borrow_mut().pending_logs.push(msg);
             Ok(())
         })?;
 
-        let collect_logs_pending = self.pending_logs.clone();
-        let collect_logs_groups = self.log_groups.clone();
         let collect_logs_fn =
             self.lua
-                .create_function(move |_lua, (header, phase_str): (String, String)| {
-                    let messages: Vec<String> =
-                        collect_logs_pending.borrow_mut().drain(..).collect();
+                .create_function(|lua, (header, phase_str): (String, String)| {
+                    let cell = lua_state!(lua);
+                    let mut state = cell.borrow_mut();
+                    let messages: Vec<String> = state.pending_logs.drain(..).collect();
                     if !messages.is_empty() {
                         let phase = match phase_str.as_str() {
                             "pre" => LogPhase::Pre,
                             "post" => LogPhase::Post,
                             _ => LogPhase::Command,
                         };
-                        collect_logs_groups.borrow_mut().push(LogGroup {
+                        state.log_groups.push(LogGroup {
                             header,
                             phase,
                             messages,
