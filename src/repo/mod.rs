@@ -190,7 +190,7 @@ impl JjRepo {
             .config()
             .get::<String>("revsets.log")
             .unwrap_or_else(|_| {
-                "present(@) | ancestors(immutable_heads()..@, 2) | ancestors(trunk(), 16)"
+                "present(@) | ancestors(immutable_heads()..@, 2) | trunk() | ancestors(trunk(), 16)"
                     .to_string()
             })
     }
