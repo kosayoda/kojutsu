@@ -209,8 +209,9 @@ impl SelectionContext {
     }
 
     fn recompute_summary(&mut self) {
-        let mut files = std::collections::HashSet::new();
-        let mut full_files = std::collections::HashSet::new();
+        use std::collections::HashSet;
+        let mut files = HashSet::new();
+        let mut full_file_count = 0usize;
         let mut line_count = 0usize;
         let mut commit_count = 0usize;
         let mut has_full_files = false;
@@ -219,12 +220,12 @@ impl SelectionContext {
             match selection {
                 Selection::Commit(_) => commit_count += 1,
                 Selection::File(file_ref) => {
-                    files.insert(file_ref.path.clone());
+                    files.insert(&file_ref.path);
                     has_full_files = true;
-                    full_files.insert(file_ref.path.clone());
+                    full_file_count += 1;
                 }
                 Selection::Line { file_ref, .. } => {
-                    files.insert(file_ref.path.clone());
+                    files.insert(&file_ref.path);
                     line_count += 1;
                 }
             }
@@ -233,7 +234,7 @@ impl SelectionContext {
         self.summary = SelectionSummary {
             commit_count,
             file_count: files.len(),
-            full_file_count: full_files.len(),
+            full_file_count,
             line_count,
             has_full_files,
         };

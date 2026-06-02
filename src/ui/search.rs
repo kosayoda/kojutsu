@@ -61,8 +61,13 @@ pub(super) fn gutter_span<'a>(search: Option<&SearchRender<'_>>, theme: &Theme) 
 pub(super) fn contains_query(haystack: &str, needle: &str, case_sensitive: bool) -> bool {
     if case_sensitive {
         haystack.contains(needle)
+    } else if needle.is_empty() {
+        true
     } else {
-        haystack.to_lowercase().contains(needle)
+        haystack
+            .as_bytes()
+            .windows(needle.len())
+            .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
     }
 }
 

@@ -457,7 +457,7 @@ fn suspend_and_run(
 }
 
 fn update_revset(app: &mut App, revset_str: String) {
-    app.request_revset_load(Some(revset_str));
+    app.request_revset_load_no_snapshot(Some(revset_str));
 }
 
 fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) {

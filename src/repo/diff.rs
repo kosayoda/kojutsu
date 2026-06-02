@@ -707,8 +707,9 @@ fn hunks_to_diff_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut Vec<Dif
             let mut diff_tokens = Vec::new();
             let mut full_text = String::new();
             for (tag, bytes) in tokens {
-                let text = String::from_utf8_lossy(bytes).to_string();
+                let text = String::from_utf8_lossy(bytes);
                 full_text.push_str(&text);
+                let text = text.into_owned();
                 let kind = match tag {
                     DiffTokenType::Matching => crate::dag::DiffTokenKind::Unchanged,
                     DiffTokenType::Different => match line_type {

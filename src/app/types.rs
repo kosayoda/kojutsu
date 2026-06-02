@@ -265,6 +265,8 @@ pub struct CommandLogEntry {
     /// Structured command parts for syntax highlighting (None for non-command entries).
     pub command_parts: Option<Vec<crate::jj_command::CommandPart>>,
     pub output: Vec<u8>,
+    /// ANSI-parsed output lines, cached to avoid re-parsing every frame.
+    pub parsed_lines: Vec<ratatui::text::Line<'static>>,
     pub success: bool,
     pub timestamp: jiff::Timestamp,
 }

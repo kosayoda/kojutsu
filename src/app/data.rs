@@ -15,6 +15,17 @@ impl App {
             .push(RepoRequest::load_revset(revset));
     }
 
+    /// Request a revset load without snapshotting the working copy first.
+    /// Use when the refresh is purely a revset/UI change (e.g. editing the
+    /// revset string, switching presets) and no filesystem mutation occurred.
+    pub fn request_revset_load_no_snapshot(&mut self, revset: Option<String>) {
+        self.revset.load_state = Loadable::Loading;
+        self.revset.pending = revset.clone().map(Into::into);
+        self.clear_info_status();
+        self.pending_repo_requests
+            .push(RepoRequest::load_revset_no_snapshot(revset));
+    }
+
     fn apply_entries(&mut self, entries: Vec<DagEntry>) {
         // Capture cursor context using stable ChangeId for restore after rebuild.
         let cursor_context = self.selected_entry_idx().map(|entry_idx| {

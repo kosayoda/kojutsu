@@ -149,9 +149,9 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     DisplayRow::CommitNode { .. }
                     | DisplayRow::OpLogItem { .. }
                     | DisplayRow::EvoLogItem { .. } => {
-                        vec![Line::raw(""), Line::raw("")]
+                        vec![Line::default(), Line::default()]
                     }
-                    _ => vec![Line::raw("")],
+                    _ => vec![Line::default()],
                 };
             }
             let row_search = search_ctx.as_ref().map(|ctx| SearchRender {
@@ -271,7 +271,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let flags = RenderFlags {
                         is_source: false,
                         is_selected: app.is_line_selected(*entry_idx, *file_idx, *line_idx),
-                        in_visual: app.is_in_visual_range(*entry_idx, *file_idx, *line_idx),
+                        in_visual: app.is_in_visual_range(
+                            *entry_idx,
+                            *file_idx,
+                            *line_idx,
+                            RowIdx::new(row_idx),
+                        ),
                     };
                     render_diff_line(
                         diff_line,
@@ -452,30 +457,25 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     file_idx,
                     hunk_idx,
                 } => {
-                    let hunks = app
+                    let (num, total) = app
                         .nodes
                         .get(*entry_idx)
                         .and_then(|n| n.conflict_hunks(*file_idx))
-                        .and_then(|l| l.loaded());
-                    let total = hunks
-                        .map(|h: &Vec<crate::dag::ConflictHunkKind>| {
-                            h.iter()
-                                .filter(|h| {
-                                    matches!(h, crate::dag::ConflictHunkKind::Conflict { .. })
-                                })
-                                .count()
+                        .and_then(|l| l.loaded())
+                        .map(|hunks| {
+                            let mut num = 0usize;
+                            let mut total = 0usize;
+                            for (i, h) in hunks.iter().enumerate() {
+                                if matches!(h, crate::dag::ConflictHunkKind::Conflict { .. }) {
+                                    total += 1;
+                                    if i <= hunk_idx.raw() {
+                                        num += 1;
+                                    }
+                                }
+                            }
+                            (num, total)
                         })
-                        .unwrap_or(0);
-                    let num = hunks
-                        .map(|h| {
-                            h.iter()
-                                .take(hunk_idx.raw() + 1)
-                                .filter(|h| {
-                                    matches!(h, crate::dag::ConflictHunkKind::Conflict { .. })
-                                })
-                                .count()
-                        })
-                        .unwrap_or(0);
+                        .unwrap_or((0, 0));
                     vec![Line::from(vec![
                         Span::raw("        "),
                         Span::styled(
@@ -846,11 +846,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     }
     let h_skip = app.h_scroll;
 
-    // Apply horizontal scroll trimming.
+    // Apply horizontal scroll trimming (viewport rows only).
     let items: Vec<ListItem> = raw_items
         .into_iter()
-        .map(|lines| {
-            let trimmed: Vec<Line> = if h_skip > 0 {
+        .enumerate()
+        .map(|(i, lines)| {
+            let trimmed: Vec<Line> = if h_skip > 0 && i >= vis_start && i < vis_end {
                 lines
                     .into_iter()
                     .map(|line| trim_line(line, h_skip, max_w))
@@ -1857,15 +1858,10 @@ fn render_command_log_detail(
     line_idx: usize,
     _theme: &Theme,
 ) -> Vec<Line<'static>> {
-    use ansi_to_tui::IntoText as _;
-
-    // Parse ANSI output into ratatui styled text, then pick the requested line.
-    if let Ok(styled) = entry.output.as_slice().into_text() {
-        if let Some(line) = styled.lines.into_iter().nth(line_idx) {
-            let mut spans: Vec<Span<'static>> = vec![Span::raw("      ")];
-            spans.extend(line.spans);
-            return vec![Line::from(spans)];
-        }
+    if let Some(line) = entry.parsed_lines.get(line_idx) {
+        let mut spans: Vec<Span<'static>> = vec![Span::raw("      ")];
+        spans.extend(line.spans.iter().cloned());
+        return vec![Line::from(spans)];
     }
     // Fallback: plain text.
     let text = String::from_utf8_lossy(&entry.output);

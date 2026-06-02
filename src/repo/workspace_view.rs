@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use futures::TryStreamExt as _;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::object_id::ObjectId;
 use jj_lib::repo::Repo;
@@ -311,19 +310,23 @@ impl JjRepo {
 
     /// Count commits reachable from `to` but not from `from`.
     fn count_revs_between(&self, from: &BackendCommitId, to: &BackendCommitId) -> Option<usize> {
+        use futures::StreamExt as _;
         let revset = jj_lib::revset::walk_revs(
             self.repo.as_ref(),
             std::slice::from_ref(to),
             std::slice::from_ref(from),
         )
         .ok()?;
-        Some(
-            revset
-                .stream()
-                .try_collect::<Vec<_>>()
-                .block_on()
-                .ok()?
-                .len(),
-        )
+        let count = revset
+            .stream()
+            .fold(0usize, |acc, item| async move {
+                if item.is_ok() {
+                    acc + 1
+                } else {
+                    acc
+                }
+            })
+            .block_on();
+        Some(count)
     }
 }

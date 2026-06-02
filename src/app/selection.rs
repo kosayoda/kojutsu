@@ -269,33 +269,34 @@ impl App {
             return FileSelectionState::Full;
         }
 
-        // Count line-level selections for this file.
-        let selected_count = self
-            .selection
-            .iter()
-            .filter(|s| {
-                matches!(s, Selection::Line { file_ref, .. }
-                    if file_ref.change_id == change_id && file_ref.path == file_path)
-            })
-            .count();
-
-        if selected_count == 0 {
+        // Check if any lines for this file are selected by scanning the diff
+        // and testing membership, rather than scanning all selections.
+        let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
             return FileSelectionState::None;
+        };
+        let file_ref = FileRef {
+            change_id,
+            path: file_path,
+        };
+        let mut selected_count = 0usize;
+        let mut selectable_count = 0usize;
+        for dl in diff_lines {
+            if !dl.kind.is_selectable() {
+                continue;
+            }
+            selectable_count += 1;
+            if self.selection.contains(&Selection::Line {
+                file_ref: file_ref.clone(),
+                old_line: dl.old_line,
+                new_line: dl.new_line,
+            }) {
+                selected_count += 1;
+            }
         }
 
-        // Count selectable lines (added/removed) in the diff.
-        // If all are selected, promote to Full.
-        let selectable_count = self
-            .diff_lines(entry_idx, file_idx)
-            .map(|diff_lines: &Vec<crate::dag::DiffLine>| {
-                diff_lines
-                    .iter()
-                    .filter(|dl| dl.kind.is_selectable())
-                    .count()
-            })
-            .unwrap_or(0);
-
-        if selectable_count > 0 && selected_count >= selectable_count {
+        if selected_count == 0 {
+            FileSelectionState::None
+        } else if selectable_count > 0 && selected_count >= selectable_count {
             FileSelectionState::Full
         } else {
             FileSelectionState::Partial

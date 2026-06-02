@@ -24,10 +24,20 @@ pub struct RepoResponseHandle {
     result_rx: Receiver<RepoResult>,
 }
 
+/// Whether a revset load should snapshot the working copy first.
+#[derive(Clone, Copy)]
+pub enum RevsetLoadKind {
+    /// Snapshot first — use after actions that may have changed the filesystem.
+    Snapshot,
+    /// Skip the snapshot — use for pure revset/UI changes.
+    NoSnapshot,
+}
+
 #[derive(Clone)]
 enum RepoRequestKind {
     Revset {
         revset: Option<String>,
+        load_kind: RevsetLoadKind,
     },
     Commit {
         commit_id: CommitId,
@@ -213,7 +223,20 @@ impl RepoRequest {
     pub fn load_revset(revset: Option<String>) -> Self {
         Self {
             epoch: 0,
-            kind: RepoRequestKind::Revset { revset },
+            kind: RepoRequestKind::Revset {
+                revset,
+                load_kind: RevsetLoadKind::Snapshot,
+            },
+        }
+    }
+
+    pub fn load_revset_no_snapshot(revset: Option<String>) -> Self {
+        Self {
+            epoch: 0,
+            kind: RepoRequestKind::Revset {
+                revset,
+                load_kind: RevsetLoadKind::NoSnapshot,
+            },
         }
     }
 
@@ -408,7 +431,7 @@ impl CancellationToken {
 
 struct RepoServiceState {
     repo_path: PathBuf,
-    repo: Option<JjRepo>,
+    repo: Option<Arc<JjRepo>>,
     result_tx: Sender<RepoResult>,
     current_epoch: Arc<AtomicU64>,
     in_flight_commit_details: HashSet<CommitId>,
@@ -443,12 +466,12 @@ impl RepoServiceState {
     fn handle_request(&mut self, request: RepoRequest) {
         let RepoRequest { epoch, kind } = request;
         match kind {
-            RepoRequestKind::Revset { revset } => {
+            RepoRequestKind::Revset { revset, load_kind } => {
                 self.bg_cancel.cancel();
                 self.bg_cancel = CancellationToken::new();
                 self.in_flight_commit_details.clear();
                 self.in_flight_file_diffs.clear();
-                self.handle_revset(epoch, revset);
+                self.handle_revset(epoch, revset, load_kind);
             }
             RepoRequestKind::Commit { commit_id } => {
                 self.handle_commit_details(epoch, commit_id);
@@ -507,41 +530,44 @@ impl RepoServiceState {
         }
     }
 
-    fn handle_revset(&mut self, epoch: u64, revset: Option<String>) {
+    fn handle_revset(&mut self, epoch: u64, revset: Option<String>, load_kind: RevsetLoadKind) {
         let requested_revset = revset.clone().unwrap_or_default();
 
-        // Always do a full snapshot + open to pick up all changes.
+        // Re-open the repo to pick up changes. Only snapshot when the working
+        // copy may have changed (e.g. after returning from an external command).
         self.repo = None;
 
-        if let Err(err) = JjRepo::snapshot(&self.repo_path) {
-            if matches!(err, SnapshotError::Stale(_)) {
-                match JjRepo::update_stale(&self.repo_path) {
-                    Ok(()) => {
-                        let _ = self.result_tx.send(RepoResult::WorkspaceUpdatedStale {
-                            message: "workspace was stale — updated".to_string(),
-                        });
-                        let _ = JjRepo::snapshot(&self.repo_path);
-                    }
-                    Err(update_err) => {
-                        self.send_if_current(
-                            epoch,
-                            RepoResult::Revset {
-                                revset: requested_revset,
-                                result: Err(RepoError {
-                                    kind: RepoErrorKind::WorkspaceStale,
-                                    message: format!(
-                                        "workspace is stale and update-stale failed:\n{update_err}"
-                                    ),
-                                }),
-                            },
-                        );
-                        return;
+        if matches!(load_kind, RevsetLoadKind::Snapshot) {
+            if let Err(err) = JjRepo::snapshot(&self.repo_path) {
+                if matches!(err, SnapshotError::Stale(_)) {
+                    match JjRepo::update_stale(&self.repo_path) {
+                        Ok(()) => {
+                            let _ = self.result_tx.send(RepoResult::WorkspaceUpdatedStale {
+                                message: "workspace was stale — updated".to_string(),
+                            });
+                            let _ = JjRepo::snapshot(&self.repo_path);
+                        }
+                        Err(update_err) => {
+                            self.send_if_current(
+                                epoch,
+                                RepoResult::Revset {
+                                    revset: requested_revset,
+                                    result: Err(RepoError {
+                                        kind: RepoErrorKind::WorkspaceStale,
+                                        message: format!(
+                                            "workspace is stale and update-stale failed:\n{update_err}"
+                                        ),
+                                    }),
+                                },
+                            );
+                            return;
+                        }
                     }
                 }
             }
         }
         match JjRepo::open(&self.repo_path) {
-            Ok(repo) => self.repo = Some(repo),
+            Ok(repo) => self.repo = Some(Arc::new(repo)),
             Err(err) => {
                 self.send_if_current(
                     epoch,
@@ -557,7 +583,7 @@ impl RepoServiceState {
             }
         }
 
-        let Some(repo) = self.repo.as_ref() else {
+        let Some(repo) = self.repo.as_deref() else {
             return;
         };
         let effective_revset = revset.unwrap_or_else(|| repo.default_revset());
@@ -677,26 +703,16 @@ impl RepoServiceState {
                 }
 
                 // Spawn background thread to compute shortest unique ID prefixes.
+                // The repo is already Arc-wrapped, so background threads share
+                // it instead of re-opening the workspace.
                 {
+                    let bg_repo = Arc::clone(self.repo.as_ref().unwrap());
                     let tx = self.result_tx.clone();
-                    let repo_path = self.repo_path.clone();
                     let cancel = self.bg_cancel.clone();
                     spawn_background(self.result_tx.clone(), move || {
                         if cancel.is_cancelled() {
                             return;
                         }
-                        let bg_repo = match JjRepo::open(&repo_path) {
-                            Ok(r) => r,
-                            Err(e) => {
-                                let _ = tx.send(RepoResult::BackgroundError {
-                                    error: RepoError {
-                                        kind: RepoErrorKind::Background,
-                                        message: format!("prefix lengths: {e:#}"),
-                                    },
-                                });
-                                return;
-                            }
-                        };
                         match bg_repo.compute_prefix_lengths(&all_ids, &cancel) {
                             Ok(updates) if !updates.is_empty() => {
                                 let _ = tx.send(RepoResult::PrefixLengths { updates });
@@ -716,25 +732,13 @@ impl RepoServiceState {
 
                 // Spawn background thread for bookmark detail prefix lengths.
                 if !detail_commit_ids.is_empty() {
+                    let bg_repo = Arc::clone(self.repo.as_ref().unwrap());
                     let tx = self.result_tx.clone();
-                    let repo_path = self.repo_path.clone();
                     let cancel = self.bg_cancel.clone();
                     spawn_background(self.result_tx.clone(), move || {
                         if cancel.is_cancelled() {
                             return;
                         }
-                        let bg_repo = match JjRepo::open(&repo_path) {
-                            Ok(r) => r,
-                            Err(e) => {
-                                let _ = tx.send(RepoResult::BackgroundError {
-                                    error: RepoError {
-                                        kind: RepoErrorKind::Background,
-                                        message: format!("detail prefix lengths: {e:#}"),
-                                    },
-                                });
-                                return;
-                            }
-                        };
                         match bg_repo.compute_prefix_lengths(&detail_commit_ids, &cancel) {
                             Ok(updates) if !updates.is_empty() => {
                                 let _ =
@@ -775,7 +779,7 @@ impl RepoServiceState {
         if !self.in_flight_commit_details.insert(commit_id.clone()) {
             return;
         }
-        let Some(repo) = self.repo.as_ref() else {
+        let Some(repo) = self.repo.as_deref() else {
             self.in_flight_commit_details.remove(&commit_id);
             self.send_if_current(
                 epoch,
@@ -826,7 +830,7 @@ impl RepoServiceState {
         if !self.in_flight_file_diffs.insert(key.clone()) {
             return;
         }
-        let Some(repo) = self.repo.as_ref() else {
+        let Some(repo) = self.repo.as_deref() else {
             self.in_flight_file_diffs.remove(&key);
             self.send_if_current(
                 epoch,
@@ -1008,7 +1012,7 @@ impl RepoServiceState {
     ) -> Option<&JjRepo> {
         if self.repo.is_none() {
             match JjRepo::open(&self.repo_path) {
-                Ok(repo) => self.repo = Some(repo),
+                Ok(repo) => self.repo = Some(Arc::new(repo)),
                 Err(err) => {
                     self.send_if_current(
                         epoch,
@@ -1021,7 +1025,7 @@ impl RepoServiceState {
                 }
             }
         }
-        self.repo.as_ref()
+        self.repo.as_deref()
     }
 
     fn send_if_current(&self, epoch: u64, result: RepoResult) {

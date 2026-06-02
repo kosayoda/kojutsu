@@ -408,7 +408,7 @@ pub fn dispatch_action_after_hooks(
         AppAction::EditRevsetInEditor => Action::EditRevsetInEditor,
         AppAction::ResetRevset => {
             app.revset.active_preset = None;
-            app.request_revset_load(None);
+            app.request_revset_load_no_snapshot(None);
             Action::None
         }
         AppAction::SwitchPreset(slot) => {
@@ -418,7 +418,7 @@ pub fn dispatch_action_after_hooks(
             } else {
                 // No preset at this slot — use jj's default revset.
                 app.revset.active_preset = None;
-                app.request_revset_load(None);
+                app.request_revset_load_no_snapshot(None);
                 Action::None
             }
         }

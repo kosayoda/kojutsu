@@ -412,11 +412,18 @@ impl App {
         output: Vec<u8>,
         success: bool,
     ) {
+        use ansi_to_tui::IntoText as _;
+        let parsed_lines = output
+            .as_slice()
+            .into_text()
+            .map(|t| t.lines)
+            .unwrap_or_default();
         self.command_log.entries.push(CommandLogEntry {
             kind,
             summary: summary.into(),
             command_parts,
             output,
+            parsed_lines,
             success,
             timestamp: jiff::Timestamp::now(),
         });

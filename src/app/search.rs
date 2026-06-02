@@ -92,7 +92,7 @@ impl App {
     pub fn is_match(&self, row_idx: RowIdx) -> bool {
         self.search
             .as_ref()
-            .is_some_and(|search| search.matches.contains(&row_idx))
+            .is_some_and(|search| search.matches.binary_search(&row_idx).is_ok())
     }
 
     pub fn toggle_search_scope(&mut self, flag: SearchScopes) {
@@ -203,8 +203,13 @@ impl App {
         let contains = |haystack: &str| {
             if case_sensitive {
                 haystack.contains(needle)
+            } else if needle.is_empty() {
+                true
             } else {
-                haystack.to_lowercase().contains(needle)
+                haystack
+                    .as_bytes()
+                    .windows(needle.len())
+                    .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
             }
         };
 

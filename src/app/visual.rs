@@ -142,16 +142,14 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
+        row_idx: RowIdx,
     ) -> bool {
         // Check active line visual range.
         if let Some(VisualMode::Lines { anchor }) = &self.visual.mode {
-            let lo = (*anchor).min(self.cursor).raw();
-            let hi = (*anchor).max(self.cursor).raw();
-            if let Some(row_idx) = self.rows.iter().position(|r| {
-                matches!(r, DisplayRow::DiffLine { entry_idx: e, file_idx: f, line_idx: l }
-                    if *e == entry_idx && *f == file_idx && *l == line_idx)
-            }) {
-                return row_idx >= lo && row_idx <= hi;
+            let lo = (*anchor).min(self.cursor);
+            let hi = (*anchor).max(self.cursor);
+            if row_idx >= lo && row_idx <= hi {
+                return true;
             }
         }
 

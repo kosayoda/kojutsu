@@ -109,16 +109,10 @@ impl JjRepo {
         // only for commits that are actually in the log revset.
         let prioritize_revset = self.evaluate_prioritize(&context, &symbol_resolver, &mut warnings);
         if let Some(ref prio) = prioritize_revset {
-            // Collect log commit IDs only when needed for filtering.
-            let log_commit_ids: std::collections::HashSet<BackendCommitId> = revset
-                .stream()
-                .try_collect::<Vec<_>>()
-                .block_on()?
-                .into_iter()
-                .collect();
+            let is_in_log = revset.containing_fn();
             let prio_ids: Vec<BackendCommitId> = prio.stream().try_collect().block_on()?;
             for commit_id in prio_ids {
-                if log_commit_ids.contains(&commit_id) {
+                if is_in_log(&commit_id).unwrap_or(false) {
                     topo_iter.prioritize_branch(commit_id);
                 }
             }
