@@ -101,7 +101,7 @@ fn render_help_column(
             rows.push(Row::new(vec![Cell::from(""), Cell::from("")]));
         }
         rows.push(Row::new(vec![
-            Cell::from(group.label()).style(header_style),
+            Cell::from(group.to_string()).style(header_style),
             Cell::from(""),
         ]));
         let desc_width = area.width.saturating_sub(20) as usize;

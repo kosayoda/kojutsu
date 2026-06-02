@@ -346,8 +346,11 @@ pub const OP_LOG_BATCH_SIZE: usize = 200;
     serde::Deserialize,
     strum::EnumCount,
     strum::FromRepr,
+    strum::Display,
+    strum::EnumString,
 )]
 #[repr(usize)]
+#[strum(serialize_all = "snake_case")]
 pub enum ActiveView {
     #[default]
     Dag,

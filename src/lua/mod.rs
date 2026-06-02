@@ -690,7 +690,7 @@ impl LuaEngine {
         ctx.set("is_working_copy", app.selected_is_working_copy())?;
         ctx.set("is_empty", app.selected_is_empty())?;
         ctx.set("has_conflict", app.selected_has_conflict())?;
-        ctx.set("view", view_name(app.active_view))?;
+        ctx.set("view", app.active_view.to_string())?;
         ctx.set("revset", app.revset.current.as_str())?;
         ctx.set("repo_root", app.repo_root.as_str())?;
         Ok(ctx)
@@ -743,21 +743,9 @@ impl LuaEngine {
         })?;
 
         let switch_view_fn = self.lua.create_function(|lua, view: String| {
-            use crate::app::ActiveView;
-            let av = match view.as_str() {
-                "dag" => ActiveView::Dag,
-                "bookmarks" => ActiveView::Bookmarks,
-                "tags" => ActiveView::Tags,
-                "operations" => ActiveView::Operations,
-                "workspaces" => ActiveView::Workspaces,
-                "evolog" => ActiveView::Evolog,
-                "command_log" => ActiveView::CommandLog,
-                "interdiff" => ActiveView::Interdiff,
-                "annotate" => ActiveView::Annotate,
-                other => {
-                    return Err(mlua::Error::external(format!("unknown view: {other}")));
-                }
-            };
+            let av: crate::app::ActiveView = view
+                .parse()
+                .map_err(|_| mlua::Error::external(format!("unknown view: {view}")))?;
             lua_state!(lua).borrow_mut().pending_action = PendingAction::SwitchView(av);
             Ok(())
         })?;
@@ -1465,37 +1453,15 @@ fn table_to_string_vec(table: &mlua::Table) -> Vec<String> {
         .collect()
 }
 
-fn view_name(view: crate::app::ActiveView) -> &'static str {
-    use crate::app::ActiveView;
-    match view {
-        ActiveView::Dag => "dag",
-        ActiveView::Bookmarks => "bookmarks",
-        ActiveView::Tags => "tags",
-        ActiveView::Operations => "operations",
-        ActiveView::Workspaces => "workspaces",
-        ActiveView::Evolog => "evolog",
-        ActiveView::CommandLog => "command_log",
-        ActiveView::Interdiff => "interdiff",
-        ActiveView::Annotate => "annotate",
-    }
-}
-
 fn parse_scope(s: &str) -> Scope {
-    use crate::app::ActiveView;
-    match s {
-        "all" => Scope::All,
-        "dag" => Scope::Views(smallvec::smallvec![ActiveView::Dag]),
-        "bookmarks" => Scope::Views(smallvec::smallvec![ActiveView::Bookmarks]),
-        "tags" => Scope::Views(smallvec::smallvec![ActiveView::Tags]),
-        "operations" => Scope::Views(smallvec::smallvec![ActiveView::Operations]),
-        "workspaces" => Scope::Views(smallvec::smallvec![ActiveView::Workspaces]),
-        "evolog" => Scope::Views(smallvec::smallvec![ActiveView::Evolog]),
-        "command_log" => Scope::Views(smallvec::smallvec![ActiveView::CommandLog]),
-        "interdiff" => Scope::Views(smallvec::smallvec![ActiveView::Interdiff]),
-        "annotate" => Scope::Views(smallvec::smallvec![ActiveView::Annotate]),
-        other => {
+    if s == "all" {
+        return Scope::All;
+    }
+    match s.parse::<crate::app::ActiveView>() {
+        Ok(view) => Scope::Views(smallvec::smallvec![view]),
+        Err(_) => {
             tracing::warn!(
-                "unknown scope '{other}', defaulting to 'all' \
+                "unknown scope '{s}', defaulting to 'all' \
                  (valid: all, dag, bookmarks, tags, operations, workspaces, \
                  evolog, command_log, interdiff, annotate)"
             );

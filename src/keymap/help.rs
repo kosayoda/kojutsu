@@ -2,21 +2,11 @@ use super::registry::{ActionId, ActionRegistry};
 use super::trie::{Keymap, TrieNode};
 use super::{display_key, toggle_hint, AppAction, SelectionKindSet};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::Display)]
 pub enum HelpGroup {
     Commands,
     Navigation,
     General,
-}
-
-impl HelpGroup {
-    pub fn label(self) -> &'static str {
-        match self {
-            HelpGroup::Navigation => "Navigation",
-            HelpGroup::Commands => "Commands",
-            HelpGroup::General => "General",
-        }
-    }
 }
 
 pub struct HelpEntry {
