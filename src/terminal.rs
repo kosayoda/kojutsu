@@ -120,7 +120,7 @@ pub fn spawn_terminal_events<T: Send + 'static>(
                                         return;
                                     }
                                 }
-                                Err(_) => return,
+                                Err(_) => break,
                             }
                             if !event::poll(std::time::Duration::ZERO).unwrap_or(false) {
                                 break;
