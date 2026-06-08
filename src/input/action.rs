@@ -539,7 +539,7 @@ pub fn dispatch_action_after_hooks(
         | AppAction::Parallelize
         | AppAction::SimplifyParents
         | AppAction::Interdiff
-        | AppAction::Revert => super::dag::dispatch(app, lua, action, flags),
+        | AppAction::Revert => super::view::dag::dispatch(app, lua, action, flags),
         AppAction::SwitchToDagView => {
             app.switch_view(crate::app::ActiveView::Dag);
             Action::None
@@ -549,24 +549,24 @@ pub fn dispatch_action_after_hooks(
             Action::None
         }
         // Bookmark view actions
-        AppAction::BmViewDelete
-        | AppAction::BmViewTrack
-        | AppAction::BmViewUntrack
-        | AppAction::BmViewPush
-        | AppAction::BmViewJumpToCommit
-        | AppAction::BmViewEdit
-        | AppAction::BmViewRename
-        | AppAction::BmViewMove
-        | AppAction::BmViewForget
-        | AppAction::BmViewSet
-        | AppAction::BmViewFetch => super::bmview::dispatch(app, action, flags),
+        AppAction::BookmarkViewDelete
+        | AppAction::BookmarkViewTrack
+        | AppAction::BookmarkViewUntrack
+        | AppAction::BookmarkViewPush
+        | AppAction::BookmarkViewJumpToCommit
+        | AppAction::BookmarkViewEdit
+        | AppAction::BookmarkViewRename
+        | AppAction::BookmarkViewMove
+        | AppAction::BookmarkViewForget
+        | AppAction::BookmarkViewSet
+        | AppAction::BookmarkViewFetch => super::view::bookmark::dispatch(app, action, flags),
         // Tag view actions
         AppAction::SwitchToTagView => {
             app.switch_view(crate::app::ActiveView::Tags);
             Action::None
         }
-        AppAction::TgViewDelete | AppAction::TgViewSet | AppAction::TgViewJumpToCommit => {
-            super::tgview::dispatch(app, action, flags)
+        AppAction::TagViewDelete | AppAction::TagViewSet | AppAction::TagViewJumpToCommit => {
+            super::view::tag::dispatch(app, action, flags)
         }
         // Operations view actions
         AppAction::SwitchToOpLogView => {
@@ -576,7 +576,7 @@ pub fn dispatch_action_after_hooks(
         AppAction::OpLogFilterWorkspace
         | AppAction::OpLogRestore
         | AppAction::OpLogRevert
-        | AppAction::OpLogAbandon => super::oplog::dispatch(app, action, flags),
+        | AppAction::OpLogAbandon => super::view::oplog::dispatch(app, action, flags),
         // Workspace view actions
         AppAction::SwitchToWorkspaceView => {
             app.switch_view(crate::app::ActiveView::Workspaces);
@@ -597,8 +597,8 @@ pub fn dispatch_action_after_hooks(
         AppAction::EvoLogEdit
         | AppAction::EvoLogNew
         | AppAction::EvoLogInterdiff
-        | AppAction::EvoLogRestore => super::evolog::dispatch(app, action, flags),
-        AppAction::WsViewForget => super::wsview::dispatch(app, action, flags),
+        | AppAction::EvoLogRestore => super::view::evolog::dispatch(app, action, flags),
+        AppAction::WorkspaceViewForget => super::view::workspace::dispatch(app, action, flags),
         AppAction::FileAnnotate => {
             if let Some((path, _)) = extract_file_and_line(app) {
                 if let Some(cid) = extract_commit_id(app) {
@@ -613,7 +613,7 @@ pub fn dispatch_action_after_hooks(
         }
         AppAction::AnnotateTimeTravel
         | AppAction::ToggleAnnotateSeparator
-        | AppAction::AnnotateForward => super::annotate::dispatch(app, action, flags),
+        | AppAction::AnnotateForward => super::view::annotate::dispatch(app, action, flags),
         AppAction::EditFileWorkingCopy => {
             if let Some((path, line)) = extract_file_and_line(app) {
                 return Action::EditWorkingCopyFile {
@@ -650,8 +650,10 @@ pub fn dispatch_action_after_hooks(
             app.set_error("select a file to edit");
             Action::None
         }
-        AppAction::AnnotateGoToCommit => super::annotate::dispatch(app, action, flags),
-        AppAction::WsViewJumpToCommit => super::wsview::dispatch(app, action, flags),
+        AppAction::AnnotateGoToCommit => super::view::annotate::dispatch(app, action, flags),
+        AppAction::WorkspaceViewJumpToCommit => {
+            super::view::workspace::dispatch(app, action, flags)
+        }
         AppAction::CommandMode => {
             app.mode = AppMode::text_input(":", "", PendingCommand::RawCommand);
             Action::None

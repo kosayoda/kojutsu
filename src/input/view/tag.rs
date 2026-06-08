@@ -5,12 +5,12 @@ use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::PendingCommand;
 
-use super::action::jump_to_commit_in_dag;
-use super::Action;
+use crate::input::action::jump_to_commit_in_dag;
+use crate::input::Action;
 
-pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
+pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
     match action {
-        AppAction::TgViewDelete => {
+        AppAction::TagViewDelete => {
             let Some(entry) = app.selected_tag_entry() else {
                 return Action::None;
             };
@@ -22,7 +22,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
                 flags,
             })
         }
-        AppAction::TgViewSet => {
+        AppAction::TagViewSet => {
             let Some(entry) = app.selected_tag_entry() else {
                 return Action::None;
             };
@@ -34,7 +34,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
             );
             Action::None
         }
-        AppAction::TgViewJumpToCommit => {
+        AppAction::TagViewJumpToCommit => {
             let Some(ids) = app
                 .selected_tag_entry()
                 .map(|e| (e.commit_id.clone(), e.change_id.clone()))

@@ -466,30 +466,36 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     specs.extend(file_prefix_bindings(dag));
 
     // Bookmark view
-    let bm = || views(&[Bookmarks]);
+    let bookmark = || views(&[Bookmarks]);
     specs.extend([
-        bind("d", BmViewDelete, "delete", C, bm()),
-        bind("t", BmViewTrack, "track", C, bm()),
-        bind("shift-u", BmViewUntrack, "untrack", C, bm()),
-        bind("p", BmViewPush, "push", C, bm()),
-        bind("enter", BmViewJumpToCommit, "jump / pick", C, bm()),
-        bind("e", BmViewEdit, "edit (checkout)", C, bm()),
-        bind("r", BmViewRename, "rename", C, bm()),
-        bind("m", BmViewMove, "move\u{2026}", C, bm()),
-        bind("f", BmViewFetch, "fetch", C, bm()),
-        bind("s", BmViewSet, "set\u{2026}", C, bm()),
-        bind("shift-f", BmViewForget, "forget", C, bm()),
+        bind("d", BookmarkViewDelete, "delete", C, bookmark()),
+        bind("t", BookmarkViewTrack, "track", C, bookmark()),
+        bind("shift-u", BookmarkViewUntrack, "untrack", C, bookmark()),
+        bind("p", BookmarkViewPush, "push", C, bookmark()),
+        bind(
+            "enter",
+            BookmarkViewJumpToCommit,
+            "jump / pick",
+            C,
+            bookmark(),
+        ),
+        bind("e", BookmarkViewEdit, "edit (checkout)", C, bookmark()),
+        bind("r", BookmarkViewRename, "rename", C, bookmark()),
+        bind("m", BookmarkViewMove, "move\u{2026}", C, bookmark()),
+        bind("f", BookmarkViewFetch, "fetch", C, bookmark()),
+        bind("s", BookmarkViewSet, "set\u{2026}", C, bookmark()),
+        bind("shift-f", BookmarkViewForget, "forget", C, bookmark()),
     ]);
-    specs.extend(undo_redo(bm));
+    specs.extend(undo_redo(bookmark));
 
     // Tag view
-    let tg = || views(&[Tags]);
+    let tag = || views(&[Tags]);
     specs.extend([
-        bind("d", TgViewDelete, "delete", C, tg()),
-        bind("s", TgViewSet, "set\u{2026}", C, tg()),
-        bind("enter", TgViewJumpToCommit, "jump to commit", C, tg()),
+        bind("d", TagViewDelete, "delete", C, tag()),
+        bind("s", TagViewSet, "set\u{2026}", C, tag()),
+        bind("enter", TagViewJumpToCommit, "jump to commit", C, tag()),
     ]);
-    specs.extend(undo_redo(tg));
+    specs.extend(undo_redo(tag));
 
     // Operations view
     let op = || views(&[Operations]);
@@ -502,14 +508,20 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     specs.extend(undo_redo(op));
 
     // Workspaces view
-    let ws = || views(&[Workspaces]);
+    let workspace = || views(&[Workspaces]);
     specs.extend([
-        bind("a", WorkspaceAdd, "add", C, ws()),
-        bind("f", WsViewForget, "forget", C, ws()),
-        bind("r", WorkspaceRename, "rename", C, ws()),
-        bind("enter", WsViewJumpToCommit, "jump to commit", C, ws()),
+        bind("a", WorkspaceAdd, "add", C, workspace()),
+        bind("f", WorkspaceViewForget, "forget", C, workspace()),
+        bind("r", WorkspaceRename, "rename", C, workspace()),
+        bind(
+            "enter",
+            WorkspaceViewJumpToCommit,
+            "jump to commit",
+            C,
+            workspace(),
+        ),
     ]);
-    specs.extend(undo_redo(ws));
+    specs.extend(undo_redo(workspace));
 
     // Evolog view
     let evo = || views(&[Evolog]);

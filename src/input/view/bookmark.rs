@@ -5,12 +5,12 @@ use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{ChangeId, PendingCommand, PendingSelection, RemoteName, TargetOperation};
 
-use super::action::{enter_target_select, jump_to_commit_in_dag};
-use super::Action;
+use crate::input::action::{enter_target_select, jump_to_commit_in_dag};
+use crate::input::Action;
 
-pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
+pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
     match action {
-        AppAction::BmViewDelete => {
+        AppAction::BookmarkViewDelete => {
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
@@ -22,7 +22,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
                 flags,
             })
         }
-        AppAction::BmViewTrack => {
+        AppAction::BookmarkViewTrack => {
             let Some(br) = app.selected_bookmark_ref() else {
                 app.set_error("bookmark is already local");
                 return Action::None;
@@ -34,7 +34,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
                 flags,
             })
         }
-        AppAction::BmViewUntrack => {
+        AppAction::BookmarkViewUntrack => {
             let Some(br) = app.selected_bookmark_ref() else {
                 app.set_error("bookmark has no remote to untrack");
                 return Action::None;
@@ -46,7 +46,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
                 flags,
             })
         }
-        AppAction::BmViewPush => {
+        AppAction::BookmarkViewPush => {
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
@@ -74,7 +74,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
                 })
             }
         }
-        AppAction::BmViewJumpToCommit => {
+        AppAction::BookmarkViewJumpToCommit => {
             // On a conflict target row: resolve by setting the bookmark there.
             if let Some((entry, target)) = app.selected_conflict_target() {
                 let name = entry.name.clone();
@@ -115,7 +115,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
             );
             Action::None
         }
-        AppAction::BmViewEdit => {
+        AppAction::BookmarkViewEdit => {
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
@@ -129,7 +129,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
                 flags,
             })
         }
-        AppAction::BmViewRename => {
+        AppAction::BookmarkViewRename => {
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
@@ -141,7 +141,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
             );
             Action::None
         }
-        AppAction::BmViewMove => {
+        AppAction::BookmarkViewMove => {
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
@@ -149,7 +149,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
             app.switch_view(crate::app::ActiveView::Dag);
             enter_target_select(app, TargetOperation::BookmarkMove { bookmark_name }, flags)
         }
-        AppAction::BmViewForget => {
+        AppAction::BookmarkViewForget => {
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
@@ -161,7 +161,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
                 flags,
             })
         }
-        AppAction::BmViewSet => {
+        AppAction::BookmarkViewSet => {
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
@@ -173,7 +173,7 @@ pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) ->
             );
             Action::None
         }
-        AppAction::BmViewFetch => {
+        AppAction::BookmarkViewFetch => {
             // On a remote target row: fetch that specific bookmark+remote.
             if let Some((entry, target)) = app.selected_remote_target() {
                 return Action::SuspendAndRunJj(JJCommand {

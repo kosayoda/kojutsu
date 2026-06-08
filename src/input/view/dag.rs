@@ -8,14 +8,14 @@ use crate::types::{
     RebaseSource, SelectionKind, SmallVec, SplitKind, SquashKind, Str, TargetOperation,
 };
 
-use super::action::{build_change_selection, enter_target_select, run_cmd};
-use super::bookmark::{
+use crate::input::action::{build_change_selection, enter_target_select, run_cmd};
+use crate::input::bookmark::{
     enter_bookmark_advance, enter_bookmark_select, enter_bookmark_text_input,
     enter_remote_bookmark_select, enter_tag_delete, BookmarkTextAction, PendingSelectionKind,
 };
-use super::Action;
+use crate::input::Action;
 
-pub(super) fn dispatch(
+pub(in crate::input) fn dispatch(
     app: &mut App,
     lua: &crate::lua::LuaEngine,
     action: AppAction,

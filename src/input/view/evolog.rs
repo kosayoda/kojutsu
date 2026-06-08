@@ -3,10 +3,10 @@ use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{ChangeId, CommitId, Str};
 
-use super::action::build_change_selection;
-use super::Action;
+use crate::input::action::build_change_selection;
+use crate::input::Action;
 
-pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
+pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
     match action {
         AppAction::EvoLogEdit => {
             let Some(entry) = app.selected_evolog_entry() else {

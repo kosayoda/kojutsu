@@ -1,10 +1,10 @@
 use crate::app::App;
 use crate::keymap::{AppAction, CommandFlags};
 
-use super::action::jump_to_commit_in_dag;
-use super::Action;
+use crate::input::action::jump_to_commit_in_dag;
+use crate::input::Action;
 
-pub(super) fn dispatch(app: &mut App, action: AppAction, _flags: CommandFlags) -> Action {
+pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, _flags: CommandFlags) -> Action {
     match action {
         AppAction::AnnotateTimeTravel => {
             if let Some(line) = app.selected_annotate_line() {

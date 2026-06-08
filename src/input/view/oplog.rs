@@ -3,9 +3,9 @@ use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::PendingSelection;
 
-use super::Action;
+use crate::input::Action;
 
-pub(super) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
+pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
     match action {
         AppAction::OpLogFilterWorkspace => {
             let mut workspaces: Vec<String> = app
