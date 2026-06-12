@@ -91,7 +91,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     let is_marked = |entry_idx: EntryIdx| -> bool {
         target_marks.map_or_else(
             || app.is_commit_selected(entry_idx),
-            |marks| marks.contains(&app.nodes[entry_idx].commit.unique_change_id()),
+            |marks| marks.contains(&app.nodes[entry_idx].commit.unique_prefix()),
         )
     };
 
