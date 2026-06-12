@@ -289,7 +289,7 @@ pub enum TargetMode {
     Multi { targets: HashSet<ChangeId> },
 }
 
-#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PersistedState {
     pub show_line_numbers: bool,
@@ -300,10 +300,25 @@ pub struct PersistedState {
     #[serde(default, alias = "search_scopes")]
     pub view_search_scopes: [u8; <ActiveView as strum::EnumCount>::COUNT],
     pub active_preset: Option<usize>,
-    #[serde(default)]
     pub git_diff: bool,
-    #[serde(default)]
     pub annotate_separators: bool,
+    pub diff_underline: bool,
+}
+
+impl Default for PersistedState {
+    fn default() -> Self {
+        Self {
+            show_line_numbers: false,
+            ignore_immutable: false,
+            ignore_working_copy: false,
+            debug: false,
+            view_search_scopes: [0; <ActiveView as strum::EnumCount>::COUNT],
+            active_preset: None,
+            git_diff: false,
+            annotate_separators: false,
+            diff_underline: true,
+        }
+    }
 }
 
 pub fn load_persisted_state() -> PersistedState {

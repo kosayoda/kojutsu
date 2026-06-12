@@ -255,6 +255,8 @@ pub struct App {
     pub pre_overlay_mode: Option<AppMode>,
     /// Whether to show line numbers in diff views.
     pub show_line_numbers: bool,
+    /// Whether to underline changed tokens in word-level diffs.
+    pub diff_underline: bool,
     /// Current selection context: implicit commit under cursor, or explicit
     /// homogeneous file/line selection.
     pub selection: SelectionContext,
@@ -325,6 +327,7 @@ impl App {
             last_action_label: None,
             pre_overlay_mode: None,
             show_line_numbers: false,
+            diff_underline: true,
             selection: SelectionContext::new(),
             visual: VisualState::new(),
             search: None,
@@ -1102,6 +1105,7 @@ impl App {
             active_preset: self.revset.active_preset,
             git_diff: self.diff_format == DiffFormat::Git,
             annotate_separators: self.annotate.show_commit_separators,
+            diff_underline: self.diff_underline,
         }
     }
 
@@ -1118,6 +1122,7 @@ impl App {
             DiffFormat::ColorWords
         };
         self.annotate.show_commit_separators = state.annotate_separators;
+        self.diff_underline = state.diff_underline;
         self.revset.active_preset = state
             .active_preset
             .filter(|&i| i < self.revset.presets.len());

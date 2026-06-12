@@ -281,6 +281,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     render_diff_line(
                         diff_line,
                         app.show_line_numbers,
+                        app.diff_underline,
                         &flags,
                         row_search.as_ref(),
                         theme,
@@ -418,7 +419,13 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let diff_line = app
                         .evolog_diff_lines(*evolog_idx, *file_idx)
                         .and_then(|lines| lines.get(line_idx.raw()));
-                    render_simple_diff_line(diff_line, row_search.as_ref(), theme, &tab_spaces)
+                    render_simple_diff_line(
+                        diff_line,
+                        app.diff_underline,
+                        row_search.as_ref(),
+                        theme,
+                        &tab_spaces,
+                    )
                 }
                 DisplayRow::EvoLogGraphLink {
                     evolog_idx,
@@ -621,7 +628,13 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let diff_line = app
                         .interdiff_diff_lines(*file_idx)
                         .and_then(|lines| lines.get(line_idx.raw()));
-                    render_simple_diff_line(diff_line, row_search.as_ref(), theme, &tab_spaces)
+                    render_simple_diff_line(
+                        diff_line,
+                        app.diff_underline,
+                        row_search.as_ref(),
+                        theme,
+                        &tab_spaces,
+                    )
                 }
                 DisplayRow::AnnotateLine { line_idx } => {
                     let lines_data = app.annotate.lines.loaded();
@@ -1277,6 +1290,7 @@ fn push_diff_tokens(
     spans: &mut Vec<Span<'static>>,
     diff_line: &DiffLine,
     base_style: Style,
+    underline: bool,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
     tab_str: &str,
@@ -1298,12 +1312,26 @@ fn push_diff_tokens(
         }
         let style = match token.kind {
             DiffTokenKind::Unchanged => base_style,
-            DiffTokenKind::Removed => Style::default()
-                .fg(theme.error)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-            DiffTokenKind::Added => Style::default()
-                .fg(theme.added)
-                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            DiffTokenKind::Removed => {
+                let s = Style::default()
+                    .fg(theme.error)
+                    .add_modifier(Modifier::BOLD);
+                if underline {
+                    s.add_modifier(Modifier::UNDERLINED)
+                } else {
+                    s
+                }
+            }
+            DiffTokenKind::Added => {
+                let s = Style::default()
+                    .fg(theme.added)
+                    .add_modifier(Modifier::BOLD);
+                if underline {
+                    s.add_modifier(Modifier::UNDERLINED)
+                } else {
+                    s
+                }
+            }
         };
         spans.push(Span::styled(expand_tabs(&token.text, tab_str), style));
     }
@@ -1322,6 +1350,7 @@ fn format_line_numbers(old: Option<u32>, new: Option<u32>) -> String {
 fn render_diff_line(
     diff_line: &DiffLine,
     show_line_numbers: bool,
+    diff_underline: bool,
     flags: &RenderFlags,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
@@ -1350,7 +1379,15 @@ fn render_diff_line(
         let nums = format_line_numbers(diff_line.old_line, diff_line.new_line);
         spans.push(Span::styled(nums, line_num_style));
         spans.push(Span::styled(marker, style));
-        push_diff_tokens(&mut spans, diff_line, style, search, theme, tab_str);
+        push_diff_tokens(
+            &mut spans,
+            diff_line,
+            style,
+            diff_underline,
+            search,
+            theme,
+            tab_str,
+        );
     } else {
         let prefix = match diff_line.kind {
             DiffLineKind::Header => "      ",
@@ -1359,7 +1396,15 @@ fn render_diff_line(
             DiffLineKind::Removed => "      -",
         };
         spans.push(Span::styled(prefix, style));
-        push_diff_tokens(&mut spans, diff_line, style, search, theme, tab_str);
+        push_diff_tokens(
+            &mut spans,
+            diff_line,
+            style,
+            diff_underline,
+            search,
+            theme,
+            tab_str,
+        );
     }
 
     vec![Line::from(spans)]
@@ -1731,6 +1776,7 @@ fn file_status_display(status: FileStatus, theme: &Theme) -> (&'static str, rata
 /// (evolog, interdiff).
 fn render_simple_diff_line(
     diff_line: Option<&DiffLine>,
+    diff_underline: bool,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
     tab_str: &str,
@@ -1753,7 +1799,15 @@ fn render_simple_diff_line(
         gutter_span(search, theme),
         Span::styled(format!("    {prefix} "), base_style),
     ];
-    push_diff_tokens(&mut spans, diff_line, base_style, search, theme, tab_str);
+    push_diff_tokens(
+        &mut spans,
+        diff_line,
+        base_style,
+        diff_underline,
+        search,
+        theme,
+        tab_str,
+    );
     vec![Line::from(spans)]
 }
 

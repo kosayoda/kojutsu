@@ -310,6 +310,10 @@ pub fn dispatch_action_after_hooks(
             app.show_line_numbers = !app.show_line_numbers;
             Action::None
         }
+        AppAction::ToggleDiffUnderline => {
+            app.diff_underline = !app.diff_underline;
+            Action::None
+        }
         AppAction::ToggleSelect => {
             // If cursor is in a persistent visual range, toggle it into selections.
             if app.cursor_in_persistent_visual_range() {

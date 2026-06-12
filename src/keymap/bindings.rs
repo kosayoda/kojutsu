@@ -261,6 +261,14 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind2(";", "g", ToggleGitDiff, "toggle diff style", G, all()),
         bind2(
             ";",
+            "u",
+            ToggleDiffUnderline,
+            "toggle diff underline",
+            G,
+            all(),
+        ),
+        bind2(
+            ";",
             "s",
             ToggleAnnotateSeparator,
             "toggle separator lines",
