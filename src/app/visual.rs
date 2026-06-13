@@ -4,13 +4,51 @@ use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, RowIdx};
 use crate::types::{DisplayRow, FileRef, Selection, SelectionKind, VisualRange};
 
 impl App {
+    /// Whether a file row is in the active or persistent visual file range.
+    pub fn is_in_visual_file_range(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> bool {
+        if let Some(VisualMode::Files {
+            anchor,
+            entry_idx: ve,
+        }) = &self.visual.mode
+        {
+            if entry_idx == *ve {
+                let lo = (*anchor).min(self.cursor);
+                let hi = (*anchor).max(self.cursor);
+                for i in lo.raw()..=hi.raw() {
+                    if let Some(DisplayRow::FileChange {
+                        entry_idx: ei,
+                        file_idx: fi,
+                    }) = self.rows.get(i)
+                    {
+                        if *ei == entry_idx && *fi == file_idx {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(PersistentVisualRange::Files {
+            entry_idx: ve,
+            lo,
+            hi,
+        }) = &self.visual.persistent
+        {
+            if entry_idx == *ve && file_idx >= *lo && file_idx <= *hi {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+impl App {
     /// Whether any visual mode is active (line or commit).
     pub fn in_visual_mode(&self) -> bool {
         self.visual.mode.is_some()
     }
 
     /// Enter visual mode based on the current cursor row type.
-    /// CommitNode → commit visual mode, DiffLine → line visual mode.
+    /// CommitNode → commit visual mode, DiffLine → line visual mode, FileChange → file visual mode.
     pub fn enter_visual_mode(&mut self) {
         match self.rows.get(self.cursor.raw()) {
             Some(DisplayRow::CommitNode { entry_idx }) => {
@@ -37,6 +75,14 @@ impl App {
                     self.visual.persistent = None;
                 }
             }
+            Some(DisplayRow::FileChange { entry_idx, .. }) => {
+                let entry_idx = *entry_idx;
+                self.visual.mode = Some(VisualMode::Files {
+                    anchor: self.cursor,
+                    entry_idx,
+                });
+                self.visual.persistent = None;
+            }
             _ => {}
         }
     }
@@ -51,6 +97,9 @@ impl App {
                 if !path.is_empty() {
                     self.visual.persistent = Some(PersistentVisualRange::Commits(path));
                 }
+            }
+            Some(VisualMode::Files { anchor, entry_idx }) => {
+                self.visual.persistent = self.compute_file_range(anchor, entry_idx);
             }
             None => {}
         }
@@ -71,6 +120,10 @@ impl App {
             Some(VisualMode::Commits { path, .. }) => {
                 self.visual.persistent = Some(PersistentVisualRange::Commits(path));
                 self.toggle_commit_visual_selection();
+            }
+            Some(VisualMode::Files { anchor, entry_idx }) => {
+                self.visual.persistent = self.compute_file_range(anchor, entry_idx);
+                self.toggle_file_visual_selection();
             }
             None => {}
         }
@@ -103,6 +156,15 @@ impl App {
                 Some(DisplayRow::CommitNode { entry_idx }) => range.contains(entry_idx),
                 _ => false,
             },
+            Some(PersistentVisualRange::Files { entry_idx, lo, hi }) => {
+                match self.rows.get(self.cursor.raw()) {
+                    Some(DisplayRow::FileChange {
+                        entry_idx: ei,
+                        file_idx,
+                    }) => ei == entry_idx && file_idx >= lo && file_idx <= hi,
+                    _ => false,
+                }
+            }
             None => false,
         }
     }
@@ -116,6 +178,9 @@ impl App {
             Some(PersistentVisualRange::Commits(_)) => {
                 self.toggle_commit_visual_selection();
             }
+            Some(PersistentVisualRange::Files { .. }) => {
+                self.toggle_file_visual_selection();
+            }
             None => {}
         }
     }
@@ -124,6 +189,7 @@ impl App {
         match &self.visual.mode {
             Some(VisualMode::Lines { .. }) => self.line_visual_move_down(),
             Some(VisualMode::Commits { .. }) => self.commit_visual_move_down(),
+            Some(VisualMode::Files { .. }) => self.file_visual_move_down(),
             None => {}
         }
     }
@@ -132,6 +198,7 @@ impl App {
         match &self.visual.mode {
             Some(VisualMode::Lines { .. }) => self.line_visual_move_up(),
             Some(VisualMode::Commits { .. }) => self.commit_visual_move_up(),
+            Some(VisualMode::Files { .. }) => self.file_visual_move_up(),
             None => {}
         }
     }
@@ -471,6 +538,112 @@ impl App {
             Some(EntryIdx::new(raw - 1))
         } else {
             None
+        }
+    }
+
+    fn file_visual_move_down(&mut self) {
+        let Some(VisualMode::Files { entry_idx, .. }) = &self.visual.mode else {
+            return;
+        };
+        let entry_idx = *entry_idx;
+        for j in (self.cursor.raw() + 1)..self.rows.len() {
+            match &self.rows[j] {
+                DisplayRow::GraphLink { .. } => continue,
+                DisplayRow::FileChange { entry_idx: ei, .. } if *ei == entry_idx => {
+                    self.cursor = RowIdx::new(j);
+                    return;
+                }
+                _ => return,
+            }
+        }
+    }
+
+    fn file_visual_move_up(&mut self) {
+        let Some(VisualMode::Files { entry_idx, .. }) = &self.visual.mode else {
+            return;
+        };
+        let entry_idx = *entry_idx;
+        for j in (0..self.cursor.raw()).rev() {
+            match &self.rows[j] {
+                DisplayRow::GraphLink { .. } => continue,
+                DisplayRow::FileChange { entry_idx: ei, .. } if *ei == entry_idx => {
+                    self.cursor = RowIdx::new(j);
+                    return;
+                }
+                _ => return,
+            }
+        }
+    }
+
+    fn compute_file_range(
+        &self,
+        anchor: RowIdx,
+        entry_idx: EntryIdx,
+    ) -> Option<PersistentVisualRange> {
+        let lo = anchor.min(self.cursor).raw();
+        let hi = anchor.max(self.cursor).raw();
+        let mut min_fi: Option<FileIdx> = None;
+        let mut max_fi: Option<FileIdx> = None;
+        for i in lo..=hi {
+            if let Some(DisplayRow::FileChange {
+                entry_idx: ei,
+                file_idx,
+            }) = self.rows.get(i)
+            {
+                if *ei == entry_idx {
+                    min_fi = Some(min_fi.map_or(*file_idx, |m: FileIdx| m.min(*file_idx)));
+                    max_fi = Some(max_fi.map_or(*file_idx, |m: FileIdx| m.max(*file_idx)));
+                }
+            }
+        }
+        match (min_fi, max_fi) {
+            (Some(lo), Some(hi)) => Some(PersistentVisualRange::Files { entry_idx, lo, hi }),
+            _ => None,
+        }
+    }
+
+    fn toggle_file_visual_selection(&mut self) {
+        let Some(PersistentVisualRange::Files { entry_idx, lo, hi }) = &self.visual.persistent
+        else {
+            return;
+        };
+        let (entry_idx, lo, hi) = (*entry_idx, *lo, *hi);
+
+        let Some(files) = self.files_for_entry(entry_idx) else {
+            return;
+        };
+        let change_id = self.nodes[entry_idx].commit.unique_change_id();
+        let file_refs: Vec<FileRef> = files
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| {
+                let fi = FileIdx::new(*i);
+                fi >= lo && fi <= hi
+            })
+            .map(|(_, f)| FileRef {
+                change_id: change_id.clone(),
+                path: f.path.clone(),
+            })
+            .collect();
+
+        if file_refs.is_empty() {
+            return;
+        }
+
+        let all_selected = file_refs
+            .iter()
+            .all(|fr| self.selection.contains(&Selection::File(fr.clone())));
+
+        if all_selected {
+            for fr in &file_refs {
+                self.selection.remove(&Selection::File(fr.clone()));
+            }
+        } else {
+            self.clear_other_commits(&change_id);
+            self.selection.ensure_kind(SelectionKind::File);
+            for fr in file_refs {
+                self.selection.insert(Selection::File(fr));
+            }
         }
     }
 

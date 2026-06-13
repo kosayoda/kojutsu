@@ -586,12 +586,25 @@ pub enum VisualMode {
         /// Ordered path from newest to oldest along Direct edges (inclusive).
         path: Vec<EntryIdx>,
     },
+    /// Visual selection of files within a single commit.
+    Files {
+        /// Row index where `v` was pressed.
+        anchor: RowIdx,
+        /// Which commit the anchor belongs to (single-commit constraint).
+        entry_idx: EntryIdx,
+    },
 }
 
 /// Persistent visual range (survives exiting visual mode with `v`).
 pub enum PersistentVisualRange {
     Lines(VisualRange),
     Commits(Vec<EntryIdx>),
+    /// A contiguous range of files within one commit.
+    Files {
+        entry_idx: EntryIdx,
+        lo: crate::idx::FileIdx,
+        hi: crate::idx::FileIdx,
+    },
 }
 
 /// State for the select-from-list overlay (e.g. picking a bookmark).

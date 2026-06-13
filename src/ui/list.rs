@@ -257,7 +257,15 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     let file = &files[file_idx.raw()];
                     let is_unfolded = app.is_file_unfolded(*entry_idx, *file_idx);
                     let sel_state = app.file_selection_state(*entry_idx, *file_idx);
-                    render_file_line(file, is_unfolded, sel_state, row_search.as_ref(), theme)
+                    let in_visual = app.is_in_visual_file_range(*entry_idx, *file_idx);
+                    render_file_line(
+                        file,
+                        is_unfolded,
+                        sel_state,
+                        in_visual,
+                        row_search.as_ref(),
+                        theme,
+                    )
                 }
                 DisplayRow::DiffLine {
                     entry_idx,
@@ -1211,6 +1219,7 @@ fn render_file_line(
     file: &FileChange,
     is_unfolded: bool,
     sel_state: FileSelectionState,
+    in_visual: bool,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
@@ -1235,9 +1244,14 @@ fn render_file_line(
     };
 
     let mut spans = vec![gutter_span(search, theme)];
+    spans.push(if in_visual {
+        Span::styled("│", Style::default().fg(theme.accent))
+    } else {
+        Span::raw(" ")
+    });
     spans.extend(vec![
         Span::styled(
-            format!("  {select_char} "),
+            format!(" {select_char} "),
             Style::default().fg(theme.selection),
         ),
         Span::styled(fold_char, Style::default().fg(theme.muted)),
