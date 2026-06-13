@@ -203,6 +203,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
             frame.render_widget(ratatui::widgets::Clear, area);
             overlay::draw_follow_up(frame, area, prompt, options, theme);
         }
+        AppMode::CommandRunning { command_parts, .. } => {
+            let area = overlay_area(overlay_base, 2);
+            frame.render_widget(ratatui::widgets::Clear, area);
+            overlay::draw_command_running(frame, area, command_parts, theme);
+        }
         AppMode::SelectFromList(s) => {
             let height = (s.filtered_indices.len() as u16 + 2)
                 .min(overlay_base.height / 2)

@@ -613,6 +613,26 @@ pub(super) fn draw_select_list(
     }
 }
 
+pub(super) fn draw_command_running(
+    frame: &mut Frame,
+    area: Rect,
+    command_parts: &[crate::jj_command::CommandPart],
+    theme: &Theme,
+) {
+    use ratatui::widgets::Padding;
+
+    let command_line = Line::from(super::spans::command_parts_to_spans(command_parts, theme));
+    let hint = Line::from(Span::styled(
+        "running… (^C to cancel)",
+        Style::default().fg(theme.muted),
+    ));
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(theme.muted))
+        .padding(Padding::new(1, 1, 0, 0));
+    frame.render_widget(Paragraph::new(vec![hint, command_line]).block(block), area);
+}
+
 pub(super) fn draw_command_output(
     frame: &mut Frame,
     area: Rect,

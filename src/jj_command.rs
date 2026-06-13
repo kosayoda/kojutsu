@@ -1,5 +1,7 @@
+use std::io::Read as _;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::{atomic::AtomicI32, atomic::Ordering, Arc};
 
 use compact_str::format_compact;
 
@@ -13,6 +15,34 @@ use crate::types::{
     PendingCommitSelect, ReadyCommand, RebaseKind, RebaseSource, RebaseTarget, RemoteName,
     SmallVec, SmallVec1, SplitTarget, SquashTarget, Str, TagName, TargetOperation, WorkspaceName,
 };
+
+/// Handle for cancelling an in-progress background jj command.
+///
+/// Stores the child's process group ID once it has been spawned. Calling
+/// `kill()` sends SIGTERM to the entire process group.
+#[derive(Clone)]
+pub struct KillHandle(Arc<AtomicI32>);
+
+impl KillHandle {
+    pub fn pair() -> (Self, Self) {
+        let arc = Arc::new(AtomicI32::new(0));
+        (Self(Arc::clone(&arc)), Self(arc))
+    }
+
+    pub(crate) fn set_pgid(&self, pgid: i32) {
+        self.0.store(pgid, Ordering::Release);
+    }
+
+    pub fn kill(&self) {
+        let pgid = self.0.load(Ordering::Acquire);
+        if pgid > 0 {
+            let _ = nix::sys::signal::killpg(
+                nix::unistd::Pid::from_raw(pgid),
+                nix::sys::signal::Signal::SIGTERM,
+            );
+        }
+    }
+}
 
 /// Where to insert a new commit relative to its parent.
 #[derive(Debug, Clone, Copy)]
@@ -1020,6 +1050,78 @@ impl JJCommand {
                 success: status.success(),
             },
             Err(e) => jj_error(display, display_parts, e),
+        }
+    }
+
+    /// Run the command in the background, in its own process group, returning
+    /// once it exits or is killed.
+    ///
+    /// The caller must set up a `KillHandle` pair before calling this. Once
+    /// the child is spawned its PGID is recorded in `kill` so the main thread
+    /// can cancel the run via `kill.kill()`.
+    pub fn run_cancellable(&self, repo_path: &Path, kill: &KillHandle) -> JJCommandResult {
+        use std::os::unix::process::CommandExt as _;
+
+        let args = self.args();
+        let display = self.display();
+        let display_parts = self.display_parts();
+
+        let mut child = match Command::new("jj")
+            .args(&args)
+            .arg("-R")
+            .arg(repo_path)
+            .arg("--color=always")
+            .current_dir(repo_path)
+            .env("JJ_EDITOR", ":")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .process_group(0)
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(e) => return jj_error(display, display_parts, e),
+        };
+
+        kill.set_pgid(child.id() as i32);
+
+        let child_stdout = child.stdout.take().unwrap();
+        let child_stderr = child.stderr.take().unwrap();
+        let stdout_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let mut src = child_stdout;
+            let _ = src.read_to_end(&mut buf);
+            buf
+        });
+        let stderr_thread = std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let mut src = child_stderr;
+            let _ = src.read_to_end(&mut buf);
+            buf
+        });
+
+        let status = match child.wait() {
+            Ok(s) => s,
+            Err(e) => return jj_error(display, display_parts, e),
+        };
+
+        let stdout = stdout_thread.join().unwrap_or_default();
+        let stderr = stderr_thread.join().unwrap_or_default();
+
+        if status.code().is_none() {
+            return JJCommandResult {
+                display,
+                display_parts,
+                output: b"interrupted".to_vec(),
+                success: false,
+            };
+        }
+
+        JJCommandResult {
+            display,
+            display_parts,
+            output: merge_captured_output(stdout, stderr),
+            success: status.success(),
         }
     }
 }

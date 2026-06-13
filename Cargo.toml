@@ -41,6 +41,8 @@ mio = { version = "1", features = ["os-poll"] }
 pollster = "0.4"
 # DAG graph rendering (same library jj uses)
 sapling-renderdag = "0.1"
+# killpg for cancelling background jj commands
+nix = { version = "0.29", features = ["signal"] }
 # Safe signal handling (ignore SIGINT while child processes run)
 signal-hook = "0.4"
 # mio adapter for signal-hook

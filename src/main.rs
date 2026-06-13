@@ -7,7 +7,7 @@ use crossterm::event::{Event, KeyEventKind};
 
 use kojutsu::app::{App, AppMode, DeferredWork, Loadable};
 use kojutsu::input::{self, Action};
-use kojutsu::jj_command::JJCommand;
+use kojutsu::jj_command::{JJCommand, JJCommandResult};
 use kojutsu::keymap::{self, Keymaps};
 use kojutsu::repo::JjRepo;
 use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService};
@@ -19,6 +19,12 @@ enum AppEvent {
     Init,
     Terminal(Event),
     Repo(Box<RepoResult>),
+    JjDone {
+        result: Box<JJCommandResult>,
+        cmd: Box<JJCommand>,
+        jump: Option<JumpTarget>,
+        label: Option<&'static str>,
+    },
 }
 
 #[derive(Parser)]
@@ -228,6 +234,16 @@ fn main() -> Result<()> {
                     dirty = true;
                     Action::None
                 }
+                AppEvent::JjDone {
+                    result,
+                    cmd,
+                    jump,
+                    label,
+                } => {
+                    dirty = true;
+                    finish_jj_command(&mut app, *result, *cmd, jump, label, &lua_engine);
+                    Action::None
+                }
                 AppEvent::Terminal(ev) => match ev {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         dirty = true;
@@ -267,11 +283,7 @@ fn main() -> Result<()> {
             Action::Quit => break,
             Action::RunJj(cmd) => {
                 let action_label = app.last_action_label.take();
-                run_jj_command(&mut app, &repo_path, cmd);
-                if let Some(label) = action_label {
-                    let (success, output) = extract_command_result(&app);
-                    lua_engine.run_post_hooks(label, &mut app, success, &output);
-                }
+                run_jj_command(&mut app, &repo_path, cmd, action_label, &event_tx);
             }
             Action::SuspendAndRunJj(cmd) => {
                 let action_label = app.last_action_label.take();
@@ -343,11 +355,7 @@ fn main() -> Result<()> {
                 match result {
                     Action::RunJj(cmd) => {
                         let action_label = app.last_action_label.take();
-                        run_jj_command(&mut app, &repo_path, cmd);
-                        if let Some(label) = action_label {
-                            let (success, output) = extract_command_result(&app);
-                            lua_engine.run_post_hooks(label, &mut app, success, &output);
-                        }
+                        run_jj_command(&mut app, &repo_path, cmd, action_label, &event_tx);
                     }
                     Action::SuspendAndRunJj(cmd) => {
                         let action_label = app.last_action_label.take();
@@ -587,10 +595,51 @@ fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
     }
 }
 
-fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
+/// Spawn a background thread to run a non-interactive jj command.
+///
+/// Sets `app.mode` to `CommandRunning` immediately so the UI shows progress,
+/// then sends `AppEvent::JjDone` when the child exits (or is cancelled via
+/// Esc, which kills the child process group).
+fn run_jj_command(
+    app: &mut App,
+    repo_path: &std::path::Path,
+    cmd: JJCommand,
+    label: Option<&'static str>,
+    event_tx: &mpsc::Sender<AppEvent>,
+) {
     let jump = cmd.jump_target();
-    let result = cmd.run(repo_path);
+    let command = cmd.display();
+    let command_parts = cmd.display_parts();
+    let (kill_main, kill_bg) = kojutsu::jj_command::KillHandle::pair();
 
+    app.mode = AppMode::CommandRunning {
+        command,
+        command_parts,
+        kill: kill_main,
+    };
+
+    let repo_path = repo_path.to_path_buf();
+    let event_tx = event_tx.clone();
+    std::thread::spawn(move || {
+        let result = cmd.run_cancellable(&repo_path, &kill_bg);
+        let _ = event_tx.send(AppEvent::JjDone {
+            result: Box::new(result),
+            cmd: Box::new(cmd),
+            jump,
+            label,
+        });
+    });
+}
+
+/// Process the result of a completed background jj command.
+fn finish_jj_command(
+    app: &mut App,
+    result: JJCommandResult,
+    cmd: JJCommand,
+    jump: Option<JumpTarget>,
+    label: Option<&'static str>,
+    lua_engine: &kojutsu::lua::LuaEngine,
+) {
     app.push_command_log(
         kojutsu::app::CommandLogKind::Command,
         &result.display,
@@ -608,7 +657,6 @@ fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
     };
 
     if result.success {
-        // Decide whether to switch to DAG before moving jump into app state.
         let switch_to_dag = match &jump {
             Some(JumpTarget::WorkingCopy | JumpTarget::Prefix(_)) => true,
             Some(JumpTarget::Bookmark(_)) => false,
@@ -620,6 +668,11 @@ fn run_jj_command(app: &mut App, repo_path: &std::path::Path, cmd: JJCommand) {
             app.switch_view(kojutsu::app::ActiveView::Dag);
         }
         refresh_app(app);
+    }
+
+    if let Some(lbl) = label {
+        let (success, output) = extract_command_result(app);
+        lua_engine.run_post_hooks(lbl, app, success, &output);
     }
 }
 

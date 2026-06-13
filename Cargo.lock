@@ -2324,6 +2324,7 @@ dependencies = [
  "keymap_parser",
  "mio",
  "mlua",
+ "nix",
  "pollster",
  "ratatui",
  "sapling-renderdag",

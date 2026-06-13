@@ -677,6 +677,12 @@ pub enum AppMode {
     },
     /// Selecting an item from a list (e.g. picking a bookmark).
     SelectFromList(SelectFromListState),
+    /// A background jj command is running; the UI stays live. Esc cancels.
+    CommandRunning {
+        command: String,
+        command_parts: Vec<crate::jj_command::CommandPart>,
+        kill: crate::jj_command::KillHandle,
+    },
 }
 
 impl AppMode {

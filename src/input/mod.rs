@@ -134,6 +134,13 @@ pub fn handle_key(
         AppMode::FollowUp { .. } => modal::handle_follow_up(app, key),
         AppMode::SelectFromList(_) => list::handle_select_from_list(app, lua, key),
         AppMode::Jump { .. } => modal::handle_jump(app, key),
+        AppMode::CommandRunning { kill, .. } => {
+            let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
+            if ctrl && node.key == keymap_parser::Key::Char('c') {
+                kill.kill();
+            }
+            Action::None
+        }
     }
 }
 
@@ -182,11 +189,12 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
             }
             Action::None
         }
-        // Ignore mouse in modal input modes (text input, search, follow-up, list).
+        // Ignore mouse in modal input modes (text input, search, follow-up, list, running command).
         AppMode::TextInput { .. }
         | AppMode::SearchInput
         | AppMode::FollowUp { .. }
-        | AppMode::SelectFromList(_) => Action::None,
+        | AppMode::SelectFromList(_)
+        | AppMode::CommandRunning { .. } => Action::None,
         // Normal, Submenu, Help: standard DAG navigation.
         _ => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
