@@ -76,19 +76,8 @@ impl LuaEngine {
 
         if let Err(e) = (|| -> mlua::Result<()> {
             let reg_clone = reg_commands.clone();
-            let command_fn = self
-                .lua
-                .create_function(move |lua, args: mlua::MultiValue| {
-                    if args.len() < 3 {
-                        return Err(mlua::Error::external(
-                            "kojutsu.command requires 3 args: name, fn, opts",
-                        ));
-                    }
-                    let mut iter = args.into_iter();
-                    let name: String = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
-                    let func: mlua::Function = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
-                    let opts: mlua::Table = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
-
+            let command_fn = self.lua.create_function(
+                move |lua, (name, func, opts): (String, mlua::Function, mlua::Table)| {
                     let desc: String = opts.get::<String>("desc").unwrap_or_else(|_| name.clone());
                     let scope: String =
                         opts.get::<String>("scope").unwrap_or_else(|_| "all".into());
@@ -117,19 +106,12 @@ impl LuaEngine {
                     });
 
                     Ok(())
-                })?;
+                },
+            )?;
 
             let hooks_clone = reg_hooks.clone();
-            let hook_fn = self
-                .lua
-                .create_function(move |lua, args: mlua::MultiValue| {
-                    if args.len() < 3 {
-                        return Err(mlua::Error::external(
-                            "kojutsu.hook requires 3 args: action(s), phase, fn",
-                        ));
-                    }
-                    let mut iter = args.into_iter();
-                    let first = iter.next().unwrap();
+            let hook_fn = self.lua.create_function(
+                move |lua, (first, phase_str, func): (mlua::Value, String, mlua::Function)| {
                     let action_names: Vec<String> =
                         match first {
                             mlua::Value::String(s) => vec![s.to_str()?.to_string()],
@@ -138,8 +120,6 @@ impl LuaEngine {
                                 "first argument must be an action name or table of action names",
                             )),
                         };
-                    let phase_str: String = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
-                    let func: mlua::Function = mlua::FromLua::from_lua(iter.next().unwrap(), lua)?;
                     let phase = match phase_str.as_str() {
                         "pre" => HookPhase::Pre,
                         "post" => HookPhase::Post,
@@ -163,7 +143,8 @@ impl LuaEngine {
                         ));
                     }
                     Ok(())
-                })?;
+                },
+            )?;
 
             let bindings_clone = reg_bindings.clone();
             let bind_fn = self.lua.create_function(move |_lua, opts: mlua::Table| {
