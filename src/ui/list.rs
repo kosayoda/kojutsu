@@ -25,10 +25,30 @@ pub(super) fn expand_tabs(s: &str, tab_spaces: &str) -> String {
 }
 
 fn pad_or_truncate(s: &str, width: usize) -> String {
-    if s.chars().count() > width {
-        s.chars().take(width).collect()
+    use unicode_width::UnicodeWidthChar;
+    let display_width: usize = s.chars().map(|c| c.width().unwrap_or(0)).sum();
+    if display_width > width {
+        let mut used = 0;
+        let truncated: String = s
+            .chars()
+            .take_while(|c| {
+                let w = c.width().unwrap_or(0);
+                if used + w > width {
+                    return false;
+                }
+                used += w;
+                true
+            })
+            .collect();
+        let pad = width.saturating_sub(used);
+        if pad > 0 {
+            format!("{truncated}{:pad$}", "")
+        } else {
+            truncated
+        }
     } else {
-        format!("{s:<width$}")
+        let pad = width.saturating_sub(display_width);
+        format!("{s}{:pad$}", "")
     }
 }
 
