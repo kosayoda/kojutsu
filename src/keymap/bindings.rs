@@ -243,6 +243,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         ),
         bind("shift-d", ToggleDebug, "toggle debug", G, all()),
         bind("ctrl-r", Refresh, "refresh", N, all()),
+        bind(".", RepeatLast, "repeat last", C, all()),
         bind(":", CommandMode, "command mode", N, all()),
         // Command palette (`;` prefix)
         prefix(";", "command", G, all()),

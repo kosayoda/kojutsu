@@ -65,7 +65,7 @@ pub(super) fn handle_normal_key(
         }
         LookupResult::Action(ActionId::Lua(id)) => {
             app.status_message = None;
-            lua.execute_command(id, app, CommandFlags::empty())
+            run_lua_command(lua, id, app, CommandFlags::empty())
         }
         LookupResult::Prefix { label, children } => {
             app.status_message = None;
@@ -119,7 +119,7 @@ pub(super) fn handle_submenu_key(
         }
         LookupResult::Action(ActionId::Lua(id)) => {
             app.mode = AppMode::Normal;
-            lua.execute_command(id, app, flags)
+            run_lua_command(lua, id, app, flags)
         }
         LookupResult::Toggle(flag) => {
             if let AppMode::Submenu { flags, .. } = &mut app.mode {
@@ -144,6 +144,19 @@ pub(super) fn handle_submenu_key(
     }
 }
 
+fn run_lua_command(
+    lua: &crate::lua::LuaEngine,
+    id: u16,
+    app: &mut App,
+    flags: CommandFlags,
+) -> Action {
+    let result = lua.execute_command(id, app, flags);
+    if matches!(result, Action::RunJj(_) | Action::SuspendAndRunJj(_)) {
+        app.last_repeatable = None;
+    }
+    result
+}
+
 fn dispatch_action(
     app: &mut App,
     registry: &ActionRegistry,
@@ -151,6 +164,15 @@ fn dispatch_action(
     action: AppAction,
     flags: CommandFlags,
 ) -> Action {
+    if action == AppAction::RepeatLast {
+        return if let Some((prev_action, prev_flags)) = app.last_repeatable {
+            dispatch_action(app, registry, lua, prev_action, prev_flags)
+        } else {
+            app.set_error("no action to repeat");
+            Action::None
+        };
+    }
+
     let id_name = crate::keymap::action_id_name(action);
 
     match lua.run_pre_hooks(id_name, action, flags, app) {
@@ -160,7 +182,15 @@ fn dispatch_action(
         crate::lua::HookOutcome::Proceed => {}
     }
 
-    dispatch_action_after_hooks(app, registry, lua, action, flags)
+    let result = dispatch_action_after_hooks(app, registry, lua, action, flags);
+
+    if action.is_repeatable() && matches!(result, Action::RunJj(_) | Action::SuspendAndRunJj(_)) {
+        app.last_repeatable = Some((action, flags));
+    } else if action.is_mutation() {
+        app.last_repeatable = None;
+    }
+
+    result
 }
 
 pub fn dispatch_action_after_hooks(
@@ -672,6 +702,7 @@ pub fn dispatch_action_after_hooks(
             }
             Action::None
         }
+        AppAction::RepeatLast => unreachable!("handled in dispatch_action"),
     }
 }
 

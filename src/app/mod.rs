@@ -266,6 +266,7 @@ pub struct App {
     pub search: Option<SearchState>,
     /// Where to jump the cursor after the next DAG refresh.
     pub jump_after_refresh: Option<JumpTarget>,
+    pub last_repeatable: Option<(crate::keymap::AppAction, CommandFlags)>,
 }
 
 impl std::fmt::Debug for App {
@@ -332,6 +333,7 @@ impl App {
             visual: VisualState::new(),
             search: None,
             jump_after_refresh: None,
+            last_repeatable: None,
         };
         app.rebuild_rows();
         app

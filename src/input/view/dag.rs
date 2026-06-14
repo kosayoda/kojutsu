@@ -598,46 +598,28 @@ fn arrange(app: &mut App, flags: CommandFlags, direction: ArrangeDirection) -> A
     let node = &app.nodes[entry_idx];
     let change_id = node.commit.unique_prefix();
 
-    match direction {
-        ArrangeDirection::Up => {
-            if node.children.len() != 1 {
-                app.set_error("arrange: commit must have exactly one child");
-                return Action::None;
-            }
-            let child = &app.nodes[node.children[0]];
-            let child_id = child.commit.unique_prefix();
-            run_cmd(JJCommand {
-                kind: JJCommandKind::Rebase {
-                    change_ids: smallvec![change_id],
-                    source_mode: RebaseSource::Revision,
-                    dest: RebaseTarget {
-                        targets: smallvec![child_id],
-                        kind: RebaseKind::After,
-                    },
-                },
-                flags,
-            })
-        }
-        ArrangeDirection::Down => {
-            if node.parents.len() != 1 {
-                app.set_error("arrange: commit must have exactly one parent");
-                return Action::None;
-            }
-            let parent = &app.nodes[node.parents[0]];
-            let parent_id = parent.commit.unique_prefix();
-            run_cmd(JJCommand {
-                kind: JJCommandKind::Rebase {
-                    change_ids: smallvec![change_id],
-                    source_mode: RebaseSource::Revision,
-                    dest: RebaseTarget {
-                        targets: smallvec![parent_id],
-                        kind: RebaseKind::Before,
-                    },
-                },
-                flags,
-            })
-        }
+    let (neighbors, noun, kind) = match direction {
+        ArrangeDirection::Up => (&node.children, "child", RebaseKind::After),
+        ArrangeDirection::Down => (&node.parents, "parent", RebaseKind::Before),
+    };
+
+    if neighbors.len() != 1 {
+        app.set_error(format!("arrange: commit must have exactly one {noun}"));
+        return Action::None;
     }
+
+    let target_id = app.nodes[neighbors[0]].commit.unique_prefix();
+    run_cmd(JJCommand {
+        kind: JJCommandKind::Rebase {
+            change_ids: smallvec![change_id],
+            source_mode: RebaseSource::Revision,
+            dest: RebaseTarget {
+                targets: smallvec![target_id],
+                kind,
+            },
+        },
+        flags,
+    })
 }
 
 fn write_conflict_resolution(app: &mut App, result: crate::app::ConflictPickResult) -> Action {
