@@ -3,6 +3,7 @@ mod list;
 mod overlay;
 mod search;
 mod spans;
+mod views;
 
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::Frame;
