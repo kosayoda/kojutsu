@@ -25,7 +25,7 @@ pub struct RepoResponseHandle {
 }
 
 /// Whether a revset load should snapshot the working copy first.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum RevsetLoadKind {
     /// Snapshot first — use after actions that may have changed the filesystem.
     Snapshot,
@@ -85,6 +85,26 @@ enum RepoRequestKind {
     FileList {
         commit_id: CommitId,
     },
+}
+
+impl RepoRequestKind {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Revset { .. } => "revset",
+            Self::Commit { .. } => "commit",
+            Self::FileDiff { .. } => "file_diff",
+            Self::Operations { .. } => "operations",
+            Self::ConflictHunks { .. } => "conflict_hunks",
+            Self::OpDiff { .. } => "op_diff",
+            Self::EvolutionLog { .. } => "evolution_log",
+            Self::EvoLogDetails { .. } => "evolog_details",
+            Self::EvoLogFileDiff { .. } => "evolog_file_diff",
+            Self::InterdiffDetails { .. } => "interdiff_details",
+            Self::InterdiffFileDiff { .. } => "interdiff_file_diff",
+            Self::Annotate { .. } => "annotate",
+            Self::FileList { .. } => "file_list",
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -465,6 +485,7 @@ impl RepoServiceState {
 
     fn handle_request(&mut self, request: RepoRequest) {
         let RepoRequest { epoch, kind } = request;
+        tracing::debug!(epoch, request = %kind.label(), "repo request");
         match kind {
             RepoRequestKind::Revset { revset, load_kind } => {
                 self.bg_cancel.cancel();
@@ -531,7 +552,9 @@ impl RepoServiceState {
     }
 
     fn handle_revset(&mut self, epoch: u64, revset: Option<String>, load_kind: RevsetLoadKind) {
+        let start = std::time::Instant::now();
         let requested_revset = revset.clone().unwrap_or_default();
+        tracing::info!(revset = %requested_revset, ?load_kind, "loading revset");
 
         // Re-open the repo to pick up changes. Only snapshot when the working
         // copy may have changed (e.g. after returning from an external command).
@@ -635,6 +658,7 @@ impl RepoServiceState {
                     ids.into_iter().collect()
                 };
 
+                let entry_count = entries.len();
                 self.send_if_current(
                     epoch,
                     RepoResult::Revset {
@@ -652,6 +676,11 @@ impl RepoServiceState {
                             warnings,
                         })),
                     },
+                );
+                tracing::info!(
+                    elapsed_ms = start.elapsed().as_millis() as u64,
+                    commits = entry_count,
+                    "revset loaded",
                 );
 
                 // Spawn background thread to compute is_empty for all commits.

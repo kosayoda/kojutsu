@@ -131,8 +131,10 @@ impl JJCommand {
     pub fn run_cancellable(&self, repo_path: &Path, kill: &KillHandle) -> JJCommandResult {
         use std::os::unix::process::CommandExt as _;
 
+        let start = std::time::Instant::now();
         let args = self.args();
-        let display = self.display();
+        let cmd_str = self.display();
+        tracing::info!(command = cmd_str.as_str(), "running jj command");
         let display_parts = self.display_parts();
 
         let mut child = match Command::new("jj")
@@ -149,7 +151,7 @@ impl JJCommand {
             .spawn()
         {
             Ok(c) => c,
-            Err(e) => return jj_error(display, display_parts, e),
+            Err(e) => return jj_error(cmd_str, display_parts, e),
         };
 
         kill.set_pgid(child.id() as i32);
@@ -171,15 +173,22 @@ impl JJCommand {
 
         let status = match child.wait() {
             Ok(s) => s,
-            Err(e) => return jj_error(display, display_parts, e),
+            Err(e) => return jj_error(cmd_str, display_parts, e),
         };
 
         let stdout = stdout_thread.join().unwrap_or_default();
         let stderr = stderr_thread.join().unwrap_or_default();
 
+        let success = status.code().is_some() && status.success();
+        tracing::info!(
+            elapsed_ms = start.elapsed().as_millis() as u64,
+            success,
+            "jj command finished",
+        );
+
         if status.code().is_none() {
             return JJCommandResult {
-                display,
+                display: cmd_str,
                 display_parts,
                 output: b"interrupted".to_vec(),
                 success: false,
@@ -187,7 +196,7 @@ impl JJCommand {
         }
 
         JJCommandResult {
-            display,
+            display: cmd_str,
             display_parts,
             output: merge_captured_output(stdout, stderr),
             success: status.success(),
