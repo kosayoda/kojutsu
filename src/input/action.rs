@@ -543,7 +543,9 @@ pub fn dispatch_action_after_hooks(
         | AppAction::Parallelize
         | AppAction::SimplifyParents
         | AppAction::Interdiff
-        | AppAction::Revert => super::view::dag::dispatch(app, lua, action, flags),
+        | AppAction::Revert
+        | AppAction::ArrangeUp
+        | AppAction::ArrangeDown => super::view::dag::dispatch(app, lua, action, flags),
         AppAction::SwitchToDagView => {
             app.switch_view(crate::app::ActiveView::Dag);
             Action::None

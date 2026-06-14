@@ -367,6 +367,8 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind2("r", "r", RebaseRevision, "revision\u{2026}", C, dag()),
         bind2("r", "s", RebaseSource, "source\u{2026}", C, dag()),
         bind2("r", "b", RebaseBranch, "branch\u{2026}", C, dag()),
+        bind2("r", "k", ArrangeUp, "arrange up", C, dag()),
+        bind2("r", "j", ArrangeDown, "arrange down", C, dag()),
         // Restore prefix
         prefix("shift-r", "restore", C, dag()),
         toggle2(

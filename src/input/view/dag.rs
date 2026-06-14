@@ -4,8 +4,9 @@ use crate::app::{App, AppMode};
 use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{
-    BookmarkName, ChangeId, DisplayRow, MessageMode, PendingCommand, PendingSelection,
-    RebaseSource, SelectionKind, SmallVec, SplitKind, SquashKind, Str, TargetOperation,
+    BookmarkName, ChangeId, DisplayRow, MessageMode, PendingCommand, PendingSelection, RebaseKind,
+    RebaseSource, RebaseTarget, SelectionKind, SmallVec, SplitKind, SquashKind, Str,
+    TargetOperation,
 };
 
 use crate::input::action::{build_change_selection, enter_target_select, run_cmd};
@@ -534,6 +535,8 @@ pub(in crate::input) fn dispatch(
             kind: JJCommandKind::SimplifyParents { change_ids: ids },
             flags,
         }),
+        AppAction::ArrangeUp => arrange(app, flags, ArrangeDirection::Up),
+        AppAction::ArrangeDown => arrange(app, flags, ArrangeDirection::Down),
         AppAction::Interdiff => enter_target_select(app, TargetOperation::Interdiff, flags),
         AppAction::Revert => {
             let sources = app.selected_change_ids();
@@ -581,6 +584,60 @@ fn enter_describe_input(app: &mut App, flags: CommandFlags) -> Action {
         },
     );
     Action::None
+}
+
+enum ArrangeDirection {
+    Up,
+    Down,
+}
+
+fn arrange(app: &mut App, flags: CommandFlags, direction: ArrangeDirection) -> Action {
+    let Some(entry_idx) = app.selected_entry_idx() else {
+        return Action::None;
+    };
+    let node = &app.nodes[entry_idx];
+    let change_id = node.commit.unique_prefix();
+
+    match direction {
+        ArrangeDirection::Up => {
+            if node.children.len() != 1 {
+                app.set_error("arrange: commit must have exactly one child");
+                return Action::None;
+            }
+            let child = &app.nodes[node.children[0]];
+            let child_id = child.commit.unique_prefix();
+            run_cmd(JJCommand {
+                kind: JJCommandKind::Rebase {
+                    change_ids: smallvec![change_id],
+                    source_mode: RebaseSource::Revision,
+                    dest: RebaseTarget {
+                        targets: smallvec![child_id],
+                        kind: RebaseKind::After,
+                    },
+                },
+                flags,
+            })
+        }
+        ArrangeDirection::Down => {
+            if node.parents.len() != 1 {
+                app.set_error("arrange: commit must have exactly one parent");
+                return Action::None;
+            }
+            let parent = &app.nodes[node.parents[0]];
+            let parent_id = parent.commit.unique_prefix();
+            run_cmd(JJCommand {
+                kind: JJCommandKind::Rebase {
+                    change_ids: smallvec![change_id],
+                    source_mode: RebaseSource::Revision,
+                    dest: RebaseTarget {
+                        targets: smallvec![parent_id],
+                        kind: RebaseKind::Before,
+                    },
+                },
+                flags,
+            })
+        }
+    }
 }
 
 fn write_conflict_resolution(app: &mut App, result: crate::app::ConflictPickResult) -> Action {
