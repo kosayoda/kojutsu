@@ -50,6 +50,13 @@ impl SplitKind {
     }
 }
 
+/// Direction for arrange (commit reorder).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ArrangeDirection {
+    Up,
+    Down,
+}
+
 /// Rebase source mode.
 #[derive(Debug, Clone)]
 pub enum RebaseSource {

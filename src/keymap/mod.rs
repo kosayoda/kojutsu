@@ -115,8 +115,7 @@ pub enum AppAction {
     Parallelize,
     SimplifyParents,
     Revert,
-    ArrangeUp,
-    ArrangeDown,
+    Arrange(crate::types::ArrangeDirection),
     Fix,
     FileUntrack,
     ResolveOurs,
@@ -194,8 +193,7 @@ pub enum AppAction {
 impl AppAction {
     pub fn is_repeatable(self) -> bool {
         match self {
-            AppAction::ArrangeUp
-            | AppAction::ArrangeDown
+            AppAction::Arrange(_)
             | AppAction::Abandon
             | AppAction::Fix
             | AppAction::Absorb
@@ -387,8 +385,7 @@ impl AppAction {
             | AppAction::Parallelize
             | AppAction::SimplifyParents
             | AppAction::Revert
-            | AppAction::ArrangeUp
-            | AppAction::ArrangeDown
+            | AppAction::Arrange(_)
             | AppAction::Fix
             | AppAction::FileUntrack
             | AppAction::ResolveOurs
@@ -595,7 +592,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::Parallelize => "parallelize",
         AppAction::SimplifyParents => "simplify-parents",
         AppAction::Revert => "revert",
-        AppAction::ArrangeUp | AppAction::ArrangeDown => "arrange",
+        AppAction::Arrange(_) => "arrange",
         AppAction::ExpandAncestors => "expand",
         AppAction::Fix => "fix",
         AppAction::FileUntrack => "untrack",
@@ -691,8 +688,8 @@ pub fn action_id_name(action: AppAction) -> &'static str {
         AppAction::Parallelize => "parallelize",
         AppAction::SimplifyParents => "simplify_parents",
         AppAction::Revert => "revert",
-        AppAction::ArrangeUp => "arrange_up",
-        AppAction::ArrangeDown => "arrange_down",
+        AppAction::Arrange(crate::types::ArrangeDirection::Up) => "arrange_up",
+        AppAction::Arrange(crate::types::ArrangeDirection::Down) => "arrange_down",
         AppAction::Fix => "fix",
         AppAction::FileUntrack => "file_untrack",
         AppAction::ResolveOurs => "resolve_ours",
@@ -845,8 +842,8 @@ pub const ALL_ACTIONS: &[AppAction] = &[
     AppAction::Parallelize,
     AppAction::SimplifyParents,
     AppAction::Revert,
-    AppAction::ArrangeUp,
-    AppAction::ArrangeDown,
+    AppAction::Arrange(crate::types::ArrangeDirection::Up),
+    AppAction::Arrange(crate::types::ArrangeDirection::Down),
     AppAction::RepeatLast,
     AppAction::Fix,
     AppAction::FileUntrack,

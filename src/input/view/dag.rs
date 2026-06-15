@@ -4,9 +4,9 @@ use crate::app::{App, AppMode};
 use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{
-    BookmarkName, ChangeId, DisplayRow, MessageMode, PendingCommand, PendingSelection, RebaseKind,
-    RebaseSource, RebaseTarget, SelectionKind, SmallVec, SplitKind, SquashKind, Str,
-    TargetOperation,
+    ArrangeDirection, BookmarkName, ChangeId, DisplayRow, MessageMode, PendingCommand,
+    PendingSelection, RebaseKind, RebaseSource, RebaseTarget, SelectionKind, SmallVec, SplitKind,
+    SquashKind, Str, TargetOperation,
 };
 
 use crate::input::action::{build_change_selection, enter_target_select, run_cmd};
@@ -535,8 +535,7 @@ pub(in crate::input) fn dispatch(
             kind: JJCommandKind::SimplifyParents { change_ids: ids },
             flags,
         }),
-        AppAction::ArrangeUp => arrange(app, flags, ArrangeDirection::Up),
-        AppAction::ArrangeDown => arrange(app, flags, ArrangeDirection::Down),
+        AppAction::Arrange(dir) => arrange(app, flags, dir),
         AppAction::Interdiff => enter_target_select(app, TargetOperation::Interdiff, flags),
         AppAction::Revert => {
             let sources = app.selected_change_ids();
@@ -584,11 +583,6 @@ fn enter_describe_input(app: &mut App, flags: CommandFlags) -> Action {
         },
     );
     Action::None
-}
-
-enum ArrangeDirection {
-    Up,
-    Down,
 }
 
 fn arrange(app: &mut App, flags: CommandFlags, direction: ArrangeDirection) -> Action {
