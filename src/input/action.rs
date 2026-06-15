@@ -114,6 +114,17 @@ pub(super) fn handle_submenu_key(
 
     match result {
         LookupResult::Action(ActionId::Builtin(action)) => {
+            app.pending_toggles = children
+                .iter()
+                .filter_map(|(key_node, child)| match child {
+                    TrieNode::Toggle { flag, description } => Some(crate::app::SubmenuToggle {
+                        node: key_node.clone(),
+                        flag: *flag,
+                        description: description.clone(),
+                    }),
+                    _ => None,
+                })
+                .collect();
             app.mode = AppMode::Normal;
             dispatch_action(app, registry, lua, action, flags)
         }
@@ -909,6 +920,7 @@ pub(super) fn enter_target_select(
     } else {
         TargetMode::Single
     };
+    let toggles = std::mem::take(&mut app.pending_toggles);
     app.mode = AppMode::TargetSelect {
         prompt: operation.label(),
         source,
@@ -916,6 +928,7 @@ pub(super) fn enter_target_select(
         operation,
         flags,
         target_mode,
+        toggles,
     };
     Action::None
 }

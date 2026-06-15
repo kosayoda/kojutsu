@@ -306,6 +306,7 @@ pub(super) fn resolve_selection(
             change_id, flags, ..
         } => {
             let name = BookmarkName::new(names.into_iter().next().unwrap_or_default());
+            let toggles = std::mem::take(&mut app.pending_toggles);
             app.mode = AppMode::TargetSelect {
                 prompt: "move bookmark",
                 source: change_id,
@@ -315,6 +316,7 @@ pub(super) fn resolve_selection(
                 },
                 flags,
                 target_mode: TargetMode::Single,
+                toggles,
             };
             Action::None
         }

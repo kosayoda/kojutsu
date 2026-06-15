@@ -369,6 +369,18 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
             }
             Action::None
         }
+        KeyCode::Char(_) => {
+            if let (Some(node), AppMode::TargetSelect { toggles, flags, .. }) =
+                (crate::keymap::key_event_to_node(&key), &mut app.mode)
+            {
+                if let Some(toggle) = toggles.iter().find(|t| t.node == node) {
+                    flags.toggle(toggle.flag);
+                    app.status_message = None;
+                    return Action::None;
+                }
+            }
+            handle_select_navigation(app, &key).unwrap_or(Action::None)
+        }
         _ => handle_select_navigation(app, &key).unwrap_or(Action::None),
     }
 }

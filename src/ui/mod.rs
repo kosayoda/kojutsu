@@ -186,13 +186,24 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
         AppMode::TargetSelect {
             prompt,
             source,
+            flags,
             target_mode,
+            toggles,
             ..
         } => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
             let multi = matches!(target_mode, TargetMode::Multi { .. });
-            overlay::draw_target_select(frame, area, prompt, source.as_str(), multi, theme);
+            overlay::draw_target_select(
+                frame,
+                area,
+                prompt,
+                source.as_str(),
+                multi,
+                toggles,
+                *flags,
+                theme,
+            );
         }
         AppMode::CommitSelect { pending, .. } => {
             let area = overlay_area(overlay_base, 2);

@@ -382,33 +382,54 @@ pub(super) fn draw_target_select(
     prompt: &str,
     source: &str,
     multi: bool,
+    toggles: &[crate::app::SubmenuToggle],
+    flags: crate::keymap::CommandFlags,
     theme: &Theme,
 ) {
-    let block = top_border(theme);
+    let mut toggle_spans: Vec<Span> = Vec::new();
+    for toggle in toggles {
+        let active = flags.contains(toggle.flag);
+        let key_str = keymap::display_key(&toggle.node);
+        let style = if active {
+            Style::default()
+                .fg(theme.selection)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.muted)
+        };
+        toggle_spans.push(Span::styled(
+            format!(" [{key_str}] {} ", toggle.description),
+            style,
+        ));
+    }
+
+    let title = format!(" {prompt} from {source} ");
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(theme.muted))
+        .title(title)
+        .title_style(
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )
+        .title(Line::from(toggle_spans));
+
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let hint = if multi {
-        " → select target(s) (Space = toggle, Enter = confirm, Esc = cancel)"
+        "select target(s) (Space = toggle, Enter = confirm, Esc = cancel)"
     } else {
-        " → select target (Enter = confirm, Esc = cancel)"
+        "select target (Enter = confirm, Esc = cancel)"
     };
-    let spans = vec![
-        Span::styled(
-            format!("{prompt} "),
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(
-            format!("from {source}"),
-            Style::default()
-                .fg(theme.change_id)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(hint, Style::default().fg(theme.muted)),
-    ];
-    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            hint,
+            Style::default().fg(theme.muted),
+        ))),
+        inner,
+    );
 }
 
 pub(super) fn draw_commit_select(frame: &mut Frame, area: Rect, prompt: &str, theme: &Theme) {

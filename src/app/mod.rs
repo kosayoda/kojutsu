@@ -267,6 +267,7 @@ pub struct App {
     /// Where to jump the cursor after the next DAG refresh.
     pub jump_after_refresh: Option<JumpTarget>,
     pub last_repeatable: Option<(crate::keymap::AppAction, CommandFlags)>,
+    pub pending_toggles: Vec<SubmenuToggle>,
 }
 
 impl std::fmt::Debug for App {
@@ -334,6 +335,7 @@ impl App {
             search: None,
             jump_after_refresh: None,
             last_repeatable: None,
+            pending_toggles: Vec::new(),
         };
         app.rebuild_rows();
         app

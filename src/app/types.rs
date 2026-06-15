@@ -289,6 +289,12 @@ pub enum TargetMode {
     Multi { targets: HashSet<ChangeId> },
 }
 
+pub struct SubmenuToggle {
+    pub node: keymap_parser::Node,
+    pub flag: CommandFlags,
+    pub description: CompactString,
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PersistedState {
@@ -667,6 +673,7 @@ pub enum AppMode {
         operation: TargetOperation,
         flags: CommandFlags,
         target_mode: TargetMode,
+        toggles: Vec<SubmenuToggle>,
     },
     /// Navigating to select a single commit (e.g. for workspace revision).
     CommitSelect {
