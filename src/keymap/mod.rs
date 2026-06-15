@@ -200,7 +200,13 @@ impl AppAction {
             | AppAction::Parallelize
             | AppAction::SimplifyParents
             | AppAction::Undo
-            | AppAction::Redo => true,
+            | AppAction::Redo
+            | AppAction::Duplicate
+            | AppAction::ConflictPickOurs
+            | AppAction::ConflictPickTheirs
+            | AppAction::ConflictPickBase
+            | AppAction::ResolveOurs
+            | AppAction::ResolveTheirs => true,
 
             AppAction::Quit
             | AppAction::MoveDown
@@ -260,16 +266,10 @@ impl AppAction {
             | AppAction::GitPushChange
             | AppAction::GitExport
             | AppAction::GitImport
-            | AppAction::Duplicate
             | AppAction::DuplicateOnto
             | AppAction::Revert
             | AppAction::FileUntrack
-            | AppAction::ResolveOurs
-            | AppAction::ResolveTheirs
             | AppAction::ResolveMergeTool
-            | AppAction::ConflictPickOurs
-            | AppAction::ConflictPickTheirs
-            | AppAction::ConflictPickBase
             | AppAction::ToggleIgnoreImmutable
             | AppAction::ToggleIgnoreWorkingCopy
             | AppAction::ToggleDebug
