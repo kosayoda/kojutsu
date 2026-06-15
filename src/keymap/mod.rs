@@ -198,7 +198,9 @@ impl AppAction {
             | AppAction::Fix
             | AppAction::Absorb
             | AppAction::Parallelize
-            | AppAction::SimplifyParents => true,
+            | AppAction::SimplifyParents
+            | AppAction::Undo
+            | AppAction::Redo => true,
 
             AppAction::Quit
             | AppAction::MoveDown
@@ -251,8 +253,6 @@ impl AppAction {
             | AppAction::BookmarkTrack
             | AppAction::BookmarkUntrack
             | AppAction::ShowHelp
-            | AppAction::Undo
-            | AppAction::Redo
             | AppAction::GitFetch
             | AppAction::GitFetchAllRemotes
             | AppAction::GitPush
