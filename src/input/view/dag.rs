@@ -41,6 +41,13 @@ pub(in crate::input) fn dispatch(
             app.expand_ancestors(entry_idx);
             Action::None
         }
+        AppAction::ExpandDescendants => {
+            let Some(entry_idx) = app.selected_entry_idx() else {
+                return Action::None;
+            };
+            app.expand_descendants(entry_idx);
+            Action::None
+        }
         AppAction::Fix => {
             let selection = build_change_selection(app);
             make_multi_command(app, |ids| JJCommand {

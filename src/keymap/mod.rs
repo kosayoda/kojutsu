@@ -66,6 +66,7 @@ pub enum AppAction {
     ToggleFold,
     Refresh,
     ExpandAncestors,
+    ExpandDescendants,
     Abandon,
     Absorb,
     Commit,
@@ -226,6 +227,7 @@ impl AppAction {
             | AppAction::ToggleFold
             | AppAction::Refresh
             | AppAction::ExpandAncestors
+            | AppAction::ExpandDescendants
             | AppAction::Commit
             | AppAction::CommitWithMessage
             | AppAction::Describe
@@ -437,6 +439,7 @@ impl AppAction {
             | AppAction::ToggleFold
             | AppAction::Refresh
             | AppAction::ExpandAncestors
+            | AppAction::ExpandDescendants
             | AppAction::ShowHelp
             | AppAction::Jump
             | AppAction::ToggleSelect
@@ -593,7 +596,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::SimplifyParents => "simplify-parents",
         AppAction::Revert => "revert",
         AppAction::Arrange(_) => "arrange",
-        AppAction::ExpandAncestors => "expand",
+        AppAction::ExpandAncestors | AppAction::ExpandDescendants => "expand",
         AppAction::Fix => "fix",
         AppAction::FileUntrack => "untrack",
         AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
@@ -635,6 +638,7 @@ pub fn action_id_name(action: AppAction) -> &'static str {
         AppAction::ToggleFold => "toggle_fold",
         AppAction::Refresh => "refresh",
         AppAction::ExpandAncestors => "expand_ancestors",
+        AppAction::ExpandDescendants => "expand_descendants",
         AppAction::Abandon => "abandon",
         AppAction::Absorb => "absorb",
         AppAction::Commit => "commit",
@@ -789,6 +793,7 @@ pub const ALL_ACTIONS: &[AppAction] = &[
     AppAction::ToggleFold,
     AppAction::Refresh,
     AppAction::ExpandAncestors,
+    AppAction::ExpandDescendants,
     AppAction::Abandon,
     AppAction::Absorb,
     AppAction::Commit,

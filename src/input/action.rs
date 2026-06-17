@@ -530,6 +530,7 @@ pub fn dispatch_action_after_hooks(
         AppAction::Abandon
         | AppAction::Absorb
         | AppAction::ExpandAncestors
+        | AppAction::ExpandDescendants
         | AppAction::Fix
         | AppAction::ResolveOurs
         | AppAction::ResolveTheirs

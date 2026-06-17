@@ -288,6 +288,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("shift-e", SwitchToEvoLogView, "evolog", C, dag()),
         bind("a", Absorb, "absorb", C, dag()),
         bind("+", ExpandAncestors, "expand ancestors", C, dag()),
+        bind("-", ExpandDescendants, "expand descendants", C, dag()),
         // Conflict prefix
         prefix("shift-c", super::CONFLICT_PREFIX, C, dag()),
         bind2("shift-c", "o", ResolveOurs, "take ours", C, dag()),

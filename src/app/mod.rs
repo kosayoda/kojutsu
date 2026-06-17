@@ -581,20 +581,26 @@ impl App {
         self.annotate.lines.loaded()?.get(line_idx.raw())
     }
 
-    /// Number of ancestor generations to load when expanding at a terminator.
-    const ANCESTOR_EXPAND_COUNT: usize = 10;
+    const EXPAND_COUNT: usize = 10;
 
-    /// Widen the revset to include ancestors of the given commit.
     pub fn expand_ancestors(&mut self, entry_idx: crate::idx::EntryIdx) {
+        self.expand_revset(entry_idx, "ancestors");
+    }
+
+    pub fn expand_descendants(&mut self, entry_idx: crate::idx::EntryIdx) {
+        self.expand_revset(entry_idx, "descendants");
+    }
+
+    fn expand_revset(&mut self, entry_idx: crate::idx::EntryIdx, func: &str) {
         let change_id = self.change_id(entry_idx);
         let change_str = change_id.to_string();
-        let pattern = format!("ancestors({change_str}, ");
+        let pattern = format!("{func}({change_str}, ");
 
         let new_revset = if let Some(pos) = self.revset.current.find(&pattern) {
             let after_prefix = &self.revset.current[pos + pattern.len()..];
             if let Some(end) = after_prefix.find(')') {
                 if let Ok(current_count) = after_prefix[..end].parse::<usize>() {
-                    let new_count = current_count + Self::ANCESTOR_EXPAND_COUNT;
+                    let new_count = current_count + Self::EXPAND_COUNT;
                     let mut revset = self.revset.current.to_string();
                     let num_start = pos + pattern.len();
                     let num_end = num_start + end;
@@ -602,23 +608,23 @@ impl App {
                     revset
                 } else {
                     format!(
-                        "({}) | ancestors({change_str}, {})",
+                        "({}) | {func}({change_str}, {})",
                         self.revset.current,
-                        Self::ANCESTOR_EXPAND_COUNT,
+                        Self::EXPAND_COUNT,
                     )
                 }
             } else {
                 format!(
-                    "({}) | ancestors({change_str}, {})",
+                    "({}) | {func}({change_str}, {})",
                     self.revset.current,
-                    Self::ANCESTOR_EXPAND_COUNT,
+                    Self::EXPAND_COUNT,
                 )
             }
         } else {
             format!(
-                "({}) | ancestors({change_str}, {})",
+                "({}) | {func}({change_str}, {})",
                 self.revset.current,
-                Self::ANCESTOR_EXPAND_COUNT,
+                Self::EXPAND_COUNT,
             )
         };
 
