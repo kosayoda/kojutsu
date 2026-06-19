@@ -36,6 +36,12 @@ enum PendingBinding {
         key: Option<String>,
         seq: Option<String>,
     },
+    Prefix {
+        scope: String,
+        key: Option<String>,
+        seq: Option<String>,
+        label: String,
+    },
 }
 
 impl LuaEngine {
@@ -195,12 +201,30 @@ impl LuaEngine {
                 Ok(())
             })?;
 
+            let prefix_bindings_clone = reg_bindings.clone();
+            let prefix_fn = self.lua.create_function(move |_lua, opts: mlua::Table| {
+                let label: String = opts.get("label")?;
+                let scope: String = opts.get::<String>("scope").unwrap_or_else(|_| "all".into());
+                let key: Option<String> = opts.get("key").ok();
+                let seq: Option<String> = opts.get("seq").ok();
+                prefix_bindings_clone
+                    .borrow_mut()
+                    .push(PendingBinding::Prefix {
+                        scope,
+                        key,
+                        seq,
+                        label,
+                    });
+                Ok(())
+            })?;
+
             let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
             kojutsu.set("command", command_fn)?;
             kojutsu.set("hook", hook_fn)?;
             kojutsu.set("bind", bind_fn)?;
             kojutsu.set("rebind", rebind_fn)?;
             kojutsu.set("unbind", unbind_fn)?;
+            kojutsu.set("prefix", prefix_fn)?;
             Ok(())
         })() {
             self.init_error = Some(format!("{e}"));
@@ -305,6 +329,24 @@ impl LuaEngine {
                     self.extra_bindings.push(BindingSpec {
                         keys,
                         target: BindTarget::Unbind,
+                        scope: parse_scope(&scope),
+                    });
+                }
+                PendingBinding::Prefix {
+                    scope,
+                    key,
+                    seq,
+                    label,
+                } => {
+                    let Some(keys) = parse_keys(key.as_ref(), seq.as_ref()) else {
+                        continue;
+                    };
+                    self.extra_bindings.push(BindingSpec {
+                        keys,
+                        target: BindTarget::Prefix {
+                            label: label.into(),
+                            group: HelpGroup::Commands,
+                        },
                         scope: parse_scope(&scope),
                     });
                 }

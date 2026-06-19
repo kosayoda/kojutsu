@@ -138,6 +138,13 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field seq string?").unwrap();
     writeln!(out).unwrap();
 
+    writeln!(out, "---@class PrefixOpts").unwrap();
+    writeln!(out, "---@field label string").unwrap();
+    writeln!(out, "---@field scope string?").unwrap();
+    writeln!(out, "---@field key string?").unwrap();
+    writeln!(out, "---@field seq string?").unwrap();
+    writeln!(out).unwrap();
+
     writeln!(out, "---@class HookContext").unwrap();
     writeln!(out, "---@field change_id string?").unwrap();
     writeln!(out, "---@field change_ids string[]").unwrap();
@@ -173,6 +180,7 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field bind fun(opts: BindOpts)").unwrap();
     writeln!(out, "---@field rebind fun(opts: BindOpts)").unwrap();
     writeln!(out, "---@field unbind fun(opts: UnbindOpts)").unwrap();
+    writeln!(out, "---@field prefix fun(opts: PrefixOpts)").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "---@type Kojutsu").unwrap();
     writeln!(out, "---@diagnostic disable-next-line: missing-fields").unwrap();
