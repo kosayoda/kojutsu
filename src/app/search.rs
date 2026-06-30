@@ -278,9 +278,9 @@ impl App {
                         &contains,
                     )
             }
-            DisplayRow::BookmarkConflictTarget { .. } | DisplayRow::BookmarkRemoteTarget { .. } => {
-                false
-            }
+            DisplayRow::BookmarkSeparator
+            | DisplayRow::BookmarkConflictTarget { .. }
+            | DisplayRow::BookmarkRemoteTarget { .. } => false,
             DisplayRow::TagItem { tag_idx } => {
                 let Some(entry) = self.views.tag_entries.get(tag_idx.raw()) else {
                     return false;

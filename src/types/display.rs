@@ -43,6 +43,8 @@ pub enum DisplayRow {
         bookmark_idx: BookmarkIdx,
         target_idx: BookmarkDetailIdx,
     },
+    /// Blank separator between bookmark groups (local, tracking, remote).
+    BookmarkSeparator,
     /// A tag row in the tag view.
     TagItem { tag_idx: TagIdx },
     /// A remote tracking line under a tag.

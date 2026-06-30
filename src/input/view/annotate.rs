@@ -27,14 +27,27 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, _flags: Comma
             Action::None
         }
         AppAction::ToggleAnnotateSeparator => {
-            if app.active_view == crate::app::ActiveView::Annotate {
-                app.annotate.show_commit_separators = !app.annotate.show_commit_separators;
-                let label = if app.annotate.show_commit_separators {
-                    "on"
-                } else {
-                    "off"
-                };
-                app.set_status(format!("commit separators: {label}"));
+            match app.active_view {
+                crate::app::ActiveView::Annotate => {
+                    app.annotate.show_commit_separators = !app.annotate.show_commit_separators;
+                    let label = if app.annotate.show_commit_separators {
+                        "on"
+                    } else {
+                        "off"
+                    };
+                    app.set_status(format!("commit separators: {label}"));
+                }
+                crate::app::ActiveView::Bookmarks => {
+                    app.show_bookmark_separators = !app.show_bookmark_separators;
+                    app.rebuild_rows();
+                    let label = if app.show_bookmark_separators {
+                        "on"
+                    } else {
+                        "off"
+                    };
+                    app.set_status(format!("bookmark separators: {label}"));
+                }
+                _ => {}
             }
             Action::None
         }

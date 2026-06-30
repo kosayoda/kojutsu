@@ -158,7 +158,9 @@ pub enum AppAction {
     BookmarkViewMove,
     BookmarkViewForget,
     BookmarkViewSet,
-    BookmarkViewFetch,
+    BookmarkViewFetchDefault,
+    BookmarkViewFetchBookmark,
+    BookmarkViewFetchAllRemotes,
     TagViewDelete,
     TagViewSet,
     TagViewJumpToCommit,
@@ -305,7 +307,9 @@ impl AppAction {
             | AppAction::BookmarkViewMove
             | AppAction::BookmarkViewForget
             | AppAction::BookmarkViewSet
-            | AppAction::BookmarkViewFetch
+            | AppAction::BookmarkViewFetchDefault
+            | AppAction::BookmarkViewFetchBookmark
+            | AppAction::BookmarkViewFetchAllRemotes
             | AppAction::TagViewDelete
             | AppAction::TagViewSet
             | AppAction::TagViewJumpToCommit
@@ -410,7 +414,9 @@ impl AppAction {
             | AppAction::BookmarkViewMove
             | AppAction::BookmarkViewForget
             | AppAction::BookmarkViewSet
-            | AppAction::BookmarkViewFetch
+            | AppAction::BookmarkViewFetchDefault
+            | AppAction::BookmarkViewFetchBookmark
+            | AppAction::BookmarkViewFetchAllRemotes
             | AppAction::TagViewDelete
             | AppAction::TagViewSet
             | AppAction::EvoLogRestore
@@ -744,7 +750,9 @@ pub fn action_id_name(action: AppAction) -> &'static str {
         AppAction::BookmarkViewMove => "bookmark_view_move",
         AppAction::BookmarkViewForget => "bookmark_view_forget",
         AppAction::BookmarkViewSet => "bookmark_view_set",
-        AppAction::BookmarkViewFetch => "bookmark_view_fetch",
+        AppAction::BookmarkViewFetchDefault => "bookmark_view_fetch_default",
+        AppAction::BookmarkViewFetchBookmark => "bookmark_view_fetch_bookmark",
+        AppAction::BookmarkViewFetchAllRemotes => "bookmark_view_fetch_all_remotes",
         AppAction::TagViewDelete => "tag_view_delete",
         AppAction::TagViewSet => "tag_view_set",
         AppAction::TagViewJumpToCommit => "tag_view_jump_to_commit",
@@ -898,7 +906,9 @@ pub const ALL_ACTIONS: &[AppAction] = &[
     AppAction::BookmarkViewMove,
     AppAction::BookmarkViewForget,
     AppAction::BookmarkViewSet,
-    AppAction::BookmarkViewFetch,
+    AppAction::BookmarkViewFetchDefault,
+    AppAction::BookmarkViewFetchBookmark,
+    AppAction::BookmarkViewFetchAllRemotes,
     AppAction::TagViewDelete,
     AppAction::TagViewSet,
     AppAction::TagViewJumpToCommit,

@@ -58,7 +58,13 @@ impl App {
     fn rebuild_bookmark_rows(&mut self) {
         let prev_cursor = self.rows.get(self.cursor.raw()).copied();
         self.rows.clear();
+        let mut prev_rank: Option<u8> = None;
         for idx in 0..self.views.bookmark_entries.len() {
+            let rank = self.views.bookmark_entries[idx].kind.rank();
+            if self.show_bookmark_separators && prev_rank.is_some_and(|r| r != rank) {
+                self.rows.push(DisplayRow::BookmarkSeparator);
+            }
+            prev_rank = Some(rank);
             let bi = BookmarkIdx::new(idx);
             self.rows
                 .push(DisplayRow::BookmarkItem { bookmark_idx: bi });

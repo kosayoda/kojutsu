@@ -257,6 +257,8 @@ pub struct App {
     pub show_line_numbers: bool,
     /// Whether to underline changed tokens in word-level diffs.
     pub diff_underline: bool,
+    /// Whether to show separator lines between bookmark groups.
+    pub show_bookmark_separators: bool,
     /// Current selection context: implicit commit under cursor, or explicit
     /// homogeneous file/line selection.
     pub selection: SelectionContext,
@@ -330,6 +332,7 @@ impl App {
             pre_overlay_mode: None,
             show_line_numbers: false,
             diff_underline: true,
+            show_bookmark_separators: false,
             selection: SelectionContext::new(),
             visual: VisualState::new(),
             search: None,
@@ -1115,6 +1118,7 @@ impl App {
             active_preset: self.revset.active_preset,
             git_diff: self.diff_format == DiffFormat::Git,
             annotate_separators: self.annotate.show_commit_separators,
+            bookmark_separators: self.show_bookmark_separators,
             diff_underline: self.diff_underline,
         }
     }
@@ -1132,6 +1136,7 @@ impl App {
             DiffFormat::ColorWords
         };
         self.annotate.show_commit_separators = state.annotate_separators;
+        self.show_bookmark_separators = state.bookmark_separators;
         self.diff_underline = state.diff_underline;
         self.revset.active_preset = state
             .active_preset

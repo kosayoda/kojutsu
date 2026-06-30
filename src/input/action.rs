@@ -606,7 +606,11 @@ pub fn dispatch_action_after_hooks(
         | AppAction::BookmarkViewMove
         | AppAction::BookmarkViewForget
         | AppAction::BookmarkViewSet
-        | AppAction::BookmarkViewFetch => super::view::bookmark::dispatch(app, action, flags),
+        | AppAction::BookmarkViewFetchDefault
+        | AppAction::BookmarkViewFetchBookmark
+        | AppAction::BookmarkViewFetchAllRemotes => {
+            super::view::bookmark::dispatch(app, action, flags)
+        }
         // Tag view actions
         AppAction::SwitchToTagView => {
             app.switch_view(crate::app::ActiveView::Tags);

@@ -308,6 +308,7 @@ pub struct PersistedState {
     pub active_preset: Option<usize>,
     pub git_diff: bool,
     pub annotate_separators: bool,
+    pub bookmark_separators: bool,
     pub diff_underline: bool,
 }
 
@@ -322,6 +323,7 @@ impl Default for PersistedState {
             active_preset: None,
             git_diff: false,
             annotate_separators: false,
+            bookmark_separators: false,
             diff_underline: true,
         }
     }

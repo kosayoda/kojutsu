@@ -173,8 +173,31 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             );
             Action::None
         }
-        AppAction::BookmarkViewFetch => {
-            // On a remote target row: fetch that specific bookmark+remote.
+        AppAction::BookmarkViewFetchDefault => {
+            if app.views.remotes.len() > 1 {
+                let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
+                app.mode = AppMode::select_from_list(
+                    "fetch from remote",
+                    items,
+                    false,
+                    PendingSelection::GitRemoteForFetch {
+                        all_remotes: false,
+                        flags,
+                    },
+                    false,
+                );
+                Action::None
+            } else {
+                Action::SuspendAndRunJj(JJCommand {
+                    kind: JJCommandKind::GitFetch {
+                        all_remotes: false,
+                        remote: None,
+                    },
+                    flags,
+                })
+            }
+        }
+        AppAction::BookmarkViewFetchBookmark => {
             if let Some((entry, target)) = app.selected_remote_target() {
                 return Action::SuspendAndRunJj(JJCommand {
                     kind: JJCommandKind::GitFetchBookmark {
@@ -184,12 +207,10 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                     flags,
                 });
             }
-            // On a bookmark row: fetch from all remotes.
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
             if let Some(remote) = entry.kind.remote() {
-                // Remote bookmark row — fetch from that remote.
                 return Action::SuspendAndRunJj(JJCommand {
                     kind: JJCommandKind::GitFetchBookmark {
                         bookmark: entry.name.clone(),
@@ -198,15 +219,16 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                     flags,
                 });
             }
-            // Local bookmark — fetch from all remotes for this bookmark.
-            Action::SuspendAndRunJj(JJCommand {
-                kind: JJCommandKind::GitFetch {
-                    all_remotes: false,
-                    remote: None,
-                },
-                flags,
-            })
+            app.set_error("no remote to fetch from");
+            Action::None
         }
+        AppAction::BookmarkViewFetchAllRemotes => Action::SuspendAndRunJj(JJCommand {
+            kind: JJCommandKind::GitFetch {
+                all_remotes: true,
+                remote: None,
+            },
+            flags,
+        }),
         _ => Action::None,
     }
 }

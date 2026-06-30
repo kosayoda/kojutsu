@@ -13,7 +13,8 @@ impl App {
         match row {
             DisplayRow::GraphLink { .. }
             | DisplayRow::DescriptionLine { .. }
-            | DisplayRow::ConflictContext { .. } => true,
+            | DisplayRow::ConflictContext { .. }
+            | DisplayRow::BookmarkSeparator => true,
             DisplayRow::DiffLine {
                 entry_idx,
                 file_idx,

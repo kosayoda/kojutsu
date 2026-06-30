@@ -296,6 +296,10 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|d| d.remote_targets.get(target_idx.raw()));
                     render_bookmark_remote_target(target, theme)
                 }
+                DisplayRow::BookmarkSeparator => vec![Line::from(Span::styled(
+                    "─".repeat(area.width as usize),
+                    Style::default().fg(theme.muted),
+                ))],
                 DisplayRow::TagItem { tag_idx } => {
                     if let Some(entry) = app.views.tag_entries.get(tag_idx.raw()) {
                         render_tag_item(entry, row_search.as_ref(), theme)
