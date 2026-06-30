@@ -161,6 +161,7 @@ pub enum AppAction {
     BookmarkViewFetchDefault,
     BookmarkViewFetchBookmark,
     BookmarkViewFetchAllRemotes,
+    BookmarkViewInterdiff,
     TagViewDelete,
     TagViewSet,
     TagViewJumpToCommit,
@@ -310,6 +311,7 @@ impl AppAction {
             | AppAction::BookmarkViewFetchDefault
             | AppAction::BookmarkViewFetchBookmark
             | AppAction::BookmarkViewFetchAllRemotes
+            | AppAction::BookmarkViewInterdiff
             | AppAction::TagViewDelete
             | AppAction::TagViewSet
             | AppAction::TagViewJumpToCommit
@@ -417,6 +419,7 @@ impl AppAction {
             | AppAction::BookmarkViewFetchDefault
             | AppAction::BookmarkViewFetchBookmark
             | AppAction::BookmarkViewFetchAllRemotes
+            | AppAction::BookmarkViewInterdiff
             | AppAction::TagViewDelete
             | AppAction::TagViewSet
             | AppAction::EvoLogRestore
@@ -753,6 +756,7 @@ pub fn action_id_name(action: AppAction) -> &'static str {
         AppAction::BookmarkViewFetchDefault => "bookmark_view_fetch_default",
         AppAction::BookmarkViewFetchBookmark => "bookmark_view_fetch_bookmark",
         AppAction::BookmarkViewFetchAllRemotes => "bookmark_view_fetch_all_remotes",
+        AppAction::BookmarkViewInterdiff => "bookmark_view_interdiff",
         AppAction::TagViewDelete => "tag_view_delete",
         AppAction::TagViewSet => "tag_view_set",
         AppAction::TagViewJumpToCommit => "tag_view_jump_to_commit",
@@ -909,6 +913,7 @@ pub const ALL_ACTIONS: &[AppAction] = &[
     AppAction::BookmarkViewFetchDefault,
     AppAction::BookmarkViewFetchBookmark,
     AppAction::BookmarkViewFetchAllRemotes,
+    AppAction::BookmarkViewInterdiff,
     AppAction::TagViewDelete,
     AppAction::TagViewSet,
     AppAction::TagViewJumpToCommit,

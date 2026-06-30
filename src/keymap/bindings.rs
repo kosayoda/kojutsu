@@ -552,6 +552,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         ),
         bind("s", BookmarkViewSet, "set\u{2026}", C, bookmark()),
         bind("shift-f", BookmarkViewForget, "forget", C, bookmark()),
+        bind("i", BookmarkViewInterdiff, "interdiff", C, bookmark()),
     ]);
     specs.extend(undo_redo(bookmark));
 

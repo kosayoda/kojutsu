@@ -229,6 +229,32 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             },
             flags,
         }),
+        AppAction::BookmarkViewInterdiff => {
+            let Some(entry) = app.selected_bookmark_entry() else {
+                return Action::None;
+            };
+            if !entry.kind.is_dirty() {
+                app.set_error("bookmark is not dirty");
+                return Action::None;
+            }
+            let Some(local_commit) = entry.commit_id.clone() else {
+                app.set_error("bookmark has no local commit");
+                return Action::None;
+            };
+            let name = entry.name.clone();
+            let details = app.views.bookmark_details.get(&name);
+            let remote_commit = details
+                .and_then(|d| d.remote_targets.first())
+                .map(|t| t.summary.commit_id.clone());
+            let Some(remote_commit) = remote_commit else {
+                app.set_error("no remote target to diff against");
+                return Action::None;
+            };
+            let from_label = crate::types::Str::from(format!("{}@remote", name));
+            let to_label = crate::types::Str::from(name.to_string());
+            app.enter_interdiff_view(remote_commit, local_commit, from_label, to_label);
+            Action::None
+        }
         _ => Action::None,
     }
 }
