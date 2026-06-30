@@ -1,8 +1,8 @@
-# Vendored from jj-cli v0.41.0
-# Source: https://github.com/jj-vcs/jj/blob/v0.41.0/cli/src/config/revsets.toml
+# Vendored from jj-cli v0.42.0
+# Source: https://github.com/jj-vcs/jj/blob/v0.42.0/cli/src/config/revsets.toml
 # Update with: scripts/update-jj-config.sh
 #
-# jj-version: 0.41.0
+# jj-version: 0.42.0
 
 # NOTE: ensure you update docs/revsets.md with documentation when
 # adding/updating any of these aliases

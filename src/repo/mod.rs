@@ -243,7 +243,7 @@ impl JjRepo {
                 if let Some(defn) = item.as_str() {
                     // Silently ignore malformed declarations; they'll error
                     // when the alias is actually used in a revset.
-                    let _ = aliases_map.insert(decl, defn);
+                    let _ = aliases_map.insert(decl, defn, None);
                 }
             }
         }
