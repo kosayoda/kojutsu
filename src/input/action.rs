@@ -543,6 +543,7 @@ pub fn dispatch_action_after_hooks(
         | AppAction::CommitWithMessage
         | AppAction::Describe
         | AppAction::DescribeInEditor
+        | AppAction::Diffedit
         | AppAction::Edit
         | AppAction::New
         | AppAction::NewInsertAfter
@@ -618,9 +619,7 @@ pub fn dispatch_action_after_hooks(
         AppAction::TagViewDelete
         | AppAction::TagViewSet
         | AppAction::TagViewJumpToCommit
-        | AppAction::TagViewEdit => {
-            super::view::tag::dispatch(app, action, flags)
-        }
+        | AppAction::TagViewEdit => super::view::tag::dispatch(app, action, flags),
         // Operations view actions
         AppAction::SwitchToOpLogView => {
             app.switch_view(crate::app::ActiveView::Operations);

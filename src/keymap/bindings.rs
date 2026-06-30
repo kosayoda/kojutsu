@@ -285,7 +285,8 @@ pub fn default_bindings() -> Vec<BindingSpec> {
 
     // DAG view
     specs.extend([
-        bind("shift-e", SwitchToEvoLogView, "evolog", C, dag()),
+        bind("ctrl-e", SwitchToEvoLogView, "evolog", C, dag()),
+        bind("shift-e", Diffedit, "diffedit", C, dag()),
         bind("a", Absorb, "absorb", C, dag()),
         bind("+", ExpandAncestors, "expand ancestors", C, dag()),
         bind("-", ExpandDescendants, "expand descendants", C, dag()),
@@ -595,7 +596,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     // Evolog view
     let evo = || views(&[Evolog]);
     specs.extend([
-        bind("shift-e", SwitchToEvoLogView, "evolog", C, evo()),
+        bind("ctrl-e", SwitchToEvoLogView, "evolog", C, evo()),
         bind("d", EvoLogInterdiff, "interdiff vs current", C, evo()),
         bind("r", EvoLogRestore, "restore from", C, evo()),
         bind("e", EvoLogEdit, "edit (checkout)", C, evo()),

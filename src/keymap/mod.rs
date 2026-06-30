@@ -73,6 +73,7 @@ pub enum AppAction {
     CommitWithMessage,
     Describe,
     DescribeInEditor,
+    Diffedit,
     Edit,
     New,
     NewInsertAfter,
@@ -236,6 +237,7 @@ impl AppAction {
             | AppAction::CommitWithMessage
             | AppAction::Describe
             | AppAction::DescribeInEditor
+            | AppAction::Diffedit
             | AppAction::Edit
             | AppAction::New
             | AppAction::NewInsertAfter
@@ -355,6 +357,7 @@ impl AppAction {
             | AppAction::CommitWithMessage
             | AppAction::Describe
             | AppAction::DescribeInEditor
+            | AppAction::Diffedit
             | AppAction::Edit
             | AppAction::New
             | AppAction::NewInsertAfter
@@ -569,7 +572,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::Commit => "commit",
         AppAction::CommitWithMessage => "commit",
         AppAction::Describe => "describe",
-        AppAction::DescribeInEditor => "describe",
+        AppAction::DescribeInEditor | AppAction::Diffedit => "describe",
         AppAction::Edit => "edit",
         AppAction::New | AppAction::NewInsertAfter | AppAction::NewInsertBefore => "new",
         AppAction::Squash | AppAction::SquashSelect(_) => "squash",
@@ -658,6 +661,7 @@ pub fn action_id_name(action: AppAction) -> &'static str {
         AppAction::CommitWithMessage => "commit_with_message",
         AppAction::Describe => "describe",
         AppAction::DescribeInEditor => "describe_in_editor",
+        AppAction::Diffedit => "diffedit",
         AppAction::Edit => "edit",
         AppAction::New => "new",
         AppAction::NewInsertAfter => "new_insert_after",
@@ -817,6 +821,7 @@ pub const ALL_ACTIONS: &[AppAction] = &[
     AppAction::CommitWithMessage,
     AppAction::Describe,
     AppAction::DescribeInEditor,
+    AppAction::Diffedit,
     AppAction::Edit,
     AppAction::New,
     AppAction::NewInsertAfter,

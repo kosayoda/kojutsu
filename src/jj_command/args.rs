@@ -39,6 +39,19 @@ impl JJCommand {
             JJCommandKind::DescribeInEditor { change_id, .. } => {
                 vec!["describe".into(), format_compact!("{change_id}")]
             }
+            JJCommandKind::Diffedit {
+                change_id,
+                selection,
+                ..
+            } => {
+                let mut args: Vec<Str> = vec![
+                    "diffedit".into(),
+                    "-r".into(),
+                    format_compact!("{change_id}"),
+                ];
+                push_change_selection(&mut args, selection);
+                args
+            }
             JJCommandKind::Edit { change_id, .. } => {
                 vec!["edit".into(), format_compact!("{change_id}")]
             }

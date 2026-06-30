@@ -198,6 +198,13 @@ pub(in crate::input) fn dispatch(
             kind: JJCommandKind::DescribeInEditor { change_id: id },
             flags,
         }),
+        AppAction::Diffedit => make_command(app, |id| JJCommand {
+            kind: JJCommandKind::Diffedit {
+                change_id: id,
+                selection: build_change_selection(app),
+            },
+            flags,
+        }),
         AppAction::Edit => make_command(app, |id| JJCommand {
             kind: JJCommandKind::Edit { change_id: id },
             flags,

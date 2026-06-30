@@ -89,6 +89,7 @@ impl ActionRegistry {
             (CommitWithMessage, s, false, false),
             (Describe, c, false, false),
             (DescribeInEditor, c, false, false),
+            (Diffedit, cf, false, false),
             (Edit, c, false, false),
             (New, c, false, false),
             (NewInsertAfter, c, false, false),

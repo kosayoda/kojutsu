@@ -73,6 +73,10 @@ pub enum JJCommandKind {
     DescribeInEditor {
         change_id: ChangeId,
     },
+    Diffedit {
+        change_id: ChangeId,
+        selection: ChangeSelection,
+    },
     Edit {
         change_id: ChangeId,
     },
@@ -269,6 +273,7 @@ impl JJCommand {
             | JJCommandKind::Abandon { .. }
             | JJCommandKind::Absorb { .. }
             | JJCommandKind::Split { .. }
+            | JJCommandKind::Diffedit { .. }
             | JJCommandKind::Parallelize { .. }
             | JJCommandKind::SimplifyParents { .. }
             | JJCommandKind::Revert { .. } => Some(JumpTarget::WorkingCopy),
@@ -327,7 +332,7 @@ impl JJCommand {
     pub fn is_interactive(&self) -> bool {
         let flags = self.flags;
         match &self.kind {
-            JJCommandKind::DescribeInEditor { .. } => true,
+            JJCommandKind::DescribeInEditor { .. } | JJCommandKind::Diffedit { .. } => true,
             JJCommandKind::Squash {
                 message, selection, ..
             } => {
