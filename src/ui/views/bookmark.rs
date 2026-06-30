@@ -5,7 +5,6 @@ use crate::app::BookmarkViewEntry;
 use crate::theme::Theme;
 use crate::types::SearchScopes;
 
-use super::push_ref_entry_suffix;
 use crate::ui::search::{gutter_span, push_searchable, SearchRender};
 use crate::ui::spans::push_short_id;
 
@@ -59,13 +58,25 @@ pub(crate) fn render_bookmark_item(
         );
     }
 
-    push_ref_entry_suffix(
-        &mut spans,
-        entry.change_id.as_ref(),
-        entry.description.as_deref(),
-        search,
-        theme,
-    );
+    use crate::ui::spans::dot;
+    if let Some(cid) = &entry.change_id {
+        spans.push(dot(theme));
+        push_short_id(&mut spans, cid, theme.change_id, theme);
+    }
+    if let Some(cid) = &entry.short_commit_id {
+        spans.push(Span::raw(" "));
+        push_short_id(&mut spans, cid, theme.commit_id, theme);
+    }
+    if let Some(desc) = &entry.description {
+        spans.push(dot(theme));
+        push_searchable(
+            &mut spans,
+            desc,
+            SearchScopes::DESCRIPTION,
+            Style::default().fg(theme.text),
+            search,
+        );
+    }
 
     vec![Line::from(spans)]
 }

@@ -592,6 +592,7 @@ impl App {
                         name: bm.name.clone(),
                         commit_id: Some(node.commit.graph_id.clone()),
                         change_id: Some(node.commit.change_id.clone()),
+                        short_commit_id: Some(node.commit.commit_id.clone()),
                         description: node.commit.description.clone(),
                         kind,
                     });
@@ -612,6 +613,7 @@ impl App {
                         name: rb.name.clone(),
                         commit_id: Some(node.commit.graph_id.clone()),
                         change_id: Some(node.commit.change_id.clone()),
+                        short_commit_id: Some(node.commit.commit_id.clone()),
                         description: node.commit.description.clone(),
                         kind,
                     });
@@ -635,6 +637,7 @@ impl App {
                     name: rb.name.clone(),
                     commit_id: rb.commit_id.clone(),
                     change_id: None,
+                    short_commit_id: None,
                     description: None,
                     kind,
                 });

@@ -491,6 +491,7 @@ pub struct BookmarkViewEntry {
     pub name: BookmarkName,
     pub commit_id: Option<CommitId>,
     pub change_id: Option<crate::dag::ShortId>,
+    pub short_commit_id: Option<crate::dag::ShortId>,
     pub description: Option<String>,
     pub kind: BookmarkKind,
 }
