@@ -225,16 +225,18 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         ));
     }
 
-    let view_title = match app.active_view {
-        crate::app::ActiveView::Dag => " Log ",
-        crate::app::ActiveView::Bookmarks => " Bookmarks ",
-        crate::app::ActiveView::Tags => " Tags ",
-        crate::app::ActiveView::Operations => " Operations ",
-        crate::app::ActiveView::Evolog => " Evolog ",
-        crate::app::ActiveView::Workspaces => " Workspaces ",
-        crate::app::ActiveView::CommandLog => " Command Log ",
-        crate::app::ActiveView::Interdiff => " Interdiff ",
-        crate::app::ActiveView::Annotate => " Annotate ",
+    let view_title: std::borrow::Cow<'static, str> = match app.active_view {
+        crate::app::ActiveView::Dag => " Log ".into(),
+        crate::app::ActiveView::Bookmarks => {
+            format!(" Bookmarks ({}) ", app.views.bookmark_entries.len()).into()
+        }
+        crate::app::ActiveView::Tags => " Tags ".into(),
+        crate::app::ActiveView::Operations => " Operations ".into(),
+        crate::app::ActiveView::Evolog => " Evolog ".into(),
+        crate::app::ActiveView::Workspaces => " Workspaces ".into(),
+        crate::app::ActiveView::CommandLog => " Command Log ".into(),
+        crate::app::ActiveView::Interdiff => " Interdiff ".into(),
+        crate::app::ActiveView::Annotate => " Annotate ".into(),
     };
 
     let mut wc_spans: Vec<Span> = Vec::new();
@@ -249,7 +251,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.muted))
         .title("")
-        .title(view_title)
+        .title(view_title.as_ref())
         .title_style(
             Style::default()
                 .fg(theme.accent)
