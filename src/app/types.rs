@@ -500,6 +500,7 @@ pub struct TagViewEntry {
     pub name: TagName,
     pub commit_id: Option<CommitId>,
     pub change_id: Option<crate::dag::ShortId>,
+    pub short_commit_id: Option<crate::dag::ShortId>,
     pub description: Option<String>,
     /// Whether the local tag has been deleted (only remote refs remain).
     pub is_deleted: bool,

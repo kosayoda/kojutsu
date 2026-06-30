@@ -3,7 +3,7 @@ use smallvec::smallvec;
 use crate::app::{App, AppMode};
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
-use crate::types::PendingCommand;
+use crate::types::{ChangeId, PendingCommand};
 
 use crate::input::action::jump_to_commit_in_dag;
 use crate::input::Action;
@@ -48,6 +48,20 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 "tag has no associated commit",
             );
             Action::None
+        }
+        AppAction::TagViewEdit => {
+            let Some(entry) = app.selected_tag_entry() else {
+                return Action::None;
+            };
+            let Some(change_id) = entry.change_id.as_ref().map(|s| ChangeId::new(&s.display))
+            else {
+                app.set_error("tag has no associated commit");
+                return Action::None;
+            };
+            Action::RunJj(JJCommand {
+                kind: JJCommandKind::Edit { change_id },
+                flags,
+            })
         }
         _ => Action::None,
     }

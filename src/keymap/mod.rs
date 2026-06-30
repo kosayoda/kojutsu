@@ -165,6 +165,7 @@ pub enum AppAction {
     TagViewDelete,
     TagViewSet,
     TagViewJumpToCommit,
+    TagViewEdit,
     SwitchToOpLogView,
     SwitchToWorkspaceView,
     SwitchToEvoLogView,
@@ -315,6 +316,7 @@ impl AppAction {
             | AppAction::TagViewDelete
             | AppAction::TagViewSet
             | AppAction::TagViewJumpToCommit
+            | AppAction::TagViewEdit
             | AppAction::SwitchToOpLogView
             | AppAction::SwitchToWorkspaceView
             | AppAction::SwitchToEvoLogView
@@ -422,6 +424,7 @@ impl AppAction {
             | AppAction::BookmarkViewInterdiff
             | AppAction::TagViewDelete
             | AppAction::TagViewSet
+            | AppAction::TagViewEdit
             | AppAction::EvoLogRestore
             | AppAction::EvoLogEdit
             | AppAction::EvoLogNew
@@ -599,7 +602,8 @@ pub fn action_label(action: AppAction) -> &'static str {
         | AppAction::TagDelete
         | AppAction::TagViewDelete
         | AppAction::TagViewSet
-        | AppAction::TagViewJumpToCommit => "tag",
+        | AppAction::TagViewJumpToCommit
+        | AppAction::TagViewEdit => "tag",
         AppAction::Duplicate | AppAction::DuplicateOnto => "duplicate",
         AppAction::Parallelize => "parallelize",
         AppAction::SimplifyParents => "simplify-parents",
@@ -760,6 +764,7 @@ pub fn action_id_name(action: AppAction) -> &'static str {
         AppAction::TagViewDelete => "tag_view_delete",
         AppAction::TagViewSet => "tag_view_set",
         AppAction::TagViewJumpToCommit => "tag_view_jump_to_commit",
+        AppAction::TagViewEdit => "tag_view_edit",
         AppAction::Jump => "jump",
         AppAction::WorkspaceViewForget => "workspace_view_forget",
         AppAction::WorkspaceViewJumpToCommit => "workspace_view_jump_to_commit",
@@ -917,6 +922,7 @@ pub const ALL_ACTIONS: &[AppAction] = &[
     AppAction::TagViewDelete,
     AppAction::TagViewSet,
     AppAction::TagViewJumpToCommit,
+    AppAction::TagViewEdit,
     AppAction::Jump,
     AppAction::WorkspaceViewForget,
     AppAction::WorkspaceViewJumpToCommit,

@@ -230,7 +230,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         crate::app::ActiveView::Bookmarks => {
             format!(" Bookmarks ({}) ", app.views.bookmark_entries.len()).into()
         }
-        crate::app::ActiveView::Tags => " Tags ".into(),
+        crate::app::ActiveView::Tags => format!(" Tags ({}) ", app.views.tag_entries.len()).into(),
         crate::app::ActiveView::Operations => " Operations ".into(),
         crate::app::ActiveView::Evolog => " Evolog ".into(),
         crate::app::ActiveView::Workspaces => " Workspaces ".into(),

@@ -615,7 +615,10 @@ pub fn dispatch_action_after_hooks(
             app.switch_view(crate::app::ActiveView::Tags);
             Action::None
         }
-        AppAction::TagViewDelete | AppAction::TagViewSet | AppAction::TagViewJumpToCommit => {
+        AppAction::TagViewDelete
+        | AppAction::TagViewSet
+        | AppAction::TagViewJumpToCommit
+        | AppAction::TagViewEdit => {
             super::view::tag::dispatch(app, action, flags)
         }
         // Operations view actions

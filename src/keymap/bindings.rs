@@ -561,6 +561,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     specs.extend([
         bind("d", TagViewDelete, "delete", C, tag()),
         bind("s", TagViewSet, "set\u{2026}", C, tag()),
+        bind("e", TagViewEdit, "edit (checkout)", C, tag()),
         bind("enter", TagViewJumpToCommit, "jump to commit", C, tag()),
     ]);
     specs.extend(undo_redo(tag));

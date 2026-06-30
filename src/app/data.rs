@@ -673,6 +673,7 @@ impl App {
                         name: tag.clone(),
                         commit_id: Some(node.commit.graph_id.clone()),
                         change_id: Some(node.commit.change_id.clone()),
+                        short_commit_id: Some(node.commit.commit_id.clone()),
                         description: node.commit.description.clone(),
                         is_deleted,
                     });
@@ -685,20 +686,22 @@ impl App {
             if seen.insert(tag.clone()) {
                 let details = self.views.tag_details.get(tag);
                 // Use local target info from tag_details if available.
-                let (commit_id, change_id, description) =
+                let (commit_id, change_id, short_commit_id, description) =
                     if let Some(lt) = details.and_then(|d| d.local_target.as_ref()) {
                         (
                             Some(lt.summary.commit_id.clone()),
                             Some(lt.summary.change_id.clone()),
+                            Some(lt.summary.short_commit_id.clone()),
                             lt.summary.description.clone(),
                         )
                     } else {
-                        (None, None, None)
+                        (None, None, None, None)
                     };
                 entries.push(TagViewEntry {
                     name: tag.clone(),
                     commit_id,
                     change_id,
+                    short_commit_id,
                     description,
                     is_deleted: false,
                 });
@@ -712,6 +715,7 @@ impl App {
                     name: name.clone(),
                     commit_id: None,
                     change_id: None,
+                    short_commit_id: None,
                     description: None,
                     is_deleted: true,
                 });
