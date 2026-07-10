@@ -7,7 +7,7 @@ pub use completion::Completion;
 pub use completion::{common_prefix, complete, replace_current_token, split_for_completion};
 pub use follow_up::{FollowUpAction, FollowUpOption};
 
-use std::sync::{Arc, atomic::AtomicI32, atomic::Ordering};
+use std::sync::{atomic::AtomicI32, atomic::Ordering, Arc};
 
 use crate::dag::BookmarkRef;
 use crate::keymap::CommandFlags;
@@ -445,7 +445,12 @@ fn tag_args(args: &[Str], parts: &mut Vec<CommandPart>) {
 }
 
 fn looks_like_revision(s: &str) -> bool {
-    !s.is_empty()
+    // Change-id prefixes (reverse hex, letters k-z) can be as short as one
+    // char but never start with a digit; hex commit/op IDs can start with a
+    // digit but are never passed shorter than 12 chars. A short digit-leading
+    // arg is therefore a plain value (e.g. a `--jobs` count), not a revision.
+    let starts_with_letter = s.starts_with(|c: char| c.is_ascii_lowercase());
+    (starts_with_letter || s.len() >= 12)
         && s.len() <= 64
         && s.chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '/')
