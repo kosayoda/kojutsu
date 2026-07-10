@@ -134,10 +134,30 @@ pub fn handle_key(
         AppMode::FollowUp { .. } => modal::handle_follow_up(app, key),
         AppMode::SelectFromList(_) => list::handle_select_from_list(app, lua, key),
         AppMode::Jump { .. } => modal::handle_jump(app, key),
-        AppMode::CommandRunning { kill, .. } => {
+        AppMode::CommandRunning(_) => {
+            let AppMode::CommandRunning(state) = &mut app.mode else {
+                unreachable!()
+            };
+            use keymap_parser::Key;
             let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
-            if ctrl && node.key == keymap_parser::Key::Char('c') {
-                kill.kill();
+            match node.key {
+                Key::Esc => state.kill.kill(),
+                Key::Char('c') if ctrl => state.kill.kill(),
+                Key::Char('d') if ctrl => {
+                    state.scroll_from_bottom = state.scroll_from_bottom.saturating_sub(10);
+                }
+                Key::Char('u') if ctrl => {
+                    state.scroll_from_bottom = state.scroll_from_bottom.saturating_add(10);
+                }
+                Key::Char('j') | Key::Down => {
+                    state.scroll_from_bottom = state.scroll_from_bottom.saturating_sub(1);
+                }
+                Key::Char('k') | Key::Up => {
+                    state.scroll_from_bottom = state.scroll_from_bottom.saturating_add(1);
+                }
+                // Jump back to the live tail.
+                Key::Char('G') | Key::Char('$') => state.scroll_from_bottom = 0,
+                _ => {}
             }
             Action::None
         }

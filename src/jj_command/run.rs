@@ -1,4 +1,3 @@
-use std::io::Read as _;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -12,10 +11,10 @@ impl JJCommand {
 
         let (result, was_interrupted) = with_sigint_suppressed(|| {
             Command::new("jj")
-                .args(&args)
                 .arg("-R")
                 .arg(repo_path)
                 .arg("--color=always")
+                .args(&args)
                 .current_dir(repo_path)
                 .stdin(std::process::Stdio::inherit())
                 .stdout(std::process::Stdio::inherit())
@@ -49,10 +48,10 @@ impl JJCommand {
 
         let (result, was_interrupted) = with_sigint_suppressed(|| {
             let mut child = Command::new("jj")
-                .args(&args)
                 .arg("-R")
                 .arg(repo_path)
                 .arg("--color=always")
+                .args(&args)
                 .current_dir(repo_path)
                 .stdin(std::process::Stdio::inherit())
                 .stdout(std::process::Stdio::piped())
@@ -105,10 +104,10 @@ impl JJCommand {
         let display_parts = self.display_parts();
 
         let result = Command::new("jj")
-            .args(&args)
             .arg("-R")
             .arg(repo_path)
             .arg("--color=always")
+            .args(&args)
             .current_dir(repo_path)
             .env("JJ_EDITOR", ":")
             .output();
@@ -128,7 +127,12 @@ impl JJCommand {
         }
     }
 
-    pub fn run_cancellable(&self, repo_path: &Path, kill: &KillHandle) -> JJCommandResult {
+    pub fn run_cancellable(
+        &self,
+        repo_path: &Path,
+        kill: &KillHandle,
+        on_chunk: impl FnMut(&[u8]) + Send,
+    ) -> JJCommandResult {
         use std::os::unix::process::CommandExt as _;
 
         let start = std::time::Instant::now();
@@ -138,10 +142,10 @@ impl JJCommand {
         let display_parts = self.display_parts();
 
         let mut child = match Command::new("jj")
-            .args(&args)
             .arg("-R")
             .arg(repo_path)
             .arg("--color=always")
+            .args(&args)
             .current_dir(repo_path)
             .env("JJ_EDITOR", ":")
             .stdin(std::process::Stdio::null())
@@ -158,26 +162,21 @@ impl JJCommand {
 
         let child_stdout = child.stdout.take().unwrap();
         let child_stderr = child.stderr.take().unwrap();
-        let stdout_thread = std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let mut src = child_stdout;
-            let _ = src.read_to_end(&mut buf);
-            buf
+        // Accumulate stdout and stderr into one chronologically interleaved
+        // buffer; the callback observes exactly the same byte order because
+        // both happen under the same lock.
+        let sink = std::sync::Mutex::new((Vec::new(), on_chunk));
+        let status = std::thread::scope(|scope| {
+            scope.spawn(|| stream_pipe(child_stdout, &sink));
+            scope.spawn(|| stream_pipe(child_stderr, &sink));
+            child.wait()
         });
-        let stderr_thread = std::thread::spawn(move || {
-            let mut buf = Vec::new();
-            let mut src = child_stderr;
-            let _ = src.read_to_end(&mut buf);
-            buf
-        });
+        let output = sink.into_inner().map(|(buf, _)| buf).unwrap_or_default();
 
-        let status = match child.wait() {
+        let status = match status {
             Ok(s) => s,
             Err(e) => return jj_error(cmd_str, display_parts, e),
         };
-
-        let stdout = stdout_thread.join().unwrap_or_default();
-        let stderr = stderr_thread.join().unwrap_or_default();
 
         let success = status.code().is_some() && status.success();
         tracing::info!(
@@ -198,8 +197,32 @@ impl JJCommand {
         JJCommandResult {
             display: cmd_str,
             display_parts,
-            output: merge_captured_output(stdout, stderr),
+            output,
             success: status.success(),
+        }
+    }
+}
+
+fn stream_pipe<F: FnMut(&[u8])>(
+    mut pipe: impl std::io::Read,
+    sink: &std::sync::Mutex<(Vec<u8>, F)>,
+) {
+    let mut buf = [0u8; 4096];
+    loop {
+        match pipe.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let chunk = &buf[..n];
+                let mut guard = match sink.lock() {
+                    Ok(g) => g,
+                    Err(_) => break,
+                };
+                let (captured, on_chunk) = &mut *guard;
+                captured.extend_from_slice(chunk);
+                on_chunk(chunk);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => break,
         }
     }
 }

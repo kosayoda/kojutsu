@@ -295,6 +295,41 @@ pub struct SubmenuToggle {
     pub description: CompactString,
 }
 
+/// State for a background jj command with live output streaming.
+pub struct CommandRunningState {
+    pub command: String,
+    pub command_parts: Vec<crate::jj_command::CommandPart>,
+    pub kill: crate::jj_command::KillHandle,
+    /// Raw stdout+stderr bytes accumulated so far (chronologically interleaved).
+    pub output: Vec<u8>,
+    /// ANSI-parsed complete lines, cached to avoid re-parsing every frame.
+    pub parsed_lines: Vec<ratatui::text::Line<'static>>,
+    /// Byte offset into `output` up to which lines have been parsed
+    /// (always just past a newline).
+    pub parsed_upto: usize,
+    /// Scroll offset in lines from the bottom; 0 follows the tail as
+    /// output arrives. Clamped against content during draw.
+    pub scroll_from_bottom: usize,
+}
+
+impl CommandRunningState {
+    pub fn new(
+        command: String,
+        command_parts: Vec<crate::jj_command::CommandPart>,
+        kill: crate::jj_command::KillHandle,
+    ) -> Self {
+        Self {
+            command,
+            command_parts,
+            kill,
+            output: Vec::new(),
+            parsed_lines: Vec::new(),
+            parsed_upto: 0,
+            scroll_from_bottom: 0,
+        }
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct PersistedState {
@@ -701,12 +736,9 @@ pub enum AppMode {
     },
     /// Selecting an item from a list (e.g. picking a bookmark).
     SelectFromList(SelectFromListState),
-    /// A background jj command is running; the UI stays live. Esc cancels.
-    CommandRunning {
-        command: String,
-        command_parts: Vec<crate::jj_command::CommandPart>,
-        kill: crate::jj_command::KillHandle,
-    },
+    /// A background jj command is running with live output; the UI stays
+    /// live. Esc/Ctrl-C cancels, j/k scrolls the output.
+    CommandRunning(CommandRunningState),
 }
 
 impl AppMode {

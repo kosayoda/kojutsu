@@ -19,6 +19,10 @@ enum AppEvent {
     Init,
     Terminal(Event),
     Repo(Box<RepoResult>),
+    /// A chunk of stdout/stderr from a running background jj command.
+    JjOutput {
+        chunk: Vec<u8>,
+    },
     JjDone {
         result: Box<JJCommandResult>,
         cmd: Box<JJCommand>,
@@ -231,6 +235,11 @@ fn main() -> Result<()> {
                 AppEvent::Init => Action::None,
                 AppEvent::Repo(result) => {
                     deferred.merge(app.handle_repo_result_deferred(*result));
+                    dirty = true;
+                    Action::None
+                }
+                AppEvent::JjOutput { chunk } => {
+                    app.append_running_output(&chunk);
                     dirty = true;
                     Action::None
                 }
@@ -612,16 +621,20 @@ fn run_jj_command(
     let command_parts = cmd.display_parts();
     let (kill_main, kill_bg) = kojutsu::jj_command::KillHandle::pair();
 
-    app.mode = AppMode::CommandRunning {
+    app.mode = AppMode::CommandRunning(kojutsu::app::CommandRunningState::new(
         command,
         command_parts,
-        kill: kill_main,
-    };
+        kill_main,
+    ));
 
     let repo_path = repo_path.to_path_buf();
     let event_tx = event_tx.clone();
     std::thread::spawn(move || {
-        let result = cmd.run_cancellable(&repo_path, &kill_bg);
+        let result = cmd.run_cancellable(&repo_path, &kill_bg, |chunk| {
+            let _ = event_tx.send(AppEvent::JjOutput {
+                chunk: chunk.to_vec(),
+            });
+        });
         let _ = event_tx.send(AppEvent::JjDone {
             result: Box::new(result),
             cmd: Box::new(cmd),

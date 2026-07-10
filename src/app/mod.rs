@@ -442,6 +442,27 @@ impl App {
         }
     }
 
+    /// Append a streamed output chunk from a running background command and
+    /// incrementally ANSI-parse any newly completed lines.
+    pub fn append_running_output(&mut self, chunk: &[u8]) {
+        use ansi_to_tui::IntoText as _;
+        let AppMode::CommandRunning(state) = &mut self.mode else {
+            return;
+        };
+        state.output.extend_from_slice(chunk);
+        let Some(last_newline) = state.output[state.parsed_upto..]
+            .iter()
+            .rposition(|&b| b == b'\n')
+        else {
+            return;
+        };
+        let end = state.parsed_upto + last_newline + 1;
+        if let Ok(text) = (&state.output[state.parsed_upto..end]).into_text() {
+            state.parsed_lines.extend(text.lines);
+            state.parsed_upto = end;
+        }
+    }
+
     /// Whether the working copy (`@`) is visible in the current entries.
     pub fn has_working_copy(&self) -> bool {
         self.nodes.iter().any(|n| n.commit.is_working_copy())

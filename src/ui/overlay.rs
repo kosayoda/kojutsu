@@ -637,21 +637,56 @@ pub(super) fn draw_select_list(
 pub(super) fn draw_command_running(
     frame: &mut Frame,
     area: Rect,
-    command_parts: &[crate::jj_command::CommandPart],
+    state: &mut crate::app::CommandRunningState,
     theme: &Theme,
 ) {
+    use ansi_to_tui::IntoText as _;
     use ratatui::widgets::Padding;
 
-    let command_line = Line::from(super::spans::command_parts_to_spans(command_parts, theme));
-    let hint = Line::from(Span::styled(
-        "running… (^C to cancel)",
-        Style::default().fg(theme.muted),
+    let command_line = Line::from(super::spans::command_parts_to_spans(
+        &state.command_parts,
+        theme,
     ));
+    let has_output = state.parsed_upto < state.output.len() || !state.parsed_lines.is_empty();
+    let hint_text = if has_output {
+        "running… (Esc/^C to cancel, j/k scroll)"
+    } else {
+        "running… (Esc/^C to cancel)"
+    };
+    let hint = Line::from(Span::styled(hint_text, Style::default().fg(theme.muted)));
+    let mut lines = vec![hint, command_line];
+
+    if has_output {
+        // The trailing bytes past the last newline form one partial line,
+        // parsed on the fly (it's at most one line of new data).
+        let partial_line = (state.parsed_upto < state.output.len())
+            .then(|| {
+                (&state.output[state.parsed_upto..])
+                    .into_text()
+                    .ok()
+                    .and_then(|t| t.lines.into_iter().next())
+            })
+            .flatten();
+        let total = state.parsed_lines.len() + partial_line.is_some() as usize;
+        // Block has Borders::TOP only, plus the hint and command lines.
+        let visible = area.height.saturating_sub(3) as usize;
+        let max_scroll = total.saturating_sub(visible);
+        state.scroll_from_bottom = state.scroll_from_bottom.min(max_scroll);
+        let start = total - visible.min(total) - state.scroll_from_bottom;
+        let end = (start + visible).min(total);
+        for idx in start..end {
+            match state.parsed_lines.get(idx) {
+                Some(line) => lines.push(line.clone()),
+                None => lines.extend(partial_line.clone()),
+            }
+        }
+    }
+
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.muted))
         .padding(Padding::new(1, 1, 0, 0));
-    frame.render_widget(Paragraph::new(vec![hint, command_line]).block(block), area);
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 pub(super) fn draw_command_output(

@@ -215,10 +215,17 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
             frame.render_widget(ratatui::widgets::Clear, area);
             overlay::draw_follow_up(frame, area, prompt, options, theme);
         }
-        AppMode::CommandRunning { command_parts, .. } => {
-            let area = overlay_area(overlay_base, 2);
+        AppMode::CommandRunning(state) => {
+            let has_partial_line = state.parsed_upto < state.output.len();
+            let output_lines = state.parsed_lines.len() + has_partial_line as usize;
+            // Top border consumes one row: 3 rows fit the hint + command
+            // lines, output grows the overlay beyond that.
+            let height = (output_lines as u16 + 3)
+                .min(overlay_base.height / 2)
+                .max(3);
+            let area = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_command_running(frame, area, command_parts, theme);
+            overlay::draw_command_running(frame, area, state, theme);
         }
         AppMode::SelectFromList(s) => {
             let height = (s.filtered_indices.len() as u16 + 2)
