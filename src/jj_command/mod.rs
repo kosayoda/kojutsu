@@ -322,7 +322,6 @@ impl JJCommand {
     }
 
     pub fn display_parts(&self) -> Vec<CommandPart> {
-        let args = self.args();
         let mut parts = vec![
             CommandPart {
                 text: "$".into(),
@@ -333,7 +332,14 @@ impl JJCommand {
                 kind: CommandPartKind::Binary,
             },
         ];
-        tag_args(&args, &mut parts);
+        parts.extend(
+            self.tagged_args()
+                .into_iter()
+                .map(|(text, kind)| CommandPart {
+                    text: text.to_string(),
+                    kind,
+                }),
+        );
         parts
     }
 
@@ -365,93 +371,4 @@ impl JJCommand {
             _ => false,
         }
     }
-}
-
-const COMPOUND_SUBCOMMANDS: &[&str] = &["git", "bookmark", "workspace", "tag", "op", "file"];
-
-const REVISION_FLAGS: &[&str] = &[
-    "-r", "-s", "-b", "-c", "--from", "--into", "--to", "--onto", "-d",
-];
-
-fn tag_args(args: &[Str], parts: &mut Vec<CommandPart>) {
-    if args.is_empty() {
-        return;
-    }
-
-    let mut i = 0;
-
-    parts.push(CommandPart {
-        text: args[0].to_string(),
-        kind: CommandPartKind::Subcommand,
-    });
-    i += 1;
-
-    if COMPOUND_SUBCOMMANDS.contains(&args[0].as_str()) {
-        if let Some(arg) = args.get(i) {
-            if !arg.starts_with('-') {
-                parts.push(CommandPart {
-                    text: arg.to_string(),
-                    kind: CommandPartKind::Subcommand,
-                });
-                i += 1;
-            }
-        }
-    }
-
-    let mut next_is_revision = false;
-    while i < args.len() {
-        let arg = &args[i];
-        // Everything after a bare `--` belongs to a subprocess, not jj.
-        if arg == "--" {
-            parts.push(CommandPart {
-                text: arg.to_string(),
-                kind: CommandPartKind::Flag,
-            });
-            for arg in &args[i + 1..] {
-                parts.push(CommandPart {
-                    text: arg.to_string(),
-                    kind: CommandPartKind::String,
-                });
-            }
-            return;
-        }
-        if next_is_revision {
-            parts.push(CommandPart {
-                text: arg.to_string(),
-                kind: CommandPartKind::Revision,
-            });
-            next_is_revision = false;
-        } else if arg.starts_with('-') {
-            parts.push(CommandPart {
-                text: arg.to_string(),
-                kind: CommandPartKind::Flag,
-            });
-            if REVISION_FLAGS.contains(&arg.as_str()) {
-                next_is_revision = true;
-            }
-        } else {
-            let kind = if looks_like_revision(arg) {
-                CommandPartKind::Revision
-            } else {
-                CommandPartKind::String
-            };
-            parts.push(CommandPart {
-                text: arg.to_string(),
-                kind,
-            });
-        }
-        i += 1;
-    }
-}
-
-fn looks_like_revision(s: &str) -> bool {
-    // Change-id prefixes (reverse hex, letters k-z) can be as short as one
-    // char but never start with a digit; hex commit/op IDs can start with a
-    // digit but are never passed shorter than 12 chars. A short digit-leading
-    // arg is therefore a plain value (e.g. a `--jobs` count), not a revision.
-    let starts_with_letter = s.starts_with(|c: char| c.is_ascii_lowercase());
-    (starts_with_letter || s.len() >= 12)
-        && s.len() <= 64
-        && s.chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '/')
 }
