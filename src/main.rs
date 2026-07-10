@@ -463,13 +463,13 @@ fn suspend_and_run(
     // always visible even when interactive commands print to inherited stdio).
     if !result.success || !result.output.is_empty() {
         let retry = cmd.retry_options(&result.output);
-        app.mode = AppMode::CommandOutput {
-            command: result.display,
-            command_parts: Some(result.display_parts),
-            output: result.output,
-            success: result.success,
+        app.mode = AppMode::command_output(
+            result.display,
+            Some(result.display_parts),
+            result.output,
+            result.success,
             retry,
-        };
+        );
     }
     result.success
 }
@@ -488,13 +488,13 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
     let mut tmpfile = match tempfile::NamedTempFile::new() {
         Ok(f) => f,
         Err(e) => {
-            app.mode = AppMode::CommandOutput {
-                command: "revset editor".to_string(),
-                command_parts: None,
-                output: format!("failed to create temp file: {e}").into_bytes(),
-                success: false,
-                retry: vec![],
-            };
+            app.mode = AppMode::command_output(
+                "revset editor".to_string(),
+                None,
+                format!("failed to create temp file: {e}").into_bytes(),
+                false,
+                vec![],
+            );
             return;
         }
     };
@@ -523,13 +523,13 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
                     }
                 }
                 Err(e) => {
-                    app.mode = AppMode::CommandOutput {
-                        command: "revset editor".to_string(),
-                        command_parts: None,
-                        output: format!("failed to read temp file: {e}").into_bytes(),
-                        success: false,
-                        retry: vec![],
-                    };
+                    app.mode = AppMode::command_output(
+                        "revset editor".to_string(),
+                        None,
+                        format!("failed to read temp file: {e}").into_bytes(),
+                        false,
+                        vec![],
+                    );
                 }
             }
         }
@@ -537,13 +537,13 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
             // Editor exited with non-zero -- user cancelled.
         }
         Err(e) => {
-            app.mode = AppMode::CommandOutput {
-                command: "revset editor".to_string(),
-                command_parts: None,
-                output: format!("failed to run {editor}: {e}").into_bytes(),
-                success: false,
-                retry: vec![],
-            };
+            app.mode = AppMode::command_output(
+                "revset editor".to_string(),
+                None,
+                format!("failed to run {editor}: {e}").into_bytes(),
+                false,
+                vec![],
+            );
         }
     }
 }
@@ -662,13 +662,13 @@ fn finish_jj_command(
         result.success,
     );
     let retry = cmd.retry_options(&result.output);
-    app.mode = AppMode::CommandOutput {
-        command: result.display,
-        command_parts: Some(result.display_parts),
-        output: result.output,
-        success: result.success,
+    app.mode = AppMode::command_output(
+        result.display,
+        Some(result.display_parts),
+        result.output,
+        result.success,
         retry,
-    };
+    );
 
     if result.success {
         let switch_to_dag = match &jump {

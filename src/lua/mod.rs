@@ -638,13 +638,8 @@ impl LuaEngine {
                 for g in &groups {
                     render_group(g, &mut output);
                 }
-                app.mode = crate::app::AppMode::CommandOutput {
-                    command: String::new(),
-                    command_parts: None,
-                    output,
-                    success: true,
-                    retry: Vec::new(),
-                };
+                app.mode =
+                    crate::app::AppMode::command_output(String::new(), None, output, true, vec![]);
             }
         }
 

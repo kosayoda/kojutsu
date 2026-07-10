@@ -77,8 +77,24 @@ pub fn handle_key(
             action::handle_submenu_key(app, registry, lua, &children, flags, &node)
         }
         AppMode::CommandOutput { .. } => {
+            use keymap_parser::Key;
+            let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
+            // Scroll the output without dismissing; any other key dismisses.
+            let delta: Option<i16> = match node.key {
+                Key::Char('j') | Key::Down => Some(1),
+                Key::Char('k') | Key::Up => Some(-1),
+                Key::Char('d') if ctrl => Some(10),
+                Key::Char('u') if ctrl => Some(-10),
+                _ => None,
+            };
+            if let Some(delta) = delta {
+                if let AppMode::CommandOutput { scroll, .. } = &mut app.mode {
+                    *scroll = scroll.saturating_add_signed(delta);
+                }
+                return Action::None;
+            }
             let retry = app.mode.take_command_retry();
-            if node.key == keymap_parser::Key::Esc {
+            if node.key == Key::Esc {
                 Action::None
             } else if !retry.is_empty() {
                 app.mode = AppMode::FollowUp {
@@ -202,10 +218,24 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
                 _ => Action::None,
             }
         }
-        // Dismiss command output only on a deliberate click, not mouse movement.
+        // Dismiss command output only on a deliberate click, not mouse
+        // movement; the wheel scrolls the output.
         AppMode::CommandOutput { .. } => {
-            if matches!(mouse.kind, MouseEventKind::Down(_)) {
-                app.mode = AppMode::Normal;
+            match mouse.kind {
+                MouseEventKind::Down(_) => {
+                    app.mode = AppMode::Normal;
+                }
+                MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
+                    if let AppMode::CommandOutput { scroll, .. } = &mut app.mode {
+                        let delta = if mouse.kind == MouseEventKind::ScrollDown {
+                            3
+                        } else {
+                            -3
+                        };
+                        *scroll = scroll.saturating_add_signed(delta);
+                    }
+                }
+                _ => {}
             }
             Action::None
         }

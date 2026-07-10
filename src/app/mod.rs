@@ -385,13 +385,8 @@ impl App {
             error.message.as_bytes().to_vec(),
             false,
         );
-        self.mode = AppMode::CommandOutput {
-            command_parts: None,
-            command: summary,
-            output: error.message.into_bytes(),
-            success: false,
-            retry: vec![],
-        };
+        self.mode =
+            AppMode::command_output(summary, None, error.message.into_bytes(), false, vec![]);
     }
 
     /// Enter an overlay mode (search, help) that may need to restore the

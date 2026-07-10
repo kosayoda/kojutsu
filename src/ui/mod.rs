@@ -122,6 +122,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
             command_parts,
             output,
             success,
+            scroll,
             ..
         } => {
             let output_lines = output.iter().filter(|&&b| b == b'\n').count().max(1);
@@ -137,6 +138,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
                 command_parts.as_deref(),
                 output,
                 *success,
+                scroll,
                 theme,
             );
         }

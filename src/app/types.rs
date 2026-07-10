@@ -700,6 +700,8 @@ pub enum AppMode {
         /// Follow-up options offered when the overlay is dismissed (e.g. retry
         /// with `--ignore-immutable`). Empty means no retry available.
         retry: Vec<crate::types::FollowUpOption>,
+        /// Scroll offset in lines from the top; clamped during draw.
+        scroll: u16,
     },
     /// Help overlay showing all keybindings.
     Help { scroll: u16 },
@@ -749,6 +751,24 @@ pub enum AppMode {
 }
 
 impl AppMode {
+    /// Construct a `CommandOutput` mode scrolled to the top.
+    pub fn command_output(
+        command: String,
+        command_parts: Option<Vec<crate::jj_command::CommandPart>>,
+        output: Vec<u8>,
+        success: bool,
+        retry: Vec<crate::types::FollowUpOption>,
+    ) -> Self {
+        AppMode::CommandOutput {
+            command,
+            command_parts,
+            output,
+            success,
+            retry,
+            scroll: 0,
+        }
+    }
+
     /// Construct a `TextInput` mode with the given prompt, prefill, and submit handler.
     pub fn text_input(
         prompt: impl Into<String>,
