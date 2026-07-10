@@ -76,10 +76,11 @@ pub fn handle_key(
             let flags = *flags;
             action::handle_submenu_key(app, registry, lua, &children, flags, &node)
         }
-        AppMode::CommandOutput { .. } => {
+        AppMode::CommandOutput { max_scroll, .. } => {
             use keymap_parser::Key;
             let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
-            // Scroll the output without dismissing; any other key dismisses.
+            // When the output overflows, scroll keys scroll without
+            // dismissing; when it fits, they dismiss like any other key.
             let delta: Option<i16> = match node.key {
                 Key::Char('j') | Key::Down => Some(1),
                 Key::Char('k') | Key::Up => Some(-1),
@@ -87,7 +88,7 @@ pub fn handle_key(
                 Key::Char('u') if ctrl => Some(-10),
                 _ => None,
             };
-            if let Some(delta) = delta {
+            if let (Some(delta), 1..) = (delta, *max_scroll) {
                 if let AppMode::CommandOutput { scroll, .. } = &mut app.mode {
                     *scroll = scroll.saturating_add_signed(delta);
                 }

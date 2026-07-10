@@ -702,6 +702,10 @@ pub enum AppMode {
         retry: Vec<crate::types::FollowUpOption>,
         /// Scroll offset in lines from the top; clamped during draw.
         scroll: u16,
+        /// How far the content can scroll (0 = fits entirely). Written
+        /// during draw; input uses it to decide whether j/k scroll the
+        /// overlay or dismiss it.
+        max_scroll: u16,
     },
     /// Help overlay showing all keybindings.
     Help { scroll: u16 },
@@ -766,6 +770,7 @@ impl AppMode {
             success,
             retry,
             scroll: 0,
+            max_scroll: 0,
         }
     }
 

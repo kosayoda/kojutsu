@@ -709,6 +709,7 @@ pub(super) fn draw_command_output(
     output: &[u8],
     success: bool,
     scroll: &mut u16,
+    max_scroll: &mut u16,
     theme: &Theme,
 ) {
     use ansi_to_tui::IntoText;
@@ -739,9 +740,11 @@ pub(super) fn draw_command_output(
 
     // Clamp scroll to content that doesn't fit and write back so the stored
     // value never drifts past the end (top border only: inner = height - 1).
+    // max_scroll is also written back so input handling knows whether j/k
+    // scroll or dismiss.
     let visible = area.height.saturating_sub(1);
-    let max_scroll = (lines.len() as u16).saturating_sub(visible);
-    *scroll = (*scroll).min(max_scroll);
+    *max_scroll = (lines.len() as u16).saturating_sub(visible);
+    *scroll = (*scroll).min(*max_scroll);
 
     let border_color = if success { theme.muted } else { theme.error };
     let block = Block::default()
