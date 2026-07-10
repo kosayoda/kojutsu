@@ -84,8 +84,10 @@ pub fn spawn_terminal_events<T: Send + 'static>(
 
         let mut events = mio::Events::with_capacity(4);
         loop {
-            if poll.poll(&mut events, None).is_err() {
-                break;
+            match poll.poll(&mut events, None) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => break,
             }
             for ev in &events {
                 match ev.token() {
