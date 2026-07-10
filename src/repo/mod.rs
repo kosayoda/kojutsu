@@ -269,7 +269,6 @@ impl JjRepo {
             date_pattern_context: DatePatternContext::from(chrono::Local::now()),
             default_ignored_remote: None,
             fileset_aliases_map,
-            use_glob_by_default: true,
             extensions,
             workspace: Some(workspace_ctx),
         }
