@@ -12,16 +12,33 @@ pub struct Preset {
     pub revset: String,
 }
 
+/// `[run]` config section: settings for running commands over revisions.
+#[derive(Deserialize, Default)]
+pub struct RunConfig {
+    /// Preset command lines offered by the run picker (e.g. "cargo check").
+    #[serde(default)]
+    pub presets: Vec<String>,
+}
+
+/// `[revsets]` config section: settings for revset selection.
+#[derive(Deserialize, Default)]
+pub struct RevsetsConfig {
+    /// Named revset presets; keys 1-5 switch between the first 5.
+    #[serde(default)]
+    pub presets: Vec<Preset>,
+}
+
 /// Top-level config file structure (`~/.config/kojutsu/config.toml`).
 #[derive(Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub theme: Theme,
+    /// Revset configuration (mirrors jj's own `[revsets]` config section).
     #[serde(default)]
-    pub presets: Vec<Preset>,
-    /// Preset command lines offered by `jj run` (e.g. "cargo check").
+    pub revsets: RevsetsConfig,
+    /// `jj run` configuration (mirrors jj's own `[run]` config section).
     #[serde(default)]
-    pub run_presets: Vec<String>,
+    pub run: RunConfig,
     /// strftime format for commit timestamps.
     #[serde(default = "default_date_format")]
     pub date_format: String,
@@ -40,8 +57,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             theme: Theme::default(),
-            presets: Vec::new(),
-            run_presets: Vec::new(),
+            revsets: RevsetsConfig::default(),
+            run: RunConfig::default(),
             date_format: default_date_format(),
             glyphs: GlyphChars::default(),
             default_search_scopes: DefaultSearchScopes::default(),

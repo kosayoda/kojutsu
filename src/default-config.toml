@@ -39,19 +39,20 @@ selection_bg = { r = 50, g = 50, b = 60 } # background highlight for cursor row
 # tag         = false
 
 # Named revset presets: keys 1-5 switch between the first 5 presets.
-# [[presets]]
+# [[revsets.presets]]
 # name = "default"
 # revset = "present(@) | ancestors(immutable_heads()..@, 2) | ancestors(trunk(), 16)"
 #
-# [[presets]]
+# [[revsets.presets]]
 # name = "all mine"
 # revset = "author(exact:'me@example.com')"
 #
-# [[presets]]
+# [[revsets.presets]]
 # name = "recent"
 # revset = "heads(all())"
 
-# Preset command lines offered when running a command over revisions
-# with `jj run` (the `!` prefix in the DAG view). Commands run without
+# Running commands over revisions with `jj run` (the `!` prefix in the
+# DAG view). Presets are offered in the run picker; commands run without
 # a shell in a private working copy per revision.
-# run_presets = ["cargo check", "cargo clippy", "cargo fix --allow-dirty"]
+# [run]
+# presets = ["cargo check", "cargo clippy", "cargo fix --allow-dirty"]

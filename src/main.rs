@@ -159,26 +159,26 @@ fn main() -> Result<()> {
     // Resolve active preset: persisted → first preset → None (jj default).
     let active_preset = persisted
         .active_preset
-        .filter(|&i| i < config.presets.len())
-        .or(if config.presets.is_empty() {
+        .filter(|&i| i < config.revsets.presets.len())
+        .or(if config.revsets.presets.is_empty() {
             None
         } else {
             Some(0)
         });
     let requested_revset = cli.revisions.clone().or_else(|| {
         active_preset
-            .and_then(|i| config.presets.get(i))
+            .and_then(|i| config.revsets.presets.get(i))
             .map(|p| p.revset.clone())
     });
     let mut app = App::new(
         Vec::new(),
         requested_revset.clone().unwrap_or_default(),
         repo_path.display().to_string(),
-        &config.presets,
+        &config.revsets.presets,
         &config.glyphs,
     );
     app.default_search_scopes = config.default_search_scopes.to_flags();
-    app.run_presets = &config.run_presets;
+    app.run_presets = &config.run.presets;
     app.apply_persisted_state(&persisted);
     app.revset.active_preset = active_preset;
     app.request_revset_load(requested_revset);
