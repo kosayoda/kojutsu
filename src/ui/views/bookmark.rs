@@ -5,7 +5,7 @@ use crate::app::BookmarkViewEntry;
 use crate::theme::Theme;
 use crate::types::SearchScopes;
 
-use crate::ui::search::{gutter_span, push_searchable, SearchRender};
+use crate::ui::search::{SearchRender, gutter_span, push_searchable};
 use crate::ui::spans::push_short_id;
 
 pub(crate) fn render_bookmark_item(

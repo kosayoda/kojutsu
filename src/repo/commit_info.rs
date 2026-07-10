@@ -1,14 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use super::{parse_first_line_description, JjRepo, DISPLAY_ID_LEN};
+use super::{DISPLAY_ID_LEN, JjRepo, parse_first_line_description};
 use crate::dag::{
     AuthorInfo, BookmarkInfo, CommitInfo, DivergenceInfo, PrefixLengthUpdate, RemoteBookmarkInfo,
     ShortId,
 };
 use crate::types::{BookmarkName, CommitId as UiCommitId, TagName};
-use color_eyre::eyre::Context;
 use color_eyre::Result;
+use color_eyre::eyre::Context;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::commit::Commit;
 use jj_lib::fileset::FilesetAliasesMap;

@@ -5,9 +5,9 @@ use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, Lin
 use crate::theme::{Config, Theme};
 use crate::types::{FileSelectionState, SearchScopes};
 
-use super::{push_graph_node_spans, push_line_stats, RenderFlags};
+use super::{RenderFlags, push_graph_node_spans, push_line_stats};
 use crate::ui::search::{
-    contains_query, gutter_span, push_searchable, search_gutter, SearchRender, SearchRowState,
+    SearchRender, SearchRowState, contains_query, gutter_span, push_searchable, search_gutter,
 };
 use crate::ui::spans::{push_highlighted_short_id, push_short_id};
 

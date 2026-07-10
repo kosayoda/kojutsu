@@ -1,7 +1,7 @@
 use compact_str::format_compact;
 
 use crate::keymap::CommandFlags;
-use crate::types::{ChangeSelection, Str, GLOBAL_TOGGLES};
+use crate::types::{ChangeSelection, GLOBAL_TOGGLES, Str};
 
 use super::{JJCommand, JJCommandKind, ResolveTool};
 
@@ -486,6 +486,35 @@ impl JJCommand {
                 }
                 push_change_selection(&mut args, &selection);
                 args
+            }
+            JJCommandKind::Run {
+                change_ids,
+                argv,
+                jobs,
+            } => {
+                let mut args: Vec<Str> = vec!["run".into()];
+                for id in change_ids {
+                    args.push("-r".into());
+                    args.push(format_compact!("{id}"));
+                }
+                if let Some(jobs) = jobs {
+                    args.push("--jobs".into());
+                    args.push(format_compact!("{jobs}"));
+                }
+                push_flags(
+                    &mut args,
+                    flags,
+                    &[
+                        (CommandFlags::CLEAN, "--clean"),
+                        (CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
+                    ],
+                );
+                // Global flags must precede `--`: everything after it is
+                // passed verbatim to the subprocess, not to jj.
+                push_global_flags(&mut args, flags);
+                args.push("--".into());
+                args.extend(argv.iter().cloned());
+                return args;
             }
             JJCommandKind::FileUntrack { paths, .. } => {
                 let mut args: Vec<Str> = vec!["file".into(), "untrack".into()];

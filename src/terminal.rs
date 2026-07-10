@@ -1,18 +1,18 @@
-use std::io::{self, stdout, Stdout};
+use std::io::{self, Stdout, stdout};
 use std::os::unix::io::AsRawFd;
 use std::panic;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::thread;
 
 use crossterm::event::{self, Event};
+use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::cursor::{Hide, Show};
 use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
-use ratatui::Terminal;
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 

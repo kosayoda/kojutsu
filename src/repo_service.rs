@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
 use std::thread;
 
 use jj_lib::repo::Repo as _;

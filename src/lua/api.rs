@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::CommandFlags;
 
-use super::{lua_state, LogGroup, LogPhase, LuaEngine, LuaState, PendingAction};
+use super::{LogGroup, LogPhase, LuaEngine, LuaState, PendingAction, lua_state};
 
 impl LuaEngine {
     pub(super) fn register_persistent_functions(&self) -> mlua::Result<()> {

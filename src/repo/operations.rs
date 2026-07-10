@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use color_eyre::eyre::Context;
 use color_eyre::Result;
+use color_eyre::eyre::Context;
 use futures::TryStreamExt as _;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::fileset::FilesetAliasesMap;
@@ -13,7 +13,7 @@ use jj_lib::repo_path::RepoPathUiConverter;
 use jj_lib::revset::RevsetExtensions;
 use pollster::FutureExt as _;
 
-use super::{parse_first_line_description, JjRepo, DISPLAY_ID_LEN};
+use super::{DISPLAY_ID_LEN, JjRepo, parse_first_line_description};
 use crate::dag::{Edge, EdgeKind, ShortId};
 use crate::types::{CommitId as UiCommitId, OperationId, Str, WorkspaceName};
 

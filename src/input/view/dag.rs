@@ -9,12 +9,12 @@ use crate::types::{
     SquashKind, Str, TargetOperation,
 };
 
+use crate::input::Action;
 use crate::input::action::{build_change_selection, enter_target_select, run_cmd};
 use crate::input::bookmark::{
-    enter_bookmark_advance, enter_bookmark_select, enter_bookmark_text_input,
-    enter_remote_bookmark_select, enter_tag_delete, BookmarkTextAction, PendingSelectionKind,
+    BookmarkTextAction, PendingSelectionKind, enter_bookmark_advance, enter_bookmark_select,
+    enter_bookmark_text_input, enter_remote_bookmark_select, enter_tag_delete,
 };
-use crate::input::Action;
 
 pub(in crate::input) fn dispatch(
     app: &mut App,
@@ -58,6 +58,7 @@ pub(in crate::input) fn dispatch(
                 flags,
             })
         }
+        AppAction::Run => enter_run_input(app, flags),
         AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
             if let Some(DisplayRow::ConflictHeader {
                 entry_idx,
@@ -576,6 +577,22 @@ fn make_command(app: &App, build: impl FnOnce(ChangeId) -> JJCommand) -> Action 
         return Action::None;
     };
     run_cmd(build(change_id))
+}
+
+fn enter_run_input(app: &mut App, flags: CommandFlags) -> Action {
+    let ids = app.selected_change_ids();
+    if ids.is_empty() {
+        return Action::None;
+    }
+    app.mode = AppMode::text_input(
+        "run: ",
+        "",
+        PendingCommand::RunCommand {
+            change_ids: ids,
+            flags,
+        },
+    );
+    Action::None
 }
 
 fn enter_describe_input(app: &mut App, flags: CommandFlags) -> Action {

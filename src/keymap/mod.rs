@@ -6,12 +6,12 @@ mod trie;
 use keymap_parser::{Key, Modifier, Node};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-pub use bindings::{default_bindings, BindTarget, BindingSpec, Scope};
-pub use help::{help_entries, select_mode_help_entries, HelpEntry, HelpGroup};
+pub use bindings::{BindTarget, BindingSpec, Scope, default_bindings};
+pub use help::{HelpEntry, HelpGroup, help_entries, select_mode_help_entries};
 pub use registry::{ActionId, ActionRegistry};
 pub use trie::{Keymap, Keymaps, LookupResult, TrieNode};
 
-use crate::types::{SquashKind, GLOBAL_TOGGLES};
+use crate::types::{GLOBAL_TOGGLES, SquashKind};
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +43,7 @@ bitflags::bitflags! {
         const ALLOW_BACKWARDS     = 1 << 8;
         const DRY_RUN             = 1 << 9;
         const PARALLEL            = 1 << 10;
+        const CLEAN               = 1 << 11;
     }
 }
 
@@ -119,6 +120,7 @@ pub enum AppAction {
     Revert,
     Arrange(crate::types::ArrangeDirection),
     Fix,
+    Run,
     FileUntrack,
     ResolveOurs,
     ResolveTheirs,
@@ -345,6 +347,7 @@ impl AppAction {
             | AppAction::OpLogFilterWorkspace
             | AppAction::CommandMode
             | AppAction::FileList
+            | AppAction::Run
             | AppAction::RepeatLast => false,
         }
     }
@@ -434,6 +437,7 @@ impl AppAction {
             | AppAction::OpLogRestore
             | AppAction::OpLogRevert
             | AppAction::OpLogAbandon
+            | AppAction::Run
             | AppAction::CommandMode => true,
 
             AppAction::Quit
@@ -614,6 +618,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::Arrange(_) => "arrange",
         AppAction::ExpandAncestors | AppAction::ExpandDescendants => "expand",
         AppAction::Fix => "fix",
+        AppAction::Run => "run",
         AppAction::FileUntrack => "untrack",
         AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
             "resolve"
@@ -712,6 +717,7 @@ pub fn action_id_name(action: AppAction) -> &'static str {
         AppAction::Arrange(crate::types::ArrangeDirection::Up) => "arrange_up",
         AppAction::Arrange(crate::types::ArrangeDirection::Down) => "arrange_down",
         AppAction::Fix => "fix",
+        AppAction::Run => "run",
         AppAction::FileUntrack => "file_untrack",
         AppAction::ResolveOurs => "resolve_ours",
         AppAction::ResolveTheirs => "resolve_theirs",
@@ -873,6 +879,7 @@ pub const ALL_ACTIONS: &[AppAction] = &[
     AppAction::Arrange(crate::types::ArrangeDirection::Down),
     AppAction::RepeatLast,
     AppAction::Fix,
+    AppAction::Run,
     AppAction::FileUntrack,
     AppAction::ResolveOurs,
     AppAction::ResolveTheirs,

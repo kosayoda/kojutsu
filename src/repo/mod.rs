@@ -8,8 +8,8 @@ mod workspace_view;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use color_eyre::eyre::Context;
 use color_eyre::Result;
+use color_eyre::eyre::Context;
 use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
 use jj_lib::fileset::FilesetAliasesMap;
 use jj_lib::id_prefix::IdPrefixContext;
@@ -24,7 +24,7 @@ use jj_lib::revset::{
 };
 use jj_lib::settings::UserSettings;
 use jj_lib::time_util::DatePatternContext;
-use jj_lib::workspace::{default_working_copy_factories, Workspace};
+use jj_lib::workspace::{Workspace, default_working_copy_factories};
 
 pub use operations::millis_to_relative_time;
 
@@ -193,6 +193,13 @@ impl JjRepo {
                 "present(@) | ancestors(immutable_heads()..@, 2) | trunk() | ancestors(trunk(), 16)"
                     .to_string()
             })
+    }
+
+    /// Read the `run.jobs` config for a workspace, if set to a usable value.
+    pub fn read_run_jobs(workspace_path: &Path) -> Option<usize> {
+        let config = Self::load_config(workspace_path).ok()?;
+        let jobs = config.get::<i64>("run.jobs").ok()?;
+        usize::try_from(jobs).ok().filter(|&n| n > 0)
     }
 
     /// Build config stack: jj-lib defaults + vendored CLI defaults + user + repo.

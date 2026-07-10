@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use color_eyre::eyre::Context;
 use color_eyre::Result;
+use color_eyre::eyre::Context;
 use serde::Deserialize;
 use walkdir::WalkDir;
 

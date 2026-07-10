@@ -5,7 +5,7 @@ use jj_lib::object_id::ObjectId;
 use jj_lib::repo::Repo;
 use pollster::FutureExt as _;
 
-use super::{JjRepo, DISPLAY_ID_LEN};
+use super::{DISPLAY_ID_LEN, JjRepo};
 use crate::dag::ShortId;
 use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, TagName, WorkspaceName};
 
@@ -320,11 +320,7 @@ impl JjRepo {
         let count = revset
             .stream()
             .fold(0usize, |acc, item| async move {
-                if item.is_ok() {
-                    acc + 1
-                } else {
-                    acc
-                }
+                if item.is_ok() { acc + 1 } else { acc }
             })
             .block_on();
         Some(count)

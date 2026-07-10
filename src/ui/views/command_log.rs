@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use crate::theme::Theme;
 use crate::types::SearchScopes;
 
-use crate::ui::search::{gutter_span, push_searchable, SearchRender};
+use crate::ui::search::{SearchRender, gutter_span, push_searchable};
 use crate::ui::spans::command_parts_to_spans;
 
 pub(crate) fn render_command_log_item(

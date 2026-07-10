@@ -7,7 +7,7 @@ pub use completion::Completion;
 pub use completion::{common_prefix, complete, replace_current_token, split_for_completion};
 pub use follow_up::{FollowUpAction, FollowUpOption};
 
-use std::sync::{atomic::AtomicI32, atomic::Ordering, Arc};
+use std::sync::{Arc, atomic::AtomicI32, atomic::Ordering};
 
 use crate::dag::BookmarkRef;
 use crate::keymap::CommandFlags;
@@ -215,6 +215,14 @@ pub enum JJCommandKind {
         change_ids: SmallVec<ChangeId>,
         selection: ChangeSelection,
     },
+    Run {
+        change_ids: SmallVec<ChangeId>,
+        /// The command to run in each private working copy (already
+        /// shlex-split; jj executes it without a shell).
+        argv: Vec<Str>,
+        /// Parallelism (`--jobs`); `None` lets jj resolve `run.jobs`.
+        jobs: Option<usize>,
+    },
     FileUntrack {
         paths: SmallVec<Str>,
     },
@@ -393,6 +401,20 @@ fn tag_args(args: &[Str], parts: &mut Vec<CommandPart>) {
     let mut next_is_revision = false;
     while i < args.len() {
         let arg = &args[i];
+        // Everything after a bare `--` belongs to a subprocess, not jj.
+        if arg == "--" {
+            parts.push(CommandPart {
+                text: arg.to_string(),
+                kind: CommandPartKind::Flag,
+            });
+            for arg in &args[i + 1..] {
+                parts.push(CommandPart {
+                    text: arg.to_string(),
+                    kind: CommandPartKind::String,
+                });
+            }
+            return;
+        }
         if next_is_revision {
             parts.push(CommandPart {
                 text: arg.to_string(),

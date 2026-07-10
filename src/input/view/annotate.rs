@@ -1,8 +1,8 @@
 use crate::app::App;
 use crate::keymap::{AppAction, CommandFlags};
 
-use crate::input::action::jump_to_commit_in_dag;
 use crate::input::Action;
+use crate::input::action::jump_to_commit_in_dag;
 
 pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, _flags: CommandFlags) -> Action {
     match action {

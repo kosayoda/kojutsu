@@ -3,7 +3,7 @@ use keymap_parser::Node;
 use smallvec::SmallVec;
 
 use super::registry::ActionId;
-use super::{parse_key, AppAction, CommandFlags, HelpGroup};
+use super::{AppAction, CommandFlags, HelpGroup, parse_key};
 use crate::app::ActiveView;
 
 pub struct BindingSpec {
@@ -298,6 +298,17 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind2("shift-c", "m", ResolveMergeTool, "merge tool", C, dag()),
         // Fix
         bind("f", Fix, "fix", C, dag()),
+        // Run prefix
+        prefix("!", "run", C, dag()),
+        toggle2("!", "shift-c", CommandFlags::CLEAN, "clean", dag()),
+        toggle2(
+            "!",
+            "shift-d",
+            CommandFlags::RESTORE_DESCENDANTS,
+            "restore descendants",
+            dag(),
+        ),
+        bind2("!", "!", Run, "run command\u{2026}", C, dag()),
         // File prefix (dag also has untrack)
         bind2("shift-f", "u", FileUntrack, "untrack", C, dag()),
         // Bookmark prefix

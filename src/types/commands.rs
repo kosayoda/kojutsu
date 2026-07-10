@@ -1,4 +1,4 @@
-use super::id::{BookmarkName, ChangeId, CommitId, SmallVec, TagName, WorkspaceName};
+use super::id::{BookmarkName, ChangeId, CommitId, SmallVec, Str, TagName, WorkspaceName};
 use super::operations::{ChangeSelection, RebaseSource, SplitKind, SquashKind, SquashTarget};
 use crate::keymap::CommandFlags;
 
@@ -146,6 +146,17 @@ pub enum PendingCommand {
     },
     /// Rename current workspace. Text = new name.
     WorkspaceRename {
+        flags: CommandFlags,
+    },
+    /// Run step 1: collecting the command to run over revisions. Text = command line.
+    RunCommand {
+        change_ids: SmallVec<ChangeId>,
+        flags: CommandFlags,
+    },
+    /// Run step 2: command collected, collecting `--jobs`. Text = job count (empty = jj default).
+    RunJobs {
+        change_ids: SmallVec<ChangeId>,
+        argv: Vec<Str>,
         flags: CommandFlags,
     },
     RawCommand,

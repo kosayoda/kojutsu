@@ -6,8 +6,8 @@ use compact_str::CompactString;
 use crate::keymap::{ActionRegistry, BindTarget, BindingSpec, HelpGroup, SelectionKindSet};
 
 use super::{
-    helpers::{lua_source_info, parse_keys, parse_scope, shadows_default, table_to_string_vec},
     HookPhase, LuaCommand, LuaEngine, LuaHook,
+    helpers::{lua_source_info, parse_keys, parse_scope, shadows_default, table_to_string_vec},
 };
 
 struct PendingRegistration {
@@ -118,21 +118,22 @@ impl LuaEngine {
             let hooks_clone = reg_hooks.clone();
             let hook_fn = self.lua.create_function(
                 move |lua, (first, phase_str, func): (mlua::Value, String, mlua::Function)| {
-                    let action_names: Vec<String> =
-                        match first {
-                            mlua::Value::String(s) => vec![s.to_str()?.to_string()],
-                            mlua::Value::Table(t) => table_to_string_vec(&t),
-                            _ => return Err(mlua::Error::external(
+                    let action_names: Vec<String> = match first {
+                        mlua::Value::String(s) => vec![s.to_str()?.to_string()],
+                        mlua::Value::Table(t) => table_to_string_vec(&t),
+                        _ => {
+                            return Err(mlua::Error::external(
                                 "first argument must be an action name or table of action names",
-                            )),
-                        };
+                            ));
+                        }
+                    };
                     let phase = match phase_str.as_str() {
                         "pre" => HookPhase::Pre,
                         "post" => HookPhase::Post,
                         other => {
                             return Err(mlua::Error::external(format!(
                                 "invalid hook phase: {other} (expected 'pre' or 'post')"
-                            )))
+                            )));
                         }
                     };
                     let source = lua_source_info(lua, &func);

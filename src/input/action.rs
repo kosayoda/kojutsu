@@ -5,8 +5,8 @@ use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{
-    self, action_label, ActionId, ActionRegistry, AppAction, CommandFlags, Keymap, LookupResult,
-    TrieNode,
+    self, ActionId, ActionRegistry, AppAction, CommandFlags, Keymap, LookupResult, TrieNode,
+    action_label,
 };
 use crate::types::ChangeSelection;
 use crate::types::{
@@ -188,7 +188,7 @@ fn dispatch_action(
 
     match lua.run_pre_hooks(id_name, action, flags, app) {
         crate::lua::HookOutcome::Cancel | crate::lua::HookOutcome::Suspended => {
-            return Action::None
+            return Action::None;
         }
         crate::lua::HookOutcome::Proceed => {}
     }
@@ -587,6 +587,7 @@ pub fn dispatch_action_after_hooks(
         | AppAction::SimplifyParents
         | AppAction::Interdiff
         | AppAction::Revert
+        | AppAction::Run
         | AppAction::Arrange(_) => super::view::dag::dispatch(app, lua, action, flags),
         AppAction::SwitchToDagView => {
             app.switch_view(crate::app::ActiveView::Dag);

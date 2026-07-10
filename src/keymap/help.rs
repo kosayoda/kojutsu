@@ -1,6 +1,6 @@
 use super::registry::{ActionId, ActionRegistry};
 use super::trie::{Keymap, TrieNode};
-use super::{display_key, toggle_hint, AppAction, SelectionKindSet};
+use super::{AppAction, SelectionKindSet, display_key, toggle_hint};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::Display)]
 pub enum HelpGroup {

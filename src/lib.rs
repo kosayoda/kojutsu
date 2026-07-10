@@ -18,10 +18,6 @@ pub mod ui;
 #[macro_export]
 macro_rules! pluralize {
     ($value:expr, $singular:expr, $plural:expr) => {
-        if $value == 1 {
-            $singular
-        } else {
-            $plural
-        }
+        if $value == 1 { $singular } else { $plural }
     };
 }

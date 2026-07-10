@@ -4,8 +4,8 @@ use crate::app::App;
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 
-use crate::input::action::jump_to_commit_in_dag;
 use crate::input::Action;
+use crate::input::action::jump_to_commit_in_dag;
 
 pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
     match action {

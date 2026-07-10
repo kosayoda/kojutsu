@@ -155,6 +155,7 @@ impl ActionRegistry {
             (Revert, c, false, false),
             (ExpandAncestors, c, false, false),
             (Fix, cf, false, false),
+            (Run, c, false, false),
             (FileUntrack, f, true, false),
             (FileAnnotate, f, true, false),
             (ResolveOurs, f, false, true),

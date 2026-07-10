@@ -22,7 +22,7 @@ use crate::dag::{DiffLine, DiffLineKind, DiffTokenKind, FileStatus, LineStats, S
 use crate::theme::{Config, Theme};
 use crate::types::SearchScopes;
 
-use super::search::{gutter_span, push_searchable, SearchRender};
+use super::search::{SearchRender, gutter_span, push_searchable};
 use super::spans::push_short_id;
 
 pub(super) struct RenderFlags {

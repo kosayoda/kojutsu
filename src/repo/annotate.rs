@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use color_eyre::eyre::Context;
 use color_eyre::Result;
+use color_eyre::eyre::Context;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::commit::Commit;
 use jj_lib::fileset::FilesetAliasesMap;
@@ -11,8 +11,8 @@ use jj_lib::repo_path::RepoPathUiConverter;
 use jj_lib::revset::RevsetExtensions;
 use pollster::FutureExt as _;
 
-use super::operations::{format_absolute_time, millis_to_relative_time};
 use super::JjRepo;
+use super::operations::{format_absolute_time, millis_to_relative_time};
 use crate::dag::ShortId;
 use crate::types::{CommitId as UiCommitId, RepoPath};
 

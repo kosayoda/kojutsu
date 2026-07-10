@@ -6,7 +6,7 @@ use crate::theme::Config;
 use crate::types::SearchScopes;
 
 use super::push_graph_node_spans;
-use crate::ui::search::{contains_query, gutter_span, push_searchable, SearchRender};
+use crate::ui::search::{SearchRender, contains_query, gutter_span, push_searchable};
 use crate::ui::spans::{dot, push_highlighted_short_id, push_short_id};
 
 pub(crate) fn render_evolog_item(

@@ -87,9 +87,12 @@ impl PendingCommand {
             PendingCommand::SquashWithMessage { builder, flags } => {
                 Some(builder.build(text, flags))
             }
+            // Multi-step inputs resolved in the text-input handler, not here.
             PendingCommand::Revset
             | PendingCommand::WorkspaceAddPath { .. }
-            | PendingCommand::WorkspaceAddName { .. } => None,
+            | PendingCommand::WorkspaceAddName { .. }
+            | PendingCommand::RunCommand { .. }
+            | PendingCommand::RunJobs { .. } => None,
             PendingCommand::BookmarkCreate { change_id, flags } => Some(JJCommand {
                 kind: JJCommandKind::BookmarkCreate {
                     name: BookmarkName::new(text),

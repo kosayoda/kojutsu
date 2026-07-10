@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use color_eyre::eyre::Context;
 use color_eyre::Result;
+use color_eyre::eyre::Context;
 use futures::TryStreamExt as _;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::fileset::FilesetAliasesMap;

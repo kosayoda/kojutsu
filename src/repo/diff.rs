@@ -1,15 +1,15 @@
 use std::collections::HashSet;
 
-use color_eyre::eyre::Context;
 use color_eyre::Result;
+use color_eyre::eyre::Context;
 use futures::StreamExt as _;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::conflict_labels::ConflictLabels;
 use jj_lib::conflicts::{
-    materialize_tree_value, try_materialize_file_conflict_value, ConflictMaterializeOptions,
+    ConflictMaterializeOptions, materialize_tree_value, try_materialize_file_conflict_value,
 };
-use jj_lib::diff_presentation::unified::{self, git_diff_part, DiffLineType};
 use jj_lib::diff_presentation::DiffTokenType;
+use jj_lib::diff_presentation::unified::{self, DiffLineType, git_diff_part};
 use jj_lib::matchers::EverythingMatcher;
 use jj_lib::merge::{Diff, Merge};
 use jj_lib::merged_tree::MergedTree;

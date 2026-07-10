@@ -2,8 +2,9 @@ use ratatui::crossterm::event::{Event, KeyCode, KeyEvent};
 use tui_input::backend::crossterm::EventHandler;
 
 use crate::app::{App, AppMode};
+use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap;
-use crate::types::PendingCommand;
+use crate::types::{PendingCommand, Str};
 
 use super::{Action, PAGE_SIZE};
 
@@ -55,6 +56,83 @@ pub(super) fn handle_text_input(
                             flags,
                         };
                         Action::None
+                    }
+                    PendingCommand::RunCommand { change_ids, flags } => {
+                        let argv: Vec<Str> = match shlex::split(&text) {
+                            Some(args) if !args.is_empty() => {
+                                args.into_iter().map(Str::from).collect()
+                            }
+                            _ => {
+                                app.set_error("run: enter a command");
+                                app.mode = AppMode::text_input(
+                                    "run: ",
+                                    text,
+                                    PendingCommand::RunCommand { change_ids, flags },
+                                );
+                                return Action::None;
+                            }
+                        };
+                        // --jobs only matters when running over several revisions.
+                        if change_ids.len() == 1 {
+                            return Action::RunJj(JJCommand {
+                                kind: JJCommandKind::Run {
+                                    change_ids,
+                                    argv,
+                                    jobs: None,
+                                },
+                                flags,
+                            });
+                        }
+                        let prefill = crate::repo::JjRepo::read_run_jobs(std::path::Path::new(
+                            &app.repo_root,
+                        ))
+                        .map(|n| n.to_string())
+                        .unwrap_or_default();
+                        app.mode = AppMode::text_input(
+                            "jobs (empty = jj default): ",
+                            prefill,
+                            PendingCommand::RunJobs {
+                                change_ids,
+                                argv,
+                                flags,
+                            },
+                        );
+                        Action::None
+                    }
+                    PendingCommand::RunJobs {
+                        change_ids,
+                        argv,
+                        flags,
+                    } => {
+                        let trimmed = text.trim();
+                        let jobs = if trimmed.is_empty() {
+                            None
+                        } else {
+                            match trimmed.parse::<usize>() {
+                                Ok(n) if n > 0 => Some(n),
+                                _ => {
+                                    app.set_error("jobs must be a positive number");
+                                    app.mode = AppMode::text_input(
+                                        "jobs (empty = jj default): ",
+                                        text,
+                                        PendingCommand::RunJobs {
+                                            change_ids,
+                                            argv,
+                                            flags,
+                                        },
+                                    );
+                                    return Action::None;
+                                }
+                            }
+                        };
+                        Action::RunJj(JJCommand {
+                            kind: JJCommandKind::Run {
+                                change_ids,
+                                argv,
+                                jobs,
+                            },
+                            flags,
+                        })
                     }
                     PendingCommand::RawCommand => {
                         match PendingCommand::RawCommand.into_jj_command(text) {

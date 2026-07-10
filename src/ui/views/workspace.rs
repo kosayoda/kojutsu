@@ -6,7 +6,7 @@ use crate::theme::Theme;
 use crate::types::SearchScopes;
 
 use super::push_ref_entry_suffix;
-use crate::ui::search::{gutter_span, push_searchable, SearchRender};
+use crate::ui::search::{SearchRender, gutter_span, push_searchable};
 
 pub(crate) fn render_workspace_item(
     entry: &WorkspaceViewEntry,
