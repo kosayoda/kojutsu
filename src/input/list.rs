@@ -36,7 +36,7 @@ fn recompute_list_filter(items: &[String], filter: &str) -> (Vec<usize>, Vec<Vec
 /// any, is pinned to the top regardless of how it scores against the filter.
 fn refresh_list_filter(s: &mut crate::app::SelectFromListState) {
     let (mut indices, mut positions) = recompute_list_filter(&s.items, &s.filter);
-    if s.custom_entry {
+    if s.custom_entry.is_some() {
         if let Some(pos) = indices.iter().position(|&i| i == 0) {
             indices.remove(pos);
             positions.remove(pos);
@@ -91,7 +91,7 @@ pub(super) fn handle_select_from_list(
                     // Land on the best match, not the pinned custom row —
                     // unless nothing matches, where Enter then opens the
                     // free input prefilled with the filter text.
-                    s.cursor = if s.custom_entry && s.filtered_indices.len() > 1 {
+                    s.cursor = if s.custom_entry.is_some() && s.filtered_indices.len() > 1 {
                         1
                     } else {
                         0
@@ -178,7 +178,7 @@ pub(super) fn handle_select_from_list(
             if let AppMode::SelectFromList(s) = &mut app.mode {
                 if s.multi {
                     if let Some(&orig_idx) = s.filtered_indices.get(s.cursor) {
-                        if s.custom_entry && orig_idx == 0 {
+                        if s.custom_entry.is_some() && orig_idx == 0 {
                             return Action::None;
                         }
                         if s.marked.contains(&orig_idx) {
@@ -195,9 +195,12 @@ pub(super) fn handle_select_from_list(
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::SelectFromList(s) = mode {
                 let cursor_idx = s.filtered_indices.get(s.cursor).copied().unwrap_or(0);
-                if s.custom_entry && cursor_idx == 0 {
+                if cursor_idx == 0
+                    && let Some(custom) = s.custom_entry
+                {
                     // The filter text carries over as the input prefill.
-                    return resolve_custom_entry(app, s.on_select, s.filter);
+                    app.mode = AppMode::text_input(custom.prompt, s.filter, custom.on_submit);
+                    return Action::None;
                 }
                 let names: Vec<String> = if s.multi && !s.marked.is_empty() {
                     let mut indices: Vec<usize> = s.marked.into_iter().collect();
@@ -228,19 +231,6 @@ pub(super) fn handle_select_from_list(
             }
             Action::None
         }
-        _ => Action::None,
-    }
-}
-
-/// The custom-entry row was chosen: open the free-text input that the
-/// list's `on_select` stands in for, prefilled with the filter text.
-fn resolve_custom_entry(app: &mut App, on_select: PendingSelection, prefill: String) -> Action {
-    match on_select {
-        PendingSelection::RunCommand { change_ids, flags } => {
-            app.mode = super::modal::run_command_input(change_ids, flags, prefill);
-            Action::None
-        }
-        // No other selection kind offers a custom entry.
         _ => Action::None,
     }
 }

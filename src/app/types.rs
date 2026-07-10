@@ -749,11 +749,23 @@ pub struct SelectFromListState {
     pub multi: bool,
     pub filter: String,
     pub filtering: bool,
-    /// Whether `items[0]` is a free-input affordance rather than data: it is
-    /// pinned to the top through filtering, cannot be marked, and selecting
-    /// it opens a text input instead of resolving to an item.
-    pub custom_entry: bool,
+    /// When present, `items[0]` is a free-input affordance rather than data:
+    /// it is pinned to the top through filtering, cannot be marked, and
+    /// selecting it opens the text input this payload describes instead of
+    /// resolving to an item.
+    pub custom_entry: Option<CustomEntry>,
     pub on_select: PendingSelection,
+}
+
+/// The free-input affordance of a select list: what selecting the pinned
+/// custom row does. Carrying the prompt and submit handler here makes the
+/// row's behavior total — a list cannot be built with a custom row that
+/// does nothing.
+pub struct CustomEntry {
+    /// Prompt for the text input (e.g. `"run: "`).
+    pub prompt: String,
+    /// Submit handler for the text input.
+    pub on_submit: PendingCommand,
 }
 
 impl SelectFromListState {
@@ -776,7 +788,7 @@ impl SelectFromListState {
             multi,
             filter: String::new(),
             filtering: focus_filter,
-            custom_entry: false,
+            custom_entry: None,
             on_select,
         }
     }
@@ -898,12 +910,13 @@ impl AppMode {
     pub fn select_from_list_with_custom(
         title: impl Into<String>,
         custom_label: &str,
+        custom: CustomEntry,
         mut items: Vec<String>,
         on_select: PendingSelection,
     ) -> Self {
         items.insert(0, custom_label.to_string());
         let mut state = SelectFromListState::new(title, items, false, on_select, false);
-        state.custom_entry = true;
+        state.custom_entry = Some(custom);
         AppMode::SelectFromList(state)
     }
 

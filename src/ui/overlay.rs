@@ -509,7 +509,8 @@ pub(super) fn draw_select_list(
         custom_entry,
         on_select: _,
     } = s;
-    let (cursor, multi, filtering, custom_entry) = (*cursor, *multi, *filtering, *custom_entry);
+    let (cursor, multi, filtering) = (*cursor, *multi, *filtering);
+    let has_custom_entry = custom_entry.is_some();
 
     // Build title: " title [filter: text] (count) "
     let title_prefix = format!(" {title} ");
@@ -576,7 +577,7 @@ pub(super) fn draw_select_list(
             let positions = match_positions.get(filter_idx).map(|v| v.as_slice());
             let is_cursor = filter_idx == cursor;
             let is_marked = marked.contains(&orig_idx);
-            let is_custom = custom_entry && orig_idx == 0;
+            let is_custom = has_custom_entry && orig_idx == 0;
             let prefix = if multi {
                 match (is_cursor, is_marked) {
                     (true, true) => "▸ ● ",

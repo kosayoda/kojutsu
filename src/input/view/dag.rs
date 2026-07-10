@@ -600,6 +600,7 @@ fn enter_run_input(app: &mut App, flags: CommandFlags) -> Action {
     app.mode = AppMode::select_from_list_with_custom(
         "run command",
         "enter command\u{2026}",
+        crate::input::modal::run_custom_entry(ids.clone(), flags),
         items,
         PendingSelection::RunCommand {
             change_ids: ids,

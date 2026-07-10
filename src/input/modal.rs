@@ -153,17 +153,26 @@ pub(super) fn handle_text_input(
 /// A `jj run` command line has been chosen (typed or picked from the list):
 /// record it in history, then dispatch directly for a single revision or
 /// chain into the `--jobs` prompt for several.
+/// The free-input entry for the run picker; also the single source of the
+/// `run:` prompt and its submit handler.
+pub(in crate::input) fn run_custom_entry(
+    change_ids: crate::types::SmallVec<crate::types::ChangeId>,
+    flags: keymap::CommandFlags,
+) -> crate::app::CustomEntry {
+    crate::app::CustomEntry {
+        prompt: "run: ".into(),
+        on_submit: PendingCommand::RunCommand { change_ids, flags },
+    }
+}
+
 /// The `run:` command prompt (initial entry and parse-error re-prompt).
 pub(in crate::input) fn run_command_input(
     change_ids: crate::types::SmallVec<crate::types::ChangeId>,
     flags: keymap::CommandFlags,
     prefill: impl Into<String>,
 ) -> AppMode {
-    AppMode::text_input(
-        "run: ",
-        prefill,
-        PendingCommand::RunCommand { change_ids, flags },
-    )
+    let custom = run_custom_entry(change_ids, flags);
+    AppMode::text_input(custom.prompt, prefill, custom.on_submit)
 }
 
 /// The `--jobs` prompt shown when running over several revisions.
