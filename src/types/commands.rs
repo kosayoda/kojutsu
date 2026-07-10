@@ -69,6 +69,12 @@ pub enum PendingSelection {
         bookmarks: SmallVec<BookmarkName>,
         flags: CommandFlags,
     },
+    /// Pick a `jj run` command: a preset, a history entry, or the
+    /// "enter command…" sentinel that opens a free-text input.
+    RunCommand {
+        change_ids: SmallVec<ChangeId>,
+        flags: CommandFlags,
+    },
     LuaResume,
 }
 

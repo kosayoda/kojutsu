@@ -58,46 +58,7 @@ pub(super) fn handle_text_input(
                         Action::None
                     }
                     PendingCommand::RunCommand { change_ids, flags } => {
-                        let argv: Vec<Str> = match shlex::split(&text) {
-                            Some(args) if !args.is_empty() => {
-                                args.into_iter().map(Str::from).collect()
-                            }
-                            _ => {
-                                app.set_error("run: enter a command");
-                                app.mode = AppMode::text_input(
-                                    "run: ",
-                                    text,
-                                    PendingCommand::RunCommand { change_ids, flags },
-                                );
-                                return Action::None;
-                            }
-                        };
-                        // --jobs only matters when running over several revisions.
-                        if change_ids.len() == 1 {
-                            return Action::RunJj(JJCommand {
-                                kind: JJCommandKind::Run {
-                                    change_ids,
-                                    argv,
-                                    jobs: None,
-                                },
-                                flags,
-                            });
-                        }
-                        let prefill = crate::repo::JjRepo::read_run_jobs(std::path::Path::new(
-                            &app.repo_root,
-                        ))
-                        .map(|n| n.to_string())
-                        .unwrap_or_default();
-                        app.mode = AppMode::text_input(
-                            "jobs (empty = jj default): ",
-                            prefill,
-                            PendingCommand::RunJobs {
-                                change_ids,
-                                argv,
-                                flags,
-                            },
-                        );
-                        Action::None
+                        submit_run_command(app, change_ids, flags, text)
                     }
                     PendingCommand::RunJobs {
                         change_ids,
@@ -217,6 +178,54 @@ pub(super) fn handle_text_input(
             Action::None
         }
     }
+}
+
+/// A `jj run` command line has been chosen (typed or picked from the list):
+/// record it in history, then dispatch directly for a single revision or
+/// chain into the `--jobs` prompt for several.
+pub(in crate::input) fn submit_run_command(
+    app: &mut App,
+    change_ids: crate::types::SmallVec<crate::types::ChangeId>,
+    flags: keymap::CommandFlags,
+    text: String,
+) -> Action {
+    let argv: Vec<Str> = match shlex::split(&text) {
+        Some(args) if !args.is_empty() => args.into_iter().map(Str::from).collect(),
+        _ => {
+            app.set_error("run: enter a command");
+            app.mode = AppMode::text_input(
+                "run: ",
+                text,
+                PendingCommand::RunCommand { change_ids, flags },
+            );
+            return Action::None;
+        }
+    };
+    app.record_run_command(&text);
+    // --jobs only matters when running over several revisions.
+    if change_ids.len() == 1 {
+        return Action::RunJj(JJCommand {
+            kind: JJCommandKind::Run {
+                change_ids,
+                argv,
+                jobs: None,
+            },
+            flags,
+        });
+    }
+    let prefill = crate::repo::JjRepo::read_run_jobs(std::path::Path::new(&app.repo_root))
+        .map(|n| n.to_string())
+        .unwrap_or_default();
+    app.mode = AppMode::text_input(
+        "jobs (empty = jj default): ",
+        prefill,
+        PendingCommand::RunJobs {
+            change_ids,
+            argv,
+            flags,
+        },
+    );
+    Action::None
 }
 
 pub(super) fn handle_search_input(app: &mut App, key: KeyEvent) -> Action {

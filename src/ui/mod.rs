@@ -5,8 +5,8 @@ mod search;
 mod spans;
 mod views;
 
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::Frame;
 
 use crate::app::{App, AppMode, TargetMode};
 use crate::keymap::{self, Keymaps};
@@ -233,21 +233,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
                 .max(3);
             let area = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_select_list(
-                frame,
-                area,
-                &s.title,
-                &s.items,
-                &s.filtered_indices,
-                &s.match_positions,
-                s.cursor,
-                &mut s.scroll_offset,
-                &s.marked,
-                s.multi,
-                &s.filter,
-                s.filtering,
-                theme,
-            );
+            overlay::draw_select_list(frame, area, s, theme);
         }
     }
 }

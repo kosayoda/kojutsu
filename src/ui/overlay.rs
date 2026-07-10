@@ -1,15 +1,13 @@
-use std::collections::HashSet;
-
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
+use ratatui::Frame;
 
 use crate::app::App;
 use crate::keymap::{self, ActionRegistry, CommandFlags, HelpEntry, HelpGroup, TrieNode};
 use crate::theme::Theme;
-use crate::types::{FollowUpOption, SearchFocus, SelectionKind, scope_specs_for_view};
+use crate::types::{scope_specs_for_view, FollowUpOption, SearchFocus, SelectionKind};
 
 /// A plain block with only a top border (used by several simple overlay panels).
 fn top_border(theme: &Theme) -> Block<'static> {
@@ -493,19 +491,26 @@ pub(super) fn draw_follow_up(
 pub(super) fn draw_select_list(
     frame: &mut Frame,
     area: Rect,
-    title: &str,
-    items: &[String],
-    filtered_indices: &[usize],
-    match_positions: &[Vec<usize>],
-    cursor: usize,
-    scroll_offset: &mut usize,
-    marked: &HashSet<usize>,
-    multi: bool,
-    filter: &str,
-    filtering: bool,
+    s: &mut crate::app::SelectFromListState,
     theme: &Theme,
 ) {
     use ratatui::widgets::Padding;
+
+    let crate::app::SelectFromListState {
+        title,
+        items,
+        filtered_indices,
+        match_positions,
+        cursor,
+        scroll_offset,
+        marked,
+        multi,
+        filter,
+        filtering,
+        custom_entry,
+        on_select: _,
+    } = s;
+    let (cursor, multi, filtering, custom_entry) = (*cursor, *multi, *filtering, *custom_entry);
 
     // Build title: " title [filter: text] (count) "
     let title_prefix = format!(" {title} ");
@@ -572,6 +577,7 @@ pub(super) fn draw_select_list(
             let positions = match_positions.get(filter_idx).map(|v| v.as_slice());
             let is_cursor = filter_idx == cursor;
             let is_marked = marked.contains(&orig_idx);
+            let is_custom = custom_entry && orig_idx == 0;
             let prefix = if multi {
                 match (is_cursor, is_marked) {
                     (true, true) => "▸ ● ",
@@ -584,15 +590,20 @@ pub(super) fn draw_select_list(
             } else {
                 "  "
             };
-            let base_style = if is_cursor {
+            let mut base_style = if is_cursor {
                 Style::default()
                     .fg(theme.selection)
                     .add_modifier(Modifier::BOLD)
             } else if is_marked {
                 Style::default().fg(theme.selection)
+            } else if is_custom {
+                Style::default().fg(theme.muted)
             } else {
                 Style::default().fg(theme.text)
             };
+            if is_custom {
+                base_style = base_style.add_modifier(Modifier::ITALIC);
+            }
             let highlight_style = base_style.fg(theme.accent).add_modifier(Modifier::BOLD);
             let mut spans = vec![Span::styled(prefix.to_string(), base_style)];
             if let Some(pos) = positions.filter(|p| !p.is_empty()) {

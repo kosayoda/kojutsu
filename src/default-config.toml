@@ -5,16 +5,16 @@
 # Colors can be: named ("cyan"), hex ("#619eef"), RGB ({ r = 50, g = 50, b = 60 }),
 # or ANSI index (42).
 [theme]
-accent       = "cyan"                      # prompts, headers, visual range, immutable glyphs
-selection    = "yellow"                    # selected items, active toggles, keys, author
-muted        = "dark_gray"                 # borders, labels, disabled items, context lines
-text         = "white"                     # normal text, descriptions, file paths
-error        = "red"                       # errors, conflicts, removed/deleted lines
-warning      = "yellow"                    # committed without description, other warnings
-added        = "green"                     # added lines, working copy, workspace names
-change_id    = "magenta"                   # change IDs, diff headers, bookmarks
-commit_id    = "blue"                      # commit IDs
-selection_bg = { r = 50, g = 50, b = 60 }  # background highlight for cursor row
+accent = "cyan"                           # prompts, headers, visual range, immutable glyphs
+selection = "yellow"                      # selected items, active toggles, keys, author
+muted = "dark_gray"                       # borders, labels, disabled items, context lines
+text = "white"                            # normal text, descriptions, file paths
+error = "red"                             # errors, conflicts, removed/deleted lines
+warning = "yellow"                        # committed without description, other warnings
+added = "green"                           # added lines, working copy, workspace names
+change_id = "magenta"                     # change IDs, diff headers, bookmarks
+commit_id = "blue"                        # commit IDs
+selection_bg = { r = 50, g = 50, b = 60 } # background highlight for cursor row
 
 # Timestamp format (strftime syntax).
 # date_format = "%Y-%m-%d %H:%M:%S"
@@ -50,3 +50,8 @@ selection_bg = { r = 50, g = 50, b = 60 }  # background highlight for cursor row
 # [[presets]]
 # name = "recent"
 # revset = "heads(all())"
+
+# Preset command lines offered when running a command over revisions
+# with `jj run` (the `!` prefix in the DAG view). Commands run without
+# a shell in a private working copy per revision.
+# run_presets = ["cargo check", "cargo clippy", "cargo fix --allow-dirty"]

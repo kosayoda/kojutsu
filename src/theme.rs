@@ -19,6 +19,9 @@ pub struct Config {
     pub theme: Theme,
     #[serde(default)]
     pub presets: Vec<Preset>,
+    /// Preset command lines offered by `jj run` (e.g. "cargo check").
+    #[serde(default)]
+    pub run_presets: Vec<String>,
     /// strftime format for commit timestamps.
     #[serde(default = "default_date_format")]
     pub date_format: String,
@@ -38,6 +41,7 @@ impl Default for Config {
         Self {
             theme: Theme::default(),
             presets: Vec::new(),
+            run_presets: Vec::new(),
             date_format: default_date_format(),
             glyphs: GlyphChars::default(),
             default_search_scopes: DefaultSearchScopes::default(),

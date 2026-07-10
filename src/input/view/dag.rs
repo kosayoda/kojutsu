@@ -9,12 +9,12 @@ use crate::types::{
     SquashKind, Str, TargetOperation,
 };
 
-use crate::input::Action;
 use crate::input::action::{build_change_selection, enter_target_select, run_cmd};
 use crate::input::bookmark::{
-    BookmarkTextAction, PendingSelectionKind, enter_bookmark_advance, enter_bookmark_select,
-    enter_bookmark_text_input, enter_remote_bookmark_select, enter_tag_delete,
+    enter_bookmark_advance, enter_bookmark_select, enter_bookmark_text_input,
+    enter_remote_bookmark_select, enter_tag_delete, BookmarkTextAction, PendingSelectionKind,
 };
+use crate::input::Action;
 
 pub(in crate::input) fn dispatch(
     app: &mut App,
@@ -584,10 +584,31 @@ fn enter_run_input(app: &mut App, flags: CommandFlags) -> Action {
     if ids.is_empty() {
         return Action::None;
     }
-    app.mode = AppMode::text_input(
-        "run: ",
-        "",
-        PendingCommand::RunCommand {
+    // Without presets or history there is nothing to pick from — go
+    // straight to the free-text input.
+    if app.run_presets.is_empty() && app.run_history.is_empty() {
+        app.mode = AppMode::text_input(
+            "run: ",
+            "",
+            PendingCommand::RunCommand {
+                change_ids: ids,
+                flags,
+            },
+        );
+        return Action::None;
+    }
+    let mut items: Vec<String> = app.run_presets.to_vec();
+    items.extend(
+        app.run_history
+            .iter()
+            .filter(|c| !app.run_presets.contains(c))
+            .cloned(),
+    );
+    app.mode = AppMode::select_from_list_with_custom(
+        "run command",
+        "enter command\u{2026}",
+        items,
+        PendingSelection::RunCommand {
             change_ids: ids,
             flags,
         },

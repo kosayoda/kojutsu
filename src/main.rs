@@ -178,6 +178,7 @@ fn main() -> Result<()> {
         &config.glyphs,
     );
     app.default_search_scopes = config.default_search_scopes.to_flags();
+    app.run_presets = &config.run_presets;
     app.apply_persisted_state(&persisted);
     app.revset.active_preset = active_preset;
     app.request_revset_load(requested_revset);

@@ -233,6 +233,10 @@ pub struct App {
     pub glyphs: &'static crate::theme::GlyphChars,
     /// Default search scopes from config.
     pub default_search_scopes: SearchScopes,
+    /// Preset command lines for `jj run`, from config.
+    pub run_presets: &'static [String],
+    /// Previously run `jj run` commands, most recent first (persisted).
+    pub run_history: Vec<String>,
     pub repo_root: String,
     /// Current interaction mode.
     pub mode: AppMode,
@@ -320,6 +324,8 @@ impl App {
             },
             glyphs,
             default_search_scopes: SearchScopes::DEFAULT,
+            run_presets: &[],
+            run_history: Vec::new(),
             repo_root,
             mode: AppMode::Normal,
             unfolded_commits: HashSet::new(),
@@ -440,6 +446,19 @@ impl App {
         if self.active_view == ActiveView::CommandLog {
             self.rebuild_rows();
         }
+    }
+
+    /// Record a `jj run` command in the persisted history (most recent first,
+    /// deduplicated, capped).
+    pub fn record_run_command(&mut self, command: &str) {
+        const RUN_HISTORY_MAX: usize = 50;
+        let command = command.trim();
+        if command.is_empty() {
+            return;
+        }
+        self.run_history.retain(|c| c != command);
+        self.run_history.insert(0, command.to_string());
+        self.run_history.truncate(RUN_HISTORY_MAX);
     }
 
     /// Append a streamed output chunk from a running background command and
@@ -1141,6 +1160,7 @@ impl App {
             annotate_separators: self.annotate.show_commit_separators,
             bookmark_separators: self.show_bookmark_separators,
             diff_underline: self.diff_underline,
+            run_history: self.run_history.clone(),
         }
     }
 
@@ -1159,6 +1179,7 @@ impl App {
         self.annotate.show_commit_separators = state.annotate_separators;
         self.show_bookmark_separators = state.bookmark_separators;
         self.diff_underline = state.diff_underline;
+        self.run_history = state.run_history.clone();
         self.revset.active_preset = state
             .active_preset
             .filter(|&i| i < self.revset.presets.len());

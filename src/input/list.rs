@@ -1,5 +1,5 @@
-use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::crossterm::event::KeyEvent;
 
 use crate::app::TargetMode;
@@ -30,6 +30,22 @@ fn recompute_list_filter(items: &[String], filter: &str) -> (Vec<usize>, Vec<Vec
     let indices = scored.iter().map(|(i, _, _)| *i).collect();
     let positions = scored.into_iter().map(|(_, _, pos)| pos).collect();
     (indices, positions)
+}
+
+/// Re-run the fuzzy filter over the list's items. The custom-entry row, if
+/// any, is pinned to the top regardless of how it scores against the filter.
+fn refresh_list_filter(s: &mut crate::app::SelectFromListState) {
+    let (mut indices, mut positions) = recompute_list_filter(&s.items, &s.filter);
+    if s.custom_entry {
+        if let Some(pos) = indices.iter().position(|&i| i == 0) {
+            indices.remove(pos);
+            positions.remove(pos);
+        }
+        indices.insert(0, 0);
+        positions.insert(0, Vec::new());
+    }
+    s.filtered_indices = indices;
+    s.match_positions = positions;
 }
 
 /// Move the list cursor by `delta` rows (positive = down, negative = up).
@@ -71,10 +87,15 @@ pub(super) fn handle_select_from_list(
             ratatui::crossterm::event::KeyCode::Char(c) if !ctrl => {
                 if let AppMode::SelectFromList(s) = &mut app.mode {
                     s.filter.push(c);
-                    let (idx, pos) = recompute_list_filter(&s.items, &s.filter);
-                    s.filtered_indices = idx;
-                    s.match_positions = pos;
-                    s.cursor = 0;
+                    refresh_list_filter(s);
+                    // Land on the best match, not the pinned custom row —
+                    // unless nothing matches, where Enter then opens the
+                    // free input prefilled with the filter text.
+                    s.cursor = if s.custom_entry && s.filtered_indices.len() > 1 {
+                        1
+                    } else {
+                        0
+                    };
                     s.scroll_offset = 0;
                 }
                 return Action::None;
@@ -82,9 +103,7 @@ pub(super) fn handle_select_from_list(
             ratatui::crossterm::event::KeyCode::Backspace => {
                 if let AppMode::SelectFromList(s) = &mut app.mode {
                     s.filter.pop();
-                    let (idx, pos) = recompute_list_filter(&s.items, &s.filter);
-                    s.filtered_indices = idx;
-                    s.match_positions = pos;
+                    refresh_list_filter(s);
                     s.cursor = s.cursor.min(s.filtered_indices.len().saturating_sub(1));
                     s.scroll_offset = 0;
                 }
@@ -159,6 +178,9 @@ pub(super) fn handle_select_from_list(
             if let AppMode::SelectFromList(s) = &mut app.mode {
                 if s.multi {
                     if let Some(&orig_idx) = s.filtered_indices.get(s.cursor) {
+                        if s.custom_entry && orig_idx == 0 {
+                            return Action::None;
+                        }
                         if s.marked.contains(&orig_idx) {
                             s.marked.remove(&orig_idx);
                         } else {
@@ -172,6 +194,11 @@ pub(super) fn handle_select_from_list(
         Some(Key::Enter) => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::SelectFromList(s) = mode {
+                let cursor_idx = s.filtered_indices.get(s.cursor).copied().unwrap_or(0);
+                if s.custom_entry && cursor_idx == 0 {
+                    // The filter text carries over as the input prefill.
+                    return resolve_custom_entry(app, s.on_select, s.filter);
+                }
                 let names: Vec<String> = if s.multi && !s.marked.is_empty() {
                     let mut indices: Vec<usize> = s.marked.into_iter().collect();
                     indices.sort_unstable();
@@ -180,8 +207,7 @@ pub(super) fn handle_select_from_list(
                         .filter_map(|i| s.items.get(i).cloned())
                         .collect()
                 } else {
-                    let orig_idx = s.filtered_indices.get(s.cursor).copied().unwrap_or(0);
-                    vec![s.items.into_iter().nth(orig_idx).unwrap_or_default()]
+                    vec![s.items.into_iter().nth(cursor_idx).unwrap_or_default()]
                 };
                 resolve_selection(app, lua, s.on_select, names.into())
             } else {
@@ -202,6 +228,23 @@ pub(super) fn handle_select_from_list(
             }
             Action::None
         }
+        _ => Action::None,
+    }
+}
+
+/// The custom-entry row was chosen: open the free-text input that the
+/// list's `on_select` stands in for, prefilled with the filter text.
+fn resolve_custom_entry(app: &mut App, on_select: PendingSelection, prefill: String) -> Action {
+    match on_select {
+        PendingSelection::RunCommand { change_ids, flags } => {
+            app.mode = AppMode::text_input(
+                "run: ",
+                prefill,
+                crate::types::PendingCommand::RunCommand { change_ids, flags },
+            );
+            Action::None
+        }
+        // No other selection kind offers a custom entry.
         _ => Action::None,
     }
 }
@@ -359,6 +402,12 @@ pub(super) fn resolve_selection(
             let new_text = crate::jj_command::replace_current_token(&input, value, true);
             app.mode = AppMode::text_input(":", new_text, crate::types::PendingCommand::RawCommand);
             Action::None
+        }
+        PendingSelection::RunCommand { change_ids, flags } => {
+            let Some(selected) = names.into_iter().next() else {
+                return Action::None;
+            };
+            super::modal::submit_run_command(app, change_ids, flags, selected)
         }
         PendingSelection::LuaResume => {
             let selected = names.into_iter().next().map(|s| s.to_string());

@@ -345,6 +345,8 @@ pub struct PersistedState {
     pub annotate_separators: bool,
     pub bookmark_separators: bool,
     pub diff_underline: bool,
+    /// Previously run `jj run` commands, most recent first.
+    pub run_history: Vec<String>,
 }
 
 impl Default for PersistedState {
@@ -360,6 +362,7 @@ impl Default for PersistedState {
             annotate_separators: false,
             bookmark_separators: false,
             diff_underline: true,
+            run_history: Vec::new(),
         }
     }
 }
@@ -665,6 +668,10 @@ pub struct SelectFromListState {
     pub multi: bool,
     pub filter: String,
     pub filtering: bool,
+    /// Whether `items[0]` is a free-input affordance rather than data: it is
+    /// pinned to the top through filtering, cannot be marked, and selecting
+    /// it opens a text input instead of resolving to an item.
+    pub custom_entry: bool,
     pub on_select: PendingSelection,
 }
 
@@ -775,8 +782,28 @@ impl AppMode {
             multi,
             filter: String::new(),
             filtering: focus_filter,
+            custom_entry: false,
             on_select,
         })
+    }
+
+    /// Construct a single-select `SelectFromList` whose first row is a
+    /// free-input affordance labelled `custom_label` (see
+    /// [`SelectFromListState::custom_entry`]).
+    pub fn select_from_list_with_custom(
+        title: impl Into<String>,
+        custom_label: &str,
+        mut items: Vec<String>,
+        on_select: PendingSelection,
+    ) -> Self {
+        items.insert(0, custom_label.to_string());
+        match Self::select_from_list(title, items, false, on_select, false) {
+            AppMode::SelectFromList(mut state) => {
+                state.custom_entry = true;
+                AppMode::SelectFromList(state)
+            }
+            _ => unreachable!(),
+        }
     }
 
     /// Take the `retry` field out of a `CommandOutput` mode, replacing `self` with `Normal`.
