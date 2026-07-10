@@ -9,12 +9,12 @@ use crate::types::{
     SquashKind, Str, TargetOperation,
 };
 
+use crate::input::Action;
 use crate::input::action::{build_change_selection, enter_target_select, run_cmd};
 use crate::input::bookmark::{
-    enter_bookmark_advance, enter_bookmark_select, enter_bookmark_text_input,
-    enter_remote_bookmark_select, enter_tag_delete, BookmarkTextAction, PendingSelectionKind,
+    BookmarkTextAction, PendingSelectionKind, enter_bookmark_advance, enter_bookmark_select,
+    enter_bookmark_text_input, enter_remote_bookmark_select, enter_tag_delete,
 };
-use crate::input::Action;
 
 pub(in crate::input) fn dispatch(
     app: &mut App,

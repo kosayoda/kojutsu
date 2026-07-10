@@ -1,13 +1,13 @@
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
-use ratatui::Frame;
 
 use crate::app::App;
 use crate::keymap::{self, ActionRegistry, CommandFlags, HelpEntry, HelpGroup, TrieNode};
 use crate::theme::Theme;
-use crate::types::{scope_specs_for_view, FollowUpOption, SearchFocus, SelectionKind};
+use crate::types::{FollowUpOption, SearchFocus, SelectionKind, scope_specs_for_view};
 
 /// A plain block with only a top border (used by several simple overlay panels).
 fn top_border(theme: &Theme) -> Block<'static> {

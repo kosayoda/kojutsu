@@ -7,7 +7,7 @@ pub use completion::Completion;
 pub use completion::{common_prefix, complete, replace_current_token, split_for_completion};
 pub use follow_up::{FollowUpAction, FollowUpOption};
 
-use std::sync::{atomic::AtomicI32, atomic::Ordering, Arc};
+use std::sync::{Arc, atomic::AtomicI32, atomic::Ordering};
 
 use crate::dag::BookmarkRef;
 use crate::keymap::CommandFlags;
