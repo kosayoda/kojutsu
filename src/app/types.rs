@@ -295,6 +295,87 @@ pub struct SubmenuToggle {
     pub description: CompactString,
 }
 
+/// Parse ANSI-colored bytes into styled lines, falling back to plain text
+/// on malformed escape sequences.
+pub fn parse_ansi_lines(output: &[u8]) -> Vec<ratatui::text::Line<'static>> {
+    use ansi_to_tui::IntoText as _;
+    match output.into_text() {
+        Ok(text) => text.lines,
+        Err(_) => String::from_utf8_lossy(output)
+            .lines()
+            .map(|line| ratatui::text::Line::from(line.to_string()))
+            .collect(),
+    }
+}
+
+/// State for the command output overlay.
+pub struct CommandOutputState {
+    /// The command that was run, e.g. `"$ jj abandon xvzwolmw"`.
+    pub command: String,
+    /// Structured command parts for syntax highlighting.
+    pub command_parts: Option<Vec<crate::jj_command::CommandPart>>,
+    /// Raw stdout+stderr bytes (kept for consumers that need the bytes,
+    /// e.g. Lua post-hooks).
+    pub output: Vec<u8>,
+    /// ANSI-parsed output lines; parsed once at construction, refreshed via
+    /// [`Self::reparse`] after `output` is mutated.
+    pub parsed_lines: Vec<ratatui::text::Line<'static>>,
+    /// Whether the command succeeded.
+    pub success: bool,
+    /// Follow-up options offered when the overlay is dismissed (e.g. retry
+    /// with `--ignore-immutable`). Empty means no retry available.
+    pub retry: Vec<crate::types::FollowUpOption>,
+    /// Scroll offset in lines from the top; clamped during draw.
+    pub scroll: u16,
+}
+
+impl CommandOutputState {
+    pub fn new(
+        command: String,
+        command_parts: Option<Vec<crate::jj_command::CommandPart>>,
+        output: Vec<u8>,
+        success: bool,
+        retry: Vec<crate::types::FollowUpOption>,
+    ) -> Self {
+        let parsed_lines = parse_ansi_lines(&output);
+        Self {
+            command,
+            command_parts,
+            output,
+            parsed_lines,
+            success,
+            retry,
+            scroll: 0,
+        }
+    }
+
+    /// Re-parse `parsed_lines` after mutating `output`.
+    pub fn reparse(&mut self) {
+        self.parsed_lines = parse_ansi_lines(&self.output);
+    }
+
+    /// Total displayed lines: the command line plus the parsed output.
+    pub fn line_count(&self) -> usize {
+        1 + self.parsed_lines.len()
+    }
+
+    /// Overlay height for the given overlay-base height (content plus the
+    /// top border, capped at half the base).
+    pub fn overlay_height(&self, base_height: u16) -> u16 {
+        (self.parsed_lines.len().max(1) as u16 + 3)
+            .min(base_height / 2)
+            .max(3)
+    }
+
+    /// How far the content can scroll at the given overlay-base height
+    /// (0 = fits entirely; the overlay has a top border, so one row of the
+    /// overlay is not content).
+    pub fn max_scroll(&self, base_height: u16) -> u16 {
+        let visible = self.overlay_height(base_height).saturating_sub(1);
+        (self.line_count() as u16).saturating_sub(visible)
+    }
+}
+
 /// State for a background jj command with live output streaming.
 pub struct CommandRunningState {
     pub command: String,
@@ -687,26 +768,9 @@ pub enum AppMode {
         children: Arc<[(keymap_parser::Node, TrieNode)]>,
         flags: CommandFlags,
     },
-    /// Showing the result of a shell command. Dismissed on next keypress.
-    CommandOutput {
-        /// The command that was run, e.g. `"$ jj abandon xvzwolmw"`.
-        command: String,
-        /// Structured command parts for syntax highlighting.
-        command_parts: Option<Vec<crate::jj_command::CommandPart>>,
-        /// Raw stdout+stderr bytes (may contain ANSI color codes).
-        output: Vec<u8>,
-        /// Whether the command succeeded.
-        success: bool,
-        /// Follow-up options offered when the overlay is dismissed (e.g. retry
-        /// with `--ignore-immutable`). Empty means no retry available.
-        retry: Vec<crate::types::FollowUpOption>,
-        /// Scroll offset in lines from the top; clamped during draw.
-        scroll: u16,
-        /// How far the content can scroll (0 = fits entirely). Written
-        /// during draw; input uses it to decide whether j/k scroll the
-        /// overlay or dismiss it.
-        max_scroll: u16,
-    },
+    /// Showing the result of a shell command. Scrolls when the output
+    /// overflows; dismissed on any non-scroll keypress.
+    CommandOutput(CommandOutputState),
     /// Help overlay showing all keybindings.
     Help { scroll: u16 },
     /// Single-line text input in the bottom bar.
@@ -763,15 +827,13 @@ impl AppMode {
         success: bool,
         retry: Vec<crate::types::FollowUpOption>,
     ) -> Self {
-        AppMode::CommandOutput {
+        AppMode::CommandOutput(CommandOutputState::new(
             command,
             command_parts,
             output,
             success,
             retry,
-            scroll: 0,
-            max_scroll: 0,
-        }
+        ))
     }
 
     /// Construct a `TextInput` mode with the given prompt, prefill, and submit handler.
@@ -834,7 +896,7 @@ impl AppMode {
     /// Take the `retry` field out of a `CommandOutput` mode, replacing `self` with `Normal`.
     pub fn take_command_retry(&mut self) -> Vec<crate::types::FollowUpOption> {
         match std::mem::replace(self, AppMode::Normal) {
-            AppMode::CommandOutput { retry, .. } => retry,
+            AppMode::CommandOutput(state) => state.retry,
             other => {
                 *self = other;
                 Vec::new()

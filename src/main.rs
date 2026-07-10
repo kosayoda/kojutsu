@@ -397,9 +397,7 @@ fn main() -> Result<()> {
 
 fn extract_command_result(app: &App) -> (bool, Vec<u8>) {
     match &app.mode {
-        AppMode::CommandOutput {
-            success, output, ..
-        } => (*success, output.clone()),
+        AppMode::CommandOutput(state) => (state.success, state.output.clone()),
         _ => (false, Vec::new()),
     }
 }

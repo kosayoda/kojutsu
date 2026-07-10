@@ -423,12 +423,7 @@ impl App {
         output: Vec<u8>,
         success: bool,
     ) {
-        use ansi_to_tui::IntoText as _;
-        let parsed_lines = output
-            .as_slice()
-            .into_text()
-            .map(|t| t.lines)
-            .unwrap_or_default();
+        let parsed_lines = parse_ansi_lines(&output);
         self.command_log.entries.push(CommandLogEntry {
             kind,
             summary: summary.into(),
@@ -459,7 +454,6 @@ impl App {
     /// Append a streamed output chunk from a running background command and
     /// incrementally ANSI-parse any newly completed lines.
     pub fn append_running_output(&mut self, chunk: &[u8]) {
-        use ansi_to_tui::IntoText as _;
         let AppMode::CommandRunning(state) = &mut self.mode else {
             return;
         };
@@ -471,10 +465,10 @@ impl App {
             return;
         };
         let end = state.parsed_upto + last_newline + 1;
-        if let Ok(text) = (&state.output[state.parsed_upto..end]).into_text() {
-            state.parsed_lines.extend(text.lines);
-            state.parsed_upto = end;
-        }
+        state
+            .parsed_lines
+            .extend(parse_ansi_lines(&state.output[state.parsed_upto..end]));
+        state.parsed_upto = end;
     }
 
     /// Whether the working copy (`@`) is visible in the current entries.

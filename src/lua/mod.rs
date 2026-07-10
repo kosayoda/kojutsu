@@ -612,7 +612,7 @@ impl LuaEngine {
         }
 
         match &mut app.mode {
-            crate::app::AppMode::CommandOutput { output, .. } => {
+            crate::app::AppMode::CommandOutput(state) => {
                 let pre: Vec<&LogGroup> =
                     groups.iter().filter(|g| g.phase == LogPhase::Pre).collect();
                 if !pre.is_empty() {
@@ -621,17 +621,18 @@ impl LuaEngine {
                         render_group(g, &mut pre_output);
                     }
                     pre_output.push(b'\n');
-                    pre_output.extend_from_slice(output);
-                    *output = pre_output;
+                    pre_output.extend_from_slice(&state.output);
+                    state.output = pre_output;
                 }
                 let post: Vec<&LogGroup> =
                     groups.iter().filter(|g| g.phase != LogPhase::Pre).collect();
                 if !post.is_empty() {
-                    output.push(b'\n');
+                    state.output.push(b'\n');
                     for g in &post {
-                        render_group(g, output);
+                        render_group(g, &mut state.output);
                     }
                 }
+                state.reparse();
             }
             _ => {
                 let mut output = Vec::new();

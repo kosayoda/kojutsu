@@ -12,6 +12,11 @@ use crate::app::{App, AppMode, TargetMode};
 use crate::keymap::{self, Keymaps};
 use crate::theme::Config;
 
+/// Height of the status bar area at the bottom of the screen. Overlays
+/// render over the main list plus this area, so input handlers that need
+/// overlay geometry derive it from `app.last_list_height` plus this.
+pub const STATUS_AREA_HEIGHT: u16 = 2;
+
 /// Render the full UI into the frame.
 pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config) {
     let theme = &config.theme;
@@ -39,7 +44,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
     let [header_area, main_area, status_area] = Layout::vertical([
         Constraint::Length(header_height),
         Constraint::Fill(1),
-        Constraint::Length(2),
+        Constraint::Length(STATUS_AREA_HEIGHT),
     ])
     .areas(frame.area());
 
@@ -117,32 +122,11 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
                 theme,
             );
         }
-        AppMode::CommandOutput {
-            command,
-            command_parts,
-            output,
-            success,
-            scroll,
-            max_scroll,
-            ..
-        } => {
-            let output_lines = output.iter().filter(|&&b| b == b'\n').count().max(1);
-            let height = (output_lines as u16 + 3)
-                .min(overlay_base.height / 2)
-                .max(3);
+        AppMode::CommandOutput(state) => {
+            let height = state.overlay_height(overlay_base.height);
             let area = overlay_area(overlay_base, height);
             frame.render_widget(ratatui::widgets::Clear, area);
-            overlay::draw_command_output(
-                frame,
-                area,
-                command,
-                command_parts.as_deref(),
-                output,
-                *success,
-                scroll,
-                max_scroll,
-                theme,
-            );
+            overlay::draw_command_output(frame, area, state, theme);
         }
         AppMode::Help { scroll } => {
             let groups = match &app.pre_overlay_mode {

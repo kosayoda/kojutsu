@@ -76,7 +76,7 @@ pub fn handle_key(
             let flags = *flags;
             action::handle_submenu_key(app, registry, lua, &children, flags, &node)
         }
-        AppMode::CommandOutput { max_scroll, .. } => {
+        AppMode::CommandOutput(state) => {
             use keymap_parser::Key;
             let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
             // When the output overflows, scroll keys scroll without
@@ -88,9 +88,10 @@ pub fn handle_key(
                 Key::Char('u') if ctrl => Some(-10),
                 _ => None,
             };
-            if let (Some(delta), 1..) = (delta, *max_scroll) {
-                if let AppMode::CommandOutput { scroll, .. } = &mut app.mode {
-                    *scroll = scroll.saturating_add_signed(delta);
+            let overlay_base = app.last_list_height + crate::ui::STATUS_AREA_HEIGHT;
+            if let (Some(delta), 1..) = (delta, state.max_scroll(overlay_base)) {
+                if let AppMode::CommandOutput(state) = &mut app.mode {
+                    state.scroll = state.scroll.saturating_add_signed(delta);
                 }
                 return Action::None;
             }
@@ -221,19 +222,19 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
         }
         // Dismiss command output only on a deliberate click, not mouse
         // movement; the wheel scrolls the output.
-        AppMode::CommandOutput { .. } => {
+        AppMode::CommandOutput(_) => {
             match mouse.kind {
                 MouseEventKind::Down(_) => {
                     app.mode = AppMode::Normal;
                 }
                 MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
-                    if let AppMode::CommandOutput { scroll, .. } = &mut app.mode {
+                    if let AppMode::CommandOutput(state) = &mut app.mode {
                         let delta = if mouse.kind == MouseEventKind::ScrollDown {
                             3
                         } else {
                             -3
                         };
-                        *scroll = scroll.saturating_add_signed(delta);
+                        state.scroll = state.scroll.saturating_add_signed(delta);
                     }
                 }
                 _ => {}

@@ -700,59 +700,51 @@ pub(super) fn draw_command_running(
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_command_output(
     frame: &mut Frame,
     area: Rect,
-    command: &str,
-    command_parts: Option<&[crate::jj_command::CommandPart]>,
-    output: &[u8],
-    success: bool,
-    scroll: &mut u16,
-    max_scroll: &mut u16,
+    state: &mut crate::app::CommandOutputState,
     theme: &Theme,
 ) {
-    use ansi_to_tui::IntoText;
     use ratatui::widgets::Padding;
 
-    let command_line = if let Some(parts) = command_parts {
+    let command_line = if let Some(parts) = &state.command_parts {
         Line::from(super::spans::command_parts_to_spans(parts, theme))
     } else {
         Line::from(Span::styled(
-            command,
+            state.command.clone(),
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
         ))
     };
-    let mut lines = vec![command_line];
-
-    // Convert ANSI-colored output to ratatui styled text.
-    if let Ok(styled) = output.into_text() {
-        lines.extend(styled.lines);
-    } else {
-        // Fallback: render as plain text.
-        let text = String::from_utf8_lossy(output);
-        for line in text.lines() {
-            lines.push(Line::from(Span::raw(line.to_string())));
-        }
-    }
 
     // Clamp scroll to content that doesn't fit and write back so the stored
     // value never drifts past the end (top border only: inner = height - 1).
-    // max_scroll is also written back so input handling knows whether j/k
-    // scroll or dismiss.
-    let visible = area.height.saturating_sub(1);
-    *max_scroll = (lines.len() as u16).saturating_sub(visible);
-    *scroll = (*scroll).min(*max_scroll);
+    let total = state.line_count();
+    let visible = area.height.saturating_sub(1) as usize;
+    let max_scroll = total.saturating_sub(visible) as u16;
+    state.scroll = state.scroll.min(max_scroll);
 
-    let border_color = if success { theme.muted } else { theme.error };
+    // Only the visible window is cloned; the command line is row 0 and
+    // scrolls off with the rest.
+    let start = state.scroll as usize;
+    let end = (start + visible).min(total);
+    let lines: Vec<Line> = (start..end)
+        .map(|idx| match idx.checked_sub(1) {
+            None => command_line.clone(),
+            Some(output_idx) => state.parsed_lines[output_idx].clone(),
+        })
+        .collect();
+
+    let border_color = if state.success {
+        theme.muted
+    } else {
+        theme.error
+    };
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(border_color))
         .padding(Padding::new(1, 1, 0, 0));
-    frame.render_widget(
-        Paragraph::new(lines).scroll((*scroll, 0)).block(block),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
