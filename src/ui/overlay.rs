@@ -487,7 +487,6 @@ pub(super) fn draw_follow_up(
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_select_list(
     frame: &mut Frame,
     area: Rect,

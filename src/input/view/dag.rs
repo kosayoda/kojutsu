@@ -587,14 +587,7 @@ fn enter_run_input(app: &mut App, flags: CommandFlags) -> Action {
     // Without presets or history there is nothing to pick from — go
     // straight to the free-text input.
     if app.run_presets.is_empty() && app.run_history.is_empty() {
-        app.mode = AppMode::text_input(
-            "run: ",
-            "",
-            PendingCommand::RunCommand {
-                change_ids: ids,
-                flags,
-            },
-        );
+        app.mode = crate::input::modal::run_command_input(ids, flags, "");
         return Action::None;
     }
     let mut items: Vec<String> = app.run_presets.to_vec();

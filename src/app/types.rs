@@ -756,6 +756,32 @@ pub struct SelectFromListState {
     pub on_select: PendingSelection,
 }
 
+impl SelectFromListState {
+    pub fn new(
+        title: impl Into<String>,
+        items: Vec<String>,
+        multi: bool,
+        on_select: PendingSelection,
+        focus_filter: bool,
+    ) -> Self {
+        let count = items.len();
+        Self {
+            title: title.into(),
+            items,
+            filtered_indices: (0..count).collect(),
+            match_positions: vec![vec![]; count],
+            cursor: 0,
+            scroll_offset: 0,
+            marked: HashSet::new(),
+            multi,
+            filter: String::new(),
+            filtering: focus_filter,
+            custom_entry: false,
+            on_select,
+        }
+    }
+}
+
 /// The current interaction mode.
 pub enum AppMode {
     /// Normal browsing.
@@ -857,21 +883,13 @@ impl AppMode {
         on_select: PendingSelection,
         focus_filter: bool,
     ) -> Self {
-        let count = items.len();
-        AppMode::SelectFromList(SelectFromListState {
-            title: title.into(),
+        AppMode::SelectFromList(SelectFromListState::new(
+            title,
             items,
-            filtered_indices: (0..count).collect(),
-            match_positions: vec![vec![]; count],
-            cursor: 0,
-            scroll_offset: 0,
-            marked: HashSet::new(),
             multi,
-            filter: String::new(),
-            filtering: focus_filter,
-            custom_entry: false,
             on_select,
-        })
+            focus_filter,
+        ))
     }
 
     /// Construct a single-select `SelectFromList` whose first row is a
@@ -884,13 +902,9 @@ impl AppMode {
         on_select: PendingSelection,
     ) -> Self {
         items.insert(0, custom_label.to_string());
-        match Self::select_from_list(title, items, false, on_select, false) {
-            AppMode::SelectFromList(mut state) => {
-                state.custom_entry = true;
-                AppMode::SelectFromList(state)
-            }
-            _ => unreachable!(),
-        }
+        let mut state = SelectFromListState::new(title, items, false, on_select, false);
+        state.custom_entry = true;
+        AppMode::SelectFromList(state)
     }
 
     /// Take the `retry` field out of a `CommandOutput` mode, replacing `self` with `Normal`.

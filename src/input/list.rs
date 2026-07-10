@@ -237,11 +237,7 @@ pub(super) fn handle_select_from_list(
 fn resolve_custom_entry(app: &mut App, on_select: PendingSelection, prefill: String) -> Action {
     match on_select {
         PendingSelection::RunCommand { change_ids, flags } => {
-            app.mode = AppMode::text_input(
-                "run: ",
-                prefill,
-                crate::types::PendingCommand::RunCommand { change_ids, flags },
-            );
+            app.mode = super::modal::run_command_input(change_ids, flags, prefill);
             Action::None
         }
         // No other selection kind offers a custom entry.

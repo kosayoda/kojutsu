@@ -64,37 +64,7 @@ pub(super) fn handle_text_input(
                         change_ids,
                         argv,
                         flags,
-                    } => {
-                        let trimmed = text.trim();
-                        let jobs = if trimmed.is_empty() {
-                            None
-                        } else {
-                            match trimmed.parse::<usize>() {
-                                Ok(n) if n > 0 => Some(n),
-                                _ => {
-                                    app.set_error("jobs must be a positive number");
-                                    app.mode = AppMode::text_input(
-                                        "jobs (empty = jj default): ",
-                                        text,
-                                        PendingCommand::RunJobs {
-                                            change_ids,
-                                            argv,
-                                            flags,
-                                        },
-                                    );
-                                    return Action::None;
-                                }
-                            }
-                        };
-                        Action::RunJj(JJCommand {
-                            kind: JJCommandKind::Run {
-                                change_ids,
-                                argv,
-                                jobs,
-                            },
-                            flags,
-                        })
-                    }
+                    } => submit_run_jobs(app, change_ids, argv, flags, text),
                     PendingCommand::RawCommand => {
                         match PendingCommand::RawCommand.into_jj_command(text) {
                             Some(jj_cmd) => Action::SuspendAndRunJj(jj_cmd),
@@ -183,6 +153,37 @@ pub(super) fn handle_text_input(
 /// A `jj run` command line has been chosen (typed or picked from the list):
 /// record it in history, then dispatch directly for a single revision or
 /// chain into the `--jobs` prompt for several.
+/// The `run:` command prompt (initial entry and parse-error re-prompt).
+pub(in crate::input) fn run_command_input(
+    change_ids: crate::types::SmallVec<crate::types::ChangeId>,
+    flags: keymap::CommandFlags,
+    prefill: impl Into<String>,
+) -> AppMode {
+    AppMode::text_input(
+        "run: ",
+        prefill,
+        PendingCommand::RunCommand { change_ids, flags },
+    )
+}
+
+/// The `--jobs` prompt shown when running over several revisions.
+fn run_jobs_input(
+    change_ids: crate::types::SmallVec<crate::types::ChangeId>,
+    argv: Vec<Str>,
+    flags: keymap::CommandFlags,
+    prefill: impl Into<String>,
+) -> AppMode {
+    AppMode::text_input(
+        "jobs (empty = jj default): ",
+        prefill,
+        PendingCommand::RunJobs {
+            change_ids,
+            argv,
+            flags,
+        },
+    )
+}
+
 pub(in crate::input) fn submit_run_command(
     app: &mut App,
     change_ids: crate::types::SmallVec<crate::types::ChangeId>,
@@ -193,11 +194,7 @@ pub(in crate::input) fn submit_run_command(
         Some(args) if !args.is_empty() => args.into_iter().map(Str::from).collect(),
         _ => {
             app.set_error("run: enter a command");
-            app.mode = AppMode::text_input(
-                "run: ",
-                text,
-                PendingCommand::RunCommand { change_ids, flags },
-            );
+            app.mode = run_command_input(change_ids, flags, text);
             return Action::None;
         }
     };
@@ -216,16 +213,40 @@ pub(in crate::input) fn submit_run_command(
     let prefill = crate::repo::JjRepo::read_run_jobs(std::path::Path::new(&app.repo_root))
         .map(|n| n.to_string())
         .unwrap_or_default();
-    app.mode = AppMode::text_input(
-        "jobs (empty = jj default): ",
-        prefill,
-        PendingCommand::RunJobs {
+    app.mode = run_jobs_input(change_ids, argv, flags, prefill);
+    Action::None
+}
+
+/// The `--jobs` value has been entered: dispatch the run, or re-prompt on
+/// a non-numeric value.
+fn submit_run_jobs(
+    app: &mut App,
+    change_ids: crate::types::SmallVec<crate::types::ChangeId>,
+    argv: Vec<Str>,
+    flags: keymap::CommandFlags,
+    text: String,
+) -> Action {
+    let trimmed = text.trim();
+    let jobs = if trimmed.is_empty() {
+        None
+    } else {
+        match trimmed.parse::<usize>() {
+            Ok(n) if n > 0 => Some(n),
+            _ => {
+                app.set_error("jobs must be a positive number");
+                app.mode = run_jobs_input(change_ids, argv, flags, text);
+                return Action::None;
+            }
+        }
+    };
+    Action::RunJj(JJCommand {
+        kind: JJCommandKind::Run {
             change_ids,
             argv,
-            flags,
+            jobs,
         },
-    );
-    Action::None
+        flags,
+    })
 }
 
 pub(super) fn handle_search_input(app: &mut App, key: KeyEvent) -> Action {

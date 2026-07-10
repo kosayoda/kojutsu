@@ -203,48 +203,38 @@ impl JJCommand {
     }
 }
 
-fn stream_pipe<F: FnMut(&[u8])>(
-    mut pipe: impl std::io::Read,
-    sink: &std::sync::Mutex<(Vec<u8>, F)>,
-) {
+/// Read a pipe to EOF in small chunks, invoking `on_chunk` for each.
+fn read_chunks(mut pipe: impl std::io::Read, mut on_chunk: impl FnMut(&[u8])) {
     let mut buf = [0u8; 4096];
     loop {
         match pipe.read(&mut buf) {
             Ok(0) => break,
-            Ok(n) => {
-                let chunk = &buf[..n];
-                let mut guard = match sink.lock() {
-                    Ok(g) => g,
-                    Err(_) => break,
-                };
-                let (captured, on_chunk) = &mut *guard;
-                captured.extend_from_slice(chunk);
-                on_chunk(chunk);
-            }
+            Ok(n) => on_chunk(&buf[..n]),
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
     }
 }
 
-fn tee_pipe(mut pipe: impl std::io::Read + Send + 'static) -> Vec<u8> {
+fn stream_pipe<F: FnMut(&[u8])>(pipe: impl std::io::Read, sink: &std::sync::Mutex<(Vec<u8>, F)>) {
+    read_chunks(pipe, |chunk| {
+        if let Ok(mut guard) = sink.lock() {
+            let (captured, on_chunk) = &mut *guard;
+            captured.extend_from_slice(chunk);
+            on_chunk(chunk);
+        }
+    });
+}
+
+fn tee_pipe(pipe: impl std::io::Read + Send + 'static) -> Vec<u8> {
     use std::io::Write;
-    let mut buf = [0u8; 4096];
     let mut captured = Vec::new();
     let mut out = std::io::stderr();
-    loop {
-        match pipe.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                let chunk = &buf[..n];
-                captured.extend_from_slice(chunk);
-                let _ = out.write_all(chunk);
-                let _ = out.flush();
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
-        }
-    }
+    read_chunks(pipe, |chunk| {
+        captured.extend_from_slice(chunk);
+        let _ = out.write_all(chunk);
+        let _ = out.flush();
+    });
     captured
 }
 

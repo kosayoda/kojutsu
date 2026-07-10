@@ -16,6 +16,22 @@ use crate::keymap;
 /// Number of rows to jump for page-up/page-down style navigation.
 const PAGE_SIZE: usize = 15;
 
+/// Lines scrolled per mouse-wheel tick in overlay panes.
+const WHEEL_SCROLL_LINES: i16 = 3;
+
+/// Map scroll keys to a line delta for overlay panes (positive = down).
+fn scroll_delta(node: &keymap_parser::Node) -> Option<i16> {
+    use keymap_parser::Key;
+    let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
+    match node.key {
+        Key::Char('j') | Key::Down => Some(1),
+        Key::Char('k') | Key::Up => Some(-1),
+        Key::Char('d') if ctrl => Some(PAGE_SIZE as i16),
+        Key::Char('u') if ctrl => Some(-(PAGE_SIZE as i16)),
+        _ => None,
+    }
+}
+
 /// Result of handling an input event.
 pub enum Action {
     /// Quit the application.
@@ -67,7 +83,7 @@ pub fn handle_key(
 
     let registry = &keymaps.registry;
 
-    match &app.mode {
+    match &mut app.mode {
         AppMode::Normal => action::handle_normal_key(app, registry, lua, keymap, &node),
         AppMode::Submenu {
             children, flags, ..
@@ -77,26 +93,15 @@ pub fn handle_key(
             action::handle_submenu_key(app, registry, lua, &children, flags, &node)
         }
         AppMode::CommandOutput(state) => {
-            use keymap_parser::Key;
-            let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
             // When the output overflows, scroll keys scroll without
             // dismissing; when it fits, they dismiss like any other key.
-            let delta: Option<i16> = match node.key {
-                Key::Char('j') | Key::Down => Some(1),
-                Key::Char('k') | Key::Up => Some(-1),
-                Key::Char('d') if ctrl => Some(10),
-                Key::Char('u') if ctrl => Some(-10),
-                _ => None,
-            };
             let overlay_base = app.last_list_height + crate::ui::STATUS_AREA_HEIGHT;
-            if let (Some(delta), 1..) = (delta, state.max_scroll(overlay_base)) {
-                if let AppMode::CommandOutput(state) = &mut app.mode {
-                    state.scroll = state.scroll.saturating_add_signed(delta);
-                }
+            if let (Some(delta), 1..) = (scroll_delta(&node), state.max_scroll(overlay_base)) {
+                state.scroll = state.scroll.saturating_add_signed(delta);
                 return Action::None;
             }
             let retry = app.mode.take_command_retry();
-            if node.key == Key::Esc {
+            if node.key == keymap_parser::Key::Esc {
                 Action::None
             } else if !retry.is_empty() {
                 app.mode = AppMode::FollowUp {
@@ -108,21 +113,13 @@ pub fn handle_key(
                 action::handle_normal_key(app, registry, lua, keymap, &node)
             }
         }
-        AppMode::Help { .. } => {
+        AppMode::Help { scroll } => {
             use keymap_parser::Key;
+            if let Some(delta) = scroll_delta(&node) {
+                *scroll = scroll.saturating_add_signed(delta);
+                return Action::None;
+            }
             match node.key {
-                Key::Char('j') | Key::Down => {
-                    if let AppMode::Help { scroll } = &mut app.mode {
-                        *scroll = scroll.saturating_add(1);
-                    }
-                    Action::None
-                }
-                Key::Char('k') | Key::Up => {
-                    if let AppMode::Help { scroll } = &mut app.mode {
-                        *scroll = scroll.saturating_sub(1);
-                    }
-                    Action::None
-                }
                 // Dismiss without forwarding.
                 Key::Esc | Key::Char('q') | Key::Char('?') => {
                     app.exit_overlay();
@@ -152,29 +149,24 @@ pub fn handle_key(
         AppMode::FollowUp { .. } => modal::handle_follow_up(app, key),
         AppMode::SelectFromList(_) => list::handle_select_from_list(app, lua, key),
         AppMode::Jump { .. } => modal::handle_jump(app, key),
-        AppMode::CommandRunning(_) => {
-            let AppMode::CommandRunning(state) = &mut app.mode else {
-                unreachable!()
-            };
+        AppMode::CommandRunning(state) => {
             use keymap_parser::Key;
             let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
+            let shift = (node.modifiers & keymap_parser::Modifier::Shift as u8) != 0;
+            if let Some(delta) = scroll_delta(&node) {
+                // scroll_from_bottom counts up toward older lines, so the
+                // delta is inverted.
+                state.scroll_from_bottom = state
+                    .scroll_from_bottom
+                    .saturating_add_signed(-delta as isize);
+                return Action::None;
+            }
             match node.key {
                 Key::Esc => state.kill.kill(),
                 Key::Char('c') if ctrl => state.kill.kill(),
-                Key::Char('d') if ctrl => {
-                    state.scroll_from_bottom = state.scroll_from_bottom.saturating_sub(10);
-                }
-                Key::Char('u') if ctrl => {
-                    state.scroll_from_bottom = state.scroll_from_bottom.saturating_add(10);
-                }
-                Key::Char('j') | Key::Down => {
-                    state.scroll_from_bottom = state.scroll_from_bottom.saturating_sub(1);
-                }
-                Key::Char('k') | Key::Up => {
-                    state.scroll_from_bottom = state.scroll_from_bottom.saturating_add(1);
-                }
-                // Jump back to the live tail.
-                Key::Char('G') | Key::Char('$') => state.scroll_from_bottom = 0,
+                // Jump back to the live tail (G is delivered as shift+g).
+                Key::Char('g') if shift => state.scroll_from_bottom = 0,
+                Key::Char('$') => state.scroll_from_bottom = 0,
                 _ => {}
             }
             Action::None
@@ -191,7 +183,7 @@ fn mouse_select_row(app: &mut App, mouse: &MouseEvent, list_offset: u16) {
 
 /// Handle a mouse event.
 pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Action {
-    match &app.mode {
+    match &mut app.mode {
         // Modes where mouse interaction in the DAG list makes sense.
         AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. } => {
             match mouse.kind {
@@ -222,31 +214,44 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
         }
         // Dismiss command output only on a deliberate click, not mouse
         // movement; the wheel scrolls the output.
-        AppMode::CommandOutput(_) => {
+        AppMode::CommandOutput(state) => {
             match mouse.kind {
                 MouseEventKind::Down(_) => {
                     app.mode = AppMode::Normal;
                 }
-                MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
-                    if let AppMode::CommandOutput(state) = &mut app.mode {
-                        let delta = if mouse.kind == MouseEventKind::ScrollDown {
-                            3
-                        } else {
-                            -3
-                        };
-                        state.scroll = state.scroll.saturating_add_signed(delta);
-                    }
+                MouseEventKind::ScrollDown => {
+                    state.scroll = state.scroll.saturating_add_signed(WHEEL_SCROLL_LINES);
+                }
+                MouseEventKind::ScrollUp => {
+                    state.scroll = state.scroll.saturating_add_signed(-WHEEL_SCROLL_LINES);
                 }
                 _ => {}
             }
             Action::None
         }
-        // Ignore mouse in modal input modes (text input, search, follow-up, list, running command).
+        // The wheel scrolls the live output of a running command; other
+        // mouse events are ignored (Esc/^C cancels, clicks don't dismiss).
+        AppMode::CommandRunning(state) => {
+            match mouse.kind {
+                MouseEventKind::ScrollDown => {
+                    state.scroll_from_bottom = state
+                        .scroll_from_bottom
+                        .saturating_sub(WHEEL_SCROLL_LINES as usize);
+                }
+                MouseEventKind::ScrollUp => {
+                    state.scroll_from_bottom = state
+                        .scroll_from_bottom
+                        .saturating_add(WHEEL_SCROLL_LINES as usize);
+                }
+                _ => {}
+            }
+            Action::None
+        }
+        // Ignore mouse in modal input modes (text input, search, follow-up, list).
         AppMode::TextInput { .. }
         | AppMode::SearchInput
         | AppMode::FollowUp { .. }
-        | AppMode::SelectFromList(_)
-        | AppMode::CommandRunning { .. } => Action::None,
+        | AppMode::SelectFromList(_) => Action::None,
         // Normal, Submenu, Help: standard DAG navigation.
         _ => match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {

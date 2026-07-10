@@ -69,8 +69,8 @@ pub enum PendingSelection {
         bookmarks: SmallVec<BookmarkName>,
         flags: CommandFlags,
     },
-    /// Pick a `jj run` command: a preset, a history entry, or the
-    /// "enter command…" sentinel that opens a free-text input.
+    /// Pick a `jj run` command from presets and history; the list's custom
+    /// entry opens a free-text input instead.
     RunCommand {
         change_ids: SmallVec<ChangeId>,
         flags: CommandFlags,
