@@ -2200,6 +2200,7 @@ dependencies = [
  "arboard",
  "base64",
  "bitflags 2.11.1",
+ "bstr",
  "chrono",
  "clap",
  "color-eyre",

@@ -1,20 +1,24 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use color_eyre::Result;
 use color_eyre::eyre::Context;
+use futures::AsyncReadExt as _;
 use futures::StreamExt as _;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::conflict_labels::ConflictLabels;
 use jj_lib::conflicts::{
-    ConflictMaterializeOptions, materialize_tree_value, try_materialize_file_conflict_value,
+    ConflictMaterializeOptions, MaterializedTreeValue, materialize_tree_value,
+    try_materialize_file_conflict_value,
 };
 use jj_lib::diff_presentation::DiffTokenType;
 use jj_lib::diff_presentation::unified::{self, DiffLineType, git_diff_part};
 use jj_lib::matchers::EverythingMatcher;
-use jj_lib::merge::{Diff, Merge};
+use jj_lib::merge::{Diff, Merge, MergedTreeValue};
 use jj_lib::merged_tree::MergedTree;
 use jj_lib::repo::Repo;
-use jj_lib::repo_path::RepoPathBuf;
+use jj_lib::repo_path::{RepoPath as JjRepoPath, RepoPathBuf};
+use jj_lib::store::Store;
 use pollster::FutureExt as _;
 
 use super::JjRepo;
@@ -22,6 +26,83 @@ use crate::dag::{
     CommitDetails, DiffLine, DiffLineKind, DiffResult, FileChange, FileStatus, LineStats,
 };
 use crate::types::{CommitId as UiCommitId, RepoPath};
+
+/// Max bytes of file content (per side) materialized for a diff. Larger
+/// files get a placeholder instead of being loaded into memory and diffed.
+const MAX_DIFF_FILE_SIZE: usize = 8 * 1024 * 1024;
+
+/// One side of a file diff, extracted with a size cap.
+enum DiffSideContent {
+    Text(bstr::BString),
+    Binary,
+    /// Regular file larger than [`MAX_DIFF_FILE_SIZE`]; content not loaded.
+    TooLarge,
+}
+
+/// Materialize one side of a file diff. Regular files are read through a
+/// size cap so oversized blobs are never fully loaded (jj's `git_diff_part`
+/// reads whole files before its binary check and has no cap); other tree
+/// values (symlinks, conflicts, submodules) still go through `git_diff_part`.
+fn materialize_diff_side(
+    store: &Arc<Store>,
+    path: &JjRepoPath,
+    value: MergedTreeValue,
+    labels: &ConflictLabels,
+    materialize_options: &ConflictMaterializeOptions,
+) -> Result<DiffSideContent> {
+    let materialized = materialize_tree_value(store, path, value, labels).block_on()?;
+    if let MaterializedTreeValue::File(mut file) = materialized {
+        let mut contents = Vec::new();
+        (&mut file.reader)
+            .take(MAX_DIFF_FILE_SIZE as u64 + 1)
+            .read_to_end(&mut contents)
+            .block_on()
+            .map_err(|e| {
+                color_eyre::eyre::eyre!("failed to read {}: {e}", path.as_internal_file_string())
+            })?;
+        if contents.len() > MAX_DIFF_FILE_SIZE {
+            return Ok(DiffSideContent::TooLarge);
+        }
+        // Same binary heuristic as git/jj: a null byte in the first 8k.
+        let peek = &contents[..contents.len().min(8000)];
+        return Ok(if peek.contains(&0) {
+            DiffSideContent::Binary
+        } else {
+            DiffSideContent::Text(contents.into())
+        });
+    }
+    let part = git_diff_part(path, materialized, materialize_options)
+        .block_on()
+        .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+    Ok(if part.content.is_binary {
+        DiffSideContent::Binary
+    } else {
+        DiffSideContent::Text(part.content.contents)
+    })
+}
+
+/// A single-line placeholder shown instead of a real diff (binary or
+/// oversized files).
+fn placeholder_diff(text: impl Into<String>) -> DiffResult {
+    let line = DiffLine {
+        kind: DiffLineKind::Header,
+        content: text.into(),
+        tokens: vec![],
+        old_line: None,
+        new_line: None,
+    };
+    DiffResult {
+        git: vec![line.clone()],
+        color_words: vec![line],
+    }
+}
+
+fn too_large_placeholder() -> DiffResult {
+    placeholder_diff(format!(
+        "(file larger than {} MiB — diff skipped)",
+        MAX_DIFF_FILE_SIZE / (1024 * 1024)
+    ))
+}
 
 impl JjRepo {
     /// Compute the file-level changes and line totals for a commit.
@@ -135,28 +216,26 @@ impl JjRepo {
             let after_repo_path =
                 RepoPathBuf::from_internal_string(&target_path).expect("target path is valid");
 
-            let before_mat =
-                materialize_tree_value(repo.store(), &before_repo_path, values.before, &labels)
-                    .block_on()?;
-            let after_mat =
-                materialize_tree_value(repo.store(), &after_repo_path, values.after, &labels)
-                    .block_on()?;
-
-            let before_part = git_diff_part(&before_repo_path, before_mat, &materialize_options)
-                .block_on()
-                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-            let after_part = git_diff_part(&after_repo_path, after_mat, &materialize_options)
-                .block_on()
-                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-
-            if before_part.content.is_binary || after_part.content.is_binary {
+            let before = materialize_diff_side(
+                repo.store(),
+                &before_repo_path,
+                values.before,
+                &labels,
+                &materialize_options,
+            )?;
+            let after = materialize_diff_side(
+                repo.store(),
+                &after_repo_path,
+                values.after,
+                &labels,
+                &materialize_options,
+            )?;
+            let (DiffSideContent::Text(before), DiffSideContent::Text(after)) = (before, after)
+            else {
                 continue;
-            }
+            };
 
-            let contents = Diff::new(
-                before_part.content.contents.as_ref(),
-                after_part.content.contents.as_ref(),
-            );
+            let contents = Diff::new(before.as_ref(), after.as_ref());
             let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
             let file_stats = count_line_stats(&hunks);
             stats.added = stats.added.saturating_add(file_stats.added);
@@ -211,61 +290,7 @@ impl JjRepo {
 
         let parent_tree = commit.parent_tree(repo).block_on()?;
         let commit_tree = commit.tree();
-        let repo_path = RepoPathBuf::from_internal_string(path.as_str())
-            .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
-        let before_repo_path = old_path
-            .and_then(|p| RepoPathBuf::from_internal_string(p.as_str()).ok())
-            .unwrap_or_else(|| repo_path.clone());
-        let labels = ConflictLabels::unlabeled();
-        let materialize_options = default_materialize_options();
-
-        let before_value = parent_tree.path_value(&before_repo_path).block_on()?;
-        let after_value = commit_tree.path_value(&repo_path).block_on()?;
-
-        let before_mat =
-            materialize_tree_value(repo.store(), &repo_path, before_value, &labels).block_on()?;
-        let after_mat =
-            materialize_tree_value(repo.store(), &repo_path, after_value, &labels).block_on()?;
-
-        let before_part = git_diff_part(&repo_path, before_mat, &materialize_options)
-            .block_on()
-            .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-        let after_part = git_diff_part(&repo_path, after_mat, &materialize_options)
-            .block_on()
-            .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-
-        if before_part.content.is_binary || after_part.content.is_binary {
-            let line = DiffLine {
-                kind: DiffLineKind::Header,
-                content: "(binary file)".to_string(),
-                tokens: vec![],
-                old_line: None,
-                new_line: None,
-            };
-            return Ok(DiffResult {
-                git: vec![line.clone()],
-                color_words: vec![line],
-            });
-        }
-
-        let contents = Diff::new(
-            before_part.content.contents.as_ref(),
-            after_part.content.contents.as_ref(),
-        );
-        let hunks = unified::unified_diff_hunks(
-            contents,
-            3, // context lines
-            Default::default(),
-        );
-
-        let mut git_lines = Vec::new();
-        hunks_to_diff_lines(&hunks, &mut git_lines);
-        let mut cw_lines = Vec::new();
-        hunks_to_color_words_lines(&hunks, &mut cw_lines);
-        Ok(DiffResult {
-            git: git_lines,
-            color_words: cw_lines,
-        })
+        self.trees_file_diff(&parent_tree, &commit_tree, path, old_path)
     }
 
     /// Get the conflict hunks for a conflicted file, broken down by hunk.
@@ -396,21 +421,22 @@ impl JjRepo {
 
             // Compute line stats by materializing + diffing.
             let mut file_stats = LineStats::default();
-            let before_mat =
-                materialize_tree_value(repo.store(), path, values.before, &labels).block_on()?;
-            let after_mat =
-                materialize_tree_value(repo.store(), path, values.after, &labels).block_on()?;
-            let before_part = git_diff_part(path, before_mat, &materialize_options)
-                .block_on()
-                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-            let after_part = git_diff_part(path, after_mat, &materialize_options)
-                .block_on()
-                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-            if !before_part.content.is_binary && !after_part.content.is_binary {
-                let contents = Diff::new(
-                    before_part.content.contents.as_ref(),
-                    after_part.content.contents.as_ref(),
-                );
+            let before = materialize_diff_side(
+                repo.store(),
+                path,
+                values.before,
+                &labels,
+                &materialize_options,
+            )?;
+            let after = materialize_diff_side(
+                repo.store(),
+                path,
+                values.after,
+                &labels,
+                &materialize_options,
+            )?;
+            if let (DiffSideContent::Text(before), DiffSideContent::Text(after)) = (before, after) {
+                let contents = Diff::new(before.as_ref(), after.as_ref());
                 let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
                 file_stats = count_line_stats(&hunks);
             }
@@ -444,56 +470,60 @@ impl JjRepo {
 
         let from_tree = from_commit.tree();
         let to_tree = to_commit.tree();
-        self.trees_file_diff(&from_tree, &to_tree, path)
+        self.trees_file_diff(&from_tree, &to_tree, path, None)
     }
 
     /// Compute the diff for a single file between two trees.
+    /// For renamed/copied files, `old_path` provides the source path in the
+    /// before tree to diff against.
     fn trees_file_diff(
         &self,
         before_tree: &MergedTree,
         after_tree: &MergedTree,
         path: &RepoPath,
+        old_path: Option<&RepoPath>,
     ) -> Result<DiffResult> {
         let repo = self.repo.as_ref();
         let repo_path = RepoPathBuf::from_internal_string(path.as_str())
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
+        let before_repo_path = old_path
+            .and_then(|p| RepoPathBuf::from_internal_string(p.as_str()).ok())
+            .unwrap_or_else(|| repo_path.clone());
         let labels = ConflictLabels::unlabeled();
         let materialize_options = default_materialize_options();
 
-        let before_value = before_tree.path_value(&repo_path).block_on()?;
+        let before_value = before_tree.path_value(&before_repo_path).block_on()?;
         let after_value = after_tree.path_value(&repo_path).block_on()?;
 
-        let before_mat =
-            materialize_tree_value(repo.store(), &repo_path, before_value, &labels).block_on()?;
-        let after_mat =
-            materialize_tree_value(repo.store(), &repo_path, after_value, &labels).block_on()?;
+        let before = materialize_diff_side(
+            repo.store(),
+            &before_repo_path,
+            before_value,
+            &labels,
+            &materialize_options,
+        )?;
+        let after = materialize_diff_side(
+            repo.store(),
+            &repo_path,
+            after_value,
+            &labels,
+            &materialize_options,
+        )?;
 
-        let before_part = git_diff_part(&repo_path, before_mat, &materialize_options)
-            .block_on()
-            .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-        let after_part = git_diff_part(&repo_path, after_mat, &materialize_options)
-            .block_on()
-            .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+        let (before, after) = match (before, after) {
+            (DiffSideContent::Text(b), DiffSideContent::Text(a)) => (b, a),
+            (DiffSideContent::TooLarge, _) | (_, DiffSideContent::TooLarge) => {
+                return Ok(too_large_placeholder());
+            }
+            _ => return Ok(placeholder_diff("(binary file)")),
+        };
 
-        if before_part.content.is_binary || after_part.content.is_binary {
-            let line = DiffLine {
-                kind: DiffLineKind::Header,
-                content: "(binary file)".to_string(),
-                tokens: Vec::new(),
-                old_line: None,
-                new_line: None,
-            };
-            return Ok(DiffResult {
-                git: vec![line.clone()],
-                color_words: vec![line],
-            });
-        }
-
-        let contents = Diff::new(
-            before_part.content.contents.as_ref(),
-            after_part.content.contents.as_ref(),
+        let contents = Diff::new(before.as_ref(), after.as_ref());
+        let hunks = unified::unified_diff_hunks(
+            contents,
+            3, // context lines
+            Default::default(),
         );
-        let hunks = unified::unified_diff_hunks(contents, 3, Default::default());
 
         let mut git_lines = Vec::new();
         hunks_to_diff_lines(&hunks, &mut git_lines);
@@ -580,21 +610,22 @@ impl JjRepo {
             let has_conflict = !values.after.is_resolved();
 
             let mut file_stats = LineStats::default();
-            let before_mat =
-                materialize_tree_value(repo.store(), path, values.before, &labels).block_on()?;
-            let after_mat =
-                materialize_tree_value(repo.store(), path, values.after, &labels).block_on()?;
-            let before_part = git_diff_part(path, before_mat, &materialize_options)
-                .block_on()
-                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-            let after_part = git_diff_part(path, after_mat, &materialize_options)
-                .block_on()
-                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-            if !before_part.content.is_binary && !after_part.content.is_binary {
-                let contents = Diff::new(
-                    before_part.content.contents.as_ref(),
-                    after_part.content.contents.as_ref(),
-                );
+            let before = materialize_diff_side(
+                repo.store(),
+                path,
+                values.before,
+                &labels,
+                &materialize_options,
+            )?;
+            let after = materialize_diff_side(
+                repo.store(),
+                path,
+                values.after,
+                &labels,
+                &materialize_options,
+            )?;
+            if let (DiffSideContent::Text(before), DiffSideContent::Text(after)) = (before, after) {
+                let contents = Diff::new(before.as_ref(), after.as_ref());
                 let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
                 file_stats = count_line_stats(&hunks);
             }
@@ -619,7 +650,7 @@ impl JjRepo {
         path: &RepoPath,
     ) -> Result<DiffResult> {
         let (rebased_tree, to_tree) = self.compute_interdiff_trees(from_id, to_id)?;
-        self.trees_file_diff(&rebased_tree, &to_tree, path)
+        self.trees_file_diff(&rebased_tree, &to_tree, path, None)
     }
 
     /// Get the raw content of a file at a specific commit.
