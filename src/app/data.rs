@@ -436,7 +436,9 @@ impl App {
                     self.log_background_error(msg);
                 }
             },
-            RepoResult::EvoLog { result } => match result {
+            RepoResult::EvoLog { commit_id, result } => match result {
+                // The evolog target changed while this result was in flight.
+                _ if self.evolog.commit_id.as_ref() != Some(&commit_id) => {}
                 Ok(entries) => {
                     self.evolog.entries = entries;
                     self.evolog.loaded = true;
@@ -485,7 +487,13 @@ impl App {
                     self.log_background_error(msg);
                 }
             },
-            RepoResult::InterdiffDetails { result } => match result {
+            RepoResult::InterdiffDetails {
+                from_commit_id,
+                to_commit_id,
+                result,
+            } => match result {
+                // The interdiff target changed while this result was in flight.
+                _ if !self.interdiff.target_is(&from_commit_id, &to_commit_id) => {}
                 Ok(files) => {
                     self.interdiff.files = Loadable::Loaded(files);
                     if self.active_view == super::ActiveView::Interdiff {
@@ -498,7 +506,14 @@ impl App {
                     self.log_background_error(msg);
                 }
             },
-            RepoResult::InterdiffFileDiff { path, result } => match result {
+            RepoResult::InterdiffFileDiff {
+                from_commit_id,
+                to_commit_id,
+                path,
+                result,
+            } => match result {
+                // The interdiff target changed while this result was in flight.
+                _ if !self.interdiff.target_is(&from_commit_id, &to_commit_id) => {}
                 Ok(diff_result) => {
                     self.interdiff
                         .file_diffs
@@ -516,7 +531,17 @@ impl App {
                     self.log_background_error(msg);
                 }
             },
-            RepoResult::Annotate { result } => match result {
+            RepoResult::Annotate {
+                commit_id,
+                path,
+                result,
+            } => match result {
+                // The annotate target changed while this result was in flight.
+                _ if self
+                    .annotate
+                    .target
+                    .as_ref()
+                    .is_none_or(|t| t.commit_id != commit_id || t.path != path) => {}
                 Ok(annotate_result) => {
                     self.annotate.lines = Loadable::Loaded(annotate_result.lines);
                     self.annotate.commit_info = annotate_result.commit_info;

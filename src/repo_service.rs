@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -126,8 +126,6 @@ pub enum RepoErrorKind {
     WorkspaceStale,
     /// A background task panicked or failed to open the repo.
     Background,
-    /// The repository is not loaded yet (request arrived too early).
-    NotLoaded,
 }
 
 /// Error from the repository service layer.
@@ -210,6 +208,7 @@ pub enum RepoResult {
         result: Result<Vec<crate::app::OpDetailLine>, RepoError>,
     },
     EvoLog {
+        commit_id: CommitId,
         result: Result<Vec<crate::app::EvoLogEntry>, RepoError>,
     },
     EvoLogDetails {
@@ -222,13 +221,19 @@ pub enum RepoResult {
         result: Result<crate::dag::DiffResult, RepoError>,
     },
     InterdiffDetails {
+        from_commit_id: CommitId,
+        to_commit_id: CommitId,
         result: Result<Vec<crate::dag::FileChange>, RepoError>,
     },
     InterdiffFileDiff {
+        from_commit_id: CommitId,
+        to_commit_id: CommitId,
         path: RepoPath,
         result: Result<crate::dag::DiffResult, RepoError>,
     },
     Annotate {
+        commit_id: CommitId,
+        path: RepoPath,
         result: Result<crate::dag::AnnotateResult, RepoError>,
     },
     FileList {
@@ -389,20 +394,12 @@ impl RepoService {
 
 impl RepoRequestHandle {
     pub fn send(&self, mut request: RepoRequest) {
+        // Each revset load starts a new epoch; a queued revset load whose
+        // epoch is no longer current has been superseded and is skipped.
+        // Other requests deliver keyed results and don't need an epoch.
         request.epoch = match request.kind {
             RepoRequestKind::Revset { .. } => self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1,
-            RepoRequestKind::Commit { .. }
-            | RepoRequestKind::FileDiff { .. }
-            | RepoRequestKind::Operations { .. }
-            | RepoRequestKind::ConflictHunks { .. }
-            | RepoRequestKind::OpDiff { .. }
-            | RepoRequestKind::EvolutionLog { .. }
-            | RepoRequestKind::EvoLogDetails { .. }
-            | RepoRequestKind::EvoLogFileDiff { .. }
-            | RepoRequestKind::InterdiffDetails { .. }
-            | RepoRequestKind::InterdiffFileDiff { .. }
-            | RepoRequestKind::Annotate { .. }
-            | RepoRequestKind::FileList { .. } => self.current_epoch.load(Ordering::SeqCst),
+            _ => self.current_epoch.load(Ordering::SeqCst),
         };
         let _ = self.request_tx.send(request);
     }
@@ -454,8 +451,6 @@ struct RepoServiceState {
     repo: Option<Arc<JjRepo>>,
     result_tx: Sender<RepoResult>,
     current_epoch: Arc<AtomicU64>,
-    in_flight_commit_details: HashSet<CommitId>,
-    in_flight_file_diffs: HashSet<(CommitId, RepoPath)>,
     /// Cancellation token for background threads spawned by the current revset.
     bg_cancel: CancellationToken,
 }
@@ -471,14 +466,28 @@ impl RepoServiceState {
             repo: None,
             result_tx,
             current_epoch,
-            in_flight_commit_details: HashSet::new(),
-            in_flight_file_diffs: HashSet::new(),
             bg_cancel: CancellationToken::new(),
         }
     }
 
     fn run(&mut self, request_rx: Receiver<RepoRequest>) {
-        while let Ok(request) = request_rx.recv() {
+        let mut pending: VecDeque<RepoRequest> = VecDeque::new();
+        loop {
+            if pending.is_empty() {
+                match request_rx.recv() {
+                    Ok(request) => pending.push_back(request),
+                    Err(_) => return,
+                }
+            }
+            pending.extend(request_rx.try_iter());
+            // Revset loads jump the queue: they supersede stale queued work
+            // and re-open the repo that subsequent requests run against.
+            let request = pending
+                .iter()
+                .position(|r| matches!(r.kind, RepoRequestKind::Revset { .. }))
+                .and_then(|i| pending.remove(i))
+                .or_else(|| pending.pop_front())
+                .expect("pending is non-empty");
             self.handle_request(request);
         }
     }
@@ -488,65 +497,69 @@ impl RepoServiceState {
         tracing::debug!(epoch, request = %kind.label(), "repo request");
         match kind {
             RepoRequestKind::Revset { revset, load_kind } => {
+                // A newer revset load has been requested since this one was
+                // queued — skip the snapshot and evaluation entirely.
+                if epoch != self.current_epoch.load(Ordering::SeqCst) {
+                    tracing::debug!(epoch, "skipping superseded revset load");
+                    return;
+                }
                 self.bg_cancel.cancel();
                 self.bg_cancel = CancellationToken::new();
-                self.in_flight_commit_details.clear();
-                self.in_flight_file_diffs.clear();
                 self.handle_revset(epoch, revset, load_kind);
             }
             RepoRequestKind::Commit { commit_id } => {
-                self.handle_commit_details(epoch, commit_id);
+                self.handle_commit_details(commit_id);
             }
             RepoRequestKind::FileDiff {
                 commit_id,
                 path,
                 old_path,
             } => {
-                self.handle_file_diff(epoch, commit_id, path, old_path);
+                self.handle_file_diff(commit_id, path, old_path);
             }
             RepoRequestKind::Operations { limit } => {
-                self.handle_operations(epoch, limit);
+                self.handle_operations(limit);
             }
             RepoRequestKind::ConflictHunks { commit_id, path } => {
-                self.handle_conflict_hunks(epoch, commit_id, path);
+                self.handle_conflict_hunks(commit_id, path);
             }
             RepoRequestKind::OpDiff { op_id } => {
-                self.handle_op_diff(epoch, op_id);
+                self.handle_op_diff(op_id);
             }
             RepoRequestKind::EvolutionLog { commit_id } => {
-                self.handle_evolution_log(epoch, commit_id);
+                self.handle_evolution_log(commit_id);
             }
             RepoRequestKind::EvoLogDetails {
                 from_commit_id,
                 to_commit_id,
             } => {
-                self.handle_evolog_details(epoch, from_commit_id, to_commit_id);
+                self.handle_evolog_details(from_commit_id, to_commit_id);
             }
             RepoRequestKind::EvoLogFileDiff {
                 from_commit_id,
                 to_commit_id,
                 path,
             } => {
-                self.handle_evolog_file_diff(epoch, from_commit_id, to_commit_id, path);
+                self.handle_evolog_file_diff(from_commit_id, to_commit_id, path);
             }
             RepoRequestKind::InterdiffDetails {
                 from_commit_id,
                 to_commit_id,
             } => {
-                self.handle_interdiff_details(epoch, from_commit_id, to_commit_id);
+                self.handle_interdiff_details(from_commit_id, to_commit_id);
             }
             RepoRequestKind::InterdiffFileDiff {
                 from_commit_id,
                 to_commit_id,
                 path,
             } => {
-                self.handle_interdiff_file_diff(epoch, from_commit_id, to_commit_id, path);
+                self.handle_interdiff_file_diff(from_commit_id, to_commit_id, path);
             }
             RepoRequestKind::Annotate { commit_id, path } => {
-                self.handle_file_annotate(epoch, commit_id, path);
+                self.handle_file_annotate(commit_id, path);
             }
             RepoRequestKind::FileList { commit_id } => {
-                self.handle_file_list(epoch, commit_id);
+                self.handle_file_list(commit_id);
             }
         }
     }
@@ -801,121 +814,41 @@ impl RepoServiceState {
         }
     }
 
-    fn handle_commit_details(&mut self, epoch: u64, commit_id: CommitId) {
-        if epoch != self.current_epoch.load(Ordering::SeqCst) {
-            return;
-        }
-        if !self.in_flight_commit_details.insert(commit_id.clone()) {
-            return;
-        }
-        let Some(repo) = self.repo.as_deref() else {
-            self.in_flight_commit_details.remove(&commit_id);
-            self.send_if_current(
-                epoch,
-                RepoResult::CommitDetails {
-                    commit_id,
-                    result: Err(RepoError {
-                        kind: RepoErrorKind::NotLoaded,
-                        message: "repository not loaded yet".to_string(),
-                    }),
-                },
-            );
-            return;
-        };
-
-        match repo.commit_details(&commit_id) {
-            Ok(details) => self.send_if_current(
-                epoch,
-                RepoResult::CommitDetails {
-                    commit_id: commit_id.clone(),
-                    result: Ok(details),
-                },
-            ),
-            Err(err) => self.send_if_current(
-                epoch,
-                RepoResult::CommitDetails {
-                    commit_id: commit_id.clone(),
-                    result: Err(RepoError {
-                        kind: RepoErrorKind::Operation,
-                        message: format!("{err:#}"),
-                    }),
-                },
-            ),
-        }
-        self.in_flight_commit_details.remove(&commit_id);
+    fn handle_commit_details(&mut self, commit_id: CommitId) {
+        self.repo_op(
+            |repo| repo.commit_details(&commit_id),
+            |result| RepoResult::CommitDetails {
+                commit_id: commit_id.clone(),
+                result,
+            },
+        );
     }
 
     fn handle_file_diff(
         &mut self,
-        epoch: u64,
         commit_id: CommitId,
         path: RepoPath,
         old_path: Option<RepoPath>,
     ) {
-        if epoch != self.current_epoch.load(Ordering::SeqCst) {
-            return;
-        }
-        let key = (commit_id.clone(), path.clone());
-        if !self.in_flight_file_diffs.insert(key.clone()) {
-            return;
-        }
-        let Some(repo) = self.repo.as_deref() else {
-            self.in_flight_file_diffs.remove(&key);
-            self.send_if_current(
-                epoch,
-                RepoResult::FileDiff {
-                    commit_id,
-                    path,
-                    result: Err(RepoError {
-                        kind: RepoErrorKind::NotLoaded,
-                        message: "repository not loaded yet".to_string(),
-                    }),
-                },
-            );
-            return;
-        };
-
-        match repo.file_diff(&commit_id, &path, old_path.as_ref()) {
-            Ok(result) => self.send_if_current(
-                epoch,
-                RepoResult::FileDiff {
-                    commit_id: commit_id.clone(),
-                    path: path.clone(),
-                    result: Ok(result),
-                },
-            ),
-            Err(err) => self.send_if_current(
-                epoch,
-                RepoResult::FileDiff {
-                    commit_id: commit_id.clone(),
-                    path: path.clone(),
-                    result: Err(RepoError {
-                        kind: RepoErrorKind::Operation,
-                        message: format!("{err:#}"),
-                    }),
-                },
-            ),
-        }
-        self.in_flight_file_diffs.remove(&key);
+        self.repo_op(
+            |repo| repo.file_diff(&commit_id, &path, old_path.as_ref()),
+            |result| RepoResult::FileDiff {
+                commit_id: commit_id.clone(),
+                path: path.clone(),
+                result,
+            },
+        );
     }
 
-    fn handle_operations(&mut self, epoch: u64, limit: usize) {
-        if epoch != self.current_epoch.load(Ordering::SeqCst) {
-            return;
-        }
+    fn handle_operations(&mut self, limit: usize) {
         self.repo_op(
-            epoch,
             |repo| repo.operation_log(limit),
             |result| RepoResult::Operations { result },
         );
     }
 
-    fn handle_conflict_hunks(&mut self, epoch: u64, commit_id: CommitId, path: RepoPath) {
-        if epoch != self.current_epoch.load(Ordering::SeqCst) {
-            return;
-        }
+    fn handle_conflict_hunks(&mut self, commit_id: CommitId, path: RepoPath) {
         self.repo_op(
-            epoch,
             |repo| repo.conflict_hunks(&commit_id, &path),
             |result| RepoResult::ConflictHunks {
                 commit_id: commit_id.clone(),
@@ -925,12 +858,8 @@ impl RepoServiceState {
         );
     }
 
-    fn handle_op_diff(&mut self, epoch: u64, op_id: OperationId) {
-        if epoch != self.current_epoch.load(Ordering::SeqCst) {
-            return;
-        }
+    fn handle_op_diff(&mut self, op_id: OperationId) {
         self.repo_op(
-            epoch,
             |repo| repo.op_diff(op_id.as_str()),
             |result| RepoResult::OpDiff {
                 op_id: op_id.clone(),
@@ -939,14 +868,8 @@ impl RepoServiceState {
         );
     }
 
-    fn handle_evolog_details(
-        &mut self,
-        epoch: u64,
-        from_commit_id: CommitId,
-        to_commit_id: CommitId,
-    ) {
+    fn handle_evolog_details(&mut self, from_commit_id: CommitId, to_commit_id: CommitId) {
         self.repo_op(
-            epoch,
             |repo| repo.inter_commit_details(from_commit_id.as_str(), to_commit_id.as_str()),
             |result| RepoResult::EvoLogDetails {
                 commit_id: to_commit_id.clone(),
@@ -957,13 +880,11 @@ impl RepoServiceState {
 
     fn handle_evolog_file_diff(
         &mut self,
-        epoch: u64,
         from_commit_id: CommitId,
         to_commit_id: CommitId,
         path: RepoPath,
     ) {
         self.repo_op(
-            epoch,
             |repo| {
                 repo.inter_commit_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path)
             },
@@ -975,47 +896,47 @@ impl RepoServiceState {
         );
     }
 
-    fn handle_interdiff_details(
-        &mut self,
-        epoch: u64,
-        from_commit_id: CommitId,
-        to_commit_id: CommitId,
-    ) {
+    fn handle_interdiff_details(&mut self, from_commit_id: CommitId, to_commit_id: CommitId) {
         self.repo_op(
-            epoch,
             |repo| repo.interdiff_details(from_commit_id.as_str(), to_commit_id.as_str()),
-            |result| RepoResult::InterdiffDetails { result },
+            |result| RepoResult::InterdiffDetails {
+                from_commit_id: from_commit_id.clone(),
+                to_commit_id: to_commit_id.clone(),
+                result,
+            },
         );
     }
 
     fn handle_interdiff_file_diff(
         &mut self,
-        epoch: u64,
         from_commit_id: CommitId,
         to_commit_id: CommitId,
         path: RepoPath,
     ) {
         self.repo_op(
-            epoch,
             |repo| repo.interdiff_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path),
             |result| RepoResult::InterdiffFileDiff {
+                from_commit_id: from_commit_id.clone(),
+                to_commit_id: to_commit_id.clone(),
                 path: path.clone(),
                 result,
             },
         );
     }
 
-    fn handle_file_annotate(&mut self, epoch: u64, commit_id: CommitId, path: RepoPath) {
+    fn handle_file_annotate(&mut self, commit_id: CommitId, path: RepoPath) {
         self.repo_op(
-            epoch,
             |repo| repo.file_annotate(&commit_id, &path),
-            |result| RepoResult::Annotate { result },
+            |result| RepoResult::Annotate {
+                commit_id: commit_id.clone(),
+                path: path.clone(),
+                result,
+            },
         );
     }
 
-    fn handle_file_list(&mut self, epoch: u64, commit_id: CommitId) {
+    fn handle_file_list(&mut self, commit_id: CommitId) {
         self.repo_op(
-            epoch,
             |repo| repo.list_files(&commit_id),
             |result| RepoResult::FileList {
                 commit_id: commit_id.clone(),
@@ -1024,32 +945,27 @@ impl RepoServiceState {
         );
     }
 
-    fn handle_evolution_log(&mut self, epoch: u64, commit_id: CommitId) {
+    fn handle_evolution_log(&mut self, commit_id: CommitId) {
         self.repo_op(
-            epoch,
             |repo| repo.evolution_log(commit_id.as_str()),
-            |result| RepoResult::EvoLog { result },
+            |result| RepoResult::EvoLog {
+                commit_id: commit_id.clone(),
+                result,
+            },
         );
     }
 
     /// Ensure the repo is open, opening it if needed. On failure, sends the
     /// error result produced by `on_error` and returns `None`.
-    fn ensure_repo(
-        &mut self,
-        epoch: u64,
-        on_error: impl FnOnce(RepoError) -> RepoResult,
-    ) -> Option<&JjRepo> {
+    fn ensure_repo(&mut self, on_error: impl FnOnce(RepoError) -> RepoResult) -> Option<&JjRepo> {
         if self.repo.is_none() {
             match JjRepo::open(&self.repo_path) {
                 Ok(repo) => self.repo = Some(Arc::new(repo)),
                 Err(err) => {
-                    self.send_if_current(
-                        epoch,
-                        on_error(RepoError {
-                            kind: RepoErrorKind::RepoOpen,
-                            message: format!("{err:#}"),
-                        }),
-                    );
+                    let _ = self.result_tx.send(on_error(RepoError {
+                        kind: RepoErrorKind::RepoOpen,
+                        message: format!("{err:#}"),
+                    }));
                     return None;
                 }
             }
@@ -1057,6 +973,10 @@ impl RepoServiceState {
         self.repo.as_deref()
     }
 
+    /// Send a revset result only if no newer revset load has been requested.
+    /// Keyed results (diffs, details, annotate, …) are sent unconditionally:
+    /// they are content-addressed, so the app can apply or ignore them by key,
+    /// and dropping them would strand `Loading` placeholders forever.
     fn send_if_current(&self, epoch: u64, result: RepoResult) {
         if epoch == self.current_epoch.load(Ordering::SeqCst) {
             let _ = self.result_tx.send(result);
@@ -1067,16 +987,15 @@ impl RepoServiceState {
     /// `wrap` converts `Result<T, RepoError>` into the appropriate `RepoResult` variant.
     fn repo_op<T>(
         &mut self,
-        epoch: u64,
         op: impl FnOnce(&crate::repo::JjRepo) -> color_eyre::Result<T>,
         wrap: impl Fn(Result<T, RepoError>) -> RepoResult,
     ) {
-        let Some(repo) = self.ensure_repo(epoch, |e| wrap(Err(e))) else {
+        let Some(repo) = self.ensure_repo(|e| wrap(Err(e))) else {
             return;
         };
         let result =
             op(repo).map_err(|err| RepoError::new(RepoErrorKind::Operation, format!("{err:#}")));
-        self.send_if_current(epoch, wrap(result));
+        let _ = self.result_tx.send(wrap(result));
     }
 }
 

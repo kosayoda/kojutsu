@@ -194,6 +194,13 @@ impl InterdiffState {
     pub fn clear(&mut self) {
         *self = Self::new();
     }
+
+    /// Whether the current target matches the given from/to commit pair.
+    pub fn target_is(&self, from: &CommitId, to: &CommitId) -> bool {
+        self.target
+            .as_ref()
+            .is_some_and(|t| t.from_commit_id == *from && t.to_commit_id == *to)
+    }
 }
 
 /// The commit + path being annotated.
