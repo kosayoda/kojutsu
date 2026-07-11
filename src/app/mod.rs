@@ -24,8 +24,6 @@ impl DeferredWork {
     }
 }
 
-use ratatui::widgets::ListState;
-
 use crate::dag::{DagEntry, DiffLine, EdgeKind, FileChange, LineStats};
 use crate::graph;
 use crate::idx::{EntryIdx, EvoLogIdx, FileIdx, IndexVec, RowIdx};
@@ -219,8 +217,8 @@ pub struct App {
     pub cursor: RowIdx,
     /// Saved per-view state (cursor, scroll, h_scroll, search scopes).
     view_states: [ViewState; <ActiveView as strum::EnumCount>::COUNT],
-    /// Persisted list widget state (preserves scroll offset across frames).
-    pub list_state: ListState,
+    /// Scroll offset: index into `rows` of the first visible row.
+    pub scroll: usize,
     /// Header height from the last render (for mouse click translation).
     pub last_header_height: u16,
     /// Viewport height of the main list area (set during render).
@@ -310,7 +308,7 @@ impl App {
             rows: Vec::new(),
             cursor: RowIdx::new(0),
             view_states: default_view_states(),
-            list_state: ListState::default(),
+            scroll: 0,
             last_header_height: 2,
             last_list_height: 0,
             h_scroll: 0,
@@ -491,7 +489,7 @@ impl App {
             return;
         }
         // Save current view state.
-        let offset = self.scroll_offset();
+        let offset = self.scroll;
         let vs = &mut self.view_states[self.active_view.idx()];
         vs.cursor = self.cursor;
         vs.scroll_offset = offset;
@@ -526,7 +524,7 @@ impl App {
         // Restore saved state for new view.
         let vs = &self.view_states[view.idx()];
         self.cursor = RowIdx::new(vs.cursor.raw().min(self.rows.len().saturating_sub(1)));
-        *self.list_state.offset_mut() = vs.scroll_offset;
+        self.scroll = vs.scroll_offset;
         self.h_scroll = vs.h_scroll;
     }
 
@@ -1179,11 +1177,6 @@ impl App {
                 }
             }
         }
-    }
-
-    /// Get the scroll offset from the list state.
-    pub fn scroll_offset(&self) -> usize {
-        self.list_state.offset()
     }
 
     /// Get the text to pre-fill the revset input with.

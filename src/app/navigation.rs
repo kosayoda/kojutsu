@@ -3,6 +3,9 @@ use crate::dag::DiffLineKind;
 use crate::idx::{EntryIdx, RowIdx};
 use crate::types::DisplayRow;
 
+/// Rows of context kept visible above and below the cursor when scrolling.
+const SCROLL_PADDING: usize = 2;
+
 impl App {
     /// Whether a row should be skipped during navigation.
     /// Skips graph links and context diff lines (not actionable).
@@ -86,7 +89,7 @@ impl App {
     }
 
     /// Number of display lines a row occupies.
-    fn row_display_lines(&self, row_idx: usize) -> usize {
+    pub fn row_display_lines(&self, row_idx: usize) -> usize {
         let Some(row) = self.rows.get(row_idx) else {
             return 1;
         };
@@ -94,14 +97,63 @@ impl App {
             DisplayRow::CommitNode { .. }
             | DisplayRow::OpLogItem { .. }
             | DisplayRow::EvoLogItem { .. } => 2,
+            DisplayRow::AnnotateLine { line_idx } => {
+                if self.annotate.show_commit_separators
+                    && self.annotate_line_is_boundary(line_idx.raw())
+                {
+                    2
+                } else {
+                    1
+                }
+            }
             _ => 1,
         }
+    }
+
+    /// Whether an annotate line starts a new commit group (rendered with a
+    /// separator line above it when separators are enabled).
+    fn annotate_line_is_boundary(&self, line_idx: usize) -> bool {
+        if line_idx == 0 {
+            return false;
+        }
+        self.annotate
+            .lines
+            .loaded()
+            .and_then(|lines| Some((lines.get(line_idx)?, lines.get(line_idx - 1)?)))
+            .is_some_and(|(cur, prev)| cur.commit_id != prev.commit_id)
+    }
+
+    /// Adjust the scroll offset so the cursor row — plus up to
+    /// [`SCROLL_PADDING`] rows of context above and below — is fully visible
+    /// in a viewport of `viewport` display lines. Called before each render.
+    pub fn update_scroll(&mut self, viewport: usize) {
+        if self.rows.is_empty() || viewport == 0 {
+            self.scroll = 0;
+            return;
+        }
+        let cursor = self.cursor.raw().min(self.rows.len() - 1);
+        let top_target = cursor.saturating_sub(SCROLL_PADDING);
+        let bottom_target = (cursor + SCROLL_PADDING).min(self.rows.len() - 1);
+        self.scroll = self.scroll.min(top_target);
+        // Smallest offset that keeps rows through `bottom_target` fully visible.
+        let mut lines = 0;
+        let mut min_scroll = bottom_target;
+        for idx in (0..=bottom_target).rev() {
+            lines += self.row_display_lines(idx);
+            if lines > viewport {
+                break;
+            }
+            min_scroll = idx;
+        }
+        // If the viewport is too small for the padding, keep the cursor itself
+        // visible rather than scrolling it off the top.
+        self.scroll = self.scroll.max(min_scroll.min(cursor));
     }
 
     /// Compute the visible row range accounting for multi-line rows.
     /// Returns (start_row, end_row) where rows in start..end fit in the viewport.
     pub(super) fn visible_row_range(&self) -> (usize, usize) {
-        let offset = self.list_state.offset();
+        let offset = self.scroll;
         let height = self.last_list_height as usize;
         let mut lines = 0;
         let mut end = offset;
@@ -418,15 +470,11 @@ impl App {
     }
 
     /// Map a screen line (relative to the list area top) to a row index,
-    /// accounting for multi-line items (CommitNode = 2 lines, others = 1).
+    /// accounting for multi-line items.
     pub fn row_at_screen_line(&self, screen_line: usize) -> RowIdx {
-        let offset = self.list_state.offset();
         let mut lines_consumed = 0;
-        for idx in offset..self.rows.len() {
-            let height = match self.rows[idx] {
-                DisplayRow::CommitNode { .. } | DisplayRow::OpLogItem { .. } => 2,
-                _ => 1,
-            };
+        for idx in self.scroll..self.rows.len() {
+            let height = self.row_display_lines(idx);
             if lines_consumed + height > screen_line {
                 return RowIdx::new(idx);
             }

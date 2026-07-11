@@ -469,14 +469,9 @@ impl App {
         }
 
         // Count display lines from the current offset to the last child row.
-        let offset = self.list_state.offset();
         let mut lines = 0;
-        for idx in offset..=last_child {
-            lines += match self.rows.get(idx) {
-                Some(DisplayRow::CommitNode { .. } | DisplayRow::OpLogItem { .. }) => 2,
-                Some(_) => 1,
-                None => break,
-            };
+        for idx in self.scroll..=last_child {
+            lines += self.row_display_lines(idx);
         }
 
         // Only scroll if the last child extends beyond the viewport.
@@ -484,9 +479,13 @@ impl App {
             return;
         }
 
-        // Scroll by the minimum amount to bring the last child into view.
+        // Scroll down the minimum number of rows to bring the last child into view.
         let overflow = lines - viewport;
-        *self.list_state.offset_mut() = offset + overflow;
+        let mut skipped = 0;
+        while skipped < overflow && self.scroll < last_child {
+            skipped += self.row_display_lines(self.scroll);
+            self.scroll += 1;
+        }
     }
 
     /// Toggle fold on the currently selected row.

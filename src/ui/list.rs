@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
 use super::search::*;
 use super::spans::*;
@@ -55,6 +55,19 @@ fn pad_or_truncate(s: &str, width: usize) -> String {
 pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &Config) {
     let theme = &config.theme;
     let tab_spaces: String = " ".repeat(config.tab_width as usize);
+
+    // Only rows in the viewport window are rendered; scrolling is managed
+    // here (not by ratatui's List) so per-frame work stays O(visible rows).
+    let viewport = area.height as usize;
+    app.update_scroll(viewport);
+    let vis_start = app.scroll;
+    let mut lines_used = 0;
+    let mut vis_end = vis_start;
+    while vis_end < app.rows.len() && lines_used < viewport {
+        lines_used += app.row_display_lines(vis_end);
+        vis_end += 1;
+    }
+
     let (target_select_source, target_marks): (Option<&str>, Option<&HashSet<ChangeId>>) =
         match &app.mode {
             AppMode::TargetSelect {
@@ -107,26 +120,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
             None
         };
 
-    let offset = app.list_state.offset();
-    let vis_start = offset.min(app.cursor.raw()).saturating_sub(20);
-    let vis_end = (offset.max(app.cursor.raw()) + area.height as usize + 20).min(app.rows.len());
-
     let max_w = area.width as usize;
-    let mut raw_items: Vec<Vec<Line>> = app
-        .rows
+    let mut raw_items: Vec<Vec<Line>> = app.rows[vis_start..vis_end]
         .iter()
         .enumerate()
-        .map(|(row_idx, row)| -> Vec<Line<'static>> {
-            if row_idx < vis_start || row_idx >= vis_end {
-                return match row {
-                    DisplayRow::CommitNode { .. }
-                    | DisplayRow::OpLogItem { .. }
-                    | DisplayRow::EvoLogItem { .. } => {
-                        vec![Line::default(), Line::default()]
-                    }
-                    _ => vec![Line::default()],
-                };
-            }
+        .map(|(win_idx, row)| -> Vec<Line<'static>> {
+            let row_idx = vis_start + win_idx;
             let row_search = search_ctx.as_ref().map(|ctx| SearchRender {
                 row_state: search_row_state(app, RowIdx::new(row_idx)),
                 ..*ctx
@@ -791,7 +790,10 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
             .fg(theme.warning)
             .add_modifier(Modifier::BOLD);
         for (row_idx, label) in &jump_labels {
-            if let Some(lines) = raw_items.get_mut(row_idx.raw()) {
+            let Some(win_idx) = row_idx.raw().checked_sub(vis_start) else {
+                continue;
+            };
+            if let Some(lines) = raw_items.get_mut(win_idx) {
                 let target_line = if lines.len() > 1 {
                     let first_is_separator = lines[0]
                         .spans
@@ -821,8 +823,6 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     }
 
     let max_content_width: usize = raw_items
-        .get(vis_start..vis_end)
-        .unwrap_or(&[])
         .iter()
         .flat_map(|lines| lines.iter().map(line_width))
         .max()
@@ -836,9 +836,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
 
     let items: Vec<ListItem> = raw_items
         .into_iter()
-        .enumerate()
-        .map(|(i, lines)| {
-            let trimmed: Vec<Line> = if h_skip > 0 && i >= vis_start && i < vis_end {
+        .map(|lines| {
+            let trimmed: Vec<Line> = if h_skip > 0 {
                 lines
                     .into_iter()
                     .map(|line| trim_line(line, h_skip, max_w))
@@ -859,9 +858,11 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     };
     let list = List::new(items)
         .block(Block::default().borders(Borders::NONE))
-        .scroll_padding(2)
         .highlight_style(highlight);
 
-    app.list_state.select(Some(app.cursor.raw()));
-    frame.render_stateful_widget(list, area, &mut app.list_state);
+    // `update_scroll` guarantees the cursor row is inside the window, so the
+    // window-local list never needs to scroll on its own.
+    let mut list_state =
+        ListState::default().with_selected(Some(app.cursor.raw().saturating_sub(vis_start)));
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
