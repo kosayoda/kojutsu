@@ -70,7 +70,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
     let selection_kind = app.selection.kind();
 
     match &mut app.mode {
-        AppMode::Normal | AppMode::Jump { .. } => {}
+        AppMode::Normal | AppMode::Jump(_) => {}
         AppMode::Submenu {
             key,
             label,
@@ -182,16 +182,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
             let multi = matches!(target_mode, TargetMode::Multi { .. });
-            overlay::draw_target_select(
-                frame,
-                area,
-                prompt,
-                source.as_str(),
-                multi,
-                toggles,
-                *flags,
-                theme,
-            );
+            let title = format!(" {prompt} from {source} ");
+            overlay::draw_target_select(frame, area, &title, multi, toggles, *flags, theme);
         }
         AppMode::CommitSelect { pending, .. } => {
             let area = overlay_area(overlay_base, 2);

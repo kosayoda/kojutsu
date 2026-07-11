@@ -190,10 +190,10 @@ fn insert_binding(nodes: &mut Vec<(Node, MutableTrieNode)>, keys: &[Node], targe
 
         // Find or create the prefix node.
         let prefix_node = nodes.iter_mut().find_map(|(k, n)| {
-            if k == &prefix_key {
-                if let MutableTrieNode::Prefix { children, .. } = n {
-                    return Some(children);
-                }
+            if k == &prefix_key
+                && let MutableTrieNode::Prefix { children, .. } = n
+            {
+                return Some(children);
             }
             None
         });

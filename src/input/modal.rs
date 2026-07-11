@@ -94,48 +94,47 @@ pub(super) fn handle_text_input(
             if let AppMode::TextInput {
                 input, on_submit, ..
             } = &mut app.mode
+                && matches!(on_submit, PendingCommand::RawCommand)
             {
-                if matches!(on_submit, PendingCommand::RawCommand) {
-                    let text = input.to_string();
-                    let repo_path = std::path::PathBuf::from(&app.repo_root);
-                    let completions = crate::jj_command::complete(&repo_path, &text);
+                let text = input.to_string();
+                let repo_path = std::path::PathBuf::from(&app.repo_root);
+                let completions = crate::jj_command::complete(&repo_path, &text);
 
-                    if completions.len() == 1 {
-                        // Single match: replace and add trailing space.
-                        let new_text = crate::jj_command::replace_current_token(
-                            &text,
-                            &completions[0].value,
+                if completions.len() == 1 {
+                    // Single match: replace and add trailing space.
+                    let new_text = crate::jj_command::replace_current_token(
+                        &text,
+                        &completions[0].value,
+                        true,
+                    );
+                    *input = tui_input::Input::new(new_text);
+                } else if completions.len() > 1 {
+                    // Multiple matches: extend to common prefix if possible.
+                    let prefix = crate::jj_command::common_prefix(&completions);
+                    let (_, current) = crate::jj_command::split_for_completion(&text);
+                    if prefix.len() > current.len() {
+                        let new_text =
+                            crate::jj_command::replace_current_token(&text, prefix, false);
+                        *input = tui_input::Input::new(new_text);
+                    } else {
+                        // Already at common prefix — show completion list.
+                        let items: Vec<String> = completions
+                            .iter()
+                            .map(|c| {
+                                if c.description.is_empty() {
+                                    c.value.clone()
+                                } else {
+                                    format!("{}  {}", c.value, c.description)
+                                }
+                            })
+                            .collect();
+                        app.mode = AppMode::select_from_list(
+                            "completions",
+                            items,
+                            false,
+                            crate::types::PendingSelection::CommandCompletion { input: text },
                             true,
                         );
-                        *input = tui_input::Input::new(new_text);
-                    } else if completions.len() > 1 {
-                        // Multiple matches: extend to common prefix if possible.
-                        let prefix = crate::jj_command::common_prefix(&completions);
-                        let (_, current) = crate::jj_command::split_for_completion(&text);
-                        if prefix.len() > current.len() {
-                            let new_text =
-                                crate::jj_command::replace_current_token(&text, prefix, false);
-                            *input = tui_input::Input::new(new_text);
-                        } else {
-                            // Already at common prefix — show completion list.
-                            let items: Vec<String> = completions
-                                .iter()
-                                .map(|c| {
-                                    if c.description.is_empty() {
-                                        c.value.clone()
-                                    } else {
-                                        format!("{}  {}", c.value, c.description)
-                                    }
-                                })
-                                .collect();
-                            app.mode = AppMode::select_from_list(
-                                "completions",
-                                items,
-                                false,
-                                crate::types::PendingSelection::CommandCompletion { input: text },
-                                true,
-                            );
-                        }
                     }
                 }
             }
@@ -415,10 +414,9 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
                     ..
                 },
             ) = (id, &mut app.mode)
+                && !targets.remove(&id)
             {
-                if !targets.remove(&id) {
-                    targets.insert(id);
-                }
+                targets.insert(id);
             }
             Action::None
         }
@@ -489,12 +487,11 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
         KeyCode::Char(_) => {
             if let (Some(node), AppMode::TargetSelect { toggles, flags, .. }) =
                 (crate::keymap::key_event_to_node(&key), &mut app.mode)
+                && let Some(toggle) = toggles.iter().find(|t| t.node == node)
             {
-                if let Some(toggle) = toggles.iter().find(|t| t.node == node) {
-                    flags.toggle(toggle.flag);
-                    app.status_message = None;
-                    return Action::None;
-                }
+                flags.toggle(toggle.flag);
+                app.status_message = None;
+                return Action::None;
             }
             handle_select_navigation(app, &key).unwrap_or(Action::None)
         }
@@ -528,7 +525,7 @@ pub(super) fn handle_commit_select(app: &mut App, key: KeyEvent) -> Action {
 }
 
 pub(super) fn handle_jump(app: &mut App, key: KeyEvent) -> Action {
-    let (mut labels, mut input, restore_mode) = app
+    let mut state = app
         .mode
         .take_jump()
         .expect("handle_jump called outside Jump mode");
@@ -538,29 +535,27 @@ pub(super) fn handle_jump(app: &mut App, key: KeyEvent) -> Action {
     };
 
     let KeyCode::Char(c) = key.code else {
-        exit(app, restore_mode);
+        exit(app, state.restore_mode);
         return Action::None;
     };
 
-    input.push(c);
-    labels.retain(|(label, _)| label.starts_with(&input));
+    state.input.push(c);
+    state
+        .labels
+        .retain(|(label, _)| label.starts_with(&state.input));
 
-    if labels.is_empty() {
-        exit(app, restore_mode);
+    if state.labels.is_empty() {
+        exit(app, state.restore_mode);
         return Action::None;
     }
 
     // Exact match → jump and exit.
-    if let Some((_, row_idx)) = labels.iter().find(|(label, _)| *label == input) {
+    if let Some((_, row_idx)) = state.labels.iter().find(|(label, _)| *label == state.input) {
         app.set_cursor(*row_idx);
-        exit(app, restore_mode);
+        exit(app, state.restore_mode);
     } else {
         // Input is a prefix of remaining labels — stay in jump mode.
-        app.mode = AppMode::Jump {
-            labels,
-            input,
-            restore_mode,
-        };
+        app.mode = AppMode::Jump(state);
     }
 
     Action::None

@@ -88,7 +88,7 @@ macro_rules! lua_state {
         $lua.app_data_ref::<RefCell<LuaState>>().unwrap()
     };
 }
-pub(self) use lua_state;
+use lua_state;
 
 #[derive(Default)]
 enum PendingAction {
@@ -544,12 +544,11 @@ impl LuaEngine {
                 Action::None
             }
             PendingAction::JumpTo(change_id) => {
-                if let Some(commit_id) = app.commit_id_for_change(&change_id) {
-                    if let Some(idx) = app.entry_by_commit_id(&commit_id) {
-                        if let Some(row) = app.row_of_commit(idx) {
-                            app.set_cursor(row);
-                        }
-                    }
+                if let Some(commit_id) = app.commit_id_for_change(&change_id)
+                    && let Some(idx) = app.entry_by_commit_id(&commit_id)
+                    && let Some(row) = app.row_of_commit(idx)
+                {
+                    app.set_cursor(row);
                 }
                 Action::None
             }

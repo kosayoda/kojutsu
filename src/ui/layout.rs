@@ -174,20 +174,20 @@ pub(super) fn draw_header(
 
             // Current commit
             crumbs.push(Span::styled(" → ", muted));
-            if let Some(cid) = app.annotate.target.as_ref().map(|t| &t.commit_id) {
-                if let Some(info) = app.annotate.commit_info.get(cid) {
-                    let id = &info.change_id;
-                    let p = id.display[..id.prefix_len.min(id.display.len())].to_string();
-                    let s = id.display[id.prefix_len.min(id.display.len())..].to_string();
-                    crumbs.push(Span::styled(
-                        p,
-                        Style::default()
-                            .fg(theme.change_id)
-                            .add_modifier(Modifier::BOLD),
-                    ));
-                    if !s.is_empty() {
-                        crumbs.push(Span::styled(s, muted));
-                    }
+            if let Some(cid) = app.annotate.target.as_ref().map(|t| &t.commit_id)
+                && let Some(info) = app.annotate.commit_info.get(cid)
+            {
+                let id = &info.change_id;
+                let p = id.display[..id.prefix_len.min(id.display.len())].to_string();
+                let s = id.display[id.prefix_len.min(id.display.len())..].to_string();
+                crumbs.push(Span::styled(
+                    p,
+                    Style::default()
+                        .fg(theme.change_id)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                if !s.is_empty() {
+                    crumbs.push(Span::styled(s, muted));
                 }
             }
             crumbs.push(Span::styled(" (current)", muted));

@@ -215,19 +215,19 @@ impl JjRepo {
         // Try loading user config (~/.config/jj/config.toml or platform equivalent)
         if let Some(config_dir) = dirs::config_dir() {
             let user_config = config_dir.join("jj").join("config.toml");
-            if user_config.exists() {
-                if let Err(e) = config.load_file(ConfigSource::User, &user_config) {
-                    tracing::warn!("failed to load user config {}: {e}", user_config.display());
-                }
+            if user_config.exists()
+                && let Err(e) = config.load_file(ConfigSource::User, &user_config)
+            {
+                tracing::warn!("failed to load user config {}: {e}", user_config.display());
             }
         }
 
         // Try loading repo config (.jj/repo/config.toml)
         let repo_config = workspace_path.join(".jj").join("repo").join("config.toml");
-        if repo_config.exists() {
-            if let Err(e) = config.load_file(ConfigSource::Repo, &repo_config) {
-                tracing::warn!("failed to load repo config {}: {e}", repo_config.display());
-            }
+        if repo_config.exists()
+            && let Err(e) = config.load_file(ConfigSource::Repo, &repo_config)
+        {
+            tracing::warn!("failed to load repo config {}: {e}", repo_config.display());
         }
 
         Ok(config)

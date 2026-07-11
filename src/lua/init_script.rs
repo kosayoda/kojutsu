@@ -235,7 +235,7 @@ impl LuaEngine {
         if let Err(e) = self
             .lua
             .load(&source)
-            .set_name(&init_path.display().to_string())
+            .set_name(init_path.display().to_string())
             .exec()
         {
             self.init_error = Some(format!("{e}"));

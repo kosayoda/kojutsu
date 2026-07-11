@@ -678,27 +678,27 @@ pub fn dispatch_action_after_hooks(
             Action::None
         }
         AppAction::EditFileAtRevision => {
-            if let Some((path, line)) = extract_file_and_line(app) {
-                if let Some(cid) = extract_commit_id(app) {
-                    return Action::EditFileAtRevision {
-                        commit_id: cid,
-                        path,
-                        line,
-                    };
-                }
+            if let Some((path, line)) = extract_file_and_line(app)
+                && let Some(cid) = extract_commit_id(app)
+            {
+                return Action::EditFileAtRevision {
+                    commit_id: cid,
+                    path,
+                    line,
+                };
             }
             app.set_error("select a file to edit");
             Action::None
         }
         AppAction::CheckoutAndEditFile => {
-            if let Some((path, line)) = extract_file_and_line(app) {
-                if let Some(cid) = extract_commit_id(app) {
-                    return Action::CheckoutAndEdit {
-                        commit_id: cid,
-                        path: path.as_str().to_string(),
-                        line,
-                    };
-                }
+            if let Some((path, line)) = extract_file_and_line(app)
+                && let Some(cid) = extract_commit_id(app)
+            {
+                return Action::CheckoutAndEdit {
+                    commit_id: cid,
+                    path: path.as_str().to_string(),
+                    line,
+                };
             }
             app.set_error("select a file to edit");
             Action::None

@@ -573,32 +573,31 @@ impl RepoServiceState {
         // copy may have changed (e.g. after returning from an external command).
         self.repo = None;
 
-        if matches!(load_kind, RevsetLoadKind::Snapshot) {
-            if let Err(err) = JjRepo::snapshot(&self.repo_path) {
-                if matches!(err, SnapshotError::Stale(_)) {
-                    match JjRepo::update_stale(&self.repo_path) {
-                        Ok(()) => {
-                            let _ = self.result_tx.send(RepoResult::WorkspaceUpdatedStale {
-                                message: "workspace was stale — updated".to_string(),
-                            });
-                            let _ = JjRepo::snapshot(&self.repo_path);
-                        }
-                        Err(update_err) => {
-                            self.send_if_current(
-                                epoch,
-                                RepoResult::Revset {
-                                    revset: requested_revset,
-                                    result: Err(RepoError {
-                                        kind: RepoErrorKind::WorkspaceStale,
-                                        message: format!(
-                                            "workspace is stale and update-stale failed:\n{update_err}"
-                                        ),
-                                    }),
-                                },
-                            );
-                            return;
-                        }
-                    }
+        if matches!(load_kind, RevsetLoadKind::Snapshot)
+            && let Err(err) = JjRepo::snapshot(&self.repo_path)
+            && matches!(err, SnapshotError::Stale(_))
+        {
+            match JjRepo::update_stale(&self.repo_path) {
+                Ok(()) => {
+                    let _ = self.result_tx.send(RepoResult::WorkspaceUpdatedStale {
+                        message: "workspace was stale — updated".to_string(),
+                    });
+                    let _ = JjRepo::snapshot(&self.repo_path);
+                }
+                Err(update_err) => {
+                    self.send_if_current(
+                        epoch,
+                        RepoResult::Revset {
+                            revset: requested_revset,
+                            result: Err(RepoError {
+                                kind: RepoErrorKind::WorkspaceStale,
+                                message: format!(
+                                    "workspace is stale and update-stale failed:\n{update_err}"
+                                ),
+                            }),
+                        },
+                    );
+                    return;
                 }
             }
         }

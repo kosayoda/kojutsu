@@ -352,6 +352,5 @@ fn build_ansi_theme(
             item("markup.deleted", 1),
             item("markup.changed", 3),
         ],
-        ..Default::default()
     }
 }

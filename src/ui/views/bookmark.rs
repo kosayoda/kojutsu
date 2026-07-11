@@ -154,23 +154,23 @@ pub(crate) fn render_bookmark_remote_target(
     if !target.is_tracked {
         parts.push("untracked".to_string());
     }
-    if let Some(n) = target.ahead_count {
-        if n > 0 {
-            parts.push(format!(
-                "ahead by {} commit{}",
-                n,
-                if n == 1 { "" } else { "s" }
-            ));
-        }
+    if let Some(n) = target.ahead_count
+        && n > 0
+    {
+        parts.push(format!(
+            "ahead by {} commit{}",
+            n,
+            if n == 1 { "" } else { "s" }
+        ));
     }
-    if let Some(n) = target.behind_count {
-        if n > 0 {
-            parts.push(format!(
-                "behind by {} commit{}",
-                n,
-                if n == 1 { "" } else { "s" }
-            ));
-        }
+    if let Some(n) = target.behind_count
+        && n > 0
+    {
+        parts.push(format!(
+            "behind by {} commit{}",
+            n,
+            if n == 1 { "" } else { "s" }
+        ));
     }
     if !parts.is_empty() {
         spans.push(Span::styled(

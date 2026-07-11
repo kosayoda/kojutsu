@@ -105,9 +105,13 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     });
 
     let (jump_labels, jump_input_len): (HashMap<RowIdx, &str>, usize) = match &app.mode {
-        AppMode::Jump { labels, input, .. } => (
-            labels.iter().map(|(s, idx)| (*idx, s.as_str())).collect(),
-            input.len(),
+        AppMode::Jump(state) => (
+            state
+                .labels
+                .iter()
+                .map(|(s, idx)| (*idx, s.as_str()))
+                .collect(),
+            state.input.len(),
         ),
         _ => (HashMap::new(), 0),
     };
@@ -807,16 +811,16 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                 } else {
                     lines.first_mut()
                 };
-                if let Some(target_line) = target_line {
-                    if let Some(first_span) = target_line.spans.first_mut() {
-                        let remaining = &label[jump_input_len..];
-                        let display = if remaining.len() >= 2 {
-                            remaining.to_string()
-                        } else {
-                            format!("{remaining} ")
-                        };
-                        *first_span = Span::styled(display, label_style);
-                    }
+                if let Some(target_line) = target_line
+                    && let Some(first_span) = target_line.spans.first_mut()
+                {
+                    let remaining = &label[jump_input_len..];
+                    let display = if remaining.len() >= 2 {
+                        remaining.to_string()
+                    } else {
+                        format!("{remaining} ")
+                    };
+                    *first_span = Span::styled(display, label_style);
                 }
             }
         }

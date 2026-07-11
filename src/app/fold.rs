@@ -74,20 +74,21 @@ impl App {
             // incorrectly show the local bookmark's remote tracking info).
             let entry = &self.views.bookmark_entries[idx];
             let is_remote_only = entry.kind.remote().is_some();
-            if !is_remote_only && !self.views.folded_bookmarks.contains(&entry.name) {
-                if let Some(details) = self.views.bookmark_details.get(&entry.name) {
-                    for ti in 0..details.conflict_targets.len() {
-                        self.rows.push(DisplayRow::BookmarkConflictTarget {
-                            bookmark_idx: bi,
-                            target_idx: BookmarkDetailIdx::new(ti),
-                        });
-                    }
-                    for ti in 0..details.remote_targets.len() {
-                        self.rows.push(DisplayRow::BookmarkRemoteTarget {
-                            bookmark_idx: bi,
-                            target_idx: BookmarkDetailIdx::new(ti),
-                        });
-                    }
+            if !is_remote_only
+                && !self.views.folded_bookmarks.contains(&entry.name)
+                && let Some(details) = self.views.bookmark_details.get(&entry.name)
+            {
+                for ti in 0..details.conflict_targets.len() {
+                    self.rows.push(DisplayRow::BookmarkConflictTarget {
+                        bookmark_idx: bi,
+                        target_idx: BookmarkDetailIdx::new(ti),
+                    });
+                }
+                for ti in 0..details.remote_targets.len() {
+                    self.rows.push(DisplayRow::BookmarkRemoteTarget {
+                        bookmark_idx: bi,
+                        target_idx: BookmarkDetailIdx::new(ti),
+                    });
                 }
             }
         }
@@ -111,22 +112,22 @@ impl App {
 
             // Emit remote target child rows unless this tag is folded.
             let name = &self.views.tag_entries[idx].name;
-            if !self.views.folded_tags.contains(name) {
-                if let Some(details) = self.views.tag_details.get(name) {
-                    let local_commit = details
-                        .local_target
-                        .as_ref()
-                        .map(|lt| &lt.summary.commit_id);
-                    for ri in 0..details.remote_targets.len() {
-                        let rt = &details.remote_targets[ri];
-                        if local_commit == Some(&rt.summary.commit_id) {
-                            continue;
-                        }
-                        self.rows.push(DisplayRow::TagRemoteTarget {
-                            tag_idx: ti,
-                            target_idx: TagDetailIdx::new(ri),
-                        });
+            if !self.views.folded_tags.contains(name)
+                && let Some(details) = self.views.tag_details.get(name)
+            {
+                let local_commit = details
+                    .local_target
+                    .as_ref()
+                    .map(|lt| &lt.summary.commit_id);
+                for ri in 0..details.remote_targets.len() {
+                    let rt = &details.remote_targets[ri];
+                    if local_commit == Some(&rt.summary.commit_id) {
+                        continue;
                     }
+                    self.rows.push(DisplayRow::TagRemoteTarget {
+                        tag_idx: ti,
+                        target_idx: TagDetailIdx::new(ri),
+                    });
                 }
             }
         }
@@ -173,26 +174,25 @@ impl App {
         self.rows.clear();
         for idx in 0..self.op_log.entries.len() {
             // Apply workspace filter (operations with no workspace always pass).
-            if !self.op_log.workspace_filter.is_empty() {
-                if let Some(ws) = &self.op_log.entries[idx].workspace {
-                    if !self.op_log.workspace_filter.contains(ws) {
-                        continue;
-                    }
-                }
+            if !self.op_log.workspace_filter.is_empty()
+                && let Some(ws) = &self.op_log.entries[idx].workspace
+                && !self.op_log.workspace_filter.contains(ws)
+            {
+                continue;
             }
             let oi = OpLogIdx::new(idx);
             self.rows.push(DisplayRow::OpLogItem { op_log_idx: oi });
 
             // Emit detail lines if this op is unfolded and data is loaded.
             let op_id = &self.op_log.entries[idx].id;
-            if self.op_log.unfolded.contains(op_id) {
-                if let Some(Loadable::Loaded(lines)) = self.op_log.details.get(op_id) {
-                    for li in 0..lines.len() {
-                        self.rows.push(DisplayRow::OpLogDetailLine {
-                            op_log_idx: oi,
-                            line_idx: OpLogDetailIdx::new(li),
-                        });
-                    }
+            if self.op_log.unfolded.contains(op_id)
+                && let Some(Loadable::Loaded(lines)) = self.op_log.details.get(op_id)
+            {
+                for li in 0..lines.len() {
+                    self.rows.push(DisplayRow::OpLogDetailLine {
+                        op_log_idx: oi,
+                        line_idx: OpLogDetailIdx::new(li),
+                    });
                 }
             }
 
@@ -228,32 +228,31 @@ impl App {
 
             // Emit file change rows if this entry is unfolded.
             let commit_id = &self.evolog.entries[idx].commit_id;
-            if self.evolog.unfolded.contains(commit_id) {
-                if let Some(Loadable::Loaded(files)) = self.evolog.files.get(commit_id) {
-                    for fi in 0..files.len() {
-                        let file_idx = FileIdx::new(fi);
-                        self.rows.push(DisplayRow::EvoLogFileChange {
-                            evolog_idx: ei,
-                            file_idx,
-                        });
-                        // Emit diff lines if this file is unfolded.
-                        let key = (commit_id.clone(), files[fi].path.clone());
-                        if self.evolog.unfolded_files.contains(&key) {
-                            if let Some(lines) = self
-                                .evolog
-                                .file_diffs
-                                .get(&key)
-                                .and_then(|l| l.loaded())
-                                .map(|r| r.lines(self.diff_format))
-                            {
-                                for li in 0..lines.len() {
-                                    self.rows.push(DisplayRow::EvoLogFileDiffLine {
-                                        evolog_idx: ei,
-                                        file_idx,
-                                        line_idx: DiffLineIdx::new(li),
-                                    });
-                                }
-                            }
+            if self.evolog.unfolded.contains(commit_id)
+                && let Some(Loadable::Loaded(files)) = self.evolog.files.get(commit_id)
+            {
+                for (fi, file) in files.iter().enumerate() {
+                    let file_idx = FileIdx::new(fi);
+                    self.rows.push(DisplayRow::EvoLogFileChange {
+                        evolog_idx: ei,
+                        file_idx,
+                    });
+                    // Emit diff lines if this file is unfolded.
+                    let key = (commit_id.clone(), file.path.clone());
+                    if self.evolog.unfolded_files.contains(&key)
+                        && let Some(lines) = self
+                            .evolog
+                            .file_diffs
+                            .get(&key)
+                            .and_then(|l| l.loaded())
+                            .map(|r| r.lines(self.diff_format))
+                    {
+                        for li in 0..lines.len() {
+                            self.rows.push(DisplayRow::EvoLogFileDiffLine {
+                                evolog_idx: ei,
+                                file_idx,
+                                line_idx: DiffLineIdx::new(li),
+                            });
                         }
                     }
                 }
@@ -645,10 +644,10 @@ impl App {
                 if let Some(file) = self
                     .files_for_entry(entry_idx)
                     .and_then(|f| f.get(file_idx.raw()))
+                    && cid == vr.change_id
+                    && file.path == vr.path
                 {
-                    if cid == vr.change_id && file.path == vr.path {
-                        self.visual.persistent = None;
-                    }
+                    self.visual.persistent = None;
                 }
             }
             self.visual.mode = None;
@@ -672,12 +671,10 @@ impl App {
                 }
 
                 // Also request conflict hunks if the file is conflicted.
-                if has_conflict {
-                    if self.nodes[entry_idx].conflict_hunks_should_request(file_idx) {
-                        self.nodes[entry_idx].set_conflict_hunks(file_idx, Loadable::Loading);
-                        self.pending_repo_requests
-                            .push(RepoRequest::load_conflict_hunks(commit_id, path));
-                    }
+                if has_conflict && self.nodes[entry_idx].conflict_hunks_should_request(file_idx) {
+                    self.nodes[entry_idx].set_conflict_hunks(file_idx, Loadable::Loading);
+                    self.pending_repo_requests
+                        .push(RepoRequest::load_conflict_hunks(commit_id, path));
                 }
             }
             self.unfolded_files.insert(fold_key);
@@ -703,17 +700,16 @@ impl App {
                 .files
                 .get(&commit_id)
                 .is_none_or(Loadable::should_request)
+                && let Some(pred_id) = entry.predecessor_ids.first()
             {
-                if let Some(pred_id) = entry.predecessor_ids.first() {
-                    self.evolog
-                        .files
-                        .insert(commit_id.clone(), Loadable::Loading);
-                    self.pending_repo_requests
-                        .push(RepoRequest::load_evolog_details(
-                            pred_id.clone(),
-                            commit_id.clone(),
-                        ));
-                }
+                self.evolog
+                    .files
+                    .insert(commit_id.clone(), Loadable::Loading);
+                self.pending_repo_requests
+                    .push(RepoRequest::load_evolog_details(
+                        pred_id.clone(),
+                        commit_id.clone(),
+                    ));
             }
             self.evolog.unfolded.insert(commit_id.clone());
         }
@@ -746,18 +742,17 @@ impl App {
                 .file_diffs
                 .get(&key)
                 .is_none_or(Loadable::should_request)
+                && let Some(pred_id) = entry.predecessor_ids.first()
             {
-                if let Some(pred_id) = entry.predecessor_ids.first() {
-                    self.evolog
-                        .file_diffs
-                        .insert(key.clone(), Loadable::Loading);
-                    self.pending_repo_requests
-                        .push(RepoRequest::load_evolog_file_diff(
-                            pred_id.clone(),
-                            commit_id,
-                            path,
-                        ));
-                }
+                self.evolog
+                    .file_diffs
+                    .insert(key.clone(), Loadable::Loading);
+                self.pending_repo_requests
+                    .push(RepoRequest::load_evolog_file_diff(
+                        pred_id.clone(),
+                        commit_id,
+                        path,
+                    ));
             }
             self.evolog.unfolded_files.insert(key.clone());
         }
@@ -773,11 +768,11 @@ impl App {
         self.rows.push(DisplayRow::InterdiffHeader);
 
         if let Loadable::Loaded(files) = &self.interdiff.files {
-            for fi in 0..files.len() {
+            for (fi, file) in files.iter().enumerate() {
                 let file_idx = FileIdx::new(fi);
                 self.rows.push(DisplayRow::InterdiffFileChange { file_idx });
 
-                let path = &files[fi].path;
+                let path = &file.path;
                 if self.interdiff.unfolded_files.contains(path) {
                     let format = self.diff_format;
                     if let Some(lines) = self
@@ -806,35 +801,34 @@ impl App {
         self.rows.clear();
 
         if let Loadable::Loaded(lines) = &self.annotate.lines {
-            for li in 0..lines.len() {
+            for (li, line) in lines.iter().enumerate() {
                 let line_idx = crate::idx::AnnotateLineIdx::new(li);
                 self.rows.push(DisplayRow::AnnotateLine { line_idx });
 
-                if self.annotate.unfolded_lines.contains(&line_idx) {
-                    if let Some(info) = self.annotate.commit_info.get(&lines[li].commit_id) {
-                        for di in 0..info.detail_row_count() {
-                            self.rows.push(DisplayRow::AnnotateDetail {
-                                line_idx,
-                                detail_idx: crate::idx::AnnotateDetailIdx::new(di),
-                            });
-                        }
+                if self.annotate.unfolded_lines.contains(&line_idx)
+                    && let Some(info) = self.annotate.commit_info.get(&line.commit_id)
+                {
+                    for di in 0..info.detail_row_count() {
+                        self.rows.push(DisplayRow::AnnotateDetail {
+                            line_idx,
+                            detail_idx: crate::idx::AnnotateDetailIdx::new(di),
+                        });
                     }
                 }
             }
         }
 
         // Jump to target line after time-travel reload.
-        if let Some(lines) = self.annotate.lines.loaded() {
-            if let Some(target) = self.annotate.target_line.take() {
-                if let Some(row_idx) = self.rows.iter().position(|r| {
-                    matches!(r, DisplayRow::AnnotateLine { line_idx }
+        if let Some(lines) = self.annotate.lines.loaded()
+            && let Some(target) = self.annotate.target_line.take()
+            && let Some(row_idx) = self.rows.iter().position(|r| {
+                matches!(r, DisplayRow::AnnotateLine { line_idx }
                         if lines.get(line_idx.raw())
                             .is_some_and(|l| l.line_number == target))
-                }) {
-                    self.cursor = crate::idx::RowIdx::new(row_idx);
-                    return;
-                }
-            }
+            })
+        {
+            self.cursor = crate::idx::RowIdx::new(row_idx);
+            return;
         }
 
         self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
@@ -858,19 +852,18 @@ impl App {
                 .file_diffs
                 .get(&path)
                 .is_none_or(Loadable::should_request)
+                && let Some(target) = &self.interdiff.target
             {
-                if let Some(target) = &self.interdiff.target {
-                    let (from, to) = (&target.from_commit_id, &target.to_commit_id);
-                    self.interdiff
-                        .file_diffs
-                        .insert(path.clone(), Loadable::Loading);
-                    self.pending_repo_requests
-                        .push(RepoRequest::load_interdiff_file_diff(
-                            from.clone(),
-                            to.clone(),
-                            path.clone(),
-                        ));
-                }
+                let (from, to) = (&target.from_commit_id, &target.to_commit_id);
+                self.interdiff
+                    .file_diffs
+                    .insert(path.clone(), Loadable::Loading);
+                self.pending_repo_requests
+                    .push(RepoRequest::load_interdiff_file_diff(
+                        from.clone(),
+                        to.clone(),
+                        path.clone(),
+                    ));
             }
             self.interdiff.unfolded_files.insert(path.clone());
         }

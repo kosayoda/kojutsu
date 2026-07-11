@@ -19,6 +19,12 @@ pub struct ActionRegistry {
     lua_meta: Vec<ActionMeta>,
 }
 
+impl Default for ActionRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ActionRegistry {
     pub fn new() -> Self {
         let mut reg = Self {

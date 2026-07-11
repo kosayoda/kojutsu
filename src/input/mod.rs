@@ -148,7 +148,7 @@ pub fn handle_key(
         AppMode::CommitSelect { .. } => modal::handle_commit_select(app, key),
         AppMode::FollowUp { .. } => modal::handle_follow_up(app, key),
         AppMode::SelectFromList(_) => list::handle_select_from_list(app, lua, key),
-        AppMode::Jump { .. } => modal::handle_jump(app, key),
+        AppMode::Jump(_) => modal::handle_jump(app, key),
         AppMode::CommandRunning(state) => {
             use keymap_parser::Key;
             let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;

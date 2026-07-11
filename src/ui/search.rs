@@ -29,10 +29,10 @@ pub(super) fn search_row_state(app: &App, row_idx: RowIdx) -> SearchRowState {
     if !app.is_match(row_idx) {
         return SearchRowState::None;
     }
-    if let Some(current) = search.current_match {
-        if search.matches.get(current).copied() == Some(row_idx) {
-            return SearchRowState::Current;
-        }
+    if let Some(current) = search.current_match
+        && search.matches.get(current).copied() == Some(row_idx)
+    {
+        return SearchRowState::Current;
     }
     SearchRowState::Match
 }
@@ -79,11 +79,12 @@ pub(super) fn push_searchable(
     style: Style,
     search: Option<&SearchRender<'_>>,
 ) {
-    if let Some(s) = search {
-        if s.scopes.contains(scope) && contains_query(text, s.query_lower, s.case_sensitive) {
-            push_highlighted(out, text, s.query_lower, style, s.case_sensitive);
-            return;
-        }
+    if let Some(s) = search
+        && s.scopes.contains(scope)
+        && contains_query(text, s.query_lower, s.case_sensitive)
+    {
+        push_highlighted(out, text, s.query_lower, style, s.case_sensitive);
+        return;
     }
     out.push(Span::styled(text.to_string(), style));
 }

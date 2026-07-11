@@ -767,10 +767,9 @@ impl App {
         if let crate::dag::ConflictHunkKind::Conflict {
             sides, selected, ..
         } = hunk
+            && side < sides.len()
         {
-            if side < sides.len() {
-                *selected = Some(side);
-            }
+            *selected = Some(side);
         }
 
         // Check if all conflict hunks are now resolved.
@@ -793,12 +792,12 @@ impl App {
                     crate::dag::ConflictHunkKind::Conflict {
                         sides, selected, ..
                     } => {
-                        if let Some(si) = selected {
-                            if let Some(side_lines) = sides.get(*si) {
-                                for line in side_lines {
-                                    content.push_str(line);
-                                    content.push('\n');
-                                }
+                        if let Some(si) = selected
+                            && let Some(side_lines) = sides.get(*si)
+                        {
+                            for line in side_lines {
+                                content.push_str(line);
+                                content.push('\n');
                             }
                         }
                     }
@@ -991,7 +990,7 @@ impl App {
         let (offset, end) = self.visible_row_range();
         let cursor = self.cursor.raw();
         let visible = |idx: RowIdx| idx.raw() >= offset && idx.raw() < end;
-        let dist = |i: usize| if i >= cursor { i - cursor } else { cursor - i };
+        let dist = |i: usize| i.abs_diff(cursor);
 
         let nav_candidates: &[(&str, Option<RowIdx>)] = &[
             ("j", self.peek_down()),
@@ -1011,13 +1010,15 @@ impl App {
         let mut used_chars: HashSet<char> = HashSet::new();
 
         for &(key, target) in nav_candidates {
-            if let Some(idx) = target {
-                if visible(idx) && idx != self.cursor && !nav_rows.contains(&idx) {
-                    labels.push((key.to_string(), idx));
-                    nav_rows.insert(idx);
-                    for c in key.chars() {
-                        used_chars.insert(c);
-                    }
+            if let Some(idx) = target
+                && visible(idx)
+                && idx != self.cursor
+                && !nav_rows.contains(&idx)
+            {
+                labels.push((key.to_string(), idx));
+                nav_rows.insert(idx);
+                for c in key.chars() {
+                    used_chars.insert(c);
                 }
             }
         }
@@ -1058,7 +1059,7 @@ impl App {
             let n_groups = if overflow == 0 {
                 0
             } else {
-                (overflow + pool.len() - 1) / pool.len()
+                overflow.div_ceil(pool.len())
             };
             let n_single = pool.len().saturating_sub(n_groups);
 
@@ -1092,11 +1093,11 @@ impl App {
                 }
                 _ => None,
             };
-            self.mode = AppMode::Jump {
+            self.mode = AppMode::Jump(JumpState {
                 labels,
                 input: String::new(),
                 restore_mode,
-            };
+            });
         }
     }
 
@@ -1171,10 +1172,10 @@ impl App {
             .active_preset
             .filter(|&i| i < self.revset.presets.len());
         for (i, &bits) in state.view_search_scopes.iter().enumerate() {
-            if let Some(scopes) = SearchScopes::from_bits(bits) {
-                if !scopes.is_empty() {
-                    self.view_states[i].search_scopes = scopes;
-                }
+            if let Some(scopes) = SearchScopes::from_bits(bits)
+                && !scopes.is_empty()
+            {
+                self.view_states[i].search_scopes = scopes;
             }
         }
     }

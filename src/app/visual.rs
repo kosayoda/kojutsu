@@ -10,20 +10,19 @@ impl App {
             anchor,
             entry_idx: ve,
         }) = &self.visual.mode
+            && entry_idx == *ve
         {
-            if entry_idx == *ve {
-                let lo = (*anchor).min(self.cursor);
-                let hi = (*anchor).max(self.cursor);
-                for i in lo.raw()..=hi.raw() {
-                    if let Some(DisplayRow::FileChange {
-                        entry_idx: ei,
-                        file_idx: fi,
-                    }) = self.rows.get(i)
-                    {
-                        if *ei == entry_idx && *fi == file_idx {
-                            return true;
-                        }
-                    }
+            let lo = (*anchor).min(self.cursor);
+            let hi = (*anchor).max(self.cursor);
+            for i in lo.raw()..=hi.raw() {
+                if let Some(DisplayRow::FileChange {
+                    entry_idx: ei,
+                    file_idx: fi,
+                }) = self.rows.get(i)
+                    && *ei == entry_idx
+                    && *fi == file_idx
+                {
+                    return true;
                 }
             }
         }
@@ -32,10 +31,11 @@ impl App {
             lo,
             hi,
         }) = &self.visual.persistent
+            && entry_idx == *ve
+            && file_idx >= *lo
+            && file_idx <= *hi
         {
-            if entry_idx == *ve && file_idx >= *lo && file_idx <= *hi {
-                return true;
-            }
+            return true;
         }
         false
     }
@@ -223,16 +223,14 @@ impl App {
         // Check persistent line range.
         if let Some(PersistentVisualRange::Lines(vr)) = &self.visual.persistent {
             let cid = self.nodes[entry_idx].commit.unique_change_id();
-            if let Some(files) = self.files_for_entry(entry_idx) {
-                if let Some(file) = files.get(file_idx.raw()) {
-                    if cid == vr.change_id
-                        && file.path == vr.path
-                        && line_idx >= vr.start_line
-                        && line_idx <= vr.end_line
-                    {
-                        return true;
-                    }
-                }
+            if let Some(files) = self.files_for_entry(entry_idx)
+                && let Some(file) = files.get(file_idx.raw())
+                && cid == vr.change_id
+                && file.path == vr.path
+                && line_idx >= vr.start_line
+                && line_idx <= vr.end_line
+            {
+                return true;
             }
         }
 
@@ -241,15 +239,15 @@ impl App {
 
     /// Check if a commit is in the visual range (active or persistent).
     pub fn is_in_visual_commit_range(&self, entry_idx: EntryIdx) -> bool {
-        if let Some(VisualMode::Commits { path, .. }) = &self.visual.mode {
-            if path.contains(&entry_idx) {
-                return true;
-            }
+        if let Some(VisualMode::Commits { path, .. }) = &self.visual.mode
+            && path.contains(&entry_idx)
+        {
+            return true;
         }
-        if let Some(PersistentVisualRange::Commits(range)) = &self.visual.persistent {
-            if range.contains(&entry_idx) {
-                return true;
-            }
+        if let Some(PersistentVisualRange::Commits(range)) = &self.visual.persistent
+            && range.contains(&entry_idx)
+        {
+            return true;
         }
         false
     }
@@ -589,11 +587,10 @@ impl App {
                 entry_idx: ei,
                 file_idx,
             }) = self.rows.get(i)
+                && *ei == entry_idx
             {
-                if *ei == entry_idx {
-                    min_fi = Some(min_fi.map_or(*file_idx, |m: FileIdx| m.min(*file_idx)));
-                    max_fi = Some(max_fi.map_or(*file_idx, |m: FileIdx| m.max(*file_idx)));
-                }
+                min_fi = Some(min_fi.map_or(*file_idx, |m: FileIdx| m.min(*file_idx)));
+                max_fi = Some(max_fi.map_or(*file_idx, |m: FileIdx| m.max(*file_idx)));
             }
         }
         match (min_fi, max_fi) {

@@ -377,8 +377,7 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App, theme:
 pub(super) fn draw_target_select(
     frame: &mut Frame,
     area: Rect,
-    prompt: &str,
-    source: &str,
+    title: &str,
     multi: bool,
     toggles: &[crate::app::SubmenuToggle],
     flags: crate::keymap::CommandFlags,
@@ -401,11 +400,10 @@ pub(super) fn draw_target_select(
         ));
     }
 
-    let title = format!(" {prompt} from {source} ");
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.muted))
-        .title(title)
+        .title(title.to_string())
         .title_style(
             Style::default()
                 .fg(theme.accent)

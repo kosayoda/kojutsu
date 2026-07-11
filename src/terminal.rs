@@ -115,14 +115,9 @@ pub fn spawn_terminal_events<T: Send + 'static>(
                         // Read the first event, then drain any events
                         // crossterm buffered internally since mio won't
                         // re-trigger for bytes already consumed from stdin.
-                        loop {
-                            match event::read() {
-                                Ok(ev) => {
-                                    if event_tx.send(wrap(ev)).is_err() {
-                                        return;
-                                    }
-                                }
-                                Err(_) => break,
+                        while let Ok(ev) = event::read() {
+                            if event_tx.send(wrap(ev)).is_err() {
+                                return;
                             }
                             if !event::poll(std::time::Duration::ZERO).unwrap_or(false) {
                                 break;

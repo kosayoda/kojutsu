@@ -26,7 +26,7 @@ fn recompute_list_filter(items: &[String], filter: &str) -> (Vec<usize>, Vec<Vec
                 .map(|(score, indices)| (i, score, indices))
         })
         .collect();
-    scored.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    scored.sort_unstable_by_key(|&(_, score, _)| std::cmp::Reverse(score));
     let indices = scored.iter().map(|(i, _, _)| *i).collect();
     let positions = scored.into_iter().map(|(_, _, pos)| pos).collect();
     (indices, positions)
@@ -175,18 +175,17 @@ pub(super) fn handle_select_from_list(
             Action::None
         }
         Some(Key::Space) => {
-            if let AppMode::SelectFromList(s) = &mut app.mode {
-                if s.multi {
-                    if let Some(&orig_idx) = s.filtered_indices.get(s.cursor) {
-                        if s.custom_entry.is_some() && orig_idx == 0 {
-                            return Action::None;
-                        }
-                        if s.marked.contains(&orig_idx) {
-                            s.marked.remove(&orig_idx);
-                        } else {
-                            s.marked.insert(orig_idx);
-                        }
-                    }
+            if let AppMode::SelectFromList(s) = &mut app.mode
+                && s.multi
+                && let Some(&orig_idx) = s.filtered_indices.get(s.cursor)
+            {
+                if s.custom_entry.is_some() && orig_idx == 0 {
+                    return Action::None;
+                }
+                if s.marked.contains(&orig_idx) {
+                    s.marked.remove(&orig_idx);
+                } else {
+                    s.marked.insert(orig_idx);
                 }
             }
             Action::None
@@ -219,11 +218,11 @@ pub(super) fn handle_select_from_list(
         }
         Some(Key::Esc) => {
             // If filtering, just exit filter focus — keep the filter text.
-            if let AppMode::SelectFromList(s) = &mut app.mode {
-                if s.filtering {
-                    s.filtering = false;
-                    return Action::None;
-                }
+            if let AppMode::SelectFromList(s) = &mut app.mode
+                && s.filtering
+            {
+                s.filtering = false;
+                return Action::None;
             }
             app.mode = AppMode::Normal;
             if lua.has_suspended_thread() {

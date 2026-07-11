@@ -114,11 +114,11 @@ pub fn help_entries(
 
     let mut groups: Vec<(HelpGroup, Vec<HelpEntry>)> = Vec::new();
     for entry in entries {
-        if let Some(last) = groups.last_mut() {
-            if last.0 == entry.group {
-                last.1.push(entry);
-                continue;
-            }
+        if let Some(last) = groups.last_mut()
+            && last.0 == entry.group
+        {
+            last.1.push(entry);
+            continue;
         }
         let group = entry.group;
         groups.push((group, vec![entry]));
@@ -156,14 +156,14 @@ pub fn select_mode_help_entries() -> Vec<(HelpGroup, Vec<HelpEntry>)> {
         h("ctrl-n", "next match", N),
         h("ctrl-p", "prev match", N),
     ];
-    nav.sort_unstable_by(|a, b| sort_key(&a.keys).cmp(&sort_key(&b.keys)));
+    nav.sort_unstable_by_key(|a| sort_key(&a.keys));
 
     let mut general = vec![
         h("Enter", "confirm selection", G),
         h("Esc", "cancel", G),
         h("?", "help", G),
     ];
-    general.sort_unstable_by(|a, b| sort_key(&a.keys).cmp(&sort_key(&b.keys)));
+    general.sort_unstable_by_key(|a| sort_key(&a.keys));
 
     vec![(N, nav), (G, general)]
 }

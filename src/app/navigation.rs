@@ -97,14 +97,11 @@ impl App {
             DisplayRow::CommitNode { .. }
             | DisplayRow::OpLogItem { .. }
             | DisplayRow::EvoLogItem { .. } => 2,
-            DisplayRow::AnnotateLine { line_idx } => {
+            DisplayRow::AnnotateLine { line_idx }
                 if self.annotate.show_commit_separators
-                    && self.annotate_line_is_boundary(line_idx.raw())
-                {
-                    2
-                } else {
-                    1
-                }
+                    && self.annotate_line_is_boundary(line_idx.raw()) =>
+            {
+                2
             }
             _ => 1,
         }
@@ -285,10 +282,10 @@ impl App {
 
     /// Context-aware section jump target upward.
     pub fn peek_up_section(&self) -> Option<RowIdx> {
-        if let Some(DisplayRow::CommitNode { entry_idx }) = self.rows.get(self.cursor.raw()) {
-            if let Some(row) = self.child_commit_row(*entry_idx) {
-                return Some(row);
-            }
+        if let Some(DisplayRow::CommitNode { entry_idx }) = self.rows.get(self.cursor.raw())
+            && let Some(row) = self.child_commit_row(*entry_idx)
+        {
+            return Some(row);
         }
 
         for j in (0..self.cursor.raw()).rev() {
@@ -301,10 +298,10 @@ impl App {
 
     /// Context-aware section jump target downward.
     pub fn peek_down_section(&self) -> Option<RowIdx> {
-        if let Some(DisplayRow::CommitNode { entry_idx }) = self.rows.get(self.cursor.raw()) {
-            if let Some(row) = self.parent_commit_row(*entry_idx) {
-                return Some(row);
-            }
+        if let Some(DisplayRow::CommitNode { entry_idx }) = self.rows.get(self.cursor.raw())
+            && let Some(row) = self.parent_commit_row(*entry_idx)
+        {
+            return Some(row);
         }
 
         for j in (self.cursor.raw() + 1)..self.rows.len() {
@@ -410,25 +407,25 @@ impl App {
         // If in the bookmark view, find the entry by name.
         if self.active_view == super::ActiveView::Bookmarks {
             for (idx, entry) in self.views.bookmark_entries.iter().enumerate() {
-                if entry.name == *name {
-                    if let Some(pos) = self.rows.iter().position(|r| {
+                if entry.name == *name
+                    && let Some(pos) = self.rows.iter().position(|r| {
                         *r == crate::types::DisplayRow::BookmarkItem {
                             bookmark_idx: crate::idx::BookmarkIdx::new(idx),
                         }
-                    }) {
-                        self.cursor = RowIdx::new(pos);
-                        return;
-                    }
+                    })
+                {
+                    self.cursor = RowIdx::new(pos);
+                    return;
                 }
             }
         }
         // In DAG view, find the commit with this bookmark.
         for (idx, node) in self.nodes.iter_enumerated() {
-            if node.commit.bookmarks.iter().any(|b| b.name == *name) {
-                if let Some(row) = self.row_of_commit(idx) {
-                    self.cursor = row;
-                    return;
-                }
+            if node.commit.bookmarks.iter().any(|b| b.name == *name)
+                && let Some(row) = self.row_of_commit(idx)
+            {
+                self.cursor = row;
+                return;
             }
         }
         self.set_status("bookmark not in current revset");
@@ -436,13 +433,12 @@ impl App {
 
     pub fn jump_to_change_id(&mut self, prefix: &str) {
         for (idx, node) in self.nodes.iter_enumerated() {
-            if node.commit.change_id.display.starts_with(prefix)
-                || node.commit.graph_id.as_str().starts_with(prefix)
+            if (node.commit.change_id.display.starts_with(prefix)
+                || node.commit.graph_id.as_str().starts_with(prefix))
+                && let Some(row) = self.row_of_commit(idx)
             {
-                if let Some(row) = self.row_of_commit(idx) {
-                    self.cursor = row;
-                    return;
-                }
+                self.cursor = row;
+                return;
             }
         }
     }

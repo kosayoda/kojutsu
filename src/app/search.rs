@@ -183,10 +183,8 @@ impl App {
         if let Some(search) = &mut self.search {
             search.matches = matches;
             search.current_match = current_match;
-            if move_cursor {
-                if let Some(idx) = current_match {
-                    self.cursor = search.matches[idx];
-                }
+            if move_cursor && let Some(idx) = current_match {
+                self.cursor = search.matches[idx];
             }
         }
     }

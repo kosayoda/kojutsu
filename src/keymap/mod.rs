@@ -555,12 +555,11 @@ pub fn key_event_to_node(key: &KeyEvent) -> Option<Node> {
 }
 
 pub fn display_key(node: &Node) -> String {
-    if node.modifiers == Modifier::Shift as u8 {
-        if let Key::Char(c) = node.key {
-            if c.is_ascii_lowercase() {
-                return c.to_ascii_uppercase().to_string();
-            }
-        }
+    if node.modifiers == Modifier::Shift as u8
+        && let Key::Char(c) = node.key
+        && c.is_ascii_lowercase()
+    {
+        return c.to_ascii_uppercase().to_string();
     }
     format!("{node}")
 }

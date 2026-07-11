@@ -25,6 +25,12 @@ pub struct VisualState {
     pub persistent: Option<PersistentVisualRange>,
 }
 
+impl Default for VisualState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VisualState {
     pub fn new() -> Self {
         Self {
@@ -56,6 +62,12 @@ pub struct ViewData {
     pub remote_bookmarks: Vec<crate::dag::RemoteBookmarkRef>,
     /// Available git remote names.
     pub remotes: Vec<RemoteName>,
+}
+
+impl Default for ViewData {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ViewData {
@@ -102,6 +114,12 @@ pub struct OpLogState {
     pub details: HashMap<OperationId, Loadable<Vec<OpDetailLine>>>,
 }
 
+impl Default for OpLogState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpLogState {
     pub fn new() -> Self {
         Self {
@@ -125,6 +143,12 @@ pub struct EvoLogState {
     pub files: HashMap<CommitId, Loadable<Vec<crate::dag::FileChange>>>,
     pub unfolded_files: HashSet<(CommitId, RepoPath)>,
     pub file_diffs: HashMap<(CommitId, RepoPath), Loadable<crate::dag::DiffResult>>,
+}
+
+impl Default for EvoLogState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EvoLogState {
@@ -156,6 +180,12 @@ pub struct CommandLogState {
     pub unfolded: HashSet<crate::idx::CommandLogIdx>,
 }
 
+impl Default for CommandLogState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CommandLogState {
     pub fn new() -> Self {
         Self {
@@ -179,6 +209,12 @@ pub struct InterdiffState {
     pub files: Loadable<Vec<crate::dag::FileChange>>,
     pub unfolded_files: HashSet<RepoPath>,
     pub file_diffs: HashMap<RepoPath, Loadable<crate::dag::DiffResult>>,
+}
+
+impl Default for InterdiffState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl InterdiffState {
@@ -225,6 +261,12 @@ pub struct AnnotateState {
     pub history: Vec<(CommitId, usize)>,
     /// Show separator lines between groups of lines from different commits.
     pub show_commit_separators: bool,
+}
+
+impl Default for AnnotateState {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AnnotateState {
@@ -802,6 +844,16 @@ impl SelectFromListState {
 }
 
 /// The current interaction mode.
+/// State for jump mode: typed-label navigation to a visible row.
+pub struct JumpState {
+    /// (label_string, row_index) for each visible jumpable row.
+    pub labels: Vec<(String, RowIdx)>,
+    /// Characters typed so far (for multi-char label matching).
+    pub input: String,
+    /// Mode to restore on exit (e.g. TargetSelect). None → Normal.
+    pub restore_mode: Option<Box<AppMode>>,
+}
+
 pub enum AppMode {
     /// Normal browsing.
     Normal,
@@ -848,14 +900,7 @@ pub enum AppMode {
         options: Vec<FollowUpOption>,
     },
     /// Jump mode: labels visible on jumpable rows, type label chars to jump.
-    Jump {
-        /// (label_string, row_index) for each visible jumpable row.
-        labels: Vec<(String, RowIdx)>,
-        /// Characters typed so far (for multi-char label matching).
-        input: String,
-        /// Mode to restore on exit (e.g. TargetSelect). None → Normal.
-        restore_mode: Option<Box<AppMode>>,
-    },
+    Jump(JumpState),
     /// Selecting an item from a list (e.g. picking a bookmark).
     SelectFromList(SelectFromListState),
     /// A background jj command is running with live output; the UI stays
@@ -938,14 +983,10 @@ impl AppMode {
         }
     }
 
-    /// Take the fields out of a `Jump` mode, replacing `self` with `Normal`.
-    pub fn take_jump(&mut self) -> Option<(Vec<(String, RowIdx)>, String, Option<Box<AppMode>>)> {
+    /// Take the state out of a `Jump` mode, replacing `self` with `Normal`.
+    pub fn take_jump(&mut self) -> Option<JumpState> {
         match std::mem::replace(self, AppMode::Normal) {
-            AppMode::Jump {
-                labels,
-                input,
-                restore_mode,
-            } => Some((labels, input, restore_mode)),
+            AppMode::Jump(state) => Some(state),
             other => {
                 *self = other;
                 None
