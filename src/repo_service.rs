@@ -196,6 +196,7 @@ pub enum RepoResult {
         updates: Vec<(CommitId, PrefixLengthUpdate)>,
     },
     Operations {
+        limit: usize,
         result: Result<(Vec<crate::app::OpLogEntry>, bool), RepoError>,
     },
     ConflictHunks {
@@ -453,6 +454,8 @@ struct RepoServiceState {
     current_epoch: Arc<AtomicU64>,
     /// Cancellation token for background threads spawned by the current revset.
     bg_cancel: CancellationToken,
+    /// Workers executing per-request repo operations concurrently.
+    workers: WorkerPool,
 }
 
 impl RepoServiceState {
@@ -461,9 +464,14 @@ impl RepoServiceState {
         result_tx: Sender<RepoResult>,
         current_epoch: Arc<AtomicU64>,
     ) -> Self {
+        let worker_count = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .clamp(2, 8);
         Self {
             repo_path,
             repo: None,
+            workers: WorkerPool::new(worker_count, result_tx.clone()),
             result_tx,
             current_epoch,
             bg_cancel: CancellationToken::new(),
@@ -815,11 +823,11 @@ impl RepoServiceState {
 
     fn handle_commit_details(&mut self, commit_id: CommitId) {
         self.repo_op(
-            |repo| repo.commit_details(&commit_id),
-            |result| RepoResult::CommitDetails {
-                commit_id: commit_id.clone(),
-                result,
+            {
+                let commit_id = commit_id.clone();
+                move |repo| repo.commit_details(&commit_id)
             },
+            move |result| RepoResult::CommitDetails { commit_id, result },
         );
     }
 
@@ -830,10 +838,14 @@ impl RepoServiceState {
         old_path: Option<RepoPath>,
     ) {
         self.repo_op(
-            |repo| repo.file_diff(&commit_id, &path, old_path.as_ref()),
-            |result| RepoResult::FileDiff {
-                commit_id: commit_id.clone(),
-                path: path.clone(),
+            {
+                let commit_id = commit_id.clone();
+                let path = path.clone();
+                move |repo| repo.file_diff(&commit_id, &path, old_path.as_ref())
+            },
+            move |result| RepoResult::FileDiff {
+                commit_id,
+                path,
                 result,
             },
         );
@@ -841,17 +853,21 @@ impl RepoServiceState {
 
     fn handle_operations(&mut self, limit: usize) {
         self.repo_op(
-            |repo| repo.operation_log(limit),
-            |result| RepoResult::Operations { result },
+            move |repo| repo.operation_log(limit),
+            move |result| RepoResult::Operations { limit, result },
         );
     }
 
     fn handle_conflict_hunks(&mut self, commit_id: CommitId, path: RepoPath) {
         self.repo_op(
-            |repo| repo.conflict_hunks(&commit_id, &path),
-            |result| RepoResult::ConflictHunks {
-                commit_id: commit_id.clone(),
-                path: path.clone(),
+            {
+                let commit_id = commit_id.clone();
+                let path = path.clone();
+                move |repo| repo.conflict_hunks(&commit_id, &path)
+            },
+            move |result| RepoResult::ConflictHunks {
+                commit_id,
+                path,
                 result,
             },
         );
@@ -859,19 +875,24 @@ impl RepoServiceState {
 
     fn handle_op_diff(&mut self, op_id: OperationId) {
         self.repo_op(
-            |repo| repo.op_diff(op_id.as_str()),
-            |result| RepoResult::OpDiff {
-                op_id: op_id.clone(),
-                result,
+            {
+                let op_id = op_id.clone();
+                move |repo| repo.op_diff(op_id.as_str())
             },
+            move |result| RepoResult::OpDiff { op_id, result },
         );
     }
 
     fn handle_evolog_details(&mut self, from_commit_id: CommitId, to_commit_id: CommitId) {
         self.repo_op(
-            |repo| repo.inter_commit_details(from_commit_id.as_str(), to_commit_id.as_str()),
-            |result| RepoResult::EvoLogDetails {
-                commit_id: to_commit_id.clone(),
+            {
+                let to_commit_id = to_commit_id.clone();
+                move |repo| {
+                    repo.inter_commit_details(from_commit_id.as_str(), to_commit_id.as_str())
+                }
+            },
+            move |result| RepoResult::EvoLogDetails {
+                commit_id: to_commit_id,
                 result,
             },
         );
@@ -884,12 +905,20 @@ impl RepoServiceState {
         path: RepoPath,
     ) {
         self.repo_op(
-            |repo| {
-                repo.inter_commit_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path)
+            {
+                let to_commit_id = to_commit_id.clone();
+                let path = path.clone();
+                move |repo| {
+                    repo.inter_commit_file_diff(
+                        from_commit_id.as_str(),
+                        to_commit_id.as_str(),
+                        &path,
+                    )
+                }
             },
-            |result| RepoResult::EvoLogFileDiff {
-                commit_id: to_commit_id.clone(),
-                path: path.clone(),
+            move |result| RepoResult::EvoLogFileDiff {
+                commit_id: to_commit_id,
+                path,
                 result,
             },
         );
@@ -897,10 +926,14 @@ impl RepoServiceState {
 
     fn handle_interdiff_details(&mut self, from_commit_id: CommitId, to_commit_id: CommitId) {
         self.repo_op(
-            |repo| repo.interdiff_details(from_commit_id.as_str(), to_commit_id.as_str()),
-            |result| RepoResult::InterdiffDetails {
-                from_commit_id: from_commit_id.clone(),
-                to_commit_id: to_commit_id.clone(),
+            {
+                let from_commit_id = from_commit_id.clone();
+                let to_commit_id = to_commit_id.clone();
+                move |repo| repo.interdiff_details(from_commit_id.as_str(), to_commit_id.as_str())
+            },
+            move |result| RepoResult::InterdiffDetails {
+                from_commit_id,
+                to_commit_id,
                 result,
             },
         );
@@ -913,11 +946,18 @@ impl RepoServiceState {
         path: RepoPath,
     ) {
         self.repo_op(
-            |repo| repo.interdiff_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path),
-            |result| RepoResult::InterdiffFileDiff {
-                from_commit_id: from_commit_id.clone(),
-                to_commit_id: to_commit_id.clone(),
-                path: path.clone(),
+            {
+                let from_commit_id = from_commit_id.clone();
+                let to_commit_id = to_commit_id.clone();
+                let path = path.clone();
+                move |repo| {
+                    repo.interdiff_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path)
+                }
+            },
+            move |result| RepoResult::InterdiffFileDiff {
+                from_commit_id,
+                to_commit_id,
+                path,
                 result,
             },
         );
@@ -925,10 +965,14 @@ impl RepoServiceState {
 
     fn handle_file_annotate(&mut self, commit_id: CommitId, path: RepoPath) {
         self.repo_op(
-            |repo| repo.file_annotate(&commit_id, &path),
-            |result| RepoResult::Annotate {
-                commit_id: commit_id.clone(),
-                path: path.clone(),
+            {
+                let commit_id = commit_id.clone();
+                let path = path.clone();
+                move |repo| repo.file_annotate(&commit_id, &path)
+            },
+            move |result| RepoResult::Annotate {
+                commit_id,
+                path,
                 result,
             },
         );
@@ -936,40 +980,37 @@ impl RepoServiceState {
 
     fn handle_file_list(&mut self, commit_id: CommitId) {
         self.repo_op(
-            |repo| repo.list_files(&commit_id),
-            |result| RepoResult::FileList {
-                commit_id: commit_id.clone(),
-                result,
+            {
+                let commit_id = commit_id.clone();
+                move |repo| repo.list_files(&commit_id)
             },
+            move |result| RepoResult::FileList { commit_id, result },
         );
     }
 
     fn handle_evolution_log(&mut self, commit_id: CommitId) {
         self.repo_op(
-            |repo| repo.evolution_log(commit_id.as_str()),
-            |result| RepoResult::EvoLog {
-                commit_id: commit_id.clone(),
-                result,
+            {
+                let commit_id = commit_id.clone();
+                move |repo| repo.evolution_log(commit_id.as_str())
             },
+            move |result| RepoResult::EvoLog { commit_id, result },
         );
     }
 
-    /// Ensure the repo is open, opening it if needed. On failure, sends the
-    /// error result produced by `on_error` and returns `None`.
-    fn ensure_repo(&mut self, on_error: impl FnOnce(RepoError) -> RepoResult) -> Option<&JjRepo> {
+    /// Ensure the repo is open, opening it if needed.
+    fn ensure_repo(&mut self) -> Result<Arc<JjRepo>, RepoError> {
         if self.repo.is_none() {
             match JjRepo::open(&self.repo_path) {
                 Ok(repo) => self.repo = Some(Arc::new(repo)),
                 Err(err) => {
-                    let _ = self.result_tx.send(on_error(RepoError {
-                        kind: RepoErrorKind::RepoOpen,
-                        message: format!("{err:#}"),
-                    }));
-                    return None;
+                    return Err(RepoError::new(RepoErrorKind::RepoOpen, format!("{err:#}")));
                 }
             }
         }
-        self.repo.as_deref()
+        Ok(Arc::clone(
+            self.repo.as_ref().expect("repo was just opened"),
+        ))
     }
 
     /// Send a revset result only if no newer revset load has been requested.
@@ -982,19 +1023,25 @@ impl RepoServiceState {
         }
     }
 
-    /// Ensure repo is loaded, call a fallible operation, and send the result.
-    /// `wrap` converts `Result<T, RepoError>` into the appropriate `RepoResult` variant.
-    fn repo_op<T>(
+    /// Ensure the repo is loaded, then run a fallible operation on a worker
+    /// thread and send the result. `wrap` converts `Result<T, RepoError>`
+    /// into the appropriate `RepoResult` variant.
+    fn repo_op<T: Send + 'static>(
         &mut self,
-        op: impl FnOnce(&crate::repo::JjRepo) -> color_eyre::Result<T>,
-        wrap: impl Fn(Result<T, RepoError>) -> RepoResult,
+        op: impl FnOnce(&crate::repo::JjRepo) -> color_eyre::Result<T> + Send + 'static,
+        wrap: impl FnOnce(Result<T, RepoError>) -> RepoResult + Send + 'static,
     ) {
-        let Some(repo) = self.ensure_repo(|e| wrap(Err(e))) else {
-            return;
-        };
-        let result =
-            op(repo).map_err(|err| RepoError::new(RepoErrorKind::Operation, format!("{err:#}")));
-        let _ = self.result_tx.send(wrap(result));
+        let tx = self.result_tx.clone();
+        match self.ensure_repo() {
+            Ok(repo) => self.workers.submit(move || {
+                let result = op(&repo)
+                    .map_err(|err| RepoError::new(RepoErrorKind::Operation, format!("{err:#}")));
+                let _ = tx.send(wrap(result));
+            }),
+            Err(e) => {
+                let _ = tx.send(wrap(Err(e)));
+            }
+        }
     }
 }
 
@@ -1004,17 +1051,55 @@ fn spawn_background(err_tx: Sender<RepoResult>, f: impl FnOnce() + Send + 'stati
     thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
         if let Err(e) = result {
-            let msg = e
-                .downcast_ref::<&str>()
-                .map(|s| s.to_string())
-                .or_else(|| e.downcast_ref::<String>().cloned())
-                .unwrap_or_else(|| "unknown panic".to_string());
             let _ = err_tx.send(RepoResult::BackgroundError {
-                error: RepoError {
-                    kind: RepoErrorKind::Background,
-                    message: msg,
-                },
+                error: RepoError::new(RepoErrorKind::Background, panic_message(e)),
             });
         }
     });
+}
+
+fn panic_message(e: Box<dyn std::any::Any + Send>) -> String {
+    e.downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| e.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".to_string())
+}
+
+/// Fixed pool of worker threads running per-request repo operations (diffs,
+/// annotate, op log, …) so one slow operation occupies a worker instead of
+/// stalling the request queue. Results are keyed, so they may complete and
+/// be delivered in any order.
+struct WorkerPool {
+    job_tx: Sender<Box<dyn FnOnce() + Send>>,
+}
+
+impl WorkerPool {
+    fn new(threads: usize, err_tx: Sender<RepoResult>) -> Self {
+        let (job_tx, job_rx) = mpsc::channel::<Box<dyn FnOnce() + Send>>();
+        let job_rx = Arc::new(std::sync::Mutex::new(job_rx));
+        for _ in 0..threads {
+            let job_rx = Arc::clone(&job_rx);
+            let err_tx = err_tx.clone();
+            thread::spawn(move || {
+                loop {
+                    // The lock is held only while waiting for a job, so pickup
+                    // is serialized but execution is parallel.
+                    let job = match job_rx.lock().unwrap().recv() {
+                        Ok(job) => job,
+                        Err(_) => return,
+                    };
+                    if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)) {
+                        let _ = err_tx.send(RepoResult::BackgroundError {
+                            error: RepoError::new(RepoErrorKind::Background, panic_message(e)),
+                        });
+                    }
+                }
+            });
+        }
+        Self { job_tx }
+    }
+
+    fn submit(&self, job: impl FnOnce() + Send + 'static) {
+        let _ = self.job_tx.send(Box::new(job));
+    }
 }

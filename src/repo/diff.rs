@@ -27,9 +27,13 @@ use crate::dag::{
 };
 use crate::types::{CommitId as UiCommitId, RepoPath};
 
-/// Max bytes of file content (per side) materialized for a diff. Larger
-/// files get a placeholder instead of being loaded into memory and diffed.
-const MAX_DIFF_FILE_SIZE: usize = 8 * 1024 * 1024;
+/// Max bytes of file content (per side) materialized for a diff. This is a
+/// memory guard, not a latency cap — diff work runs on background workers.
+/// Larger files get a placeholder instead of being loaded into memory.
+const MAX_DIFF_FILE_SIZE: usize = 64 * 1024 * 1024;
+
+/// Bytes examined for the binary heuristic (git's null-byte scan).
+const BINARY_SNIFF_SIZE: usize = 8000;
 
 /// One side of a file diff, extracted with a size cap.
 enum DiffSideContent {
@@ -52,24 +56,29 @@ fn materialize_diff_side(
 ) -> Result<DiffSideContent> {
     let materialized = materialize_tree_value(store, path, value, labels).block_on()?;
     if let MaterializedTreeValue::File(mut file) = materialized {
+        let read_err = |e: futures::io::Error| {
+            color_eyre::eyre::eyre!("failed to read {}: {e}", path.as_internal_file_string())
+        };
+        // Sniff the first 8k for a null byte (git's binary heuristic) so
+        // binary blobs are detected without reading their full content.
         let mut contents = Vec::new();
         (&mut file.reader)
-            .take(MAX_DIFF_FILE_SIZE as u64 + 1)
+            .take(BINARY_SNIFF_SIZE as u64)
             .read_to_end(&mut contents)
             .block_on()
-            .map_err(|e| {
-                color_eyre::eyre::eyre!("failed to read {}: {e}", path.as_internal_file_string())
-            })?;
+            .map_err(read_err)?;
+        if contents.contains(&0) {
+            return Ok(DiffSideContent::Binary);
+        }
+        (&mut file.reader)
+            .take((MAX_DIFF_FILE_SIZE + 1 - contents.len()) as u64)
+            .read_to_end(&mut contents)
+            .block_on()
+            .map_err(read_err)?;
         if contents.len() > MAX_DIFF_FILE_SIZE {
             return Ok(DiffSideContent::TooLarge);
         }
-        // Same binary heuristic as git/jj: a null byte in the first 8k.
-        let peek = &contents[..contents.len().min(8000)];
-        return Ok(if peek.contains(&0) {
-            DiffSideContent::Binary
-        } else {
-            DiffSideContent::Text(contents.into())
-        });
+        return Ok(DiffSideContent::Text(contents.into()));
     }
     let part = git_diff_part(path, materialized, materialize_options)
         .block_on()

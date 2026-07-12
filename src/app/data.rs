@@ -370,7 +370,9 @@ impl App {
                 }
                 self.rebuild_tag_entries();
             }
-            RepoResult::Operations { result } => match result {
+            RepoResult::Operations { limit, result } => match result {
+                // Result for a superseded limit (load-more raced) - ignore.
+                _ if limit != self.op_log.limit => {}
                 Ok((entries, has_more)) => {
                     self.op_log.entries = entries;
                     self.op_log.loaded = true;
