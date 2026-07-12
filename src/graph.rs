@@ -1,4 +1,4 @@
-use renderdag::{Ancestor, GraphRowRenderer, Renderer};
+use renderdag::{Ancestor, BoxDrawingRenderer, GraphRowRenderer, Renderer};
 
 use crate::dag::{DagEntry, Edge, EdgeKind};
 use crate::theme::GlyphChars;
@@ -26,81 +26,92 @@ pub struct GraphLines {
     pub extra: Vec<String>,
 }
 
-/// Render the DAG graph column for all entries using `BoxDrawingRenderer`.
-///
-/// Returns one [`GraphLines`] per entry, in the same order as the input.
-/// Each `GraphLines` contains properly-padded graph prefixes that the UI
-/// can directly concatenate with styled content.
-pub fn render(entries: &[DagEntry], glyphs: &GlyphChars) -> Vec<GraphLines> {
-    let ids: Vec<String> = entries
-        .iter()
-        .map(|e| e.commit.graph_id.to_string())
-        .collect();
-    let generic: Vec<(&str, &[Edge], char)> = entries
-        .iter()
-        .zip(&ids)
-        .map(|(entry, id)| {
-            (
-                id.as_str(),
-                entry.edges.as_slice(),
-                glyphs.char_for(entry.commit.glyph()),
-            )
-        })
-        .collect();
-    render_generic(&generic)
+/// Stateful DAG graph renderer. Entries can be rendered incrementally
+/// (chunk by chunk) because renderdag's column state persists across calls.
+pub struct DagGraphRenderer {
+    inner: BoxDrawingRenderer<String, GraphRowRenderer<String>>,
+}
+
+impl DagGraphRenderer {
+    pub fn new() -> Self {
+        Self {
+            inner: GraphRowRenderer::new()
+                .output()
+                .with_min_row_height(2)
+                .build_box_drawing(),
+        }
+    }
+
+    /// Render graph lines for the next batch of DAG entries, continuing from
+    /// any previously rendered rows.
+    pub fn render(&mut self, entries: &[DagEntry], glyphs: &GlyphChars) -> Vec<GraphLines> {
+        entries
+            .iter()
+            .map(|entry| {
+                self.render_row(
+                    entry.commit.graph_id.as_str(),
+                    &entry.edges,
+                    glyphs.char_for(entry.commit.glyph()),
+                )
+            })
+            .collect()
+    }
+
+    /// Render the graph lines for a single row.
+    fn render_row(&mut self, id: &str, edges: &[Edge], glyph: char) -> GraphLines {
+        let parents: Vec<Ancestor<String>> = edges
+            .iter()
+            .map(|e| match e.kind {
+                EdgeKind::Direct => Ancestor::Parent(e.target.to_string()),
+                EdgeKind::Indirect => Ancestor::Ancestor(e.target.to_string()),
+                EdgeKind::Missing => Ancestor::Anonymous,
+            })
+            .collect();
+
+        let message = format!("{NODE_SENTINEL}\n{CONT_SENTINEL}\n{REST_SENTINEL}");
+        let row = self
+            .inner
+            .next_row(id.to_string(), parents, glyph.to_string(), message);
+
+        let mut node = String::new();
+        let mut cont = String::new();
+        let mut rest = String::new();
+        let mut extra = Vec::new();
+
+        for line in row.lines() {
+            if let Some(idx) = line.find(NODE_SENTINEL) {
+                node = line[..idx].to_string();
+            } else if let Some(idx) = line.find(CONT_SENTINEL) {
+                cont = line[..idx].to_string();
+            } else if let Some(idx) = line.find(REST_SENTINEL) {
+                rest = line[..idx].to_string();
+            } else {
+                extra.push(line.trim_end().to_string());
+            }
+        }
+
+        GraphLines {
+            node,
+            cont,
+            rest,
+            extra,
+        }
+    }
+}
+
+impl Default for DagGraphRenderer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Render graph lines for a list of entries with edges and a glyph per entry.
 ///
 /// Generic over the entry type — callers provide ID, edges, and glyph for each.
 pub fn render_generic(entries: &[(&str, &[Edge], char)]) -> Vec<GraphLines> {
-    let mut renderer = GraphRowRenderer::new()
-        .output()
-        .with_min_row_height(2)
-        .build_box_drawing();
-
+    let mut renderer = DagGraphRenderer::new();
     entries
         .iter()
-        .map(|(id, edges, glyph)| {
-            let parents: Vec<Ancestor<String>> = if edges.is_empty() {
-                vec![]
-            } else {
-                edges
-                    .iter()
-                    .map(|e| match e.kind {
-                        EdgeKind::Direct => Ancestor::Parent(e.target.to_string()),
-                        EdgeKind::Indirect => Ancestor::Ancestor(e.target.to_string()),
-                        EdgeKind::Missing => Ancestor::Anonymous,
-                    })
-                    .collect()
-            };
-
-            let message = format!("{NODE_SENTINEL}\n{CONT_SENTINEL}\n{REST_SENTINEL}");
-            let row = renderer.next_row(id.to_string(), parents, glyph.to_string(), message);
-
-            let mut node = String::new();
-            let mut cont = String::new();
-            let mut rest = String::new();
-            let mut extra = Vec::new();
-
-            for line in row.lines() {
-                if let Some(idx) = line.find(NODE_SENTINEL) {
-                    node = line[..idx].to_string();
-                } else if let Some(idx) = line.find(CONT_SENTINEL) {
-                    cont = line[..idx].to_string();
-                } else if let Some(idx) = line.find(REST_SENTINEL) {
-                    rest = line[..idx].to_string();
-                } else {
-                    extra.push(line.trim_end().to_string());
-                }
-            }
-
-            GraphLines {
-                node,
-                cont,
-                rest,
-                extra,
-            }
-        })
+        .map(|(id, edges, glyph)| renderer.render_row(id, edges, *glyph))
         .collect()
 }

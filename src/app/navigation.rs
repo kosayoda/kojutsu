@@ -394,16 +394,19 @@ impl App {
             .map(RowIdx::new)
     }
 
-    /// Jump to the working copy commit (`@`).
-    pub fn jump_to_working_copy(&mut self) {
+    /// Jump to the working copy commit (`@`). Returns whether it was found.
+    pub fn jump_to_working_copy(&mut self) -> bool {
         if let Some(pos) = self.peek_working_copy() {
             self.cursor = pos;
+            true
         } else {
-            self.set_error("working copy not in current revset");
+            false
         }
     }
 
-    pub fn jump_to_bookmark(&mut self, name: &crate::types::BookmarkName) {
+    /// Jump to the commit (or bookmark-view entry) with this bookmark.
+    /// Returns whether it was found.
+    pub fn jump_to_bookmark(&mut self, name: &crate::types::BookmarkName) -> bool {
         // If in the bookmark view, find the entry by name.
         if self.active_view == super::ActiveView::Bookmarks {
             for (idx, entry) in self.views.bookmark_entries.iter().enumerate() {
@@ -415,7 +418,7 @@ impl App {
                     })
                 {
                     self.cursor = RowIdx::new(pos);
-                    return;
+                    return true;
                 }
             }
         }
@@ -425,22 +428,24 @@ impl App {
                 && let Some(row) = self.row_of_commit(idx)
             {
                 self.cursor = row;
-                return;
+                return true;
             }
         }
-        self.set_status("bookmark not in current revset");
+        false
     }
 
-    pub fn jump_to_change_id(&mut self, prefix: &str) {
+    /// Jump to a commit by change/commit ID prefix. Returns whether it was found.
+    pub fn jump_to_change_id(&mut self, prefix: &str) -> bool {
         for (idx, node) in self.nodes.iter_enumerated() {
             if (node.commit.change_id.display.starts_with(prefix)
                 || node.commit.graph_id.as_str().starts_with(prefix))
                 && let Some(row) = self.row_of_commit(idx)
             {
                 self.cursor = row;
-                return;
+                return true;
             }
         }
+        false
     }
 
     /// Move cursor up by `n` selectable rows (commits or files).

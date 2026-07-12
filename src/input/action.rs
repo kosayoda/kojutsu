@@ -300,7 +300,9 @@ pub fn dispatch_action_after_hooks(
             Action::None
         }
         AppAction::JumpToWorkingCopy => {
-            app.jump_to_working_copy();
+            if !app.jump_to_working_copy() {
+                app.set_error("working copy not in current revset");
+            }
             Action::None
         }
         AppAction::MoveToTop => {

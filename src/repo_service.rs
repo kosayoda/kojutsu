@@ -164,6 +164,9 @@ pub struct RevsetData {
     pub workspace_entries: Vec<crate::app::WorkspaceViewEntry>,
     /// Non-fatal warnings from revset evaluation (e.g. immutable() failed).
     pub warnings: Vec<String>,
+    /// Whether this is the complete revset. When `false`, the remaining
+    /// entries follow as [`RepoResult::RevsetChunk`]s.
+    pub done: bool,
 }
 
 pub enum RepoResult {
@@ -171,6 +174,8 @@ pub enum RepoResult {
         revset: String,
         result: Result<Box<RevsetData>, RepoError>,
     },
+    /// A follow-up batch of entries for a streamed revset load.
+    RevsetChunk { entries: Vec<DagEntry>, done: bool },
     /// The workspace was stale and has been (or failed to be) recovered.
     WorkspaceUpdatedStale { message: String },
     /// Background-computed is_empty for a single commit.
@@ -626,199 +631,26 @@ impl RepoServiceState {
             }
         }
 
-        let Some(repo) = self.repo.as_deref() else {
+        let Some(repo) = self.repo.as_ref().map(Arc::clone) else {
             return;
         };
         let effective_revset = revset.unwrap_or_else(|| repo.default_revset());
-        match repo.evaluate_revset(&effective_revset) {
-            Ok(result) => {
-                let warnings = result.warnings;
-                let entries = result.entries;
-
-                // Collect all commit IDs for background is_empty computation.
-                // (Previously only merge commits were deferred; now all commits
-                // defer is_empty to keep the initial load fast.)
-
-                // Collect commit IDs before sending entries (which moves them).
-                let all_ids: Vec<CommitId> =
-                    entries.iter().map(|e| e.commit.graph_id.clone()).collect();
-
-                let remote_bookmarks = repo.all_remote_bookmark_refs();
-                let remotes = repo.git_remotes();
-                let all_tags = repo.all_local_tags();
-                let tag_details = repo.extract_tag_details();
-                let bookmark_details = repo.extract_bookmark_details();
-                let workspace_entries = repo.workspace_entries();
-
-                // Collect unique commit IDs from bookmark + tag details + workspaces
-                // for prefix computation.
-                let detail_commit_ids: Vec<CommitId> = {
-                    let mut ids = std::collections::HashSet::new();
-                    for details in bookmark_details.values() {
-                        for ct in &details.conflict_targets {
-                            ids.insert(ct.summary.commit_id.clone());
-                        }
-                        for rt in &details.remote_targets {
-                            ids.insert(rt.summary.commit_id.clone());
-                        }
-                    }
-                    for details in tag_details.values() {
-                        if let Some(lt) = &details.local_target {
-                            ids.insert(lt.summary.commit_id.clone());
-                        }
-                        for rt in &details.remote_targets {
-                            ids.insert(rt.summary.commit_id.clone());
-                        }
-                    }
-                    for ws in &workspace_entries {
-                        if let Some(ref cid) = ws.commit_id {
-                            ids.insert(cid.clone());
-                        }
-                    }
-                    ids.into_iter().collect()
-                };
-
-                let entry_count = entries.len();
-                self.send_if_current(
-                    epoch,
-                    RepoResult::Revset {
-                        revset: effective_revset.clone(),
-                        result: Ok(Box::new(RevsetData {
-                            revset: effective_revset,
-                            repo_root: repo.workspace_root().display().to_string(),
-                            entries,
-                            remote_bookmarks,
-                            remotes,
-                            all_tags,
-                            tag_details,
-                            bookmark_details,
-                            workspace_entries,
-                            warnings,
-                        })),
-                    },
-                );
-                tracing::info!(
-                    elapsed_ms = start.elapsed().as_millis() as u64,
-                    commits = entry_count,
-                    "revset loaded",
-                );
-
-                // Spawn background thread to compute is_empty for all commits.
-                {
-                    let empty_ids = all_ids.clone();
-                    let inner = repo.inner_repo();
-                    let tx = self.result_tx.clone();
-                    let cancel = self.bg_cancel.clone();
-                    spawn_background(self.result_tx.clone(), move || {
-                        for id in &empty_ids {
-                            // is_empty involves tree diffs (I/O) — check every iteration.
-                            if cancel.is_cancelled() {
-                                return;
-                            }
-                            let Some(backend_id) =
-                                jj_lib::backend::CommitId::try_from_hex(id.as_str())
-                            else {
-                                continue;
-                            };
-                            let Ok(commit) = inner.store().get_commit(&backend_id) else {
-                                continue;
-                            };
-                            if commit
-                                .is_empty(inner.as_ref())
-                                .block_on()
-                                .inspect_err(|e| tracing::warn!("is_empty check failed: {e}"))
-                                .unwrap_or(false)
-                            {
-                                let _ = tx.send(RepoResult::CommitEmpty {
-                                    commit_id: id.clone(),
-                                });
-                            }
-                        }
-                    });
-                }
-
-                // Spawn background thread to compute divergence/hidden status.
-                {
-                    let inner = repo.inner_repo();
-                    let div_ids = all_ids.clone();
-                    let tx = self.result_tx.clone();
-                    let cancel = self.bg_cancel.clone();
-                    spawn_background(self.result_tx.clone(), move || {
-                        let updates = JjRepo::compute_divergence_info(&inner, &div_ids, &cancel);
-                        if !updates.is_empty() {
-                            let _ = tx.send(RepoResult::DivergenceInfo { updates });
-                        }
-                    });
-                }
-
-                // Spawn background thread to compute shortest unique ID prefixes.
-                // The repo is already Arc-wrapped, so background threads share
-                // it instead of re-opening the workspace.
-                {
-                    let bg_repo = Arc::clone(self.repo.as_ref().unwrap());
-                    let tx = self.result_tx.clone();
-                    let cancel = self.bg_cancel.clone();
-                    spawn_background(self.result_tx.clone(), move || {
-                        if cancel.is_cancelled() {
-                            return;
-                        }
-                        match bg_repo.compute_prefix_lengths(&all_ids, &cancel) {
-                            Ok(updates) if !updates.is_empty() => {
-                                let _ = tx.send(RepoResult::PrefixLengths { updates });
-                            }
-                            Err(e) => {
-                                let _ = tx.send(RepoResult::BackgroundError {
-                                    error: RepoError {
-                                        kind: RepoErrorKind::Background,
-                                        message: format!("prefix lengths: {e:#}"),
-                                    },
-                                });
-                            }
-                            _ => {}
-                        }
-                    });
-                }
-
-                // Spawn background thread for bookmark detail prefix lengths.
-                if !detail_commit_ids.is_empty() {
-                    let bg_repo = Arc::clone(self.repo.as_ref().unwrap());
-                    let tx = self.result_tx.clone();
-                    let cancel = self.bg_cancel.clone();
-                    spawn_background(self.result_tx.clone(), move || {
-                        if cancel.is_cancelled() {
-                            return;
-                        }
-                        match bg_repo.compute_prefix_lengths(&detail_commit_ids, &cancel) {
-                            Ok(updates) if !updates.is_empty() => {
-                                let _ =
-                                    tx.send(RepoResult::BookmarkDetailPrefixLengths { updates });
-                            }
-                            Err(e) => {
-                                let _ = tx.send(RepoResult::BackgroundError {
-                                    error: RepoError {
-                                        kind: RepoErrorKind::Background,
-                                        message: format!("detail prefix lengths: {e:#}"),
-                                    },
-                                });
-                            }
-                            _ => {}
-                        }
-                    });
-                }
-            }
-            Err(err) => {
-                self.send_if_current(
-                    epoch,
-                    RepoResult::Revset {
-                        revset: effective_revset,
-                        result: Err(RepoError {
-                            kind: RepoErrorKind::Revset,
-                            message: format!("{err:#}"),
-                        }),
-                    },
-                );
-            }
-        }
+        // Evaluate on a background thread so the request queue stays
+        // responsive; entries stream to the app in chunks.
+        let tx = self.result_tx.clone();
+        let current_epoch = Arc::clone(&self.current_epoch);
+        let cancel = self.bg_cancel.clone();
+        spawn_background(self.result_tx.clone(), move || {
+            stream_revset(
+                repo,
+                effective_revset,
+                epoch,
+                tx,
+                current_epoch,
+                cancel,
+                start,
+            );
+        });
     }
 
     fn handle_commit_details(&mut self, commit_id: CommitId) {
@@ -1042,6 +874,220 @@ impl RepoServiceState {
                 let _ = tx.send(wrap(Err(e)));
             }
         }
+    }
+}
+
+/// Evaluate a revset and stream its entries to the app. The first chunk is
+/// sent as a full [`RepoResult::Revset`] (with view metadata), the rest as
+/// [`RepoResult::RevsetChunk`]s. After the stream completes, background
+/// passes (is_empty, divergence, ID prefixes) are spawned over all entries.
+///
+/// Runs on its own background thread; a newer revset load supersedes it via
+/// the epoch counter and the cancellation token.
+fn stream_revset(
+    repo: Arc<JjRepo>,
+    revset: String,
+    epoch: u64,
+    tx: Sender<RepoResult>,
+    current_epoch: Arc<AtomicU64>,
+    cancel: CancellationToken,
+    start: std::time::Instant,
+) {
+    let send_if_current = |result: RepoResult| -> bool {
+        epoch == current_epoch.load(Ordering::SeqCst) && tx.send(result).is_ok()
+    };
+
+    let mut all_ids: Vec<CommitId> = Vec::new();
+    let mut first = true;
+    let stream_result = repo.evaluate_revset_streaming(&revset, |entries, done, warnings| {
+        if cancel.is_cancelled() {
+            return false;
+        }
+        all_ids.extend(entries.iter().map(|e| e.commit.graph_id.clone()));
+        if !first {
+            return send_if_current(RepoResult::RevsetChunk { entries, done });
+        }
+        first = false;
+
+        // Gather view metadata once, alongside the first chunk.
+        let remote_bookmarks = repo.all_remote_bookmark_refs();
+        let remotes = repo.git_remotes();
+        let all_tags = repo.all_local_tags();
+        let tag_details = repo.extract_tag_details();
+        let bookmark_details = repo.extract_bookmark_details();
+        let workspace_entries = repo.workspace_entries();
+
+        // Collect unique commit IDs from bookmark + tag details + workspaces,
+        // and spawn their prefix computation (independent of the stream).
+        let detail_commit_ids: Vec<CommitId> = {
+            let mut ids = std::collections::HashSet::new();
+            for details in bookmark_details.values() {
+                for ct in &details.conflict_targets {
+                    ids.insert(ct.summary.commit_id.clone());
+                }
+                for rt in &details.remote_targets {
+                    ids.insert(rt.summary.commit_id.clone());
+                }
+            }
+            for details in tag_details.values() {
+                if let Some(lt) = &details.local_target {
+                    ids.insert(lt.summary.commit_id.clone());
+                }
+                for rt in &details.remote_targets {
+                    ids.insert(rt.summary.commit_id.clone());
+                }
+            }
+            for ws in &workspace_entries {
+                if let Some(ref cid) = ws.commit_id {
+                    ids.insert(cid.clone());
+                }
+            }
+            ids.into_iter().collect()
+        };
+        if !detail_commit_ids.is_empty() {
+            let bg_repo = Arc::clone(&repo);
+            let tx = tx.clone();
+            let cancel = cancel.clone();
+            spawn_background(tx.clone(), move || {
+                if cancel.is_cancelled() {
+                    return;
+                }
+                match bg_repo.compute_prefix_lengths(&detail_commit_ids, &cancel) {
+                    Ok(updates) if !updates.is_empty() => {
+                        let _ = tx.send(RepoResult::BookmarkDetailPrefixLengths { updates });
+                    }
+                    Err(e) => {
+                        let _ = tx.send(RepoResult::BackgroundError {
+                            error: RepoError::new(
+                                RepoErrorKind::Background,
+                                format!("detail prefix lengths: {e:#}"),
+                            ),
+                        });
+                    }
+                    _ => {}
+                }
+            });
+        }
+
+        send_if_current(RepoResult::Revset {
+            revset: revset.clone(),
+            result: Ok(Box::new(RevsetData {
+                revset: revset.clone(),
+                repo_root: repo.workspace_root().display().to_string(),
+                entries,
+                remote_bookmarks,
+                remotes,
+                all_tags,
+                tag_details,
+                bookmark_details,
+                workspace_entries,
+                warnings: warnings.to_vec(),
+                done,
+            })),
+        })
+    });
+
+    match stream_result {
+        Ok(_) => {}
+        Err(err) if first => {
+            // Nothing was sent — report as a failed revset load.
+            send_if_current(RepoResult::Revset {
+                revset,
+                result: Err(RepoError::new(RepoErrorKind::Revset, format!("{err:#}"))),
+            });
+            return;
+        }
+        Err(err) => {
+            // Entries were already delivered — finalize the stream so the
+            // app leaves streaming mode, and surface the error separately.
+            send_if_current(RepoResult::RevsetChunk {
+                entries: Vec::new(),
+                done: true,
+            });
+            let _ = tx.send(RepoResult::BackgroundError {
+                error: RepoError::new(RepoErrorKind::Background, format!("revset stream: {err:#}")),
+            });
+        }
+    }
+    // Superseded or cancelled mid-stream — skip the background passes.
+    if first || cancel.is_cancelled() || epoch != current_epoch.load(Ordering::SeqCst) {
+        return;
+    }
+
+    tracing::info!(
+        elapsed_ms = start.elapsed().as_millis() as u64,
+        commits = all_ids.len(),
+        "revset loaded",
+    );
+
+    // Spawn background thread to compute is_empty for all commits.
+    {
+        let empty_ids = all_ids.clone();
+        let inner = repo.inner_repo();
+        let tx = tx.clone();
+        let cancel = cancel.clone();
+        spawn_background(tx.clone(), move || {
+            for id in &empty_ids {
+                // is_empty involves tree diffs (I/O) — check every iteration.
+                if cancel.is_cancelled() {
+                    return;
+                }
+                let Some(backend_id) = jj_lib::backend::CommitId::try_from_hex(id.as_str()) else {
+                    continue;
+                };
+                let Ok(commit) = inner.store().get_commit(&backend_id) else {
+                    continue;
+                };
+                if commit
+                    .is_empty(inner.as_ref())
+                    .block_on()
+                    .inspect_err(|e| tracing::warn!("is_empty check failed: {e}"))
+                    .unwrap_or(false)
+                {
+                    let _ = tx.send(RepoResult::CommitEmpty {
+                        commit_id: id.clone(),
+                    });
+                }
+            }
+        });
+    }
+
+    // Spawn background thread to compute divergence/hidden status.
+    {
+        let inner = repo.inner_repo();
+        let div_ids = all_ids.clone();
+        let tx = tx.clone();
+        let cancel = cancel.clone();
+        spawn_background(tx.clone(), move || {
+            let updates = JjRepo::compute_divergence_info(&inner, &div_ids, &cancel);
+            if !updates.is_empty() {
+                let _ = tx.send(RepoResult::DivergenceInfo { updates });
+            }
+        });
+    }
+
+    // Spawn background thread to compute shortest unique ID prefixes.
+    {
+        let bg_repo = Arc::clone(&repo);
+        spawn_background(tx.clone(), move || {
+            if cancel.is_cancelled() {
+                return;
+            }
+            match bg_repo.compute_prefix_lengths(&all_ids, &cancel) {
+                Ok(updates) if !updates.is_empty() => {
+                    let _ = tx.send(RepoResult::PrefixLengths { updates });
+                }
+                Err(e) => {
+                    let _ = tx.send(RepoResult::BackgroundError {
+                        error: RepoError::new(
+                            RepoErrorKind::Background,
+                            format!("prefix lengths: {e:#}"),
+                        ),
+                    });
+                }
+                _ => {}
+            }
+        });
     }
 }
 

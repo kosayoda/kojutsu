@@ -5,7 +5,7 @@ use color_eyre::eyre::Context;
 use futures::TryStreamExt as _;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::fileset::FilesetAliasesMap;
-use jj_lib::graph::{GraphEdgeType, GraphNode, TopoGroupedGraph};
+use jj_lib::graph::{GraphEdgeType, TopoGroupedGraph};
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::RefName;
 use jj_lib::repo::Repo;
@@ -18,6 +18,12 @@ use crate::dag::{DagEntry, Edge, EdgeKind, RemoteBookmarkInfo, RevsetResult};
 use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, WorkspaceName};
 
 use super::commit_info::CommitContext;
+
+/// Entries in the first chunk of a streamed revset load — kept small so the
+/// first screenful appears quickly.
+const FIRST_CHUNK_SIZE: usize = 200;
+/// Entries per subsequent chunk of a streamed revset load.
+const CHUNK_SIZE: usize = 2000;
 
 impl JjRepo {
     /// Resolve a revset to a single commit's hex ID.
@@ -66,6 +72,32 @@ impl JjRepo {
     /// Evaluate a revset string and return DAG entries in topological order
     /// with graph edges for rendering.
     pub fn evaluate_revset(&self, revset_str: &str) -> Result<RevsetResult> {
+        let mut entries = Vec::new();
+        let warnings =
+            self.evaluate_revset_streaming(revset_str, |mut chunk, _done, _warnings| {
+                entries.append(&mut chunk);
+                true
+            })?;
+        Ok(RevsetResult { entries, warnings })
+    }
+
+    /// Evaluate a revset string and deliver DAG entries in chunks via
+    /// `on_chunk(entries, done, warnings)`, so the first screenful can be
+    /// shown before the full (possibly huge) revset finishes loading.
+    ///
+    /// The first chunk holds [`FIRST_CHUNK_SIZE`] entries, later ones
+    /// [`CHUNK_SIZE`]. `done` is `true` on the final chunk (which may be
+    /// empty). `warnings` is complete before the first call. Returning
+    /// `false` from `on_chunk` stops the stream early (cancellation).
+    ///
+    /// Errors are returned only for setup failures (parse/resolve/evaluate)
+    /// and stream failures; chunks delivered before a stream failure remain
+    /// valid.
+    pub fn evaluate_revset_streaming(
+        &self,
+        revset_str: &str,
+        mut on_chunk: impl FnMut(Vec<DagEntry>, bool, &[String]) -> bool,
+    ) -> Result<Vec<String>> {
         let repo = self.repo.as_ref();
 
         // Shared context pieces
@@ -179,11 +211,16 @@ impl JjRepo {
             wc_commit_workspaces: &wc_commit_workspaces,
         };
 
-        // Iterate graph nodes
+        // Iterate graph nodes lazily, delivering chunks as they fill up.
+        let stream = topo_iter.stream();
+        futures::pin_mut!(stream);
         let mut entries = Vec::new();
-        let topo_nodes: Vec<GraphNode<BackendCommitId>> =
-            topo_iter.stream().try_collect().block_on()?;
-        for (commit_id, edges) in topo_nodes {
+        let mut chunk_limit = FIRST_CHUNK_SIZE;
+        while let Some((commit_id, edges)) = stream
+            .try_next()
+            .block_on()
+            .wrap_err("failed to read graph stream")?
+        {
             let commit = repo
                 .store()
                 .get_commit(&commit_id)
@@ -215,9 +252,17 @@ impl JjRepo {
                 commit: info,
                 edges: dag_edges,
             });
+
+            if entries.len() >= chunk_limit {
+                if !on_chunk(std::mem::take(&mut entries), false, &warnings) {
+                    return Ok(warnings);
+                }
+                chunk_limit = CHUNK_SIZE;
+            }
         }
 
-        Ok(RevsetResult { entries, warnings })
+        on_chunk(entries, true, &warnings);
+        Ok(warnings)
     }
 
     /// Return the `revsets.log-graph-prioritize` revset from config, falling

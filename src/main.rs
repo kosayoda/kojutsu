@@ -171,7 +171,6 @@ fn main() -> Result<()> {
             .map(|p| p.revset.clone())
     });
     let mut app = App::new(
-        Vec::new(),
         requested_revset.clone().unwrap_or_default(),
         repo_path.display().to_string(),
         &config.revsets.presets,

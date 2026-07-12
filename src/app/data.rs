@@ -1,10 +1,38 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{App, DeferredWork, JumpTarget, Loadable};
-use crate::dag::DagEntry;
-use crate::idx::{EntryIdx, FileIdx, IndexVec, RowIdx};
+use crate::dag::{DagEntry, EdgeKind};
+use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, RowIdx};
 use crate::repo_service::{RepoRequest, RepoResult};
-use crate::types::{ChangeId, CommitId, DisplayRow};
+use crate::types::{ChangeId, CommitId, DisplayRow, RepoPath, SmallVec};
+
+/// Cached per-commit data carried across a refresh.
+type NodeCache = (
+    Loadable<Vec<crate::dag::FileChange>>,
+    Loadable<crate::dag::LineStats>,
+    Vec<Loadable<crate::dag::DiffResult>>,
+);
+
+/// Cursor position captured before a refresh, keyed by stable IDs so it can
+/// be restored once its commit reappears in the streamed DAG.
+struct CursorContext {
+    change_id: ChangeId,
+    file_path: Option<RepoPath>,
+    diff_line_idx: Option<DiffLineIdx>,
+}
+
+/// State of an in-progress streamed revset load.
+pub(super) struct DagStreamState {
+    /// Graph renderer holding renderdag column state across chunks.
+    renderer: crate::graph::DagGraphRenderer,
+    /// Caches from the pre-refresh nodes, restored as commits reappear.
+    old_caches: HashMap<CommitId, NodeCache>,
+    /// Cursor context to restore once its commit arrives.
+    cursor_restore: Option<CursorContext>,
+    /// Direct-edge child entries waiting for their parent commit to arrive
+    /// in a later chunk.
+    pending_parents: HashMap<CommitId, Vec<EntryIdx>>,
+}
 
 impl App {
     pub fn request_revset_load(&mut self, revset: Option<String>) {
@@ -26,9 +54,12 @@ impl App {
             .push(RepoRequest::load_revset_no_snapshot(revset));
     }
 
-    fn apply_entries(&mut self, entries: Vec<DagEntry>) {
+    /// Replace the DAG with the first chunk of a (possibly streamed) revset
+    /// load. Cached data, fold state, and the cursor position carry over via
+    /// [`DagStreamState`] as their commits reappear in later chunks.
+    fn apply_entries(&mut self, entries: Vec<DagEntry>, done: bool) {
         // Capture cursor context using stable ChangeId for restore after rebuild.
-        let cursor_context = self.selected_entry_idx().map(|entry_idx| {
+        let cursor_restore = self.selected_entry_idx().map(|entry_idx| {
             let change_id = self.change_id(entry_idx);
             let row = self.rows.get(self.cursor.raw());
             let file_path = row.and_then(|r| match r {
@@ -50,20 +81,15 @@ impl App {
                 DisplayRow::DiffLine { line_idx, .. } => Some(*line_idx),
                 _ => None,
             });
-            (change_id, file_path, diff_line_idx)
+            CursorContext {
+                change_id,
+                file_path,
+                diff_line_idx,
+            }
         });
 
-        // Build new nodes from entries, preserving cached data from old nodes.
-        let entries = IndexVec::from_vec(entries);
-        let new_commit_index = super::build_commit_index(&entries);
-
-        type NodeCache = (
-            Loadable<Vec<crate::dag::FileChange>>,
-            Loadable<crate::dag::LineStats>,
-            Vec<Loadable<crate::dag::DiffResult>>,
-        );
         // Collect old caches keyed by CommitId before replacing nodes.
-        let mut old_caches: HashMap<CommitId, NodeCache> = std::mem::take(&mut self.nodes)
+        let old_caches: HashMap<CommitId, NodeCache> = std::mem::take(&mut self.nodes)
             .into_vec()
             .into_iter()
             .map(|mut n| {
@@ -72,11 +98,58 @@ impl App {
             })
             .collect();
 
-        let mut nodes = super::build_nodes(entries, &new_commit_index, self.glyphs);
+        self.commit_index.clear();
+        self.visual.mode = None;
+        self.visual.persistent = None;
+        self.stream = Some(DagStreamState {
+            renderer: crate::graph::DagGraphRenderer::new(),
+            old_caches,
+            cursor_restore,
+            pending_parents: HashMap::new(),
+        });
+        self.append_entries(entries, done);
+    }
 
-        // Restore cached data for commits that survived the refresh.
-        for node in nodes.iter_mut() {
-            if let Some((files, stats, diffs)) = old_caches.remove(&node.commit.graph_id) {
+    /// Append a chunk of streamed entries to the DAG, resolving cross-chunk
+    /// parent/child edges and restoring surviving caches. Finalizes the
+    /// stream state when `done`.
+    pub(super) fn append_entries(&mut self, entries: Vec<DagEntry>, done: bool) {
+        // A chunk without an active stream is stale (e.g. the stream was
+        // finalized by an error) — ignore it.
+        let Some(mut stream) = self.stream.take() else {
+            return;
+        };
+
+        let base = self.nodes.len();
+        for (i, entry) in entries.iter().enumerate() {
+            self.commit_index
+                .insert(entry.commit.graph_id.clone(), EntryIdx::new(base + i));
+        }
+        let graph_lines = stream.renderer.render(&entries, self.glyphs);
+        self.nodes.reserve(entries.len());
+        for (entry, graph) in entries.into_iter().zip(graph_lines) {
+            let idx = EntryIdx::new(self.nodes.len());
+            // Resolve direct parents against commits loaded so far; targets
+            // arriving in later chunks are linked below as they appear.
+            let mut parents = SmallVec::new();
+            for edge in entry
+                .edges
+                .iter()
+                .filter(|e| matches!(e.kind, EdgeKind::Direct))
+            {
+                if let Some(&parent_idx) = self.commit_index.get(&edge.target) {
+                    parents.push(parent_idx);
+                } else {
+                    stream
+                        .pending_parents
+                        .entry(edge.target.clone())
+                        .or_default()
+                        .push(idx);
+                }
+            }
+            let mut node = super::DagNode::new(entry.commit, graph, parents);
+            // Restore cached data if this commit survived the refresh.
+            if let Some((files, stats, diffs)) = stream.old_caches.remove(&node.commit.graph_id) {
                 if !files.should_request() {
                     node.files = files;
                 }
@@ -87,16 +160,31 @@ impl App {
                     node.restore_diffs(diffs);
                 }
             }
+            self.nodes.push(node);
         }
 
-        self.visual.mode = None;
-        self.visual.persistent = None;
-        self.commit_index = new_commit_index;
-        self.nodes = nodes;
+        // Second pass, once all of the chunk's nodes exist: fill children
+        // (parents may point forward within the chunk) and link children
+        // from earlier chunks that were waiting on these commits.
+        for idx_raw in base..self.nodes.len() {
+            let idx = EntryIdx::new(idx_raw);
+            for parent_idx in self.nodes[idx].parents.clone() {
+                self.nodes[parent_idx].children.push(idx);
+            }
+            if let Some(waiting) = stream
+                .pending_parents
+                .remove(&self.nodes[idx].commit.graph_id)
+            {
+                for child_idx in waiting {
+                    self.nodes[child_idx].parents.push(idx);
+                    self.nodes[idx].children.push(child_idx);
+                }
+            }
+        }
 
-        // Re-request data for commits that are still unfolded but whose
+        // Re-request data for new commits that are still unfolded but whose
         // cached file data didn't survive the refresh (happens after mutation).
-        for idx_raw in 0..self.nodes.len() {
+        for idx_raw in base..self.nodes.len() {
             let idx = EntryIdx::new(idx_raw);
             let change_id = self.nodes[idx].commit.unique_change_id();
             if self.unfolded_commits.contains(&change_id) && self.nodes[idx].files.should_request()
@@ -109,82 +197,113 @@ impl App {
             }
         }
 
-        // Prune fold state for changes no longer in the DAG.
-        let live_change_ids: HashSet<ChangeId> = self
-            .nodes
-            .iter()
-            .map(|n| n.commit.unique_change_id())
-            .collect();
-        self.unfolded_commits
-            .retain(|k| live_change_ids.contains(k));
-        self.unfolded_files
-            .retain(|k| live_change_ids.contains(&k.change_id));
-        self.selection
-            .retain(|s| live_change_ids.contains(s.change_id()));
-
         self.rebuild_bookmark_entries();
         self.rebuild_tag_entries();
         self.rebuild_rows();
 
-        // Restore cursor using stable ChangeId, with fallback chain:
-        // DiffLine → FileChange → CommitNode.
-        if let Some((change_id, file_path, diff_line_idx)) = cursor_context
-            && let Some((entry_idx, _)) = self
+        if done {
+            // Prune fold state for changes no longer in the DAG.
+            let live_change_ids: HashSet<ChangeId> = self
                 .nodes
-                .iter_enumerated()
-                .find(|(_, node)| node.commit.unique_change_id() == change_id)
+                .iter()
+                .map(|n| n.commit.unique_change_id())
+                .collect();
+            self.unfolded_commits
+                .retain(|k| live_change_ids.contains(k));
+            self.unfolded_files
+                .retain(|k| live_change_ids.contains(&k.change_id));
+            self.selection
+                .retain(|s| live_change_ids.contains(s.change_id()));
+            self.clear_info_status();
+        } else {
+            self.set_status(format!("loading… {} commits", self.nodes.len()));
+        }
+
+        // Restore the cursor once its commit has arrived.
+        if let Some(ctx) = stream.cursor_restore.take()
+            && !self.try_restore_cursor(&ctx)
+            && !done
         {
-            let find_row = |pred: &dyn Fn(&DisplayRow) -> bool| self.rows.iter().position(pred);
+            stream.cursor_restore = Some(ctx);
+        }
 
-            let restored = diff_line_idx
-                    .and_then(|li| {
-                        let fp = file_path.as_ref()?;
-                        find_row(&|r| match r {
-                            DisplayRow::DiffLine {
-                                entry_idx: ei,
-                                file_idx,
-                                line_idx,
-                            } if *ei == entry_idx && *line_idx == li => self
-                                .files_for_entry(entry_idx)
-                                .and_then(|f| f.get(file_idx.raw()))
-                                .is_some_and(|f| f.path == *fp),
-                            _ => false,
-                        })
-                    })
-                    .or_else(|| {
-                        let fp = file_path.as_ref()?;
-                        find_row(&|r| match r {
-                            DisplayRow::FileChange {
-                                entry_idx: ei,
-                                file_idx,
-                            } if *ei == entry_idx => self
-                                .files_for_entry(entry_idx)
-                                .and_then(|f| f.get(file_idx.raw()))
-                                .is_some_and(|f| f.path == *fp),
-                            _ => false,
-                        })
-                    })
-                    .or_else(|| {
-                        find_row(&|r| {
-                            matches!(r, DisplayRow::CommitNode { entry_idx: ei } if *ei == entry_idx)
-                        })
-                    });
-
-            if let Some(row_idx) = restored {
-                self.cursor = RowIdx::new(row_idx);
+        // Apply the post-refresh jump target once it can be found; give up
+        // when the stream completes.
+        if let Some(target) = self.jump_after_refresh.take() {
+            let found = match &target {
+                JumpTarget::WorkingCopy => self.jump_to_working_copy(),
+                JumpTarget::Bookmark(name) => self.jump_to_bookmark(name),
+                JumpTarget::Prefix(prefix) => self.jump_to_change_id(prefix),
+            };
+            if !found {
+                if done {
+                    self.set_status("jump target not in current revset");
+                } else {
+                    self.jump_after_refresh = Some(target);
+                }
             }
         }
 
-        // Apply post-refresh jump target if set.
-        if let Some(target) = self.jump_after_refresh.take() {
-            match target {
-                JumpTarget::WorkingCopy => self.jump_to_working_copy(),
-                JumpTarget::Bookmark(ref name) => self.jump_to_bookmark(name),
-                JumpTarget::Prefix(ref prefix) => self.jump_to_change_id(prefix),
-            }
+        if !done {
+            self.stream = Some(stream);
         }
 
         self.refresh_search_matches();
+    }
+
+    /// Restore the cursor to the pre-refresh position captured in `ctx`,
+    /// with fallback chain: DiffLine → FileChange → CommitNode.
+    /// Returns whether the commit was found.
+    fn try_restore_cursor(&mut self, ctx: &CursorContext) -> bool {
+        let Some((entry_idx, _)) = self
+            .nodes
+            .iter_enumerated()
+            .find(|(_, node)| node.commit.unique_change_id() == ctx.change_id)
+        else {
+            return false;
+        };
+
+        let find_row = |pred: &dyn Fn(&DisplayRow) -> bool| self.rows.iter().position(pred);
+
+        let restored = ctx
+            .diff_line_idx
+            .and_then(|li| {
+                let fp = ctx.file_path.as_ref()?;
+                find_row(&|r| match r {
+                    DisplayRow::DiffLine {
+                        entry_idx: ei,
+                        file_idx,
+                        line_idx,
+                    } if *ei == entry_idx && *line_idx == li => self
+                        .files_for_entry(entry_idx)
+                        .and_then(|f| f.get(file_idx.raw()))
+                        .is_some_and(|f| f.path == *fp),
+                    _ => false,
+                })
+            })
+            .or_else(|| {
+                let fp = ctx.file_path.as_ref()?;
+                find_row(&|r| match r {
+                    DisplayRow::FileChange {
+                        entry_idx: ei,
+                        file_idx,
+                    } if *ei == entry_idx => self
+                        .files_for_entry(entry_idx)
+                        .and_then(|f| f.get(file_idx.raw()))
+                        .is_some_and(|f| f.path == *fp),
+                    _ => false,
+                })
+            })
+            .or_else(|| {
+                find_row(
+                    &|r| matches!(r, DisplayRow::CommitNode { entry_idx: ei } if *ei == entry_idx),
+                )
+            });
+
+        if let Some(row_idx) = restored {
+            self.cursor = RowIdx::new(row_idx);
+        }
+        true
     }
 
     /// Process a repo result, deferring `rebuild_rows` and `scroll_to_show_children`.
@@ -228,7 +347,7 @@ impl App {
                         self.set_error(data.warnings.join("; "));
                     }
                     // apply_entries does its own rebuild_rows (needed for cursor restoration).
-                    self.apply_entries(data.entries);
+                    self.apply_entries(data.entries, data.done);
                 }
                 Err(error) => {
                     self.revset.pending = None;
@@ -238,6 +357,10 @@ impl App {
                     self.show_error_overlay("revset error", error);
                 }
             },
+            // append_entries does its own rebuild_rows (cursor/jump restore).
+            RepoResult::RevsetChunk { entries, done } => {
+                self.append_entries(entries, done);
+            }
             RepoResult::CommitDetails { commit_id, result } => match result {
                 Ok(details) => {
                     self.clear_info_status();

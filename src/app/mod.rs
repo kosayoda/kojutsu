@@ -24,8 +24,7 @@ impl DeferredWork {
     }
 }
 
-use crate::dag::{DagEntry, DiffLine, EdgeKind, FileChange, LineStats};
-use crate::graph;
+use crate::dag::{DiffLine, FileChange, LineStats};
 use crate::idx::{EntryIdx, EvoLogIdx, FileIdx, IndexVec, RowIdx};
 use crate::types::SmallVec;
 
@@ -98,6 +97,25 @@ impl std::fmt::Debug for DagNode {
 }
 
 impl DagNode {
+    /// Create a node with no lazily-loaded data yet.
+    fn new(
+        commit: crate::dag::CommitInfo,
+        graph: crate::graph::GraphLines,
+        parents: SmallVec<EntryIdx>,
+    ) -> Self {
+        Self {
+            commit,
+            graph,
+            parents,
+            children: SmallVec::new(),
+            row: 0,
+            files: Loadable::NotRequested,
+            stats: Loadable::NotRequested,
+            diffs: Vec::new(),
+            conflict_hunks: Vec::new(),
+        }
+    }
+
     /// Get the loaded diff lines for a file in the given format.
     pub fn diff(&self, fi: FileIdx, format: DiffFormat) -> Option<&Vec<DiffLine>> {
         Some(self.diffs.get(fi.raw())?.loaded()?.lines(format))
@@ -199,6 +217,8 @@ pub struct App {
     pub nodes: IndexVec<EntryIdx, DagNode>,
     /// Lookup from commit graph_id → entry index (needed at event boundary).
     pub commit_index: HashMap<CommitId, EntryIdx>,
+    /// In-progress revset stream state (present while chunks are arriving).
+    stream: Option<data::DagStreamState>,
     /// Data for bookmark/tag/workspace views.
     pub views: ViewData,
     /// Operation log view state.
@@ -286,19 +306,16 @@ impl std::fmt::Debug for App {
 
 impl App {
     pub fn new(
-        entries: Vec<DagEntry>,
         revset: String,
         repo_root: String,
         presets: &'static [crate::theme::Preset],
         glyphs: &'static crate::theme::GlyphChars,
     ) -> Self {
-        let entries = IndexVec::from_vec(entries);
-        let commit_index = build_commit_index(&entries);
-        let nodes = build_nodes(entries, &commit_index, glyphs);
         let mut app = Self {
             active_view: ActiveView::Dag,
-            nodes,
-            commit_index,
+            nodes: IndexVec::new(),
+            commit_index: HashMap::new(),
+            stream: None,
             views: ViewData::new(),
             op_log: OpLogState::new(),
             evolog: EvoLogState::new(),
@@ -1190,58 +1207,4 @@ impl App {
     pub fn entry_by_commit_id(&self, commit_id: &CommitId) -> Option<EntryIdx> {
         self.commit_index.get(commit_id).copied()
     }
-}
-
-fn build_commit_index(entries: &IndexVec<EntryIdx, DagEntry>) -> HashMap<CommitId, EntryIdx> {
-    entries
-        .iter_enumerated()
-        .map(|(idx, e)| (e.commit.graph_id.clone(), idx))
-        .collect()
-}
-
-/// Build consolidated `DagNode` vec from transport `DagEntry` vec, resolving
-/// edges to `EntryIdx` and computing graph lines.
-fn build_nodes(
-    entries: IndexVec<EntryIdx, DagEntry>,
-    commit_index: &HashMap<CommitId, EntryIdx>,
-    glyphs: &crate::theme::GlyphChars,
-) -> IndexVec<EntryIdx, DagNode> {
-    let graph_lines = graph::render(entries.as_slice(), glyphs);
-
-    let node_vec: Vec<DagNode> = entries
-        .into_vec()
-        .into_iter()
-        .zip(graph_lines)
-        .map(|(entry, gl)| {
-            let parents: SmallVec<EntryIdx> = entry
-                .edges
-                .iter()
-                .filter(|e| matches!(e.kind, EdgeKind::Direct))
-                .filter_map(|e| commit_index.get(&e.target).copied())
-                .collect();
-            DagNode {
-                commit: entry.commit,
-                graph: gl,
-                parents,
-                children: SmallVec::new(),
-                row: 0,
-                files: Loadable::NotRequested,
-                stats: Loadable::NotRequested,
-                diffs: Vec::new(),
-                conflict_hunks: Vec::new(),
-            }
-        })
-        .collect();
-    let mut nodes: IndexVec<EntryIdx, DagNode> = IndexVec::from_vec(node_vec);
-
-    // Second pass: fill children from resolved parents.
-    for idx_raw in 0..nodes.len() {
-        let idx = EntryIdx::new(idx_raw);
-        let parents: SmallVec<EntryIdx> = nodes[idx].parents.clone();
-        for parent_idx in parents {
-            nodes[parent_idx].children.push(idx);
-        }
-    }
-
-    nodes
 }

@@ -369,7 +369,9 @@ pub(super) fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<
             Some(Action::None)
         }
         (Key::Char('@'), _, _) => {
-            app.jump_to_working_copy();
+            if !app.jump_to_working_copy() {
+                app.set_error("working copy not in current revset");
+            }
             Some(Action::None)
         }
         (Key::Char('0'), _, _) => {
