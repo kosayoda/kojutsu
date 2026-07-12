@@ -280,9 +280,7 @@ fn main() -> Result<()> {
         }
 
         // Apply deferred work once for the whole batch.
-        if deferred.rebuild {
-            app.rebuild_rows();
-        }
+        app.apply_rebuild(deferred.rebuild);
         if deferred.scroll {
             app.scroll_to_show_children();
         }

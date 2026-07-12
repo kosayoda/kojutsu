@@ -393,16 +393,16 @@ impl App {
                     // Store loaded files and stats.
                     self.nodes[idx].files = Loadable::Loaded(details.files);
                     self.nodes[idx].stats = Loadable::Loaded(details.stats);
-                    deferred.rebuild = true;
+                    deferred.rebuild.add_entry(idx);
                     deferred.scroll = true;
                 }
                 Err(error) => {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                         self.nodes[idx].files = Loadable::Failed(error.clone());
                         self.nodes[idx].stats = Loadable::Failed(error.clone());
+                        deferred.rebuild.add_entry(idx);
                     }
                     self.show_error_overlay(format!("load files for {commit_id}"), error);
-                    deferred.rebuild = true;
                 }
             },
             RepoResult::FileDiff {
@@ -416,18 +416,18 @@ impl App {
                         && let Some(file_idx) = self.file_idx_by_path(idx, &path)
                     {
                         self.nodes[idx].set_diff(file_idx, diff_result);
+                        deferred.rebuild.add_entry(idx);
+                        deferred.scroll = true;
                     }
-                    deferred.rebuild = true;
-                    deferred.scroll = true;
                 }
                 Err(error) => {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id)
                         && let Some(file_idx) = self.file_idx_by_path(idx, &path)
                     {
                         self.nodes[idx].set_diff_state(file_idx, Loadable::Failed(error.clone()));
+                        deferred.rebuild.add_entry(idx);
                     }
                     self.show_error_overlay(format!("load diff for {path}"), error);
-                    deferred.rebuild = true;
                 }
             },
             RepoResult::WorkspaceUpdatedStale { message } => {
@@ -501,7 +501,7 @@ impl App {
                     self.op_log.loaded = true;
                     self.op_log.has_more = has_more;
                     if self.active_view == super::ActiveView::Operations {
-                        deferred.rebuild = true;
+                        deferred.rebuild.set_full();
                     }
                 }
                 Err(error) => {
@@ -519,7 +519,7 @@ impl App {
                         .details
                         .insert(op_id, super::Loadable::Loaded(lines));
                     if self.active_view == super::ActiveView::Operations {
-                        deferred.rebuild = true;
+                        deferred.rebuild.set_full();
                         deferred.scroll = true;
                     }
                 }
@@ -542,9 +542,9 @@ impl App {
                     {
                         self.nodes[idx]
                             .set_conflict_hunks(file_idx, super::Loadable::Loaded(hunks));
+                        deferred.rebuild.add_entry(idx);
+                        deferred.scroll = true;
                     }
-                    deferred.rebuild = true;
-                    deferred.scroll = true;
                 }
                 Err(error) => {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id)
@@ -552,6 +552,7 @@ impl App {
                     {
                         self.nodes[idx]
                             .set_conflict_hunks(file_idx, super::Loadable::Failed(error.clone()));
+                        deferred.rebuild.add_entry(idx);
                     }
                     let msg = format!("failed to load conflict hunks for {path}: {error}");
                     self.log_background_error(msg);
@@ -564,7 +565,7 @@ impl App {
                     self.evolog.entries = entries;
                     self.evolog.loaded = true;
                     if self.active_view == super::ActiveView::Evolog {
-                        deferred.rebuild = true;
+                        deferred.rebuild.set_full();
                     }
                 }
                 Err(error) => {
@@ -579,7 +580,7 @@ impl App {
                         .files
                         .insert(commit_id, super::Loadable::Loaded(files));
                     if self.active_view == super::ActiveView::Evolog {
-                        deferred.rebuild = true;
+                        deferred.rebuild.set_full();
                         deferred.scroll = true;
                     }
                 }
@@ -599,7 +600,7 @@ impl App {
                         .file_diffs
                         .insert(key, super::Loadable::Loaded(diff_result));
                     if self.active_view == super::ActiveView::Evolog {
-                        deferred.rebuild = true;
+                        deferred.rebuild.set_full();
                         deferred.scroll = true;
                     }
                 }
@@ -618,7 +619,7 @@ impl App {
                 Ok(files) => {
                     self.interdiff.files = Loadable::Loaded(files);
                     if self.active_view == super::ActiveView::Interdiff {
-                        deferred.rebuild = true;
+                        deferred.rebuild.set_full();
                     }
                 }
                 Err(error) => {
@@ -640,7 +641,7 @@ impl App {
                         .file_diffs
                         .insert(path, Loadable::Loaded(diff_result));
                     if self.active_view == super::ActiveView::Interdiff {
-                        deferred.rebuild = true;
+                        deferred.rebuild.set_full();
                         deferred.scroll = true;
                     }
                 }
@@ -667,7 +668,7 @@ impl App {
                     self.annotate.lines = Loadable::Loaded(annotate_result.lines);
                     self.annotate.commit_info = annotate_result.commit_info;
                     if self.active_view == super::ActiveView::Annotate {
-                        deferred.rebuild = true;
+                        deferred.rebuild.set_full();
                     }
                 }
                 Err(error) => {
@@ -702,9 +703,7 @@ impl App {
     /// Process a repo result immediately (convenience wrapper).
     pub fn handle_repo_result(&mut self, result: RepoResult) {
         let deferred = self.handle_repo_result_deferred(result);
-        if deferred.rebuild {
-            self.rebuild_rows();
-        }
+        self.apply_rebuild(deferred.rebuild);
         if deferred.scroll {
             self.scroll_to_show_children();
         }

@@ -10,16 +10,62 @@ pub use types::*;
 
 use std::collections::{HashMap, HashSet};
 
+/// How much of the row list a batch of repo results invalidated.
+#[derive(Default)]
+pub enum RebuildScope {
+    #[default]
+    None,
+    /// Only these DAG entries' rows changed — rebuilt in place via
+    /// [`App::rebuild_entry_rows`].
+    Entries(Vec<crate::idx::EntryIdx>),
+    /// Rebuild the whole row list.
+    Full,
+}
+
+impl RebuildScope {
+    /// Mark a single DAG entry's rows as changed.
+    pub fn add_entry(&mut self, entry_idx: crate::idx::EntryIdx) {
+        match self {
+            Self::None => *self = Self::Entries(vec![entry_idx]),
+            Self::Entries(entries) => {
+                if !entries.contains(&entry_idx) {
+                    entries.push(entry_idx);
+                }
+            }
+            Self::Full => {}
+        }
+    }
+
+    /// Mark the whole row list as changed.
+    pub fn set_full(&mut self) {
+        *self = Self::Full;
+    }
+
+    fn merge(&mut self, other: Self) {
+        match (&mut *self, other) {
+            (_, Self::None) => {}
+            (Self::Full, _) => {}
+            (_, Self::Full) => *self = Self::Full,
+            (Self::None, entries) => *self = entries,
+            (Self::Entries(_), Self::Entries(other)) => {
+                for entry_idx in other {
+                    self.add_entry(entry_idx);
+                }
+            }
+        }
+    }
+}
+
 /// Signals deferred work that should run once after a batch of repo results.
 #[derive(Default)]
 pub struct DeferredWork {
-    pub rebuild: bool,
+    pub rebuild: RebuildScope,
     pub scroll: bool,
 }
 
 impl DeferredWork {
     pub fn merge(&mut self, other: Self) {
-        self.rebuild |= other.rebuild;
+        self.rebuild.merge(other.rebuild);
         self.scroll |= other.scroll;
     }
 }

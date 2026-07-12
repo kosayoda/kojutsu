@@ -272,176 +272,271 @@ impl App {
         // Remember what the cursor was pointing at so we can restore it.
         let prev_cursor = self.rows.get(self.cursor.raw()).copied();
 
-        self.rows.clear();
+        let mut rows = std::mem::take(&mut self.rows);
+        rows.clear();
         for idx_raw in 0..self.nodes.len() {
             let entry_idx = EntryIdx::new(idx_raw);
-            self.nodes[entry_idx].row = self.rows.len();
-            self.rows.push(DisplayRow::CommitNode { entry_idx });
+            self.nodes[entry_idx].row = rows.len();
+            self.push_dag_entry_rows(entry_idx, &mut rows);
+        }
+        self.rows = rows;
 
-            if self.is_commit_unfolded(entry_idx) {
-                // Description continuation lines (skip first line — already in CommitNode).
-                if let Some(full) = &self.nodes[entry_idx].commit.full_description {
-                    for (i, _) in full.lines().skip(1).enumerate() {
-                        self.rows.push(DisplayRow::DescriptionLine {
-                            entry_idx,
-                            line_idx: DescriptionLineIdx::new(i),
-                        });
-                    }
+        // Restore cursor: try exact match, then fall back to parent file,
+        // then parent commit. This handles fold scenarios where the cursor
+        // was on a diff line that disappeared when the file was folded.
+        let fallbacks = dag_cursor_fallbacks(prev_cursor);
+        self.cursor = restore_cursor(&self.rows, self.cursor, &fallbacks);
+    }
+
+    /// Emit the display rows for one DAG entry (commit node, description,
+    /// files, diffs/conflicts, graph links) into `rows`.
+    fn push_dag_entry_rows(&self, entry_idx: EntryIdx, rows: &mut Vec<DisplayRow>) {
+        rows.push(DisplayRow::CommitNode { entry_idx });
+
+        if self.is_commit_unfolded(entry_idx) {
+            // Description continuation lines (skip first line — already in CommitNode).
+            if let Some(full) = &self.nodes[entry_idx].commit.full_description {
+                for (i, _) in full.lines().skip(1).enumerate() {
+                    rows.push(DisplayRow::DescriptionLine {
+                        entry_idx,
+                        line_idx: DescriptionLineIdx::new(i),
+                    });
                 }
-                if let Some(files) = self.files_for_entry(entry_idx) {
-                    for file_idx_raw in 0..files.len() {
-                        let file_idx = FileIdx::new(file_idx_raw);
-                        self.rows.push(DisplayRow::FileChange {
-                            entry_idx,
-                            file_idx,
-                        });
+            }
+            if let Some(files) = self.files_for_entry(entry_idx) {
+                for file_idx_raw in 0..files.len() {
+                    let file_idx = FileIdx::new(file_idx_raw);
+                    rows.push(DisplayRow::FileChange {
+                        entry_idx,
+                        file_idx,
+                    });
 
-                        // If this file is unfolded, show diff lines or conflict hunks.
-                        if self.is_file_unfolded(entry_idx, file_idx) {
-                            if let Some(hunks) = self.nodes[entry_idx]
-                                .conflict_hunks(file_idx)
-                                .and_then(|l| l.loaded())
-                            {
-                                // Show conflict hunks instead of diff.
-                                for (hi, hunk) in hunks.iter().enumerate() {
-                                    match hunk {
-                                        crate::dag::ConflictHunkKind::Resolved { lines } => {
-                                            for li in 0..lines.len() {
-                                                self.rows.push(DisplayRow::ConflictContext {
+                    // If this file is unfolded, show diff lines or conflict hunks.
+                    if self.is_file_unfolded(entry_idx, file_idx) {
+                        if let Some(hunks) = self.nodes[entry_idx]
+                            .conflict_hunks(file_idx)
+                            .and_then(|l| l.loaded())
+                        {
+                            // Show conflict hunks instead of diff.
+                            for (hi, hunk) in hunks.iter().enumerate() {
+                                match hunk {
+                                    crate::dag::ConflictHunkKind::Resolved { lines } => {
+                                        for li in 0..lines.len() {
+                                            rows.push(DisplayRow::ConflictContext {
+                                                entry_idx,
+                                                file_idx,
+                                                hunk_idx: ConflictHunkIdx::new(hi),
+                                                line_idx: ConflictLineIdx::new(li),
+                                            });
+                                        }
+                                    }
+                                    crate::dag::ConflictHunkKind::Conflict { sides, .. } => {
+                                        rows.push(DisplayRow::ConflictHeader {
+                                            entry_idx,
+                                            file_idx,
+                                            hunk_idx: ConflictHunkIdx::new(hi),
+                                        });
+                                        for (si, side) in sides.iter().enumerate() {
+                                            for li in 0..side.len() {
+                                                rows.push(DisplayRow::ConflictSide {
                                                     entry_idx,
                                                     file_idx,
                                                     hunk_idx: ConflictHunkIdx::new(hi),
+                                                    side_idx: ConflictSideIdx::new(si),
                                                     line_idx: ConflictLineIdx::new(li),
                                                 });
                                             }
                                         }
-                                        crate::dag::ConflictHunkKind::Conflict {
-                                            sides, ..
-                                        } => {
-                                            self.rows.push(DisplayRow::ConflictHeader {
-                                                entry_idx,
-                                                file_idx,
-                                                hunk_idx: ConflictHunkIdx::new(hi),
-                                            });
-                                            for (si, side) in sides.iter().enumerate() {
-                                                for li in 0..side.len() {
-                                                    self.rows.push(DisplayRow::ConflictSide {
-                                                        entry_idx,
-                                                        file_idx,
-                                                        hunk_idx: ConflictHunkIdx::new(hi),
-                                                        side_idx: ConflictSideIdx::new(si),
-                                                        line_idx: ConflictLineIdx::new(li),
-                                                    });
-                                                }
-                                            }
-                                        }
                                     }
                                 }
-                            } else if let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) {
-                                let n = diff_lines.len();
-                                for line_idx_raw in 0..n {
-                                    self.rows.push(DisplayRow::DiffLine {
-                                        entry_idx,
-                                        file_idx,
-                                        line_idx: DiffLineIdx::new(line_idx_raw),
-                                    });
-                                }
+                            }
+                        } else if let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) {
+                            let n = diff_lines.len();
+                            for line_idx_raw in 0..n {
+                                rows.push(DisplayRow::DiffLine {
+                                    entry_idx,
+                                    file_idx,
+                                    line_idx: DiffLineIdx::new(line_idx_raw),
+                                });
                             }
                         }
                     }
                 }
             }
+        }
 
-            // Extra graph lines (link/pad/term) are rendered as separate
-            // GraphLink rows between commits.
-            for line_idx_raw in 0..self.nodes[entry_idx].graph.extra.len() {
-                self.rows.push(DisplayRow::GraphLink {
-                    entry_idx,
-                    line_idx: GraphLineIdx::new(line_idx_raw),
-                });
+        // Extra graph lines (link/pad/term) are rendered as separate
+        // GraphLink rows between commits.
+        for line_idx_raw in 0..self.nodes[entry_idx].graph.extra.len() {
+            rows.push(DisplayRow::GraphLink {
+                entry_idx,
+                line_idx: GraphLineIdx::new(line_idx_raw),
+            });
+        }
+    }
+
+    /// Apply a deferred rebuild scope.
+    pub fn apply_rebuild(&mut self, scope: super::RebuildScope) {
+        match scope {
+            super::RebuildScope::None => {}
+            super::RebuildScope::Full => self.rebuild_rows(),
+            super::RebuildScope::Entries(entries) => {
+                for entry_idx in entries {
+                    self.rebuild_entry_rows(entry_idx);
+                }
+            }
+        }
+    }
+
+    /// Regenerate the rows of a single DAG entry in place, shifting the rows
+    /// of following entries instead of rebuilding the whole list.
+    /// Falls back to a full rebuild if the entry's row range can't be located.
+    pub(super) fn rebuild_entry_rows(&mut self, entry_idx: EntryIdx) {
+        if self.active_view != ActiveView::Dag {
+            // DAG rows aren't displayed; they are rebuilt on view switch.
+            return;
+        }
+        let Some(node) = self.nodes.get(entry_idx) else {
+            return;
+        };
+        let start = node.row;
+        let end = match self.nodes.get(EntryIdx::new(entry_idx.raw() + 1)) {
+            Some(next) => next.row,
+            None => self.rows.len(),
+        };
+        let range_valid = start <= end
+            && end <= self.rows.len()
+            && matches!(
+                self.rows.get(start),
+                Some(DisplayRow::CommitNode { entry_idx: e }) if *e == entry_idx
+            );
+        if !range_valid {
+            // Row pointers are stale — regenerate everything.
+            self.rebuild_dag_rows();
+            return;
+        }
+
+        let prev_cursor = self.rows.get(self.cursor.raw()).copied();
+
+        let mut new_rows = Vec::with_capacity(end - start);
+        self.push_dag_entry_rows(entry_idx, &mut new_rows);
+        let new_end = start + new_rows.len();
+        let delta = new_end as isize - end as isize;
+        self.rows.splice(start..end, new_rows);
+
+        if delta != 0 {
+            // Shift the row pointers of all following entries.
+            for idx_raw in (entry_idx.raw() + 1)..self.nodes.len() {
+                let node = &mut self.nodes[EntryIdx::new(idx_raw)];
+                node.row = node.row.saturating_add_signed(delta);
+            }
+            if self.scroll >= end {
+                self.scroll = self.scroll.saturating_add_signed(delta);
+            }
+            // Search match rows shifted with the splice.
+            if self.search.is_some() {
+                self.refresh_search_matches();
             }
         }
 
-        // Restore cursor: try exact match, then fall back to parent file,
-        // then parent commit. This handles fold scenarios where the cursor
-        // was on a diff line that disappeared when the file was folded.
-        let fallbacks: [Option<DisplayRow>; 3] = match prev_cursor {
+        // Restore the cursor with the same semantics as a full rebuild.
+        let cursor = self.cursor.raw();
+        if cursor >= end {
+            self.cursor = RowIdx::new(cursor.saturating_add_signed(delta));
+        } else if cursor >= start {
+            // The cursor was inside the regenerated range — re-find its row
+            // (or a fallback) within the entry's new rows.
+            let fallbacks = dag_cursor_fallbacks(prev_cursor);
+            let relative = restore_cursor(
+                &self.rows[start..new_end],
+                RowIdx::new(cursor - start),
+                &fallbacks,
+            );
+            self.cursor = RowIdx::new(start + relative.raw());
+        }
+    }
+}
+
+/// Cursor fallback chain for DAG row rebuilds: exact match, then parent
+/// file, then parent commit.
+fn dag_cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>; 3] {
+    match prev_cursor {
+        Some(DisplayRow::DiffLine {
+            entry_idx,
+            file_idx,
+            line_idx,
+        }) => [
             Some(DisplayRow::DiffLine {
                 entry_idx,
                 file_idx,
                 line_idx,
-            }) => [
-                Some(DisplayRow::DiffLine {
-                    entry_idx,
-                    file_idx,
-                    line_idx,
-                }),
-                Some(DisplayRow::FileChange {
-                    entry_idx,
-                    file_idx,
-                }),
-                Some(DisplayRow::CommitNode { entry_idx }),
-            ],
-            Some(DisplayRow::DescriptionLine { entry_idx, .. }) => {
-                [Some(DisplayRow::CommitNode { entry_idx }), None, None]
-            }
+            }),
             Some(DisplayRow::FileChange {
                 entry_idx,
                 file_idx,
-            }) => [
-                Some(DisplayRow::FileChange {
-                    entry_idx,
-                    file_idx,
-                }),
-                Some(DisplayRow::CommitNode { entry_idx }),
-                None,
-            ],
-            Some(
-                DisplayRow::ConflictSide {
-                    entry_idx,
-                    file_idx,
-                    hunk_idx,
-                    ..
-                }
-                | DisplayRow::ConflictContext {
-                    entry_idx,
-                    file_idx,
-                    hunk_idx,
-                    ..
-                },
-            ) => [
-                Some(DisplayRow::ConflictHeader {
-                    entry_idx,
-                    file_idx,
-                    hunk_idx,
-                }),
-                Some(DisplayRow::FileChange {
-                    entry_idx,
-                    file_idx,
-                }),
-                Some(DisplayRow::CommitNode { entry_idx }),
-            ],
+            }),
+            Some(DisplayRow::CommitNode { entry_idx }),
+        ],
+        Some(DisplayRow::DescriptionLine { entry_idx, .. }) => {
+            [Some(DisplayRow::CommitNode { entry_idx }), None, None]
+        }
+        Some(DisplayRow::FileChange {
+            entry_idx,
+            file_idx,
+        }) => [
+            Some(DisplayRow::FileChange {
+                entry_idx,
+                file_idx,
+            }),
+            Some(DisplayRow::CommitNode { entry_idx }),
+            None,
+        ],
+        Some(
+            DisplayRow::ConflictSide {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                ..
+            }
+            | DisplayRow::ConflictContext {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                ..
+            },
+        ) => [
             Some(DisplayRow::ConflictHeader {
                 entry_idx,
                 file_idx,
-                ..
-            }) => [
-                Some(DisplayRow::FileChange {
-                    entry_idx,
-                    file_idx,
-                }),
-                Some(DisplayRow::CommitNode { entry_idx }),
-                None,
-            ],
-            Some(DisplayRow::GraphLink { entry_idx, .. }) => {
-                [Some(DisplayRow::CommitNode { entry_idx }), None, None]
-            }
-            Some(key) => [Some(key), None, None],
-            None => [None, None, None],
-        };
-        self.cursor = restore_cursor(&self.rows, self.cursor, &fallbacks);
+                hunk_idx,
+            }),
+            Some(DisplayRow::FileChange {
+                entry_idx,
+                file_idx,
+            }),
+            Some(DisplayRow::CommitNode { entry_idx }),
+        ],
+        Some(DisplayRow::ConflictHeader {
+            entry_idx,
+            file_idx,
+            ..
+        }) => [
+            Some(DisplayRow::FileChange {
+                entry_idx,
+                file_idx,
+            }),
+            Some(DisplayRow::CommitNode { entry_idx }),
+            None,
+        ],
+        Some(DisplayRow::GraphLink { entry_idx, .. }) => {
+            [Some(DisplayRow::CommitNode { entry_idx }), None, None]
+        }
+        Some(key) => [Some(key), None, None],
+        None => [None, None, None],
     }
+}
 
+impl App {
     /// After unfolding, scroll just enough to make the last child row visible.
     /// Does nothing if the content already fits in the viewport.
     pub fn scroll_to_show_children(&mut self) {
@@ -624,7 +719,7 @@ impl App {
             }
             self.unfolded_commits.insert(change_id);
         }
-        self.rebuild_rows();
+        self.rebuild_entry_rows(entry_idx);
         if self.is_commit_unfolded(entry_idx) {
             self.scroll_to_show_children();
         }
@@ -679,7 +774,7 @@ impl App {
             }
             self.unfolded_files.insert(fold_key);
         }
-        self.rebuild_rows();
+        self.rebuild_entry_rows(entry_idx);
         if !currently_unfolded {
             // We just unfolded — scroll to show child rows.
             self.scroll_to_show_children();
