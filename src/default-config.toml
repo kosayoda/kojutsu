@@ -63,3 +63,9 @@ selection_bg = { r = 50, g = 50, b = 60 } # background highlight for cursor row
 # Larger files show a placeholder instead of a diff — a memory guard for
 # repos with huge text files.
 # max_file_size_mib = 64
+
+# Note on large working copies: working-copy snapshots (startup, ctrl-r,
+# returning from suspended commands) scan the filesystem. To make them
+# incremental, enable watchman in your *jj* config (not this file):
+#   [fsmonitor]
+#   backend = "watchman"

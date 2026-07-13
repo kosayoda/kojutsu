@@ -10,7 +10,7 @@ use kojutsu::input::{self, Action};
 use kojutsu::jj_command::{JJCommand, JJCommandResult};
 use kojutsu::keymap::{self, Keymaps};
 use kojutsu::repo::JjRepo;
-use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService};
+use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind};
 use kojutsu::terminal::spawn_terminal_events;
 use kojutsu::types::JumpTarget;
 use kojutsu::ui;
@@ -304,7 +304,7 @@ fn main() -> Result<()> {
                 }
             }
             Action::Refresh => {
-                refresh_app(&mut app);
+                refresh_app(&mut app, RevsetLoadKind::Snapshot);
             }
             Action::UpdateRevset(revset_str) => {
                 update_revset(&mut app, revset_str);
@@ -376,7 +376,7 @@ fn main() -> Result<()> {
                             lua_engine.run_post_hooks(label, &mut app, success, &output);
                         }
                     }
-                    Action::Refresh => refresh_app(&mut app),
+                    Action::Refresh => refresh_app(&mut app, RevsetLoadKind::Snapshot),
                     Action::UpdateRevset(revset_str) => update_revset(&mut app, revset_str),
                     _ => {}
                 }
@@ -406,12 +406,20 @@ fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
     }
 }
 
-fn refresh_app(app: &mut App) {
+/// Reload the current revset. `Snapshot` re-scans the working copy first —
+/// needed only when the user may have edited files since jj last looked
+/// (manual refresh, returning from a suspended command). Refreshes after
+/// captured jj commands use `NoSnapshot`: the command itself already
+/// snapshotted the working copy when it started.
+fn refresh_app(app: &mut App, load_kind: RevsetLoadKind) {
     let revset = match &app.revset.load_state {
         Loadable::Loading => app.revset.pending.as_ref().map(|s| s.to_string()),
         _ => Some(app.revset.current.to_string()),
     };
-    app.request_revset_load(revset);
+    match load_kind {
+        RevsetLoadKind::Snapshot => app.request_revset_load(revset),
+        RevsetLoadKind::NoSnapshot => app.request_revset_load_no_snapshot(revset),
+    }
 }
 
 fn suspend_and_run(
@@ -452,7 +460,9 @@ fn suspend_and_run(
     if result.success {
         app.jump_after_refresh = jump;
         app.clear_selection();
-        refresh_app(app);
+        // The user may have edited files while the terminal was suspended
+        // (e.g. in $EDITOR) — re-scan the working copy.
+        refresh_app(app, RevsetLoadKind::Snapshot);
     }
 
     // Show output if there is any, or if the command failed (so failures are
@@ -677,7 +687,10 @@ fn finish_jj_command(
         if switch_to_dag && app.active_view != kojutsu::app::ActiveView::Dag {
             app.switch_view(kojutsu::app::ActiveView::Dag);
         }
-        refresh_app(app);
+        // The command already snapshotted the working copy when it started
+        // (unless run with --ignore-working-copy, where skipping is wanted),
+        // so skip the redundant re-scan.
+        refresh_app(app, RevsetLoadKind::NoSnapshot);
     }
 
     if let Some(lbl) = label {

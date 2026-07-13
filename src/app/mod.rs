@@ -724,8 +724,9 @@ impl App {
         self.jump_after_refresh = Some(JumpTarget::Prefix(change_str));
         self.revset.load_state = Loadable::Loading;
         self.revset.pending = Some(new_revset.clone().into());
+        // Pure revset change — no filesystem interaction, no snapshot needed.
         self.pending_repo_requests
-            .push(RepoRequest::load_revset(Some(new_revset)));
+            .push(RepoRequest::load_revset_no_snapshot(Some(new_revset)));
     }
 
     pub fn request_op_log_load_more(&mut self) {
