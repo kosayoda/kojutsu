@@ -194,19 +194,8 @@ fn register_globals(lua: &mlua::Lua) -> mlua::Result<()> {
     kojutsu.set("action", action_table)?;
 
     let scope_table = lua.create_table()?;
-    for name in [
-        "all",
-        "dag",
-        "bookmarks",
-        "tags",
-        "operations",
-        "workspaces",
-        "evolog",
-        "command_log",
-        "interdiff",
-        "annotate",
-    ] {
-        scope_table.set(name, name)?;
+    for name in super::helpers::scope_names() {
+        scope_table.set(name.clone(), name)?;
     }
     kojutsu.set("scope", scope_table)?;
 
@@ -216,8 +205,8 @@ fn register_globals(lua: &mlua::Lua) -> mlua::Result<()> {
     kojutsu.set("phase", phase_table)?;
 
     let selection_table = lua.create_table()?;
-    for name in ["all", "commit", "file", "line"] {
-        selection_table.set(name, name)?;
+    for name in super::helpers::selection_names() {
+        selection_table.set(name.clone(), name)?;
     }
     kojutsu.set("selection", selection_table)?;
 

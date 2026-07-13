@@ -18,6 +18,8 @@ pub struct VisualRange {
 /// path, so selections survive DAG refreshes.
 #[derive(Clone, PartialEq, Eq, Hash, EnumDiscriminants)]
 #[strum_discriminants(name(SelectionKind))]
+#[strum_discriminants(derive(strum::Display, strum::EnumString, strum::EnumIter))]
+#[strum_discriminants(strum(serialize_all = "snake_case"))]
 pub enum Selection {
     /// Commit selected (used implicitly from cursor, not currently in explicit sets).
     Commit(ChangeId),

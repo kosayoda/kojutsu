@@ -1,4 +1,17 @@
+use strum::IntoEnumIterator as _;
+
 use crate::keymap::{BindTarget, BindingSpec, Scope};
+
+/// Valid `scope` option values: `all` plus every view name.
+pub(super) fn scope_names() -> impl Iterator<Item = String> {
+    std::iter::once("all".to_string()).chain(crate::app::ActiveView::iter().map(|v| v.to_string()))
+}
+
+/// Valid `selection` option values: `all` plus every selection kind.
+pub(super) fn selection_names() -> impl Iterator<Item = String> {
+    std::iter::once("all".to_string())
+        .chain(crate::types::SelectionKind::iter().map(|k| k.to_string()))
+}
 
 pub(super) fn shadows_default(
     default_specs: &[BindingSpec],
@@ -44,18 +57,7 @@ pub fn generate_type_definitions() -> String {
     writeln!(out).unwrap();
 
     writeln!(out, "---@class KojutsuScope").unwrap();
-    for name in [
-        "all",
-        "dag",
-        "bookmarks",
-        "tags",
-        "operations",
-        "workspaces",
-        "evolog",
-        "command_log",
-        "interdiff",
-        "annotate",
-    ] {
+    for name in scope_names() {
         writeln!(out, "---@field {name} string").unwrap();
     }
     writeln!(out).unwrap();
@@ -66,7 +68,7 @@ pub fn generate_type_definitions() -> String {
     writeln!(out).unwrap();
 
     writeln!(out, "---@class KojutsuSelection").unwrap();
-    for name in ["all", "commit", "file", "line"] {
+    for name in selection_names() {
         writeln!(out, "---@field {name} string").unwrap();
     }
     writeln!(out).unwrap();
@@ -238,10 +240,10 @@ pub(super) fn parse_scope(s: &str) -> crate::keymap::Scope {
     match s.parse::<crate::app::ActiveView>() {
         Ok(view) => crate::keymap::Scope::Views(smallvec::smallvec![view]),
         Err(_) => {
+            let valid: Vec<String> = scope_names().collect();
             tracing::warn!(
-                "unknown scope '{s}', defaulting to 'all' \
-                 (valid: all, dag, bookmarks, tags, operations, workspaces, \
-                 evolog, command_log, interdiff, annotate)"
+                "unknown scope '{s}', defaulting to 'all' (valid: {})",
+                valid.join(", ")
             );
             crate::keymap::Scope::All
         }

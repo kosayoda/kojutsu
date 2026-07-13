@@ -541,6 +541,7 @@ pub const OP_LOG_BATCH_SIZE: usize = 200;
     strum::FromRepr,
     strum::Display,
     strum::EnumString,
+    strum::EnumIter,
 )]
 #[repr(usize)]
 #[strum(serialize_all = "snake_case")]

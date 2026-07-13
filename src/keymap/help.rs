@@ -2,7 +2,19 @@ use super::registry::{ActionId, ActionRegistry};
 use super::trie::{Keymap, TrieNode};
 use super::{SelectionKindSet, display_key, toggle_hint};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::Display)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    strum::Display,
+    strum::EnumString,
+    strum::EnumIter,
+)]
+#[strum(ascii_case_insensitive)]
 pub enum HelpGroup {
     Commands,
     Navigation,

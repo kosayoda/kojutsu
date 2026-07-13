@@ -222,16 +222,10 @@ pub fn dispatch_action_after_hooks(
             .selection_support(ActionId::Builtin(action))
             .contains(app.selection_kind().as_bitset())
     {
-        let kind = app.selection_kind();
-        let kind_label = match kind {
-            SelectionKind::Commit => "commit",
-            SelectionKind::File => "file",
-            SelectionKind::Line => "line",
-        };
         app.set_error(format!(
             "{} does not support {} selection",
             action_label(action),
-            kind_label
+            app.selection_kind()
         ));
         return Action::None;
     }

@@ -245,11 +245,19 @@ impl LuaEngine {
         let registrations = std::mem::take(&mut *reg_commands.borrow_mut());
 
         for reg in registrations {
-            let selection_support = match reg.selection.as_str() {
-                "commit" => SelectionKindSet::COMMIT,
-                "file" => SelectionKindSet::FILE,
-                "line" => SelectionKindSet::LINE,
-                _ => SelectionKindSet::ALL,
+            let selection_support = if reg.selection == "all" {
+                SelectionKindSet::ALL
+            } else if let Ok(kind) = reg.selection.parse::<crate::types::SelectionKind>() {
+                kind.as_bitset()
+            } else {
+                let valid: Vec<String> = super::helpers::selection_names().collect();
+                tracing::warn!(
+                    "kojutsu.command '{}': unknown selection '{}', defaulting to 'all' (valid: {})",
+                    reg.name,
+                    reg.selection,
+                    valid.join(", ")
+                );
+                SelectionKindSet::ALL
             };
             let action_id = registry.register_lua(selection_support, false, false);
 
@@ -259,10 +267,16 @@ impl LuaEngine {
                 callback: reg.callback_key,
             });
 
-            let help_group = match reg.group.as_str() {
-                "navigation" => HelpGroup::Navigation,
-                "general" => HelpGroup::General,
-                _ => HelpGroup::Commands,
+            let help_group = match reg.group.parse::<HelpGroup>() {
+                Ok(group) => group,
+                Err(_) => {
+                    tracing::warn!(
+                        "kojutsu.command '{}': unknown group '{}', defaulting to 'commands'",
+                        reg.name,
+                        reg.group
+                    );
+                    HelpGroup::Commands
+                }
             };
 
             let scope = parse_scope(&reg.scope);
