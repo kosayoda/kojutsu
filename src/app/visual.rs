@@ -5,26 +5,21 @@ use crate::types::{DisplayRow, FileRef, Selection, SelectionKind, VisualRange};
 
 impl App {
     /// Whether a file row is in the active or persistent visual file range.
+    /// O(1): in file visual mode the anchor and cursor always sit on
+    /// `FileChange` rows of the same entry, and file rows appear in
+    /// `file_idx` order, so the range is just the two rows' file indices.
     pub fn is_in_visual_file_range(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> bool {
         if let Some(VisualMode::Files {
             anchor,
             entry_idx: ve,
         }) = &self.visual.mode
             && entry_idx == *ve
+            && let Some(a) = self.file_idx_at_row(*anchor, *ve)
+            && let Some(c) = self.file_idx_at_row(self.cursor, *ve)
+            && file_idx >= a.min(c)
+            && file_idx <= a.max(c)
         {
-            let lo = (*anchor).min(self.cursor);
-            let hi = (*anchor).max(self.cursor);
-            for i in lo.raw()..=hi.raw() {
-                if let Some(DisplayRow::FileChange {
-                    entry_idx: ei,
-                    file_idx: fi,
-                }) = self.rows.get(i)
-                    && *ei == entry_idx
-                    && *fi == file_idx
-                {
-                    return true;
-                }
-            }
+            return true;
         }
         if let Some(PersistentVisualRange::Files {
             entry_idx: ve,
@@ -38,6 +33,17 @@ impl App {
             return true;
         }
         false
+    }
+
+    /// The file index of the `FileChange` row at `row`, if it belongs to `entry_idx`.
+    fn file_idx_at_row(&self, row: RowIdx, entry_idx: EntryIdx) -> Option<FileIdx> {
+        match self.rows.get(row.raw()) {
+            Some(DisplayRow::FileChange {
+                entry_idx: ei,
+                file_idx,
+            }) if *ei == entry_idx => Some(*file_idx),
+            _ => None,
+        }
     }
 }
 

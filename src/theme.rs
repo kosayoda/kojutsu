@@ -51,6 +51,9 @@ pub struct Config {
     /// Tab width for diff rendering (default: 4).
     #[serde(default = "default_tab_width")]
     pub tab_width: u8,
+    /// Diff computation configuration.
+    #[serde(default)]
+    pub diff: DiffConfig,
 }
 
 impl Default for Config {
@@ -63,12 +66,42 @@ impl Default for Config {
             glyphs: GlyphChars::default(),
             default_search_scopes: DefaultSearchScopes::default(),
             tab_width: default_tab_width(),
+            diff: DiffConfig::default(),
         }
     }
 }
 
 fn default_tab_width() -> u8 {
     4
+}
+
+/// `[diff]` section of the config file.
+#[derive(Deserialize)]
+pub struct DiffConfig {
+    /// Max file size in MiB (per side) materialized into memory for a diff.
+    /// Larger files show a placeholder instead — a memory guard, not a
+    /// latency cap (diffs run on background workers).
+    #[serde(default = "default_max_file_size_mib")]
+    pub max_file_size_mib: u64,
+}
+
+impl DiffConfig {
+    /// The configured limit in bytes.
+    pub fn max_file_size_bytes(&self) -> usize {
+        (self.max_file_size_mib as usize).saturating_mul(1024 * 1024)
+    }
+}
+
+impl Default for DiffConfig {
+    fn default() -> Self {
+        Self {
+            max_file_size_mib: default_max_file_size_mib(),
+        }
+    }
+}
+
+fn default_max_file_size_mib() -> u64 {
+    64
 }
 
 fn default_date_format() -> String {

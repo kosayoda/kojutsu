@@ -27,11 +27,6 @@ use crate::dag::{
 };
 use crate::types::{CommitId as UiCommitId, RepoPath};
 
-/// Max bytes of file content (per side) materialized for a diff. This is a
-/// memory guard, not a latency cap — diff work runs on background workers.
-/// Larger files get a placeholder instead of being loaded into memory.
-const MAX_DIFF_FILE_SIZE: usize = 64 * 1024 * 1024;
-
 /// Bytes examined for the binary heuristic (git's null-byte scan).
 const BINARY_SNIFF_SIZE: usize = 8000;
 
@@ -39,20 +34,23 @@ const BINARY_SNIFF_SIZE: usize = 8000;
 enum DiffSideContent {
     Text(bstr::BString),
     Binary,
-    /// Regular file larger than [`MAX_DIFF_FILE_SIZE`]; content not loaded.
+    /// Regular file larger than the diff size limit; content not loaded.
     TooLarge,
 }
 
 /// Materialize one side of a file diff. Regular files are read through a
-/// size cap so oversized blobs are never fully loaded (jj's `git_diff_part`
-/// reads whole files before its binary check and has no cap); other tree
-/// values (symlinks, conflicts, submodules) still go through `git_diff_part`.
+/// size cap (`limit` bytes — a memory guard, not a latency cap; diff work
+/// runs on background workers) so oversized blobs are never fully loaded
+/// (jj's `git_diff_part` reads whole files before its binary check and has
+/// no cap); other tree values (symlinks, conflicts, submodules) still go
+/// through `git_diff_part`.
 fn materialize_diff_side(
     store: &Arc<Store>,
     path: &JjRepoPath,
     value: MergedTreeValue,
     labels: &ConflictLabels,
     materialize_options: &ConflictMaterializeOptions,
+    limit: usize,
 ) -> Result<DiffSideContent> {
     let materialized = materialize_tree_value(store, path, value, labels).block_on()?;
     if let MaterializedTreeValue::File(mut file) = materialized {
@@ -71,11 +69,11 @@ fn materialize_diff_side(
             return Ok(DiffSideContent::Binary);
         }
         (&mut file.reader)
-            .take((MAX_DIFF_FILE_SIZE + 1 - contents.len()) as u64)
+            .take(limit.saturating_add(1).saturating_sub(contents.len()) as u64)
             .read_to_end(&mut contents)
             .block_on()
             .map_err(read_err)?;
-        if contents.len() > MAX_DIFF_FILE_SIZE {
+        if contents.len() > limit {
             return Ok(DiffSideContent::TooLarge);
         }
         return Ok(DiffSideContent::Text(contents.into()));
@@ -106,10 +104,10 @@ fn placeholder_diff(text: impl Into<String>) -> DiffResult {
     }
 }
 
-fn too_large_placeholder() -> DiffResult {
+fn too_large_placeholder(limit: usize) -> DiffResult {
     placeholder_diff(format!(
         "(file larger than {} MiB — diff skipped)",
-        MAX_DIFF_FILE_SIZE / (1024 * 1024)
+        limit / (1024 * 1024)
     ))
 }
 
@@ -231,6 +229,7 @@ impl JjRepo {
                 values.before,
                 &labels,
                 &materialize_options,
+                self.diff_size_limit,
             )?;
             let after = materialize_diff_side(
                 repo.store(),
@@ -238,6 +237,7 @@ impl JjRepo {
                 values.after,
                 &labels,
                 &materialize_options,
+                self.diff_size_limit,
             )?;
             let (DiffSideContent::Text(before), DiffSideContent::Text(after)) = (before, after)
             else {
@@ -436,6 +436,7 @@ impl JjRepo {
                 values.before,
                 &labels,
                 &materialize_options,
+                self.diff_size_limit,
             )?;
             let after = materialize_diff_side(
                 repo.store(),
@@ -443,6 +444,7 @@ impl JjRepo {
                 values.after,
                 &labels,
                 &materialize_options,
+                self.diff_size_limit,
             )?;
             if let (DiffSideContent::Text(before), DiffSideContent::Text(after)) = (before, after) {
                 let contents = Diff::new(before.as_ref(), after.as_ref());
@@ -510,6 +512,7 @@ impl JjRepo {
             before_value,
             &labels,
             &materialize_options,
+            self.diff_size_limit,
         )?;
         let after = materialize_diff_side(
             repo.store(),
@@ -517,12 +520,13 @@ impl JjRepo {
             after_value,
             &labels,
             &materialize_options,
+            self.diff_size_limit,
         )?;
 
         let (before, after) = match (before, after) {
             (DiffSideContent::Text(b), DiffSideContent::Text(a)) => (b, a),
             (DiffSideContent::TooLarge, _) | (_, DiffSideContent::TooLarge) => {
-                return Ok(too_large_placeholder());
+                return Ok(too_large_placeholder(self.diff_size_limit));
             }
             _ => return Ok(placeholder_diff("(binary file)")),
         };
@@ -625,6 +629,7 @@ impl JjRepo {
                 values.before,
                 &labels,
                 &materialize_options,
+                self.diff_size_limit,
             )?;
             let after = materialize_diff_side(
                 repo.store(),
@@ -632,6 +637,7 @@ impl JjRepo {
                 values.after,
                 &labels,
                 &materialize_options,
+                self.diff_size_limit,
             )?;
             if let (DiffSideContent::Text(before), DiffSideContent::Text(after)) = (before, after) {
                 let contents = Diff::new(before.as_ref(), after.as_ref());

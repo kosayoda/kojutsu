@@ -152,7 +152,8 @@ fn main() -> Result<()> {
     let keymaps = Keymaps::build(specs, registry);
     let lua_init_error = lua_engine.init_error.clone();
     let (event_tx, event_rx) = mpsc::channel();
-    let (repo_requests, repo_responses) = RepoService::spawn(repo_path.clone());
+    let (repo_requests, repo_responses) =
+        RepoService::spawn(repo_path.clone(), config.diff.max_file_size_bytes());
     let _repo_forwarder =
         repo_responses.spawn_forwarder(event_tx.clone(), |r| AppEvent::Repo(Box::new(r)));
     let persisted = kojutsu::app::load_persisted_state();

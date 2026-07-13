@@ -379,7 +379,10 @@ impl RepoRequest {
 }
 
 impl RepoService {
-    pub fn spawn(repo_path: PathBuf) -> (RepoRequestHandle, RepoResponseHandle) {
+    pub fn spawn(
+        repo_path: PathBuf,
+        diff_size_limit: usize,
+    ) -> (RepoRequestHandle, RepoResponseHandle) {
         let (request_tx, request_rx) = mpsc::channel();
         let (result_tx, result_rx) = mpsc::channel();
         let current_epoch = Arc::new(AtomicU64::new(0));
@@ -390,7 +393,8 @@ impl RepoService {
         let response_handle = RepoResponseHandle { result_rx };
 
         thread::spawn(move || {
-            let mut service = RepoServiceState::new(repo_path, result_tx, current_epoch);
+            let mut service =
+                RepoServiceState::new(repo_path, diff_size_limit, result_tx, current_epoch);
             service.run(request_rx);
         });
 
@@ -455,6 +459,9 @@ impl CancellationToken {
 struct RepoServiceState {
     repo_path: PathBuf,
     repo: Option<Arc<JjRepo>>,
+    /// Max bytes of file content (per side) materialized for a diff,
+    /// from the config file.
+    diff_size_limit: usize,
     result_tx: Sender<RepoResult>,
     current_epoch: Arc<AtomicU64>,
     /// Cancellation token for background threads spawned by the current revset.
@@ -466,6 +473,7 @@ struct RepoServiceState {
 impl RepoServiceState {
     fn new(
         repo_path: PathBuf,
+        diff_size_limit: usize,
         result_tx: Sender<RepoResult>,
         current_epoch: Arc<AtomicU64>,
     ) -> Self {
@@ -476,6 +484,7 @@ impl RepoServiceState {
         Self {
             repo_path,
             repo: None,
+            diff_size_limit,
             workers: WorkerPool::new(worker_count, result_tx.clone()),
             result_tx,
             current_epoch,
@@ -615,7 +624,10 @@ impl RepoServiceState {
             }
         }
         match JjRepo::open(&self.repo_path) {
-            Ok(repo) => self.repo = Some(Arc::new(repo)),
+            Ok(mut repo) => {
+                repo.set_diff_size_limit(self.diff_size_limit);
+                self.repo = Some(Arc::new(repo));
+            }
             Err(err) => {
                 self.send_if_current(
                     epoch,
@@ -834,7 +846,10 @@ impl RepoServiceState {
     fn ensure_repo(&mut self) -> Result<Arc<JjRepo>, RepoError> {
         if self.repo.is_none() {
             match JjRepo::open(&self.repo_path) {
-                Ok(repo) => self.repo = Some(Arc::new(repo)),
+                Ok(mut repo) => {
+                    repo.set_diff_size_limit(self.diff_size_limit);
+                    self.repo = Some(Arc::new(repo));
+                }
                 Err(err) => {
                     return Err(RepoError::new(RepoErrorKind::RepoOpen, format!("{err:#}")));
                 }
