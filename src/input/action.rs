@@ -238,12 +238,19 @@ pub fn dispatch_action_after_hooks(
     // Visual mode intercepts (line or commit): constrain movement, handle v/space/esc.
     if app.in_visual_mode() {
         match action {
-            AppAction::MoveDown => {
-                app.visual_move_down();
-                return Action::None;
-            }
-            AppAction::MoveUp => {
-                app.visual_move_up();
+            AppAction::MoveDown
+            | AppAction::MoveUp
+            | AppAction::MoveDownSection
+            | AppAction::MoveUpSection
+            | AppAction::PageDown
+            | AppAction::PageUp
+            | AppAction::MoveToTop
+            | AppAction::MoveToBottom
+            | AppAction::MoveToScreenTop
+            | AppAction::MoveToScreenMiddle
+            | AppAction::MoveToScreenBottom
+            | AppAction::JumpToWorkingCopy => {
+                app.visual_move(action, PAGE_SIZE);
                 return Action::None;
             }
             AppAction::ToggleSelect => {

@@ -1,7 +1,13 @@
 use super::{App, PersistentVisualRange, VisualMode};
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, RowIdx};
+use crate::keymap::AppAction;
 use crate::types::{DisplayRow, FileRef, Selection, SelectionKind, VisualRange};
+
+enum SearchDir {
+    Up,
+    Down,
+}
 
 impl App {
     /// Whether a file row is in the active or persistent visual file range.
@@ -207,6 +213,206 @@ impl App {
             Some(VisualMode::Files { .. }) => self.file_visual_move_up(),
             None => {}
         }
+    }
+
+    pub fn visual_move(&mut self, action: AppAction, page_size: usize) {
+        if matches!(action, AppAction::MoveDown | AppAction::MoveUp) {
+            match action {
+                AppAction::MoveDown => self.visual_move_down(),
+                AppAction::MoveUp => self.visual_move_up(),
+                _ => unreachable!(),
+            }
+            return;
+        }
+
+        let old_cursor = self.cursor;
+        self.execute_movement(action, page_size);
+        if self.cursor == old_cursor {
+            return;
+        }
+
+        match &self.visual.mode {
+            Some(VisualMode::Lines { anchor }) => {
+                let anchor = *anchor;
+                if !self.clamp_line_visual_cursor(anchor) {
+                    self.cursor = old_cursor;
+                }
+            }
+            Some(VisualMode::Commits { .. }) => {
+                if !self.rebuild_commit_visual_path() {
+                    self.cursor = old_cursor;
+                }
+            }
+            Some(VisualMode::Files { entry_idx, .. }) => {
+                let entry_idx = *entry_idx;
+                if !self.clamp_file_visual_cursor(entry_idx) {
+                    self.cursor = old_cursor;
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn execute_movement(&mut self, action: AppAction, page_size: usize) {
+        match action {
+            AppAction::MoveDown => self.move_down(),
+            AppAction::MoveUp => self.move_up(),
+            AppAction::MoveDownSection => self.move_down_section(),
+            AppAction::MoveUpSection => self.move_up_section(),
+            AppAction::PageDown => self.page_down(page_size),
+            AppAction::PageUp => self.page_up(page_size),
+            AppAction::MoveToTop => self.move_to_top(),
+            AppAction::MoveToBottom => self.move_to_bottom(),
+            AppAction::MoveToScreenTop => self.move_to_screen_top(),
+            AppAction::MoveToScreenMiddle => self.move_to_screen_middle(),
+            AppAction::MoveToScreenBottom => self.move_to_screen_bottom(),
+            AppAction::JumpToWorkingCopy => {
+                self.jump_to_working_copy();
+            }
+            _ => {}
+        }
+    }
+
+    fn rebuild_commit_visual_path(&mut self) -> bool {
+        let Some(entry) = self.rows.get(self.cursor.raw()).and_then(|r| r.entry_idx()) else {
+            return false;
+        };
+        let Some(VisualMode::Commits { anchor, path }) = &mut self.visual.mode else {
+            return false;
+        };
+        let lo = anchor.raw().min(entry.raw());
+        let hi = anchor.raw().max(entry.raw());
+        *path = (lo..=hi).map(EntryIdx::new).collect();
+        self.jump_cursor_to_commit(entry);
+        true
+    }
+
+    fn clamp_line_visual_cursor(&mut self, anchor: RowIdx) -> bool {
+        let Some((anchor_entry, anchor_file)) = (match self.rows.get(anchor.raw()) {
+            Some(DisplayRow::DiffLine {
+                entry_idx,
+                file_idx,
+                ..
+            }) => Some((*entry_idx, *file_idx)),
+            _ => None,
+        }) else {
+            return false;
+        };
+
+        if self.is_valid_line_visual_row(self.cursor, anchor_entry, anchor_file) {
+            return true;
+        }
+
+        let search_dir = if self.cursor > anchor {
+            SearchDir::Down
+        } else {
+            SearchDir::Up
+        };
+        if let Some(clamped) =
+            self.find_line_visual_bound(anchor, anchor_entry, anchor_file, search_dir)
+        {
+            self.cursor = clamped;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn is_valid_line_visual_row(&self, row: RowIdx, entry: EntryIdx, file: FileIdx) -> bool {
+        match self.rows.get(row.raw()) {
+            Some(DisplayRow::DiffLine {
+                entry_idx,
+                file_idx,
+                line_idx,
+            }) if *entry_idx == entry && *file_idx == file => self
+                .diff_lines(*entry_idx, *file_idx)
+                .and_then(|lines| lines.get(line_idx.raw()))
+                .is_some_and(|dl| dl.kind != DiffLineKind::Context),
+            _ => false,
+        }
+    }
+
+    fn find_line_visual_bound(
+        &self,
+        anchor: RowIdx,
+        entry: EntryIdx,
+        file: FileIdx,
+        dir: SearchDir,
+    ) -> Option<RowIdx> {
+        let range: Box<dyn Iterator<Item = usize>> = match dir {
+            SearchDir::Down => Box::new((anchor.raw() + 1)..self.rows.len()),
+            SearchDir::Up => Box::new((0..anchor.raw()).rev()),
+        };
+        let mut last_valid = None;
+        for j in range {
+            match &self.rows[j] {
+                DisplayRow::GraphLink { .. } => continue,
+                DisplayRow::DiffLine {
+                    entry_idx,
+                    file_idx,
+                    line_idx,
+                } if *entry_idx == entry && *file_idx == file => {
+                    let is_selectable = self
+                        .diff_lines(*entry_idx, *file_idx)
+                        .and_then(|lines| lines.get(line_idx.raw()))
+                        .is_some_and(|dl| dl.kind != DiffLineKind::Context);
+                    if is_selectable {
+                        last_valid = Some(RowIdx::new(j));
+                    }
+                }
+                _ => break,
+            }
+        }
+        last_valid
+    }
+
+    fn clamp_file_visual_cursor(&mut self, entry_idx: EntryIdx) -> bool {
+        if matches!(
+            self.rows.get(self.cursor.raw()),
+            Some(DisplayRow::FileChange { entry_idx: ei, .. }) if *ei == entry_idx
+        ) {
+            return true;
+        }
+
+        let anchor_row = match &self.visual.mode {
+            Some(VisualMode::Files { anchor, .. }) => *anchor,
+            _ => return false,
+        };
+
+        let search_dir = if self.cursor > anchor_row {
+            SearchDir::Down
+        } else {
+            SearchDir::Up
+        };
+        if let Some(clamped) = self.find_file_visual_bound(anchor_row, entry_idx, search_dir) {
+            self.cursor = clamped;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn find_file_visual_bound(
+        &self,
+        anchor: RowIdx,
+        entry_idx: EntryIdx,
+        dir: SearchDir,
+    ) -> Option<RowIdx> {
+        let range: Box<dyn Iterator<Item = usize>> = match dir {
+            SearchDir::Down => Box::new((anchor.raw() + 1)..self.rows.len()),
+            SearchDir::Up => Box::new((0..anchor.raw()).rev()),
+        };
+        let mut last_valid = None;
+        for j in range {
+            match &self.rows[j] {
+                DisplayRow::GraphLink { .. } => continue,
+                DisplayRow::FileChange { entry_idx: ei, .. } if *ei == entry_idx => {
+                    last_valid = Some(RowIdx::new(j));
+                }
+                _ => break,
+            }
+        }
+        last_valid
     }
 
     /// Check if a diff line is in the visual range (active or persistent).
