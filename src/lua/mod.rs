@@ -79,7 +79,7 @@ struct LogGroup {
 struct LuaState {
     pending_action: PendingAction,
     pending_logs: Vec<String>,
-    pending_status: Option<String>,
+    pending_status: Option<(String, crate::app::StatusLevel)>,
     log_groups: Vec<LogGroup>,
 }
 
@@ -586,8 +586,11 @@ impl LuaEngine {
             let stray: Vec<String> = state.pending_logs.drain(..).collect();
             (status_msg, groups, stray)
         };
-        if let Some(msg) = status_msg {
-            app.set_status(msg);
+        if let Some((msg, level)) = status_msg {
+            match level {
+                crate::app::StatusLevel::Info => app.set_status(msg),
+                crate::app::StatusLevel::Error => app.set_error(msg),
+            }
         }
         if !stray.is_empty() {
             groups.push(LogGroup {

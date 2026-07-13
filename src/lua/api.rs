@@ -67,7 +67,14 @@ impl LuaEngine {
         })?;
 
         let status_fn = self.lua.create_function(|lua, msg: String| {
-            lua_state!(lua).borrow_mut().pending_status = Some(msg);
+            lua_state!(lua).borrow_mut().pending_status =
+                Some((msg, crate::app::StatusLevel::Info));
+            Ok(())
+        })?;
+
+        let error_fn = self.lua.create_function(|lua, msg: String| {
+            lua_state!(lua).borrow_mut().pending_status =
+                Some((msg, crate::app::StatusLevel::Error));
             Ok(())
         })?;
 
@@ -162,6 +169,7 @@ impl LuaEngine {
 
         let ui: mlua::Table = kojutsu.get("ui")?;
         ui.set("status", status_fn)?;
+        ui.set("error", error_fn)?;
 
         let nav: mlua::Table = kojutsu.get("nav")?;
         nav.set("refresh", refresh_fn)?;
