@@ -187,8 +187,13 @@ fn dispatch_action(
     let id_name = crate::keymap::action_id_name(action);
 
     match lua.run_pre_hooks(id_name, action, flags, app) {
-        crate::lua::HookOutcome::Cancel | crate::lua::HookOutcome::Suspended => {
+        crate::lua::HookOutcome::Cancel => {
             return Action::None;
+        }
+        // The hook yielded (e.g. waiting on a prompt or a jj command); the
+        // carried action starts whatever the suspended thread requested.
+        crate::lua::HookOutcome::Suspended(yield_action) => {
+            return yield_action;
         }
         crate::lua::HookOutcome::Proceed => {}
     }

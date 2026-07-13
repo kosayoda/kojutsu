@@ -264,6 +264,10 @@ pub struct JJCommandResult {
     pub display_parts: Vec<CommandPart>,
     pub output: Vec<u8>,
     pub success: bool,
+    /// The command was killed (Esc/^C) rather than running to completion.
+    pub cancelled: bool,
+    /// Exit code, when the command ran to completion.
+    pub code: Option<i32>,
 }
 
 impl JJCommand {

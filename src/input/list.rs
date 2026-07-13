@@ -395,7 +395,11 @@ pub(super) fn resolve_selection(
             super::modal::submit_run_command(app, change_ids, flags, selected)
         }
         PendingSelection::LuaResume => {
-            let selected = names.into_iter().next().map(|s| s.to_string());
+            let selected = names
+                .into_iter()
+                .next()
+                .map(|s| crate::lua::ResumeValue::Text(s.to_string()))
+                .unwrap_or(crate::lua::ResumeValue::None);
             match lua.resume_suspended(app, selected) {
                 crate::lua::ResumeResult::Action(a) => a,
                 crate::lua::ResumeResult::DispatchAction { action, flags } => {

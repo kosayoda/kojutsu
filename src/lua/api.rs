@@ -10,7 +10,10 @@ impl LuaEngine {
         register_globals(&self.lua)?;
 
         let repo_path = self.repo_path.clone();
-        let jj_fn = self.lua.create_function(move |lua, args: mlua::Table| {
+        // Synchronous fallback for contexts that can't yield (top-level
+        // init.lua code); commands and hooks run as coroutines and go
+        // through the async yield path in `kojutsu.jj` below instead.
+        let jj_sync_fn = self.lua.create_function(move |lua, args: mlua::Table| {
             let cmd_args: Vec<String> = (1..=args.raw_len())
                 .map(|i| args.raw_get(i))
                 .collect::<mlua::Result<_>>()?;
@@ -21,13 +24,13 @@ impl LuaEngine {
                 flags: CommandFlags::empty(),
             }
             .run(&repo_path);
-            let tbl = lua.create_table()?;
-            tbl.set("ok", result.success)?;
-            tbl.set(
-                "output",
-                String::from_utf8_lossy(&result.output).into_owned(),
-            )?;
-            Ok(tbl)
+            super::jj_result_table(
+                lua,
+                result.success,
+                result.cancelled,
+                result.code,
+                &result.output,
+            )
         })?;
 
         let jj_interactive_fn = self.lua.create_function(|lua, args: mlua::Table| {
@@ -126,6 +129,12 @@ impl LuaEngine {
                 })?;
 
         self.lua.load(r#"
+            function kojutsu.jj(args)
+                if coroutine.isyieldable() then
+                    return coroutine.yield({type = "jj", args = args or {}})
+                end
+                return kojutsu._jj_sync(args)
+            end
             function kojutsu.ui.input(prompt, default)
                 return coroutine.yield({type = "input", prompt = prompt or "", default = default or ""})
             end
@@ -161,7 +170,7 @@ impl LuaEngine {
         "#).exec()?;
 
         let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
-        kojutsu.set("jj", jj_fn)?;
+        kojutsu.set("_jj_sync", jj_sync_fn)?;
         kojutsu.set("jj_interactive", jj_interactive_fn)?;
         kojutsu.set("log", log_fn)?;
         kojutsu.set("copy", copy_fn)?;

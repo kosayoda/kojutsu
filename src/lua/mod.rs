@@ -36,7 +36,9 @@ enum HookPhase {
 pub enum HookOutcome {
     Proceed,
     Cancel,
-    Suspended,
+    /// A hook yielded; the carried action (e.g. starting a jj command for
+    /// the suspended thread) must be performed by the caller.
+    Suspended(Action),
 }
 
 pub enum ResumeResult {
@@ -45,6 +47,50 @@ pub enum ResumeResult {
         action: AppAction,
         flags: CommandFlags,
     },
+}
+
+/// Outcome of a completed command, passed to post-hooks.
+pub struct CommandOutcome<'a> {
+    pub success: bool,
+    pub cancelled: bool,
+    pub code: Option<i32>,
+    pub output: &'a [u8],
+}
+
+/// The value a suspended Lua thread is resumed with.
+pub enum ResumeValue {
+    /// Prompt dismissed without input.
+    None,
+    /// Text input / list selection.
+    Text(String),
+    /// A yielded jj command finished (or was cancelled).
+    JjResult(Box<crate::jj_command::JJCommandResult>),
+}
+
+/// Build the Lua result table for a jj command:
+/// `{status = "ok"|"failed"|"cancelled", ok, output, code?}`.
+fn jj_result_table(
+    lua: &Lua,
+    success: bool,
+    cancelled: bool,
+    code: Option<i32>,
+    output: &[u8],
+) -> mlua::Result<mlua::Table> {
+    let status = if cancelled {
+        "cancelled"
+    } else if success {
+        "ok"
+    } else {
+        "failed"
+    };
+    let table = lua.create_table()?;
+    table.set("status", status)?;
+    table.set("ok", status == "ok")?;
+    table.set("output", String::from_utf8_lossy(output).into_owned())?;
+    if let Some(code) = code {
+        table.set("code", code)?;
+    }
+    Ok(table)
 }
 
 enum SuspendedKind {
@@ -191,7 +237,7 @@ impl LuaEngine {
         match thread.resume::<mlua::Value>((hooks_table, ctx)) {
             Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
                 self.collect_logs(action_name.to_string(), LogPhase::Pre);
-                self.handle_yield(
+                let yield_action = self.handle_yield(
                     thread,
                     value,
                     app,
@@ -201,7 +247,7 @@ impl LuaEngine {
                         header: action_name.to_string(),
                     },
                 );
-                HookOutcome::Suspended
+                HookOutcome::Suspended(yield_action)
             }
             Ok(mlua::Value::Boolean(false)) => {
                 self.collect_logs(action_name.to_string(), LogPhase::Pre);
@@ -230,8 +276,7 @@ impl LuaEngine {
         &self,
         action_name: &str,
         app: &mut App,
-        success: bool,
-        output: &[u8],
+        outcome: CommandOutcome<'_>,
     ) -> HookOutcome {
         let hooks_table = match self.collect_hook_functions(action_name, HookPhase::Post) {
             Some(t) => t,
@@ -244,12 +289,13 @@ impl LuaEngine {
                 return HookOutcome::Proceed;
             }
         };
-        let result_table = match (|| {
-            let t = self.lua.create_table()?;
-            t.set("ok", success)?;
-            t.set("output", String::from_utf8_lossy(output).into_owned())?;
-            Ok::<_, mlua::Error>(t)
-        })() {
+        let result_table = match jj_result_table(
+            &self.lua,
+            outcome.success,
+            outcome.cancelled,
+            outcome.code,
+            outcome.output,
+        ) {
             Ok(t) => t,
             Err(e) => {
                 app.set_error(format!("plugin: {e}"));
@@ -276,7 +322,7 @@ impl LuaEngine {
         match thread.resume::<mlua::Value>((hooks_table, ctx, result_table)) {
             Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
                 self.collect_logs(action_name.to_string(), LogPhase::Post);
-                self.handle_yield(
+                let yield_action = self.handle_yield(
                     thread,
                     value,
                     app,
@@ -284,7 +330,7 @@ impl LuaEngine {
                         header: action_name.to_string(),
                     },
                 );
-                HookOutcome::Suspended
+                HookOutcome::Suspended(yield_action)
             }
             Ok(_) => {
                 self.collect_logs(action_name.to_string(), LogPhase::Post);
@@ -335,7 +381,7 @@ impl LuaEngine {
         self.resume_and_handle(thread, ctx_arg, app, SuspendedKind::Command(flags))
     }
 
-    pub fn resume_suspended(&self, app: &mut App, value: Option<String>) -> ResumeResult {
+    pub fn resume_suspended(&self, app: &mut App, value: ResumeValue) -> ResumeResult {
         let (thread_key, kind) = match self.suspended_thread.borrow_mut().take() {
             Some(pair) => pair,
             None => return ResumeResult::Action(Action::None),
@@ -357,17 +403,28 @@ impl LuaEngine {
         }
 
         let lua_value = match value {
-            Some(s) => match self.lua.create_string(&s) {
+            ResumeValue::None => mlua::Value::Nil,
+            ResumeValue::Text(s) => match self.lua.create_string(&s) {
                 Ok(ls) => mlua::Value::String(ls),
                 Err(_) => mlua::Value::Nil,
             },
-            None => mlua::Value::Nil,
+            ResumeValue::JjResult(result) => {
+                match jj_result_table(
+                    &self.lua,
+                    result.success,
+                    result.cancelled,
+                    result.code,
+                    &result.output,
+                ) {
+                    Ok(t) => mlua::Value::Table(t),
+                    Err(_) => mlua::Value::Nil,
+                }
+            }
         };
 
         match thread.resume::<mlua::Value>(lua_value) {
             Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
-                self.handle_yield(thread, value, app, kind);
-                ResumeResult::Action(Action::None)
+                ResumeResult::Action(self.handle_yield(thread, value, app, kind))
             }
             Ok(value) => match kind {
                 SuspendedKind::Command(flags) => {
@@ -413,8 +470,7 @@ impl LuaEngine {
     ) -> Action {
         match thread.resume::<mlua::Value>(arg) {
             Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
-                self.handle_yield(thread, value, app, kind);
-                Action::None
+                self.handle_yield(thread, value, app, kind)
             }
             Ok(_) => {
                 if let SuspendedKind::Command(flags) = kind {
@@ -462,30 +518,38 @@ impl LuaEngine {
         Some(table)
     }
 
+    /// Park a yielded thread and set up whatever its request needs. Returns
+    /// the action the caller must perform (e.g. starting a jj command);
+    /// `Action::None` for requests handled entirely via `app` state.
     fn handle_yield(
         &self,
         thread: mlua::Thread,
         value: mlua::Value,
         app: &mut App,
         kind: SuspendedKind,
-    ) {
+    ) -> Action {
         let table = match value {
             mlua::Value::Table(t) => t,
             _ => {
                 app.set_error("plugin: invalid yield (expected table)");
-                return;
+                return Action::None;
             }
         };
         let request_type: String = table.get("type").unwrap_or_default();
 
-        let mode = match request_type.as_str() {
+        // The mode to enter for prompt-style requests, or the action the
+        // caller must perform for command-style requests.
+        let (mode, action) = match request_type.as_str() {
             "input" => {
                 let prompt: String = table.get("prompt").unwrap_or_default();
                 let default: String = table.get("default").unwrap_or_default();
-                crate::app::AppMode::text_input(
-                    &prompt,
-                    &default,
-                    crate::types::PendingCommand::LuaResume,
+                (
+                    Some(crate::app::AppMode::text_input(
+                        &prompt,
+                        &default,
+                        crate::types::PendingCommand::LuaResume,
+                    )),
+                    Action::None,
                 )
             }
             "choose" => {
@@ -495,21 +559,49 @@ impl LuaEngine {
                     .unwrap_or_default();
                 if items.is_empty() {
                     app.set_error("plugin: choose requires non-empty items");
-                    return;
+                    return Action::None;
                 }
                 let title: String = table.get("title").unwrap_or_default();
                 let multi: bool = table.get("multi").unwrap_or(false);
-                crate::app::AppMode::select_from_list(
-                    title,
-                    items,
-                    multi,
-                    crate::types::PendingSelection::LuaResume,
-                    false,
+                (
+                    Some(crate::app::AppMode::select_from_list(
+                        title,
+                        items,
+                        multi,
+                        crate::types::PendingSelection::LuaResume,
+                        false,
+                    )),
+                    Action::None,
                 )
+            }
+            "jj" => {
+                let args: Vec<String> = table
+                    .get::<mlua::Table>("args")
+                    .map(|t| helpers::table_to_string_vec(&t))
+                    .unwrap_or_default();
+                if args.is_empty() {
+                    app.set_error("plugin: jj requires at least one argument");
+                    return Action::None;
+                }
+                let flags = match &kind {
+                    SuspendedKind::Command(flags) => *flags,
+                    SuspendedKind::PreHooks { flags, .. } => *flags,
+                    SuspendedKind::PostHooks { .. } => CommandFlags::empty(),
+                };
+                let cmd = JJCommand {
+                    kind: JJCommandKind::Raw {
+                        args: args.into_iter().map(Into::into).collect(),
+                    },
+                    flags,
+                };
+                // The command runs through the normal pipeline (running
+                // overlay, live output, Esc/^C cancellation); its completion
+                // resumes this thread with the result table.
+                (None, Action::RunJjForLua(cmd))
             }
             other => {
                 app.set_error(format!("plugin: unknown yield type '{other}'"));
-                return;
+                return Action::None;
             }
         };
 
@@ -517,11 +609,14 @@ impl LuaEngine {
             Ok(k) => k,
             Err(e) => {
                 app.set_error(format!("plugin: failed to store thread: {e}"));
-                return;
+                return Action::None;
             }
         };
         *self.suspended_thread.borrow_mut() = Some((key, kind));
-        app.mode = mode;
+        if let Some(mode) = mode {
+            app.mode = mode;
+        }
+        action
     }
 
     fn take_pending_action(&self, app: &mut App, flags: CommandFlags) -> Action {

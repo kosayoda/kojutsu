@@ -40,6 +40,9 @@ pub enum Action {
     None,
     /// Run a jj CLI command (captured output), then refresh the DAG.
     RunJj(crate::jj_command::JJCommand),
+    /// Run a jj CLI command yielded by a suspended Lua thread; completion
+    /// resumes the thread with the result instead of refreshing.
+    RunJjForLua(crate::jj_command::JJCommand),
     /// Suspend the TUI, run an interactive jj command, then resume.
     SuspendAndRunJj(crate::jj_command::JJCommand),
     /// Snapshot the working copy and reload the DAG.

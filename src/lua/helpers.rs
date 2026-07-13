@@ -89,9 +89,18 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field repo_root string").unwrap();
     writeln!(out).unwrap();
 
+    writeln!(out, "---@alias JJStatus \"ok\"|\"failed\"|\"cancelled\"").unwrap();
+    writeln!(out).unwrap();
+
     writeln!(out, "---@class JJResult").unwrap();
+    writeln!(out, "---@field status JJStatus").unwrap();
     writeln!(out, "---@field ok boolean").unwrap();
     writeln!(out, "---@field output string").unwrap();
+    writeln!(
+        out,
+        "---@field code integer? exit code (nil when cancelled or spawn failed)"
+    )
+    .unwrap();
     writeln!(out).unwrap();
 
     writeln!(out, "---@class KojutsuUi").unwrap();
@@ -154,8 +163,14 @@ pub fn generate_type_definitions() -> String {
     writeln!(out).unwrap();
 
     writeln!(out, "---@class HookResultTable").unwrap();
+    writeln!(out, "---@field status JJStatus").unwrap();
     writeln!(out, "---@field ok boolean").unwrap();
     writeln!(out, "---@field output string").unwrap();
+    writeln!(
+        out,
+        "---@field code integer? exit code (nil when cancelled or spawn failed)"
+    )
+    .unwrap();
     writeln!(out).unwrap();
 
     writeln!(out, "---@class Kojutsu").unwrap();

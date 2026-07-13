@@ -28,6 +28,9 @@ enum AppEvent {
         cmd: Box<JJCommand>,
         jump: Option<JumpTarget>,
         label: Option<&'static str>,
+        /// The command was yielded by a suspended Lua thread; completion
+        /// resumes the thread with the result instead of refreshing.
+        for_lua: bool,
     },
 }
 
@@ -249,10 +252,14 @@ fn main() -> Result<()> {
                     cmd,
                     jump,
                     label,
+                    for_lua,
                 } => {
                     dirty = true;
-                    finish_jj_command(&mut app, *result, *cmd, jump, label, &lua_engine);
-                    Action::None
+                    if for_lua {
+                        resume_lua_jj(&mut app, result, &lua_engine)
+                    } else {
+                        finish_jj_command(&mut app, *result, *cmd, jump, label, &lua_engine)
+                    }
                 }
                 AppEvent::Terminal(ev) => match ev {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
@@ -291,7 +298,10 @@ fn main() -> Result<()> {
             Action::Quit => break,
             Action::RunJj(cmd) => {
                 let action_label = app.last_action_label.take();
-                run_jj_command(&mut app, &repo_path, cmd, action_label, &event_tx);
+                run_jj_command(&mut app, &repo_path, cmd, action_label, &event_tx, false);
+            }
+            Action::RunJjForLua(cmd) => {
+                run_jj_command(&mut app, &repo_path, cmd, None, &event_tx, true);
             }
             Action::SuspendAndRunJj(cmd) => {
                 let action_label = app.last_action_label.take();
@@ -299,8 +309,13 @@ fn main() -> Result<()> {
                 suspend_and_run(&mut app, &repo_path, &mut terminal, cmd);
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
                 if let Some(label) = action_label {
-                    let (success, output) = extract_command_result(&app);
-                    lua_engine.run_post_hooks(label, &mut app, success, &output);
+                    run_post_hooks_after_suspend(
+                        &mut app,
+                        &lua_engine,
+                        label,
+                        &repo_path,
+                        &event_tx,
+                    );
                 }
             }
             Action::Refresh => {
@@ -363,7 +378,10 @@ fn main() -> Result<()> {
                 match result {
                     Action::RunJj(cmd) => {
                         let action_label = app.last_action_label.take();
-                        run_jj_command(&mut app, &repo_path, cmd, action_label, &event_tx);
+                        run_jj_command(&mut app, &repo_path, cmd, action_label, &event_tx, false);
+                    }
+                    Action::RunJjForLua(cmd) => {
+                        run_jj_command(&mut app, &repo_path, cmd, None, &event_tx, true);
                     }
                     Action::SuspendAndRunJj(cmd) => {
                         let action_label = app.last_action_label.take();
@@ -372,8 +390,13 @@ fn main() -> Result<()> {
                         terminal_events =
                             spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
                         if let Some(label) = action_label {
-                            let (success, output) = extract_command_result(&app);
-                            lua_engine.run_post_hooks(label, &mut app, success, &output);
+                            run_post_hooks_after_suspend(
+                                &mut app,
+                                &lua_engine,
+                                label,
+                                &repo_path,
+                                &event_tx,
+                            );
                         }
                     }
                     Action::Refresh => refresh_app(&mut app, RevsetLoadKind::Snapshot),
@@ -622,6 +645,7 @@ fn run_jj_command(
     cmd: JJCommand,
     label: Option<&'static str>,
     event_tx: &mpsc::Sender<AppEvent>,
+    for_lua: bool,
 ) {
     let jump = cmd.jump_target();
     let command = cmd.display();
@@ -647,8 +671,59 @@ fn run_jj_command(
             cmd: Box::new(cmd),
             jump,
             label,
+            for_lua,
         });
     });
+}
+
+/// A jj command yielded by a suspended Lua thread finished — log it, dismiss
+/// the running overlay, and resume the thread with the result table.
+fn resume_lua_jj(
+    app: &mut App,
+    result: Box<JJCommandResult>,
+    lua_engine: &kojutsu::lua::LuaEngine,
+) -> Action {
+    app.push_command_log(
+        kojutsu::app::CommandLogKind::Command,
+        &result.display,
+        Some(result.display_parts.clone()),
+        result.output.clone(),
+        result.success,
+    );
+    if matches!(app.mode, AppMode::CommandRunning(_)) {
+        app.mode = AppMode::Normal;
+    }
+    match lua_engine.resume_suspended(app, kojutsu::lua::ResumeValue::JjResult(result)) {
+        kojutsu::lua::ResumeResult::Action(action) => action,
+        kojutsu::lua::ResumeResult::DispatchAction { action, flags } => {
+            Action::DeferredDispatch { action, flags }
+        }
+    }
+}
+
+/// Run post-hooks for a command that ran while the TUI was suspended.
+/// If a hook yields a jj command, start it for the suspended thread.
+fn run_post_hooks_after_suspend(
+    app: &mut App,
+    lua_engine: &kojutsu::lua::LuaEngine,
+    label: &'static str,
+    repo_path: &std::path::Path,
+    event_tx: &mpsc::Sender<AppEvent>,
+) {
+    let (success, output) = extract_command_result(app);
+    let outcome = lua_engine.run_post_hooks(
+        label,
+        app,
+        kojutsu::lua::CommandOutcome {
+            success,
+            cancelled: false,
+            code: None,
+            output: &output,
+        },
+    );
+    if let kojutsu::lua::HookOutcome::Suspended(Action::RunJjForLua(cmd)) = outcome {
+        run_jj_command(app, repo_path, cmd, None, event_tx, true);
+    }
 }
 
 /// Process the result of a completed background jj command.
@@ -659,7 +734,8 @@ fn finish_jj_command(
     jump: Option<JumpTarget>,
     label: Option<&'static str>,
     lua_engine: &kojutsu::lua::LuaEngine,
-) {
+) -> Action {
+    let (cancelled, code) = (result.cancelled, result.code);
     app.push_command_log(
         kojutsu::app::CommandLogKind::Command,
         &result.display,
@@ -695,8 +771,21 @@ fn finish_jj_command(
 
     if let Some(lbl) = label {
         let (success, output) = extract_command_result(app);
-        lua_engine.run_post_hooks(lbl, app, success, &output);
+        let outcome = lua_engine.run_post_hooks(
+            lbl,
+            app,
+            kojutsu::lua::CommandOutcome {
+                success,
+                cancelled,
+                code,
+                output: &output,
+            },
+        );
+        if let kojutsu::lua::HookOutcome::Suspended(action) = outcome {
+            return action;
+        }
     }
+    Action::None
 }
 
 /// Initialize tracing subscriber writing to a log file.

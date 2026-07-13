@@ -22,12 +22,14 @@ pub(super) fn handle_text_input(
             {
                 let text = input.to_string();
                 match on_submit {
-                    PendingCommand::LuaResume => match lua.resume_suspended(app, Some(text)) {
-                        crate::lua::ResumeResult::Action(a) => a,
-                        crate::lua::ResumeResult::DispatchAction { action, flags } => {
-                            Action::DeferredDispatch { action, flags }
+                    PendingCommand::LuaResume => {
+                        match lua.resume_suspended(app, crate::lua::ResumeValue::Text(text)) {
+                            crate::lua::ResumeResult::Action(a) => a,
+                            crate::lua::ResumeResult::DispatchAction { action, flags } => {
+                                Action::DeferredDispatch { action, flags }
+                            }
                         }
-                    },
+                    }
                     PendingCommand::Revset => {
                         app.revset.active_preset = None;
                         Action::UpdateRevset(text)

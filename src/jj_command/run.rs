@@ -29,6 +29,8 @@ impl JJCommand {
                     display_parts,
                     output: b"interrupted".to_vec(),
                     success: false,
+                    cancelled: true,
+                    code: None,
                 }
             }
             Ok(Output { stderr, status, .. }) => JJCommandResult {
@@ -36,6 +38,8 @@ impl JJCommand {
                 display_parts,
                 output: stderr,
                 success: status.success(),
+                cancelled: false,
+                code: status.code(),
             },
             Err(e) => jj_error(display, display_parts, e),
         }
@@ -82,6 +86,8 @@ impl JJCommand {
                     display_parts,
                     output: b"interrupted".to_vec(),
                     success: false,
+                    cancelled: true,
+                    code: None,
                 }
             }
             Ok(Output {
@@ -93,6 +99,8 @@ impl JJCommand {
                 display_parts,
                 output: merge_captured_output(stdout, stderr),
                 success: status.success(),
+                cancelled: false,
+                code: status.code(),
             },
             Err(e) => jj_error(display, display_parts, e),
         }
@@ -122,6 +130,8 @@ impl JJCommand {
                 display_parts,
                 output: merge_captured_output(stdout, stderr),
                 success: status.success(),
+                cancelled: false,
+                code: status.code(),
             },
             Err(e) => jj_error(display, display_parts, e),
         }
@@ -191,6 +201,8 @@ impl JJCommand {
                 display_parts,
                 output: b"interrupted".to_vec(),
                 success: false,
+                cancelled: true,
+                code: None,
             };
         }
 
@@ -199,6 +211,8 @@ impl JJCommand {
             display_parts,
             output,
             success: status.success(),
+            cancelled: false,
+            code: status.code(),
         }
     }
 }
@@ -258,6 +272,8 @@ fn jj_error(
         display_parts,
         output: format!("failed to run jj: {err}").into_bytes(),
         success: false,
+        cancelled: false,
+        code: None,
     }
 }
 
