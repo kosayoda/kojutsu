@@ -25,6 +25,10 @@ struct LuaHook {
     phase: HookPhase,
     callback: mlua::RegistryKey,
     source: String,
+    /// Action names this hook's pattern matched, evaluated once at
+    /// registration against the closed set of action names — dispatch is a
+    /// set lookup instead of a Lua pattern match per keypress.
+    actions: std::collections::HashSet<&'static str>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -150,7 +154,7 @@ enum PendingAction {
 pub struct LuaEngine {
     lua: Lua,
     commands: Vec<LuaCommand>,
-    hooks: Vec<(CompactString, LuaHook)>,
+    hooks: Vec<LuaHook>,
     extra_bindings: Vec<BindingSpec>,
     suspended_thread: RefCell<Option<(mlua::RegistryKey, SuspendedKind)>>,
     current_header: RefCell<String>,
@@ -498,11 +502,7 @@ impl LuaEngine {
         let matching: Vec<&LuaHook> = self
             .hooks
             .iter()
-            .filter(|(name, hook)| {
-                hook.phase == phase
-                    && helpers::hook_matches(&self.lua, name, action_name).unwrap_or(false)
-            })
-            .map(|(_, hook)| hook)
+            .filter(|hook| hook.phase == phase && hook.actions.contains(action_name))
             .collect();
         if matching.is_empty() {
             return None;

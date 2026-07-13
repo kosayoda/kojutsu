@@ -228,11 +228,7 @@ pub(super) fn lua_source_info(lua: &mlua::Lua, func: &mlua::Function) -> String 
     result.unwrap_or_else(|_| "?".into())
 }
 
-pub(super) fn hook_matches(
-    lua: &mlua::Lua,
-    pattern: &str,
-    action_name: &str,
-) -> mlua::Result<bool> {
+fn hook_matches(lua: &mlua::Lua, pattern: &str, action_name: &str) -> mlua::Result<bool> {
     if pattern == action_name {
         return Ok(true);
     }
@@ -240,6 +236,22 @@ pub(super) fn hook_matches(
     let find_fn: mlua::Function = string_mod.get("find")?;
     let result = find_fn.call::<mlua::Value>((action_name, format!("^{pattern}$")))?;
     Ok(!matches!(result, mlua::Value::Nil))
+}
+
+/// Evaluate a hook pattern against every action name once, at registration.
+/// Warns when the pattern matches nothing (likely a typo).
+pub(super) fn hook_action_set(
+    lua: &mlua::Lua,
+    pattern: &str,
+) -> std::collections::HashSet<&'static str> {
+    let actions: std::collections::HashSet<&'static str> = crate::keymap::AppAction::iter()
+        .map(crate::keymap::action_id_name)
+        .filter(|name| hook_matches(lua, pattern, name).unwrap_or(false))
+        .collect();
+    if actions.is_empty() {
+        tracing::warn!("kojutsu.hook: pattern '{pattern}' matches no actions");
+    }
+    actions
 }
 
 pub(super) fn table_to_string_vec(table: &mlua::Table) -> Vec<String> {

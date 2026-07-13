@@ -7,7 +7,10 @@ use crate::keymap::{ActionRegistry, BindTarget, BindingSpec, HelpGroup, Selectio
 
 use super::{
     HookPhase, LuaCommand, LuaEngine, LuaHook,
-    helpers::{lua_source_info, parse_keys, parse_scope, shadows_default, table_to_string_vec},
+    helpers::{
+        hook_action_set, lua_source_info, parse_keys, parse_scope, shadows_default,
+        table_to_string_vec,
+    },
 };
 
 struct PendingRegistration {
@@ -76,8 +79,7 @@ impl LuaEngine {
         };
 
         let reg_commands: Rc<RefCell<Vec<PendingRegistration>>> = Rc::new(RefCell::new(Vec::new()));
-        let reg_hooks: Rc<RefCell<Vec<(CompactString, LuaHook)>>> =
-            Rc::new(RefCell::new(Vec::new()));
+        let reg_hooks: Rc<RefCell<Vec<LuaHook>>> = Rc::new(RefCell::new(Vec::new()));
         let reg_bindings: Rc<RefCell<Vec<PendingBinding>>> = Rc::new(RefCell::new(Vec::new()));
 
         if let Err(e) = (|| -> mlua::Result<()> {
@@ -138,16 +140,14 @@ impl LuaEngine {
                     };
                     let source = lua_source_info(lua, &func);
                     let mut hooks = hooks_clone.borrow_mut();
-                    for name in action_names {
+                    for pattern in action_names {
                         let callback = lua.create_registry_value(func.clone())?;
-                        hooks.push((
-                            name.into(),
-                            LuaHook {
-                                phase,
-                                callback,
-                                source: source.clone(),
-                            },
-                        ));
+                        hooks.push(LuaHook {
+                            phase,
+                            callback,
+                            source: source.clone(),
+                            actions: hook_action_set(lua, &pattern),
+                        });
                     }
                     Ok(())
                 },
