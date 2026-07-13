@@ -72,12 +72,7 @@ impl ActionRegistry {
     }
 
     pub fn find_by_name(&self, name: &str) -> Option<ActionId> {
-        for &action in super::ALL_ACTIONS {
-            if super::action_id_name(action) == name {
-                return Some(ActionId::Builtin(action));
-            }
-        }
-        None
+        name.parse::<AppAction>().ok().map(ActionId::Builtin)
     }
 
     fn register_builtins(&mut self) {
@@ -101,30 +96,10 @@ impl ActionRegistry {
             (NewInsertAfter, c, false, false),
             (NewInsertBefore, c, false, false),
             (Squash, s, false, false),
-            (
-                SquashSelect(crate::types::SquashKind::Into),
-                s,
-                false,
-                false,
-            ),
-            (
-                SquashSelect(crate::types::SquashKind::Onto),
-                s,
-                false,
-                false,
-            ),
-            (
-                SquashSelect(crate::types::SquashKind::After),
-                s,
-                false,
-                false,
-            ),
-            (
-                SquashSelect(crate::types::SquashKind::Before),
-                s,
-                false,
-                false,
-            ),
+            (SquashInto, s, false, false),
+            (SquashOnto, s, false, false),
+            (SquashAfter, s, false, false),
+            (SquashBefore, s, false, false),
             (RebaseRevision, c, false, false),
             (RebaseSource, c, false, false),
             (RebaseBranch, c, false, false),

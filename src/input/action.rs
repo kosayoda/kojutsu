@@ -458,7 +458,12 @@ pub fn dispatch_action_after_hooks(
             app.request_revset_load_no_snapshot(None);
             Action::None
         }
-        AppAction::SwitchPreset(slot) => {
+        AppAction::SwitchPreset1
+        | AppAction::SwitchPreset2
+        | AppAction::SwitchPreset3
+        | AppAction::SwitchPreset4
+        | AppAction::SwitchPreset5 => {
+            let slot = action.preset_slot().expect("switch-preset action");
             if let Some(preset) = app.revset.presets.get(slot) {
                 app.revset.active_preset = Some(slot);
                 Action::UpdateRevset(preset.revset.clone())
@@ -551,7 +556,10 @@ pub fn dispatch_action_after_hooks(
         | AppAction::NewInsertAfter
         | AppAction::NewInsertBefore
         | AppAction::Squash
-        | AppAction::SquashSelect(_)
+        | AppAction::SquashInto
+        | AppAction::SquashOnto
+        | AppAction::SquashAfter
+        | AppAction::SquashBefore
         | AppAction::RebaseRevision
         | AppAction::RebaseSource
         | AppAction::RebaseBranch
@@ -590,7 +598,8 @@ pub fn dispatch_action_after_hooks(
         | AppAction::Interdiff
         | AppAction::Revert
         | AppAction::Run
-        | AppAction::Arrange(_) => super::view::dag::dispatch(app, lua, action, flags),
+        | AppAction::ArrangeUp
+        | AppAction::ArrangeDown => super::view::dag::dispatch(app, lua, action, flags),
         AppAction::SwitchToDagView => {
             app.switch_view(crate::app::ActiveView::Dag);
             Action::None

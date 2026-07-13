@@ -247,8 +247,17 @@ pub(in crate::input) fn dispatch(
                 })
             }
         }
-        AppAction::SquashSelect(kind) => {
-            enter_target_select(app, TargetOperation::Squash(kind), flags)
+        AppAction::SquashInto => {
+            enter_target_select(app, TargetOperation::Squash(SquashKind::Into), flags)
+        }
+        AppAction::SquashOnto => {
+            enter_target_select(app, TargetOperation::Squash(SquashKind::Onto), flags)
+        }
+        AppAction::SquashAfter => {
+            enter_target_select(app, TargetOperation::Squash(SquashKind::After), flags)
+        }
+        AppAction::SquashBefore => {
+            enter_target_select(app, TargetOperation::Squash(SquashKind::Before), flags)
         }
         AppAction::RebaseRevision => {
             let sources = app.selected_change_ids();
@@ -550,7 +559,8 @@ pub(in crate::input) fn dispatch(
             kind: JJCommandKind::SimplifyParents { change_ids: ids },
             flags,
         }),
-        AppAction::Arrange(dir) => arrange(app, flags, dir),
+        AppAction::ArrangeUp => arrange(app, flags, crate::types::ArrangeDirection::Up),
+        AppAction::ArrangeDown => arrange(app, flags, crate::types::ArrangeDirection::Down),
         AppAction::Interdiff => enter_target_select(app, TargetOperation::Interdiff, flags),
         AppAction::Revert => {
             let sources = app.selected_change_ids();

@@ -37,7 +37,7 @@ pub fn generate_type_definitions() -> String {
     writeln!(out).unwrap();
 
     writeln!(out, "---@class KojutsuAction").unwrap();
-    for &action in crate::keymap::ALL_ACTIONS {
+    for action in <crate::keymap::AppAction as strum::IntoEnumIterator>::iter() {
         let name = crate::keymap::action_id_name(action);
         writeln!(out, "---@field {name} string").unwrap();
     }

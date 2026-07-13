@@ -11,7 +11,7 @@ pub use help::{HelpEntry, HelpGroup, help_entries, select_mode_help_entries};
 pub use registry::{ActionId, ActionRegistry};
 pub use trie::{Keymap, Keymaps, LookupResult, TrieNode};
 
-use crate::types::{GLOBAL_TOGGLES, SquashKind};
+use crate::types::GLOBAL_TOGGLES;
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,7 +47,23 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Every dispatchable action. Unit-only by design: the snake_case name each
+/// variant serializes to is the stable identifier Lua plugins bind and hook
+/// on, and `EnumIter` is what exposes the full set to the Lua API and the
+/// generated type definitions — data-carrying variants would silently fall
+/// out of both.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    strum::EnumIter,
+    strum::IntoStaticStr,
+    strum::EnumString,
+)]
+#[strum(serialize_all = "snake_case")]
 pub enum AppAction {
     Quit,
     MoveDown,
@@ -80,7 +96,10 @@ pub enum AppAction {
     NewInsertAfter,
     NewInsertBefore,
     Squash,
-    SquashSelect(SquashKind),
+    SquashInto,
+    SquashOnto,
+    SquashAfter,
+    SquashBefore,
     RebaseRevision,
     RebaseSource,
     RebaseBranch,
@@ -118,7 +137,8 @@ pub enum AppAction {
     Parallelize,
     SimplifyParents,
     Revert,
-    Arrange(crate::types::ArrangeDirection),
+    ArrangeUp,
+    ArrangeDown,
     Fix,
     Run,
     FileUntrack,
@@ -147,7 +167,16 @@ pub enum AppAction {
     TagSet,
     TagDelete,
     SelectPreset,
-    SwitchPreset(usize),
+    #[strum(serialize = "switch_preset_1")]
+    SwitchPreset1,
+    #[strum(serialize = "switch_preset_2")]
+    SwitchPreset2,
+    #[strum(serialize = "switch_preset_3")]
+    SwitchPreset3,
+    #[strum(serialize = "switch_preset_4")]
+    SwitchPreset4,
+    #[strum(serialize = "switch_preset_5")]
+    SwitchPreset5,
     SwitchToDagView,
     SwitchToBookmarkView,
     SwitchToTagView,
@@ -171,15 +200,20 @@ pub enum AppAction {
     TagViewEdit,
     SwitchToOpLogView,
     SwitchToWorkspaceView,
+    #[strum(serialize = "switch_to_evolog_view")]
     SwitchToEvoLogView,
     SwitchToCommandLogView,
     Jump,
     WorkspaceViewForget,
     WorkspaceViewJumpToCommit,
+    #[strum(serialize = "evolog_restore")]
     EvoLogRestore,
+    #[strum(serialize = "evolog_edit")]
     EvoLogEdit,
+    #[strum(serialize = "evolog_new")]
     EvoLogNew,
     Interdiff,
+    #[strum(serialize = "evolog_interdiff")]
     EvoLogInterdiff,
     FileAnnotate,
     AnnotateGoToCommit,
@@ -199,9 +233,22 @@ pub enum AppAction {
 }
 
 impl AppAction {
+    /// Zero-based preset slot for the switch-preset actions.
+    pub fn preset_slot(self) -> Option<usize> {
+        match self {
+            AppAction::SwitchPreset1 => Some(0),
+            AppAction::SwitchPreset2 => Some(1),
+            AppAction::SwitchPreset3 => Some(2),
+            AppAction::SwitchPreset4 => Some(3),
+            AppAction::SwitchPreset5 => Some(4),
+            _ => None,
+        }
+    }
+
     pub fn is_repeatable(self) -> bool {
         match self {
-            AppAction::Arrange(_)
+            AppAction::ArrangeUp
+            | AppAction::ArrangeDown
             | AppAction::Abandon
             | AppAction::Fix
             | AppAction::Absorb
@@ -245,7 +292,10 @@ impl AppAction {
             | AppAction::NewInsertAfter
             | AppAction::NewInsertBefore
             | AppAction::Squash
-            | AppAction::SquashSelect(_)
+            | AppAction::SquashInto
+            | AppAction::SquashOnto
+            | AppAction::SquashAfter
+            | AppAction::SquashBefore
             | AppAction::RebaseRevision
             | AppAction::RebaseSource
             | AppAction::RebaseBranch
@@ -299,7 +349,11 @@ impl AppAction {
             | AppAction::TagSet
             | AppAction::TagDelete
             | AppAction::SelectPreset
-            | AppAction::SwitchPreset(_)
+            | AppAction::SwitchPreset1
+            | AppAction::SwitchPreset2
+            | AppAction::SwitchPreset3
+            | AppAction::SwitchPreset4
+            | AppAction::SwitchPreset5
             | AppAction::SwitchToDagView
             | AppAction::SwitchToBookmarkView
             | AppAction::SwitchToTagView
@@ -366,7 +420,10 @@ impl AppAction {
             | AppAction::NewInsertAfter
             | AppAction::NewInsertBefore
             | AppAction::Squash
-            | AppAction::SquashSelect(_)
+            | AppAction::SquashInto
+            | AppAction::SquashOnto
+            | AppAction::SquashAfter
+            | AppAction::SquashBefore
             | AppAction::RebaseRevision
             | AppAction::RebaseSource
             | AppAction::RebaseBranch
@@ -401,7 +458,8 @@ impl AppAction {
             | AppAction::Parallelize
             | AppAction::SimplifyParents
             | AppAction::Revert
-            | AppAction::Arrange(_)
+            | AppAction::ArrangeUp
+            | AppAction::ArrangeDown
             | AppAction::Fix
             | AppAction::FileUntrack
             | AppAction::ResolveOurs
@@ -467,7 +525,11 @@ impl AppAction {
             | AppAction::NextMatch
             | AppAction::PrevMatch
             | AppAction::SelectPreset
-            | AppAction::SwitchPreset(_)
+            | AppAction::SwitchPreset1
+            | AppAction::SwitchPreset2
+            | AppAction::SwitchPreset3
+            | AppAction::SwitchPreset4
+            | AppAction::SwitchPreset5
             | AppAction::SwitchToDagView
             | AppAction::SwitchToBookmarkView
             | AppAction::SwitchToTagView
@@ -578,7 +640,11 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::DescribeInEditor | AppAction::Diffedit => "describe",
         AppAction::Edit => "edit",
         AppAction::New | AppAction::NewInsertAfter | AppAction::NewInsertBefore => "new",
-        AppAction::Squash | AppAction::SquashSelect(_) => "squash",
+        AppAction::Squash
+        | AppAction::SquashInto
+        | AppAction::SquashOnto
+        | AppAction::SquashAfter
+        | AppAction::SquashBefore => "squash",
         AppAction::RebaseRevision | AppAction::RebaseSource | AppAction::RebaseBranch => "rebase",
         AppAction::Restore | AppAction::RestoreFrom | AppAction::RestoreInto => "restore",
         AppAction::Split
@@ -614,7 +680,7 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::Parallelize => "parallelize",
         AppAction::SimplifyParents => "simplify-parents",
         AppAction::Revert => "revert",
-        AppAction::Arrange(_) => "arrange",
+        AppAction::ArrangeUp | AppAction::ArrangeDown => "arrange",
         AppAction::ExpandAncestors | AppAction::ExpandDescendants => "expand",
         AppAction::Fix => "fix",
         AppAction::Run => "run",
@@ -638,325 +704,11 @@ pub fn action_label(action: AppAction) -> &'static str {
     }
 }
 
+/// Stable snake_case identifier for an action — the name Lua plugins bind
+/// and hook on (derived from the variant name via strum).
 pub fn action_id_name(action: AppAction) -> &'static str {
-    match action {
-        AppAction::Quit => "quit",
-        AppAction::MoveDown => "move_down",
-        AppAction::MoveUp => "move_up",
-        AppAction::MoveDownSection => "move_down_section",
-        AppAction::MoveUpSection => "move_up_section",
-        AppAction::PageDown => "page_down",
-        AppAction::PageUp => "page_up",
-        AppAction::JumpToWorkingCopy => "jump_to_working_copy",
-        AppAction::MoveToTop => "move_to_top",
-        AppAction::MoveToBottom => "move_to_bottom",
-        AppAction::MoveToScreenTop => "move_to_screen_top",
-        AppAction::MoveToScreenMiddle => "move_to_screen_middle",
-        AppAction::MoveToScreenBottom => "move_to_screen_bottom",
-        AppAction::ScrollLeft => "scroll_left",
-        AppAction::ScrollRight => "scroll_right",
-        AppAction::ToggleFold => "toggle_fold",
-        AppAction::Refresh => "refresh",
-        AppAction::ExpandAncestors => "expand_ancestors",
-        AppAction::ExpandDescendants => "expand_descendants",
-        AppAction::Abandon => "abandon",
-        AppAction::Absorb => "absorb",
-        AppAction::Commit => "commit",
-        AppAction::CommitWithMessage => "commit_with_message",
-        AppAction::Describe => "describe",
-        AppAction::DescribeInEditor => "describe_in_editor",
-        AppAction::Diffedit => "diffedit",
-        AppAction::Edit => "edit",
-        AppAction::New => "new",
-        AppAction::NewInsertAfter => "new_insert_after",
-        AppAction::NewInsertBefore => "new_insert_before",
-        AppAction::Squash => "squash",
-        AppAction::SquashSelect(SquashKind::Into) => "squash_into",
-        AppAction::SquashSelect(SquashKind::Onto) => "squash_onto",
-        AppAction::SquashSelect(SquashKind::After) => "squash_after",
-        AppAction::SquashSelect(SquashKind::Before) => "squash_before",
-        AppAction::RebaseRevision => "rebase_revision",
-        AppAction::RebaseSource => "rebase_source",
-        AppAction::RebaseBranch => "rebase_branch",
-        AppAction::Restore => "restore",
-        AppAction::RestoreFrom => "restore_from",
-        AppAction::RestoreInto => "restore_into",
-        AppAction::Split => "split",
-        AppAction::SplitOnto => "split_onto",
-        AppAction::SplitAfter => "split_after",
-        AppAction::SplitBefore => "split_before",
-        AppAction::EditRevset => "edit_revset",
-        AppAction::EditRevsetInEditor => "edit_revset_in_editor",
-        AppAction::ResetRevset => "reset_revset",
-        AppAction::BookmarkCreate => "bookmark_create",
-        AppAction::BookmarkSet => "bookmark_set",
-        AppAction::BookmarkDelete => "bookmark_delete",
-        AppAction::BookmarkForget => "bookmark_forget",
-        AppAction::BookmarkMove => "bookmark_move",
-        AppAction::BookmarkRename => "bookmark_rename",
-        AppAction::BookmarkAdvance => "bookmark_advance",
-        AppAction::BookmarkTrack => "bookmark_track",
-        AppAction::BookmarkUntrack => "bookmark_untrack",
-        AppAction::ShowHelp => "show_help",
-        AppAction::Undo => "undo",
-        AppAction::Redo => "redo",
-        AppAction::GitFetch => "git_fetch",
-        AppAction::GitFetchAllRemotes => "git_fetch_all_remotes",
-        AppAction::GitPush => "git_push",
-        AppAction::GitPushAll => "git_push_all",
-        AppAction::GitPushChange => "git_push_change",
-        AppAction::GitPushBookmark => "git_push_bookmark",
-        AppAction::GitExport => "git_export",
-        AppAction::GitImport => "git_import",
-        AppAction::Duplicate => "duplicate",
-        AppAction::DuplicateOnto => "duplicate_onto",
-        AppAction::Parallelize => "parallelize",
-        AppAction::SimplifyParents => "simplify_parents",
-        AppAction::Revert => "revert",
-        AppAction::Arrange(crate::types::ArrangeDirection::Up) => "arrange_up",
-        AppAction::Arrange(crate::types::ArrangeDirection::Down) => "arrange_down",
-        AppAction::Fix => "fix",
-        AppAction::Run => "run",
-        AppAction::FileUntrack => "file_untrack",
-        AppAction::ResolveOurs => "resolve_ours",
-        AppAction::ResolveTheirs => "resolve_theirs",
-        AppAction::ResolveMergeTool => "resolve_merge_tool",
-        AppAction::ConflictPickOurs => "conflict_pick_ours",
-        AppAction::ConflictPickTheirs => "conflict_pick_theirs",
-        AppAction::ConflictPickBase => "conflict_pick_base",
-        AppAction::ToggleIgnoreImmutable => "toggle_ignore_immutable",
-        AppAction::ToggleIgnoreWorkingCopy => "toggle_ignore_working_copy",
-        AppAction::ToggleDebug => "toggle_debug",
-        AppAction::ToggleGitDiff => "toggle_git_diff",
-        AppAction::ToggleLineNumbers => "toggle_line_numbers",
-        AppAction::ToggleDiffUnderline => "toggle_diff_underline",
-        AppAction::WorkspaceAdd => "workspace_add",
-        AppAction::WorkspaceForget => "workspace_forget",
-        AppAction::WorkspaceList => "workspace_list",
-        AppAction::WorkspaceRename => "workspace_rename",
-        AppAction::ToggleSelect => "toggle_select",
-        AppAction::EnterVisualMode => "enter_visual_mode",
-        AppAction::StartSearch => "start_search",
-        AppAction::NextMatch => "next_match",
-        AppAction::PrevMatch => "prev_match",
-        AppAction::TagSet => "tag_set",
-        AppAction::TagDelete => "tag_delete",
-        AppAction::SelectPreset => "select_preset",
-        AppAction::SwitchPreset(n) => match n {
-            0 => "switch_preset_1",
-            1 => "switch_preset_2",
-            2 => "switch_preset_3",
-            3 => "switch_preset_4",
-            _ => "switch_preset",
-        },
-        AppAction::SwitchToDagView => "switch_to_dag_view",
-        AppAction::SwitchToBookmarkView => "switch_to_bookmark_view",
-        AppAction::SwitchToTagView => "switch_to_tag_view",
-        AppAction::SwitchToOpLogView => "switch_to_op_log_view",
-        AppAction::SwitchToWorkspaceView => "switch_to_workspace_view",
-        AppAction::SwitchToEvoLogView => "switch_to_evolog_view",
-        AppAction::SwitchToCommandLogView => "switch_to_command_log_view",
-        AppAction::BookmarkViewDelete => "bookmark_view_delete",
-        AppAction::BookmarkViewTrack => "bookmark_view_track",
-        AppAction::BookmarkViewUntrack => "bookmark_view_untrack",
-        AppAction::BookmarkViewPush => "bookmark_view_push",
-        AppAction::BookmarkViewJumpToCommit => "bookmark_view_jump_to_commit",
-        AppAction::BookmarkViewEdit => "bookmark_view_edit",
-        AppAction::BookmarkViewRename => "bookmark_view_rename",
-        AppAction::BookmarkViewMove => "bookmark_view_move",
-        AppAction::BookmarkViewForget => "bookmark_view_forget",
-        AppAction::BookmarkViewSet => "bookmark_view_set",
-        AppAction::BookmarkViewFetchDefault => "bookmark_view_fetch_default",
-        AppAction::BookmarkViewFetchBookmark => "bookmark_view_fetch_bookmark",
-        AppAction::BookmarkViewFetchAllRemotes => "bookmark_view_fetch_all_remotes",
-        AppAction::BookmarkViewInterdiff => "bookmark_view_interdiff",
-        AppAction::TagViewDelete => "tag_view_delete",
-        AppAction::TagViewSet => "tag_view_set",
-        AppAction::TagViewJumpToCommit => "tag_view_jump_to_commit",
-        AppAction::TagViewEdit => "tag_view_edit",
-        AppAction::Jump => "jump",
-        AppAction::WorkspaceViewForget => "workspace_view_forget",
-        AppAction::WorkspaceViewJumpToCommit => "workspace_view_jump_to_commit",
-        AppAction::EvoLogRestore => "evolog_restore",
-        AppAction::EvoLogEdit => "evolog_edit",
-        AppAction::EvoLogNew => "evolog_new",
-        AppAction::Interdiff => "interdiff",
-        AppAction::EvoLogInterdiff => "evolog_interdiff",
-        AppAction::FileAnnotate => "file_annotate",
-        AppAction::AnnotateGoToCommit => "annotate_go_to_commit",
-        AppAction::AnnotateTimeTravel => "annotate_time_travel",
-        AppAction::AnnotateForward => "annotate_forward",
-        AppAction::ToggleAnnotateSeparator => "toggle_annotate_separator",
-        AppAction::EditFileWorkingCopy => "edit_file_working_copy",
-        AppAction::EditFileAtRevision => "edit_file_at_revision",
-        AppAction::CheckoutAndEditFile => "checkout_and_edit_file",
-        AppAction::OpLogRestore => "op_log_restore",
-        AppAction::OpLogRevert => "op_log_revert",
-        AppAction::OpLogAbandon => "op_log_abandon",
-        AppAction::OpLogFilterWorkspace => "op_log_filter_workspace",
-        AppAction::CommandMode => "command_mode",
-        AppAction::FileList => "file_list",
-        AppAction::RepeatLast => "repeat_last",
-    }
+    action.into()
 }
-
-pub const ALL_ACTIONS: &[AppAction] = &[
-    AppAction::Quit,
-    AppAction::MoveDown,
-    AppAction::MoveUp,
-    AppAction::MoveDownSection,
-    AppAction::MoveUpSection,
-    AppAction::PageDown,
-    AppAction::PageUp,
-    AppAction::JumpToWorkingCopy,
-    AppAction::MoveToTop,
-    AppAction::MoveToBottom,
-    AppAction::MoveToScreenTop,
-    AppAction::MoveToScreenMiddle,
-    AppAction::MoveToScreenBottom,
-    AppAction::ScrollLeft,
-    AppAction::ScrollRight,
-    AppAction::ToggleFold,
-    AppAction::Refresh,
-    AppAction::ExpandAncestors,
-    AppAction::ExpandDescendants,
-    AppAction::Abandon,
-    AppAction::Absorb,
-    AppAction::Commit,
-    AppAction::CommitWithMessage,
-    AppAction::Describe,
-    AppAction::DescribeInEditor,
-    AppAction::Diffedit,
-    AppAction::Edit,
-    AppAction::New,
-    AppAction::NewInsertAfter,
-    AppAction::NewInsertBefore,
-    AppAction::Squash,
-    AppAction::SquashSelect(SquashKind::Into),
-    AppAction::SquashSelect(SquashKind::Onto),
-    AppAction::SquashSelect(SquashKind::After),
-    AppAction::SquashSelect(SquashKind::Before),
-    AppAction::RebaseRevision,
-    AppAction::RebaseSource,
-    AppAction::RebaseBranch,
-    AppAction::Restore,
-    AppAction::RestoreFrom,
-    AppAction::RestoreInto,
-    AppAction::Split,
-    AppAction::SplitOnto,
-    AppAction::SplitAfter,
-    AppAction::SplitBefore,
-    AppAction::EditRevset,
-    AppAction::EditRevsetInEditor,
-    AppAction::ResetRevset,
-    AppAction::BookmarkCreate,
-    AppAction::BookmarkSet,
-    AppAction::BookmarkDelete,
-    AppAction::BookmarkForget,
-    AppAction::BookmarkMove,
-    AppAction::BookmarkRename,
-    AppAction::BookmarkAdvance,
-    AppAction::BookmarkTrack,
-    AppAction::BookmarkUntrack,
-    AppAction::ShowHelp,
-    AppAction::Undo,
-    AppAction::Redo,
-    AppAction::GitFetch,
-    AppAction::GitFetchAllRemotes,
-    AppAction::GitPush,
-    AppAction::GitPushAll,
-    AppAction::GitPushChange,
-    AppAction::GitPushBookmark,
-    AppAction::GitExport,
-    AppAction::GitImport,
-    AppAction::Duplicate,
-    AppAction::DuplicateOnto,
-    AppAction::Parallelize,
-    AppAction::SimplifyParents,
-    AppAction::Revert,
-    AppAction::Arrange(crate::types::ArrangeDirection::Up),
-    AppAction::Arrange(crate::types::ArrangeDirection::Down),
-    AppAction::RepeatLast,
-    AppAction::Fix,
-    AppAction::Run,
-    AppAction::FileUntrack,
-    AppAction::ResolveOurs,
-    AppAction::ResolveTheirs,
-    AppAction::ResolveMergeTool,
-    AppAction::ConflictPickOurs,
-    AppAction::ConflictPickTheirs,
-    AppAction::ConflictPickBase,
-    AppAction::ToggleIgnoreImmutable,
-    AppAction::ToggleIgnoreWorkingCopy,
-    AppAction::ToggleDebug,
-    AppAction::ToggleGitDiff,
-    AppAction::ToggleLineNumbers,
-    AppAction::ToggleDiffUnderline,
-    AppAction::WorkspaceAdd,
-    AppAction::WorkspaceForget,
-    AppAction::WorkspaceList,
-    AppAction::WorkspaceRename,
-    AppAction::ToggleSelect,
-    AppAction::EnterVisualMode,
-    AppAction::StartSearch,
-    AppAction::NextMatch,
-    AppAction::PrevMatch,
-    AppAction::TagSet,
-    AppAction::TagDelete,
-    AppAction::SelectPreset,
-    AppAction::SwitchPreset(0),
-    AppAction::SwitchPreset(1),
-    AppAction::SwitchPreset(2),
-    AppAction::SwitchPreset(3),
-    AppAction::SwitchPreset(4),
-    AppAction::SwitchToDagView,
-    AppAction::SwitchToBookmarkView,
-    AppAction::SwitchToTagView,
-    AppAction::SwitchToOpLogView,
-    AppAction::SwitchToWorkspaceView,
-    AppAction::SwitchToEvoLogView,
-    AppAction::SwitchToCommandLogView,
-    AppAction::BookmarkViewDelete,
-    AppAction::BookmarkViewTrack,
-    AppAction::BookmarkViewUntrack,
-    AppAction::BookmarkViewPush,
-    AppAction::BookmarkViewJumpToCommit,
-    AppAction::BookmarkViewEdit,
-    AppAction::BookmarkViewRename,
-    AppAction::BookmarkViewMove,
-    AppAction::BookmarkViewForget,
-    AppAction::BookmarkViewSet,
-    AppAction::BookmarkViewFetchDefault,
-    AppAction::BookmarkViewFetchBookmark,
-    AppAction::BookmarkViewFetchAllRemotes,
-    AppAction::BookmarkViewInterdiff,
-    AppAction::TagViewDelete,
-    AppAction::TagViewSet,
-    AppAction::TagViewJumpToCommit,
-    AppAction::TagViewEdit,
-    AppAction::Jump,
-    AppAction::WorkspaceViewForget,
-    AppAction::WorkspaceViewJumpToCommit,
-    AppAction::EvoLogRestore,
-    AppAction::EvoLogEdit,
-    AppAction::EvoLogNew,
-    AppAction::Interdiff,
-    AppAction::EvoLogInterdiff,
-    AppAction::FileAnnotate,
-    AppAction::AnnotateGoToCommit,
-    AppAction::AnnotateTimeTravel,
-    AppAction::AnnotateForward,
-    AppAction::ToggleAnnotateSeparator,
-    AppAction::EditFileWorkingCopy,
-    AppAction::EditFileAtRevision,
-    AppAction::CheckoutAndEditFile,
-    AppAction::OpLogRestore,
-    AppAction::OpLogRevert,
-    AppAction::OpLogAbandon,
-    AppAction::OpLogFilterWorkspace,
-    AppAction::CommandMode,
-    AppAction::FileList,
-];
 
 pub fn toggle_hint(action: AppAction) -> Option<&'static str> {
     let flag = match action {

@@ -187,7 +187,7 @@ fn register_globals(lua: &mlua::Lua) -> mlua::Result<()> {
     kojutsu.set("nav", lua.create_table()?)?;
 
     let action_table = lua.create_table()?;
-    for &action in crate::keymap::ALL_ACTIONS {
+    for action in <crate::keymap::AppAction as strum::IntoEnumIterator>::iter() {
         let name = crate::keymap::action_id_name(action);
         action_table.set(name, name)?;
     }

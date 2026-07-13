@@ -1,6 +1,6 @@
 use super::registry::{ActionId, ActionRegistry};
 use super::trie::{Keymap, TrieNode};
-use super::{AppAction, SelectionKindSet, display_key, toggle_hint};
+use super::{SelectionKindSet, display_key, toggle_hint};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, strum::Display)]
 pub enum HelpGroup {
@@ -85,12 +85,12 @@ pub fn help_entries(
     let mut entries: Vec<HelpEntry> = action_keys
         .into_iter()
         .map(|(id, keys, desc, group)| {
-            let description = if let ActionId::Builtin(AppAction::SwitchPreset(idx)) = id {
-                if let Some(preset) = presets.get(idx) {
-                    format!("{desc} ({name})", name = preset.name)
-                } else {
-                    desc
-                }
+            let preset_slot = match id {
+                ActionId::Builtin(action) => action.preset_slot(),
+                ActionId::Lua(_) => None,
+            };
+            let description = if let Some(preset) = preset_slot.and_then(|idx| presets.get(idx)) {
+                format!("{desc} ({name})", name = preset.name)
             } else {
                 desc
             };
