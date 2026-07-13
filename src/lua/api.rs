@@ -37,21 +37,32 @@ impl LuaEngine {
             let cmd_args: Vec<String> = (1..=args.raw_len())
                 .map(|i| args.raw_get(i))
                 .collect::<mlua::Result<_>>()?;
-            lua_state!(lua).borrow_mut().pending_action = PendingAction::Interactive(cmd_args);
+            lua_state!(lua)
+                .borrow_mut()
+                .pending_actions
+                .push(PendingAction::Interactive(cmd_args));
             Ok(())
         })?;
 
         let refresh_fn = self.lua.create_function(|lua, ()| {
             let cell = lua_state!(lua);
             let mut state = cell.borrow_mut();
-            if matches!(state.pending_action, PendingAction::None) {
-                state.pending_action = PendingAction::Refresh;
+            // One reload per command is enough.
+            if !state
+                .pending_actions
+                .iter()
+                .any(|a| matches!(a, PendingAction::Refresh))
+            {
+                state.pending_actions.push(PendingAction::Refresh);
             }
             Ok(())
         })?;
 
         let set_revset_fn = self.lua.create_function(|lua, revset: String| {
-            lua_state!(lua).borrow_mut().pending_action = PendingAction::SetRevset(revset);
+            lua_state!(lua)
+                .borrow_mut()
+                .pending_actions
+                .push(PendingAction::SetRevset(revset));
             Ok(())
         })?;
 
@@ -59,13 +70,20 @@ impl LuaEngine {
             let av: crate::app::ActiveView = view
                 .parse()
                 .map_err(|_| mlua::Error::external(format!("unknown view: {view}")))?;
-            lua_state!(lua).borrow_mut().pending_action = PendingAction::SwitchView(av);
+            lua_state!(lua)
+                .borrow_mut()
+                .pending_actions
+                .push(PendingAction::SwitchView(av));
             Ok(())
         })?;
 
         let jump_to_fn = self.lua.create_function(|lua, change_id: String| {
-            lua_state!(lua).borrow_mut().pending_action =
-                PendingAction::JumpTo(crate::types::ChangeId::new(change_id));
+            lua_state!(lua)
+                .borrow_mut()
+                .pending_actions
+                .push(PendingAction::JumpTo(crate::types::ChangeId::new(
+                    change_id,
+                )));
             Ok(())
         })?;
 
@@ -73,7 +91,10 @@ impl LuaEngine {
             let action: crate::keymap::AppAction = name.parse().map_err(|_| {
                 mlua::Error::external(format!("kojutsu.dispatch: unknown action '{name}'"))
             })?;
-            lua_state!(lua).borrow_mut().pending_action = PendingAction::Dispatch(action);
+            lua_state!(lua)
+                .borrow_mut()
+                .pending_actions
+                .push(PendingAction::Dispatch(action));
             Ok(())
         })?;
 

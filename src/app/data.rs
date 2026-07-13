@@ -43,6 +43,21 @@ impl App {
             .push(RepoRequest::load_revset(revset));
     }
 
+    /// Reload the current revset. `Snapshot` re-scans the working copy first —
+    /// needed only when the user may have edited files since jj last looked.
+    pub fn refresh(&mut self, load_kind: crate::repo_service::RevsetLoadKind) {
+        let revset = match &self.revset.load_state {
+            Loadable::Loading => self.revset.pending.as_ref().map(|s| s.to_string()),
+            _ => Some(self.revset.current.to_string()),
+        };
+        match load_kind {
+            crate::repo_service::RevsetLoadKind::Snapshot => self.request_revset_load(revset),
+            crate::repo_service::RevsetLoadKind::NoSnapshot => {
+                self.request_revset_load_no_snapshot(revset)
+            }
+        }
+    }
+
     /// Request a revset load without snapshotting the working copy first.
     /// Use when the refresh is purely a revset/UI change (e.g. editing the
     /// revset string, switching presets) and no filesystem mutation occurred.

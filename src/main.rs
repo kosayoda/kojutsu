@@ -5,7 +5,7 @@ use clap::Parser;
 use color_eyre::Result;
 use crossterm::event::{Event, KeyEventKind};
 
-use kojutsu::app::{App, AppMode, DeferredWork, Loadable};
+use kojutsu::app::{App, AppMode, DeferredWork};
 use kojutsu::input::{self, Action};
 use kojutsu::jj_command::{JJCommand, JJCommandResult};
 use kojutsu::keymap::{self, Keymaps};
@@ -435,14 +435,7 @@ fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
 /// captured jj commands use `NoSnapshot`: the command itself already
 /// snapshotted the working copy when it started.
 fn refresh_app(app: &mut App, load_kind: RevsetLoadKind) {
-    let revset = match &app.revset.load_state {
-        Loadable::Loading => app.revset.pending.as_ref().map(|s| s.to_string()),
-        _ => Some(app.revset.current.to_string()),
-    };
-    match load_kind {
-        RevsetLoadKind::Snapshot => app.request_revset_load(revset),
-        RevsetLoadKind::NoSnapshot => app.request_revset_load_no_snapshot(revset),
-    }
+    app.refresh(load_kind);
 }
 
 fn suspend_and_run(

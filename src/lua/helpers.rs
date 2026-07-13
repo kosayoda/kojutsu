@@ -84,6 +84,11 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field is_working_copy boolean").unwrap();
     writeln!(out, "---@field is_empty boolean").unwrap();
     writeln!(out, "---@field has_conflict boolean").unwrap();
+    writeln!(out, "---@field author_name string?").unwrap();
+    writeln!(out, "---@field author_email string?").unwrap();
+    writeln!(out, "---@field is_immutable boolean?").unwrap();
+    writeln!(out, "---@field is_merge boolean?").unwrap();
+    writeln!(out, "---@field parent_change_ids string[]?").unwrap();
     writeln!(out, "---@field view string").unwrap();
     writeln!(out, "---@field revset string").unwrap();
     writeln!(out, "---@field repo_root string").unwrap();
@@ -156,12 +161,6 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field seq string?").unwrap();
     writeln!(out).unwrap();
 
-    writeln!(out, "---@class HookContext").unwrap();
-    writeln!(out, "---@field change_id string?").unwrap();
-    writeln!(out, "---@field change_ids string[]").unwrap();
-    writeln!(out, "---@field view string").unwrap();
-    writeln!(out).unwrap();
-
     writeln!(out, "---@class HookResultTable").unwrap();
     writeln!(out, "---@field status JJStatus").unwrap();
     writeln!(out, "---@field ok boolean").unwrap();
@@ -196,7 +195,7 @@ pub fn generate_type_definitions() -> String {
     .unwrap();
     writeln!(
         out,
-        "---@field hook fun(action: string|string[], phase: string, fn: fun(ctx: HookContext, result: HookResultTable?): boolean?)"
+        "---@field hook fun(action: string|string[], phase: string, fn: fun(ctx: KojutsuCtx, result: HookResultTable?): boolean?)"
     )
     .unwrap();
     writeln!(out, "---@field bind fun(opts: BindOpts)").unwrap();

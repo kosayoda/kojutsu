@@ -127,7 +127,9 @@ struct LogGroup {
 /// the need for `Rc<RefCell<>>` on each field.
 #[derive(Default)]
 struct LuaState {
-    pending_action: PendingAction,
+    /// Nav/dispatch requests queued by the running Lua code, applied in call
+    /// order when it completes.
+    pending_actions: Vec<PendingAction>,
     pending_logs: Vec<String>,
     pending_status: Option<(String, crate::app::StatusLevel)>,
     log_groups: Vec<LogGroup>,
@@ -140,10 +142,7 @@ macro_rules! lua_state {
 }
 use lua_state;
 
-#[derive(Default)]
 enum PendingAction {
-    #[default]
-    None,
     Refresh,
     SetRevset(String),
     Interactive(Vec<String>),
@@ -256,6 +255,7 @@ impl LuaEngine {
             }
             Ok(mlua::Value::Boolean(false)) => {
                 self.collect_logs(action_name.to_string(), LogPhase::Pre);
+                self.drain_pending_actions(app, flags, false);
                 app.push_command_log(
                     crate::app::CommandLogKind::Warning,
                     format!("plugin: pre-hook cancelled - {action_name}"),
@@ -267,6 +267,7 @@ impl LuaEngine {
             }
             Ok(_) => {
                 self.collect_logs(action_name.to_string(), LogPhase::Pre);
+                self.drain_pending_actions(app, flags, false);
                 HookOutcome::Proceed
             }
             Err(e) => {
@@ -339,6 +340,7 @@ impl LuaEngine {
             }
             Ok(_) => {
                 self.collect_logs(action_name.to_string(), LogPhase::Post);
+                self.drain_pending_actions(app, CommandFlags::empty(), false);
                 HookOutcome::Proceed
             }
             Err(e) => {
@@ -403,7 +405,7 @@ impl LuaEngine {
         {
             let cell = lua_state!(self.lua);
             let mut state = cell.borrow_mut();
-            state.pending_action = PendingAction::None;
+            state.pending_actions.clear();
             state.pending_logs.clear();
         }
 
@@ -434,7 +436,7 @@ impl LuaEngine {
             Ok(value) => match kind {
                 SuspendedKind::Command(flags) => {
                     self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
-                    ResumeResult::Action(self.take_pending_action(app, flags))
+                    ResumeResult::Action(self.drain_pending_actions(app, flags, true))
                 }
                 SuspendedKind::PreHooks {
                     action,
@@ -442,6 +444,7 @@ impl LuaEngine {
                     header,
                 } => {
                     self.collect_logs(header, LogPhase::Pre);
+                    self.drain_pending_actions(app, flags, false);
                     if matches!(value, mlua::Value::Boolean(false)) {
                         ResumeResult::Action(Action::None)
                     } else {
@@ -450,6 +453,7 @@ impl LuaEngine {
                 }
                 SuspendedKind::PostHooks { header } => {
                     self.collect_logs(header, LogPhase::Post);
+                    self.drain_pending_actions(app, CommandFlags::empty(), false);
                     ResumeResult::Action(Action::None)
                 }
             },
@@ -480,7 +484,7 @@ impl LuaEngine {
             Ok(_) => {
                 if let SuspendedKind::Command(flags) = kind {
                     self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
-                    self.take_pending_action(app, flags)
+                    self.drain_pending_actions(app, flags, true)
                 } else {
                     Action::None
                 }
@@ -620,44 +624,86 @@ impl LuaEngine {
         action
     }
 
-    fn take_pending_action(&self, app: &mut App, flags: CommandFlags) -> Action {
-        let action = std::mem::take(&mut lua_state!(self.lua).borrow_mut().pending_action);
-        match action {
-            PendingAction::None => Action::None,
-            PendingAction::Refresh => Action::Refresh,
-            PendingAction::SetRevset(revset) => Action::UpdateRevset(revset),
-            PendingAction::Interactive(args) => {
-                let cmd = JJCommand {
-                    kind: JJCommandKind::Raw {
-                        args: args.into_iter().map(Into::into).collect(),
-                    },
-                    flags,
-                };
-                Action::SuspendAndRunJj(cmd)
-            }
-            PendingAction::SwitchView(view) => {
-                app.switch_view(view);
-                Action::None
-            }
-            PendingAction::JumpTo(change_id) => {
-                if let Some(commit_id) = app.commit_id_for_change(&change_id)
-                    && let Some(idx) = app.entry_by_commit_id(&commit_id)
-                    && let Some(row) = app.row_of_commit(idx)
-                {
-                    app.set_cursor(row);
+    /// Apply queued nav/dispatch requests in call order. Nav requests apply
+    /// to the app directly; at most one action that must round-trip through
+    /// the main loop (`jj_interactive`, `dispatch`) is returned — extras are
+    /// dropped with a warning. From hooks (`allow_breaking = false`) those
+    /// requests are unsupported and warn.
+    fn drain_pending_actions(
+        &self,
+        app: &mut App,
+        flags: CommandFlags,
+        allow_breaking: bool,
+    ) -> Action {
+        let pending: Vec<PendingAction> =
+            std::mem::take(&mut lua_state!(self.lua).borrow_mut().pending_actions);
+        let mut breaking = Action::None;
+        for action in pending {
+            match action {
+                PendingAction::Refresh => {
+                    // The reload path only; a plugin wanting a working-copy
+                    // re-scan can dispatch the builtin `refresh` action.
+                    app.refresh(crate::repo_service::RevsetLoadKind::NoSnapshot);
                 }
-                Action::None
+                PendingAction::SetRevset(revset) => {
+                    app.request_revset_load_no_snapshot(Some(revset));
+                }
+                PendingAction::SwitchView(view) => {
+                    app.switch_view(view);
+                }
+                PendingAction::JumpTo(change_id) => {
+                    if let Some(commit_id) = app.commit_id_for_change(&change_id)
+                        && let Some(idx) = app.entry_by_commit_id(&commit_id)
+                        && let Some(row) = app.row_of_commit(idx)
+                    {
+                        app.set_cursor(row);
+                    }
+                }
+                PendingAction::Interactive(args) => {
+                    let cmd = JJCommand {
+                        kind: JJCommandKind::Raw {
+                            args: args.into_iter().map(Into::into).collect(),
+                        },
+                        flags,
+                    };
+                    self.set_breaking(
+                        app,
+                        &mut breaking,
+                        Action::SuspendAndRunJj(cmd),
+                        allow_breaking,
+                    );
+                }
+                // The dispatched action skips its own pre-hooks (same as a
+                // pre-hook resumption) so hooks can't recurse into themselves.
+                PendingAction::Dispatch(action) => {
+                    self.set_breaking(
+                        app,
+                        &mut breaking,
+                        Action::DeferredDispatch { action, flags },
+                        allow_breaking,
+                    );
+                }
             }
-            // The dispatched action skips its own pre-hooks (same as a
-            // pre-hook resumption) so hooks can't recurse into themselves.
-            PendingAction::Dispatch(action) => Action::DeferredDispatch { action, flags },
+        }
+        breaking
+    }
+
+    fn set_breaking(&self, app: &mut App, slot: &mut Action, action: Action, allow: bool) {
+        if !allow {
+            app.set_error("plugin: dispatch/jj_interactive are not supported from hooks");
+            return;
+        }
+        if matches!(slot, Action::None) {
+            *slot = action;
+        } else {
+            app.set_error("plugin: only one dispatch/jj_interactive per command; extra ignored");
         }
     }
 
     fn prepare_execution(&self) {
         let cell = lua_state!(self.lua);
         let mut state = cell.borrow_mut();
-        state.pending_action = PendingAction::None;
+        state.pending_actions.clear();
         state.pending_logs.clear();
         state.log_groups.clear();
     }
@@ -802,6 +848,19 @@ impl LuaEngine {
         ctx.set("is_working_copy", app.selected_is_working_copy())?;
         ctx.set("is_empty", app.selected_is_empty())?;
         ctx.set("has_conflict", app.selected_has_conflict())?;
+        if let Some(entry_idx) = app.selected_entry_idx() {
+            let commit = &app.nodes[entry_idx].commit;
+            ctx.set("author_name", commit.author.name.as_str())?;
+            ctx.set("author_email", commit.author.email.as_str())?;
+            ctx.set("is_immutable", commit.is_immutable)?;
+            ctx.set("is_merge", commit.is_merge)?;
+            let parents = self.lua.create_table()?;
+            for (i, parent_idx) in app.nodes[entry_idx].parents.iter().enumerate() {
+                let parent_change = app.nodes[*parent_idx].commit.unique_change_id();
+                parents.raw_set(i + 1, parent_change.as_str())?;
+            }
+            ctx.set("parent_change_ids", parents)?;
+        }
         ctx.set("view", app.active_view.to_string())?;
         ctx.set("revset", app.revset.current.as_str())?;
         ctx.set("repo_root", app.repo_root.as_str())?;
