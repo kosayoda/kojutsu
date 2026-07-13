@@ -626,8 +626,23 @@ pub fn display_key(node: &Node) -> String {
     format!("{node}")
 }
 
+/// Parse a key string, or `None` if it's invalid. Uppercase letters
+/// normalize to shift+lowercase, matching how key events are converted
+/// (the terminal reports `Z` as shift+z).
+pub fn try_parse_key(key_str: &str) -> Option<Node> {
+    let mut node = keymap_parser::parse(key_str).ok()?;
+    if let Key::Char(c) = node.key
+        && c.is_ascii_uppercase()
+    {
+        node.key = Key::Char(c.to_ascii_lowercase());
+        node.modifiers |= Modifier::Shift as u8;
+    }
+    Some(node)
+}
+
+/// Parse a key string known to be valid (the built-in binding tables).
 pub fn parse_key(key_str: &str) -> Node {
-    keymap_parser::parse(key_str).expect("valid key string")
+    try_parse_key(key_str).expect("valid key string")
 }
 
 pub fn action_label(action: AppAction) -> &'static str {

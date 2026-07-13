@@ -36,10 +36,17 @@ pub(super) fn parse_keys(
     key: Option<&String>,
     seq: Option<&String>,
 ) -> Option<smallvec::SmallVec<[keymap_parser::Node; 3]>> {
+    let parse = |k: &str| {
+        let node = crate::keymap::try_parse_key(k);
+        if node.is_none() {
+            tracing::warn!("invalid key '{k}', skipping binding");
+        }
+        node
+    };
     if let Some(k) = key {
-        Some(smallvec::smallvec![crate::keymap::parse_key(k)])
+        Some(smallvec::smallvec![parse(k)?])
     } else {
-        seq.map(|s| s.split_whitespace().map(crate::keymap::parse_key).collect())
+        seq?.split_whitespace().map(parse).collect()
     }
 }
 
