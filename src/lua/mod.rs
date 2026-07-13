@@ -149,6 +149,7 @@ enum PendingAction {
     Interactive(Vec<String>),
     SwitchView(crate::app::ActiveView),
     JumpTo(crate::types::ChangeId),
+    Dispatch(AppAction),
 }
 
 pub struct LuaEngine {
@@ -647,6 +648,9 @@ impl LuaEngine {
                 }
                 Action::None
             }
+            // The dispatched action skips its own pre-hooks (same as a
+            // pre-hook resumption) so hooks can't recurse into themselves.
+            PendingAction::Dispatch(action) => Action::DeferredDispatch { action, flags },
         }
     }
 

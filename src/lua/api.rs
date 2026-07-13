@@ -69,6 +69,14 @@ impl LuaEngine {
             Ok(())
         })?;
 
+        let dispatch_fn = self.lua.create_function(|lua, name: String| {
+            let action: crate::keymap::AppAction = name.parse().map_err(|_| {
+                mlua::Error::external(format!("kojutsu.dispatch: unknown action '{name}'"))
+            })?;
+            lua_state!(lua).borrow_mut().pending_action = PendingAction::Dispatch(action);
+            Ok(())
+        })?;
+
         let status_fn = self.lua.create_function(|lua, msg: String| {
             lua_state!(lua).borrow_mut().pending_status =
                 Some((msg, crate::app::StatusLevel::Info));
@@ -172,6 +180,7 @@ impl LuaEngine {
         let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
         kojutsu.set("_jj_sync", jj_sync_fn)?;
         kojutsu.set("jj_interactive", jj_interactive_fn)?;
+        kojutsu.set("dispatch", dispatch_fn)?;
         kojutsu.set("log", log_fn)?;
         kojutsu.set("copy", copy_fn)?;
         kojutsu.set("_collect_logs", collect_logs_fn)?;

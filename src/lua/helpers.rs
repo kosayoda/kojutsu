@@ -182,6 +182,11 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field nav KojutsuNav").unwrap();
     writeln!(out, "---@field jj fun(args: string[]): JJResult").unwrap();
     writeln!(out, "---@field jj_interactive fun(args: string[])").unwrap();
+    writeln!(
+        out,
+        "---@field dispatch fun(action: string) run a builtin action after the command completes (fire-and-forget; skips the action's pre-hooks)"
+    )
+    .unwrap();
     writeln!(out, "---@field log fun(msg: string)").unwrap();
     writeln!(out, "---@field copy fun(text: string)").unwrap();
     writeln!(
