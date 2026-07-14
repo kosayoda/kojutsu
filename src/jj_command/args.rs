@@ -325,7 +325,7 @@ impl JJCommand {
                 match selection {
                     ChangeSelection::All => {}
                     ChangeSelection::Files(paths) => {
-                        args.extend(paths.iter().cloned().map(arg));
+                        args.extend(paths.iter().map(|p| fileset_arg(p)));
                     }
                     ChangeSelection::Lines(_) => {
                         debug_assert!(false, "line selection should be blocked for absorb");
@@ -524,7 +524,7 @@ impl JJCommand {
             }
             JJCommandKind::FileUntrack { paths, .. } => {
                 let mut args = vec![sub("file"), sub("untrack")];
-                args.extend(paths.iter().cloned().map(arg));
+                args.extend(paths.iter().map(|p| fileset_arg(p)));
                 args
             }
             JJCommandKind::Resolve {
@@ -539,7 +539,7 @@ impl JJCommand {
                     ResolveTool::Theirs => args.push(flag("--tool=:theirs")),
                     ResolveTool::Default => {}
                 }
-                args.push(arg(path.clone()));
+                args.push(fileset_arg(path));
                 args
             }
             JJCommandKind::Raw { args } => return lex_raw_args(args),
@@ -599,7 +599,7 @@ fn push_change_selection(args: &mut Vec<TaggedArg>, selection: &ChangeSelection)
     match selection {
         ChangeSelection::All => {}
         ChangeSelection::Files(paths) => {
-            args.extend(paths.iter().cloned().map(arg));
+            args.extend(paths.iter().map(|p| fileset_arg(p)));
         }
         ChangeSelection::Lines(json_path) => {
             let exe = std::env::current_exe().unwrap_or_else(|_| "kojutsu".into());
@@ -620,6 +620,11 @@ fn push_change_selection(args: &mut Vec<TaggedArg>, selection: &ChangeSelection)
             ]);
         }
     }
+}
+
+fn fileset_arg(path: &str) -> TaggedArg {
+    let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
+    arg(format!("\"{escaped}\""))
 }
 
 fn push_global_flags(args: &mut Vec<TaggedArg>, flags: CommandFlags) {
