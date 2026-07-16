@@ -320,17 +320,6 @@ pub struct CommandLogEntry {
     pub timestamp: jiff::Timestamp,
 }
 
-/// Result of picking a conflict side for a hunk.
-pub enum ConflictPickResult {
-    /// Hunk picked, but other hunks in the file are still unresolved.
-    Pending,
-    /// All hunks resolved — caller should write content to path and refresh.
-    FileResolved {
-        path: crate::types::RepoPath,
-        content: String,
-    },
-}
-
 /// Whether the target-select picker allows one or many targets.
 #[derive(Debug, Clone)]
 pub enum TargetMode {

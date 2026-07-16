@@ -450,11 +450,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     file_idx,
                     hunk_idx,
                 } => {
-                    let (num, total) = app
+                    let hunks = app
                         .nodes
                         .get(*entry_idx)
                         .and_then(|n| n.conflict_hunks(*file_idx))
-                        .and_then(|l| l.loaded())
+                        .and_then(|l| l.loaded());
+                    let (num, total) = hunks
                         .map(|hunks| {
                             let mut num = 0usize;
                             let mut total = 0usize;
@@ -469,15 +470,39 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             (num, total)
                         })
                         .unwrap_or((0, 0));
-                    vec![Line::from(vec![
+                    let picked = hunks
+                        .and_then(|hunks| hunks.get(hunk_idx.raw()))
+                        .and_then(|h| match h {
+                            crate::dag::ConflictHunkKind::Conflict {
+                                selected: Some(kind),
+                                ..
+                            } => Some(kind.label(h.num_sides())),
+                            _ => None,
+                        });
+                    let mut spans = vec![
                         Span::raw("        "),
                         Span::styled(
-                            format!("── conflict {num} of {total} ──"),
+                            format!("── conflict {num} of {total}"),
                             Style::default()
                                 .fg(theme.error)
                                 .add_modifier(Modifier::BOLD),
                         ),
-                    ])]
+                    ];
+                    if let Some(label) = picked {
+                        spans.push(Span::styled(
+                            format!(" · picked: {label}"),
+                            Style::default()
+                                .fg(theme.added)
+                                .add_modifier(Modifier::BOLD),
+                        ));
+                    }
+                    spans.push(Span::styled(
+                        " ──",
+                        Style::default()
+                            .fg(theme.error)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                    vec![Line::from(spans)]
                 }
                 DisplayRow::ConflictTerm {
                     entry_idx,

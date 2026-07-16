@@ -60,48 +60,13 @@ pub(in crate::input) fn dispatch(
         }
         AppAction::Run => enter_run_input(app, flags),
         AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
-            if let Some(DisplayRow::ConflictHeader {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-            })
-            | Some(DisplayRow::ConflictTerm {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-                ..
-            }) = app.rows.get(app.cursor.raw())
-            {
-                let (entry_idx, file_idx, hunk_idx) = (*entry_idx, *file_idx, *hunk_idx);
-                let pick = match action {
-                    AppAction::ResolveOurs => crate::dag::ConflictTermKind::Side(0),
-                    AppAction::ResolveTheirs => crate::dag::ConflictTermKind::Side(1),
-                    _ => {
-                        app.set_error("merge tool is for whole-file only");
-                        return Action::None;
-                    }
-                };
-                if picked_term_is_absent(app, entry_idx, file_idx, hunk_idx, pick) {
-                    return resolve_by_deletion(app, entry_idx, file_idx, pick, flags);
-                }
-                let result = app.pick_conflict_side(entry_idx, file_idx, hunk_idx, pick);
-                return write_conflict_resolution(app, entry_idx, result, flags);
-            }
-
-            let (entry_idx, file_idx) = match app.rows.get(app.cursor.raw()) {
-                Some(DisplayRow::FileChange {
-                    entry_idx,
-                    file_idx,
-                })
-                | Some(DisplayRow::DiffLine {
-                    entry_idx,
-                    file_idx,
-                    ..
-                }) => (*entry_idx, *file_idx),
-                _ => {
-                    app.set_error("cursor must be on a file or conflict hunk");
-                    return Action::None;
-                }
+            // Whole-file resolution via jj's native tools, from any row of
+            // the conflicted file (jj handles deletion sides itself).
+            let Some((entry_idx, file_idx)) =
+                app.rows.get(app.cursor.raw()).and_then(|r| r.dag_file())
+            else {
+                app.set_error("cursor must be on a conflicted file");
+                return Action::None;
             };
             let Some(file) = app
                 .files_for_entry(entry_idx)
@@ -156,13 +121,50 @@ pub(in crate::input) fn dispatch(
                     _ => crate::dag::ConflictTermKind::Base(0),
                 };
                 if picked_term_is_absent(app, entry_idx, file_idx, hunk_idx, pick) {
-                    return resolve_by_deletion(app, entry_idx, file_idx, pick, flags);
+                    app.set_error(
+                        "that side deleted the file — use C,o / C,t to take it whole-file",
+                    );
+                    return Action::None;
                 }
-                let result = app.pick_conflict_side(entry_idx, file_idx, hunk_idx, pick);
-                return write_conflict_resolution(app, entry_idx, result, flags);
+                app.pick_conflict_side(entry_idx, file_idx, hunk_idx, pick);
+            } else {
+                app.set_error("per-hunk only — use on a conflict hunk row");
             }
-            app.set_error("per-hunk only — use on a conflict hunk row");
             Action::None
+        }
+        AppAction::ConflictUnpick => {
+            if let Some(DisplayRow::ConflictHeader {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            })
+            | Some(DisplayRow::ConflictTerm {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                ..
+            }) = app.rows.get(app.cursor.raw())
+            {
+                let (entry_idx, file_idx, hunk_idx) = (*entry_idx, *file_idx, *hunk_idx);
+                app.unpick_conflict(entry_idx, file_idx, hunk_idx);
+            } else {
+                app.set_error("per-hunk only — use on a conflict hunk row");
+            }
+            Action::None
+        }
+        AppAction::ConflictApplyPicks => {
+            let Some((entry_idx, file_idx)) =
+                app.rows.get(app.cursor.raw()).and_then(|r| r.dag_file())
+            else {
+                app.set_error("cursor must be on a conflicted file");
+                return Action::None;
+            };
+            let Some((path, content, _complete)) = app.conflict_resolution(entry_idx, file_idx)
+            else {
+                app.set_error("no picks to apply on this file");
+                return Action::None;
+            };
+            apply_conflict_resolution(app, entry_idx, path, content, flags)
         }
         AppAction::FileUntrack => {
             let paths = app.selected_file_paths();
@@ -687,72 +689,32 @@ fn picked_term_is_absent(
         .is_some_and(|t| t.absent)
 }
 
-/// Resolve a conflict by taking an absent (deleted) term. Content assembly
-/// could only produce an empty file, not a deletion, so route to jj's
-/// builtin whole-file tools, which delete the path. Absence is a file-level
-/// state, so whole-file resolution matches the pick's meaning.
-fn resolve_by_deletion(
+/// Apply accumulated picks by running `jj resolve` with a merge tool that
+/// copies the assembled content into place. Going through jj (rather than
+/// writing to the working copy) resolves the conflict in the commit it
+/// actually lives in, rebases descendants, and records one undoable
+/// operation. Partially picked files keep conflict markers, which jj
+/// parses back into a conflicted state.
+fn apply_conflict_resolution(
     app: &mut App,
     entry_idx: crate::idx::EntryIdx,
-    file_idx: crate::idx::FileIdx,
-    pick: crate::dag::ConflictTermKind,
+    path: crate::types::RepoPath,
+    content: String,
     flags: CommandFlags,
 ) -> Action {
-    let tool = match pick {
-        crate::dag::ConflictTermKind::Side(0) => crate::jj_command::ResolveTool::Ours,
-        crate::dag::ConflictTermKind::Side(1) => crate::jj_command::ResolveTool::Theirs,
-        _ => {
-            app.set_error(
-                "cannot delete the file by picking this term — jj only supports taking ours/theirs",
-            );
-            return Action::None;
+    match persist_resolved_content(&content) {
+        Ok(content_path) => Action::RunJj(JJCommand {
+            kind: JJCommandKind::Resolve {
+                change_id: app.change_id(entry_idx),
+                path: Str::from(path.as_str()),
+                tool: crate::jj_command::ResolveTool::Content(content_path),
+            },
+            flags,
+        }),
+        Err(e) => {
+            app.set_error(format!("failed to stage resolution for {path}: {e}"));
+            Action::None
         }
-    };
-    let Some(file) = app
-        .files_for_entry(entry_idx)
-        .and_then(|f| f.get(file_idx.raw()))
-    else {
-        return Action::None;
-    };
-    Action::RunJj(JJCommand {
-        kind: JJCommandKind::Resolve {
-            change_id: app.change_id(entry_idx),
-            path: Str::from(file.path.as_str()),
-            tool,
-        },
-        flags,
-    })
-}
-
-/// Apply a completed per-hunk resolution by running `jj resolve` with a
-/// merge tool that copies the assembled content into place. Going through
-/// jj (rather than writing to the working copy) resolves the conflict in
-/// the commit it actually lives in, rebases descendants, and records one
-/// undoable operation.
-fn write_conflict_resolution(
-    app: &mut App,
-    entry_idx: crate::idx::EntryIdx,
-    result: crate::app::ConflictPickResult,
-    flags: CommandFlags,
-) -> Action {
-    match result {
-        crate::app::ConflictPickResult::FileResolved { path, content } => {
-            match persist_resolved_content(&content) {
-                Ok(content_path) => Action::RunJj(JJCommand {
-                    kind: JJCommandKind::Resolve {
-                        change_id: app.change_id(entry_idx),
-                        path: Str::from(path.as_str()),
-                        tool: crate::jj_command::ResolveTool::Content(content_path),
-                    },
-                    flags,
-                }),
-                Err(e) => {
-                    app.set_error(format!("failed to stage resolution for {path}: {e}"));
-                    Action::None
-                }
-            }
-        }
-        crate::app::ConflictPickResult::Pending => Action::None,
     }
 }
 

@@ -149,6 +149,8 @@ pub enum AppAction {
     ConflictPickOurs,
     ConflictPickTheirs,
     ConflictPickBase,
+    ConflictUnpick,
+    ConflictApplyPicks,
     ToggleIgnoreImmutable,
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
@@ -263,6 +265,8 @@ impl AppAction {
             | AppAction::ConflictPickOurs
             | AppAction::ConflictPickTheirs
             | AppAction::ConflictPickBase
+            | AppAction::ConflictUnpick
+            | AppAction::ConflictApplyPicks
             | AppAction::ResolveOurs
             | AppAction::ResolveTheirs => true,
 
@@ -471,9 +475,7 @@ impl AppAction {
             | AppAction::ResolveOurs
             | AppAction::ResolveTheirs
             | AppAction::ResolveMergeTool
-            | AppAction::ConflictPickOurs
-            | AppAction::ConflictPickTheirs
-            | AppAction::ConflictPickBase
+            | AppAction::ConflictApplyPicks
             | AppAction::WorkspaceAdd
             | AppAction::WorkspaceForget
             | AppAction::WorkspaceRename
@@ -570,6 +572,10 @@ impl AppAction {
             | AppAction::EditRevsetInEditor
             | AppAction::ResetRevset
             | AppAction::ToggleConflictedRevset
+            | AppAction::ConflictPickOurs
+            | AppAction::ConflictPickTheirs
+            | AppAction::ConflictPickBase
+            | AppAction::ConflictUnpick
             | AppAction::TagViewJumpToCommit
             | AppAction::BookmarkViewJumpToCommit
             | AppAction::RepeatLast => false,

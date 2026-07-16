@@ -70,7 +70,7 @@ impl DeferredWork {
     }
 }
 
-use crate::dag::{DiffLine, FileChange, LineStats};
+use crate::dag::{ConflictTermKind, DiffLine, FileChange, LineStats};
 use crate::idx::{EntryIdx, EvoLogIdx, FileIdx, IndexVec, RowIdx};
 use crate::types::SmallVec;
 
@@ -338,6 +338,10 @@ pub struct App {
     pub jump_after_refresh: Option<JumpTarget>,
     pub last_repeatable: Option<(crate::keymap::AppAction, CommandFlags)>,
     pub pending_toggles: Vec<SubmenuToggle>,
+    /// Conflict hunk picks, persisted across reloads. Keyed by commit ID —
+    /// identical ID means identical content and thus identical hunk
+    /// indices; a rewritten commit gets a new ID, invalidating its picks.
+    pub conflict_picks: HashMap<(CommitId, RepoPath), HashMap<usize, ConflictTermKind>>,
 }
 
 impl std::fmt::Debug for App {
@@ -406,6 +410,7 @@ impl App {
             jump_after_refresh: None,
             last_repeatable: None,
             pending_toggles: Vec::new(),
+            conflict_picks: HashMap::new(),
         };
         app.rebuild_rows();
         app
@@ -822,81 +827,173 @@ impl App {
         }
     }
 
-    /// Pick a conflict term for a hunk. Returns whether the file was fully
-    /// resolved (all hunks picked) and written to disk. Absent (deleted)
-    /// terms cannot be picked here — content assembly could only produce
-    /// an empty file, not a deletion; callers route those to `jj resolve`
-    /// builtins instead.
+    /// Pick a conflict term for a hunk (or unpick it, if already picked).
+    /// Pure UI state — nothing is written until the picks are applied.
+    /// Absent (deleted) terms cannot be picked here — content assembly
+    /// could only produce an empty file, not a deletion; callers route
+    /// those to `jj resolve` builtins instead.
     pub fn pick_conflict_side(
         &mut self,
         entry_idx: EntryIdx,
         file_idx: FileIdx,
         hunk_idx: crate::idx::ConflictHunkIdx,
-        pick: crate::dag::ConflictTermKind,
-    ) -> ConflictPickResult {
-        let hi = hunk_idx.raw();
-        let Some(hunks) =
+        pick: ConflictTermKind,
+    ) {
+        self.set_conflict_pick(entry_idx, file_idx, hunk_idx, Some(pick));
+    }
+
+    /// Clear the pick on a conflict hunk.
+    pub fn unpick_conflict(
+        &mut self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: crate::idx::ConflictHunkIdx,
+    ) {
+        self.set_conflict_pick(entry_idx, file_idx, hunk_idx, None);
+    }
+
+    fn set_conflict_pick(
+        &mut self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: crate::idx::ConflictHunkIdx,
+        pick: Option<ConflictTermKind>,
+    ) {
+        let Some(hunk) = self.nodes[entry_idx]
+            .conflict_hunks_mut(file_idx)
+            .and_then(|l| match l {
+                Loadable::Loaded(h) => Some(h),
+                _ => None,
+            })
+            .and_then(|hunks| hunks.get_mut(hunk_idx.raw()))
+        else {
+            return;
+        };
+        let new_selected = match hunk {
+            crate::dag::ConflictHunkKind::Conflict { terms, selected } => match pick {
+                Some(kind) if terms.iter().any(|t| t.kind == kind && !t.absent) => {
+                    // Re-picking the selected term unpicks it.
+                    *selected = if *selected == Some(kind) {
+                        None
+                    } else {
+                        Some(kind)
+                    };
+                    *selected
+                }
+                Some(_) => return,
+                None => {
+                    *selected = None;
+                    None
+                }
+            },
+            crate::dag::ConflictHunkKind::Resolved { .. } => return,
+        };
+        self.save_conflict_pick(entry_idx, file_idx, hunk_idx, new_selected);
+        self.rebuild_rows();
+    }
+
+    /// Write a pick through to the persistent store so it survives hunk
+    /// reloads (see `conflict_picks`).
+    fn save_conflict_pick(
+        &mut self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: crate::idx::ConflictHunkIdx,
+        pick: Option<ConflictTermKind>,
+    ) {
+        let Some(path) = self
+            .files_for_entry(entry_idx)
+            .and_then(|f| f.get(file_idx.raw()))
+            .map(|f| f.path.clone())
+        else {
+            return;
+        };
+        let key = (self.nodes[entry_idx].commit.graph_id.clone(), path);
+        match pick {
+            Some(kind) => {
+                self.conflict_picks
+                    .entry(key)
+                    .or_default()
+                    .insert(hunk_idx.raw(), kind);
+            }
+            None => {
+                if let Some(picks) = self.conflict_picks.get_mut(&key) {
+                    picks.remove(&hunk_idx.raw());
+                    if picks.is_empty() {
+                        self.conflict_picks.remove(&key);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Re-apply persisted picks to freshly loaded conflict hunks.
+    pub(super) fn restore_conflict_picks(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
+        let Some(path) = self
+            .files_for_entry(entry_idx)
+            .and_then(|f| f.get(file_idx.raw()))
+            .map(|f| f.path.clone())
+        else {
+            return;
+        };
+        let key = (self.nodes[entry_idx].commit.graph_id.clone(), path);
+        let Some(picks) = self.conflict_picks.get(&key).cloned() else {
+            return;
+        };
+        if let Some(hunks) =
             self.nodes[entry_idx]
                 .conflict_hunks_mut(file_idx)
                 .and_then(|l| match l {
                     Loadable::Loaded(h) => Some(h),
                     _ => None,
                 })
-        else {
-            return ConflictPickResult::Pending;
-        };
-        let Some(hunk) = hunks.get_mut(hi) else {
-            return ConflictPickResult::Pending;
-        };
-        if let crate::dag::ConflictHunkKind::Conflict {
-            terms, selected, ..
-        } = hunk
-            && terms.iter().any(|t| t.kind == pick && !t.absent)
         {
-            *selected = Some(pick);
-        }
-
-        // Check if all conflict hunks are now resolved.
-        let all_resolved = hunks.iter().all(|h| match h {
-            crate::dag::ConflictHunkKind::Resolved { .. } => true,
-            crate::dag::ConflictHunkKind::Conflict { selected, .. } => selected.is_some(),
-        });
-
-        let result = if all_resolved {
-            // Assemble resolved content.
-            let mut content = String::new();
-            for h in hunks.iter() {
-                match h {
-                    crate::dag::ConflictHunkKind::Resolved { text } => {
-                        text.write_to(&mut content);
-                    }
-                    crate::dag::ConflictHunkKind::Conflict {
-                        terms, selected, ..
-                    } => {
-                        if let Some(kind) = selected
-                            && let Some(term) = terms.iter().find(|t| t.kind == *kind)
-                        {
-                            term.text.write_to(&mut content);
-                        }
-                    }
+            for (hi, kind) in picks {
+                if let Some(crate::dag::ConflictHunkKind::Conflict { terms, selected }) =
+                    hunks.get_mut(hi)
+                    && terms.iter().any(|t| t.kind == kind && !t.absent)
+                {
+                    *selected = Some(kind);
                 }
             }
-            // Return the resolved content for the caller to write.
-            if let Some(path) = self
-                .files_for_entry(entry_idx)
-                .and_then(|f| f.get(file_idx.raw()))
-                .map(|f| f.path.clone())
-            {
-                ConflictPickResult::FileResolved { path, content }
-            } else {
-                ConflictPickResult::Pending
-            }
-        } else {
-            ConflictPickResult::Pending
-        };
+        }
+    }
 
-        self.rebuild_rows();
-        result
+    /// Drop persisted picks for commits no longer present (rewritten
+    /// commits get new IDs, so their picks can never match again).
+    pub(super) fn prune_conflict_picks(&mut self) {
+        let commit_index = &self.commit_index;
+        self.conflict_picks
+            .retain(|(commit_id, _), _| commit_index.contains_key(commit_id));
+    }
+
+    /// Assemble the file under the picks for a conflicted file. Returns the
+    /// path, content, and whether every hunk is resolved or picked — or
+    /// `None` if hunks aren't loaded or nothing has been picked yet.
+    pub fn conflict_resolution(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+    ) -> Option<(RepoPath, String, bool)> {
+        let hunks = self.nodes[entry_idx].conflict_hunks(file_idx)?.loaded()?;
+        let any_picked = hunks.iter().any(|h| {
+            matches!(
+                h,
+                crate::dag::ConflictHunkKind::Conflict {
+                    selected: Some(_),
+                    ..
+                }
+            )
+        });
+        if !any_picked {
+            return None;
+        }
+        let path = self
+            .files_for_entry(entry_idx)
+            .and_then(|f| f.get(file_idx.raw()))
+            .map(|f| f.path.clone())?;
+        let (content, complete) = crate::repo::assemble_resolution(hunks);
+        Some((path, content, complete))
     }
 
     pub fn selected_op_log_entry(&self) -> Option<&OpLogEntry> {

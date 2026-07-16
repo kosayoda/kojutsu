@@ -94,6 +94,21 @@ pub fn help_entries(
         }
     }
 
+    // ToggleSelect doubles as the per-hunk side picker on conflict term
+    // rows; surface that contextual meaning as a conflict-gated entry
+    // under whatever key the action is actually bound to.
+    let pick_entry = action_keys
+        .iter()
+        .find(|(id, ..)| *id == ActionId::Builtin(super::AppAction::ToggleSelect))
+        .map(|(_, keys, _, _)| HelpEntry {
+            keys: keys.join(" / "),
+            description: "pick conflict side at cursor".into(),
+            group: HelpGroup::Commands,
+            selection_support: SelectionKindSet::ALL,
+            requires_conflict: true,
+            requires_file: false,
+        });
+
     let mut entries: Vec<HelpEntry> = action_keys
         .into_iter()
         .map(|(id, keys, desc, group)| {
@@ -116,6 +131,7 @@ pub fn help_entries(
             }
         })
         .collect();
+    entries.extend(pick_entry);
     entries.extend(prefix_entries);
 
     entries.sort_unstable_by(|a, b| {

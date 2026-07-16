@@ -26,6 +26,7 @@ use jj_lib::settings::UserSettings;
 use jj_lib::time_util::DatePatternContext;
 use jj_lib::workspace::{Workspace, default_working_copy_factories};
 
+pub use diff::assemble_resolution;
 pub use operations::millis_to_relative_time;
 
 use crate::types::{BookmarkName, RemoteName};

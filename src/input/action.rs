@@ -379,6 +379,13 @@ pub fn dispatch_action_after_hooks(
                 Commit(EntryIdx),
                 File(EntryIdx, FileIdx),
                 DiffLine(EntryIdx, FileIdx, DiffLineIdx, DiffLineKind),
+                ConflictTerm(
+                    EntryIdx,
+                    FileIdx,
+                    crate::idx::ConflictHunkIdx,
+                    crate::dag::ConflictTermKind,
+                    bool,
+                ),
             }
             let target = match app.rows.get(app.cursor.raw()) {
                 Some(DisplayRow::CommitNode { entry_idx }) => {
@@ -401,6 +408,36 @@ pub fn dispatch_action_after_hooks(
                         *entry_idx, *file_idx, *line_idx, kind,
                     ))
                 }
+                // On a conflict term row, space toggles the pick for the
+                // side under the cursor (the only way to pick sides beyond
+                // ours/theirs/base in n-way merges).
+                Some(DisplayRow::ConflictTerm {
+                    entry_idx,
+                    file_idx,
+                    hunk_idx,
+                    term_idx,
+                    ..
+                }) => app
+                    .nodes
+                    .get(*entry_idx)
+                    .and_then(|n| n.conflict_hunks(*file_idx))
+                    .and_then(|l| l.loaded())
+                    .and_then(|hunks| hunks.get(hunk_idx.raw()))
+                    .and_then(|h| match h {
+                        crate::dag::ConflictHunkKind::Conflict { terms, .. } => {
+                            terms.get(term_idx.raw())
+                        }
+                        _ => None,
+                    })
+                    .map(|term| {
+                        SelectTarget::ConflictTerm(
+                            *entry_idx,
+                            *file_idx,
+                            *hunk_idx,
+                            term.kind,
+                            term.absent,
+                        )
+                    }),
                 _ => None,
             };
             match target {
@@ -419,6 +456,15 @@ pub fn dispatch_action_after_hooks(
                             app.toggle_hunk_selection(entry_idx, file_idx, line_idx);
                         }
                         DiffLineKind::Context => {} // no-op
+                    }
+                }
+                Some(SelectTarget::ConflictTerm(entry_idx, file_idx, hunk_idx, kind, absent)) => {
+                    if absent {
+                        app.set_error(
+                            "that side deleted the file — use C,o / C,t to take it whole-file",
+                        );
+                    } else {
+                        app.pick_conflict_side(entry_idx, file_idx, hunk_idx, kind);
                     }
                 }
                 None => {}
@@ -576,6 +622,8 @@ pub fn dispatch_action_after_hooks(
         | AppAction::ConflictPickOurs
         | AppAction::ConflictPickTheirs
         | AppAction::ConflictPickBase
+        | AppAction::ConflictUnpick
+        | AppAction::ConflictApplyPicks
         | AppAction::FileUntrack
         | AppAction::Commit
         | AppAction::CommitWithMessage

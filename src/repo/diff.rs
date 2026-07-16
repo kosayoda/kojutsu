@@ -723,6 +723,49 @@ fn default_materialize_options() -> ConflictMaterializeOptions {
     }
 }
 
+/// Assemble file content from conflict hunks: resolved hunks and picked
+/// hunks contribute their text; unpicked hunks are re-materialized as
+/// conflict markers, which jj parses back into a conflicted state
+/// (`merge-tool-edits-conflict-markers`). Returns the content and whether
+/// every hunk was resolved or picked.
+pub fn assemble_resolution(hunks: &[crate::dag::ConflictHunkKind]) -> (String, bool) {
+    let mut content = String::new();
+    let mut complete = true;
+    for hunk in hunks {
+        match hunk {
+            crate::dag::ConflictHunkKind::Resolved { text } => text.write_to(&mut content),
+            crate::dag::ConflictHunkKind::Conflict { terms, selected } => {
+                if let Some(kind) = selected
+                    && let Some(term) = terms.iter().find(|t| t.kind == *kind)
+                {
+                    term.text.write_to(&mut content);
+                } else {
+                    complete = false;
+                    // Terms are stored in jj's interleaved order, so the
+                    // merge can be rebuilt directly.
+                    let merge = Merge::from_vec(
+                        terms
+                            .iter()
+                            .map(|t| {
+                                let mut s = String::new();
+                                t.text.write_to(&mut s);
+                                bstr::BString::from(s)
+                            })
+                            .collect::<Vec<_>>(),
+                    );
+                    let materialized = jj_lib::conflicts::materialize_merge_result_to_bytes(
+                        &merge,
+                        &ConflictLabels::unlabeled(),
+                        &default_materialize_options(),
+                    );
+                    content.push_str(&String::from_utf8_lossy(&materialized));
+                }
+            }
+        }
+    }
+    (content, complete)
+}
+
 /// Count added/removed lines from unified diff hunks.
 fn count_line_stats(hunks: &[unified::UnifiedDiffHunk<'_>]) -> LineStats {
     let mut stats = LineStats::default();
@@ -1149,5 +1192,42 @@ mod tests {
                 _ => assert!(!t.absent),
             }
         }
+    }
+    /// Partial assembly: picked hunks contribute their term text; unpicked
+    /// hunks are re-materialized as git-style conflict markers that jj can
+    /// parse back into a conflicted state.
+    #[test]
+    fn assemble_resolution_partial_keeps_markers() {
+        use crate::dag::{ConflictHunkKind, ConflictText};
+        let terms = |sel: Option<ConflictTermKind>| ConflictHunkKind::Conflict {
+            terms: conflict_terms(
+                &Merge::from_removes_adds(vec!["base\n"], vec!["ours\n", "theirs\n"]),
+                &[false; 3],
+            ),
+            selected: sel,
+        };
+        let hunks = vec![
+            ConflictHunkKind::Resolved {
+                text: ConflictText::from_bytes(b"ctx1\n"),
+            },
+            terms(Some(ConflictTermKind::Side(1))),
+            ConflictHunkKind::Resolved {
+                text: ConflictText::from_bytes(b"ctx2\n"),
+            },
+            terms(None),
+        ];
+        let (content, complete) = assemble_resolution(&hunks);
+        assert!(!complete);
+        println!("---assembled---\n{content}---end---");
+        // Picked hunk resolved to theirs; unpicked hunk keeps markers.
+        assert!(content.starts_with("ctx1\ntheirs\nctx2\n<<<<<<<"));
+        assert!(content.contains("|||||||"));
+        assert!(content.contains("======="));
+        assert!(content.contains(">>>>>>>"));
+
+        let all_picked = vec![terms(Some(ConflictTermKind::Side(0)))];
+        let (content, complete) = assemble_resolution(&all_picked);
+        assert!(complete);
+        assert_eq!(content, "ours\n");
     }
 }

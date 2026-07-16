@@ -295,6 +295,8 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind2("shift-c", "o", ResolveOurs, "take ours", C, dag()),
         bind2("shift-c", "t", ResolveTheirs, "take theirs", C, dag()),
         bind2("shift-c", "b", ConflictPickBase, "take base", C, dag()),
+        bind2("shift-c", "u", ConflictUnpick, "unpick hunk", C, dag()),
+        bind2("shift-c", "a", ConflictApplyPicks, "apply picks", C, dag()),
         bind2("shift-c", "m", ResolveMergeTool, "merge tool", C, dag()),
         bind2(
             "shift-c",

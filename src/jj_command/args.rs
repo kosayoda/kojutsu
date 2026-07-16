@@ -553,6 +553,13 @@ impl JJCommand {
                                 "merge-tools.kojutsu-apply.merge-args=[\"--apply-resolution\", {}, \"$output\"]",
                                 toml_string_escape(&content_path.display().to_string())
                             )),
+                            // Partially picked files keep conflict markers;
+                            // jj parses them back into a conflicted state.
+                            // The style must match what kojutsu materializes.
+                            flag("--config"),
+                            arg("merge-tools.kojutsu-apply.merge-tool-edits-conflict-markers=true"),
+                            flag("--config"),
+                            arg("merge-tools.kojutsu-apply.conflict-marker-style=\"git\""),
                         ]);
                     }
                 }

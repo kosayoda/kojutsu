@@ -229,6 +229,7 @@ impl App {
                 .retain(|k| live_change_ids.contains(&k.change_id));
             self.selection
                 .retain(|s| live_change_ids.contains(s.change_id()));
+            self.prune_conflict_picks();
             self.clear_info_status();
         } else {
             self.set_status(format!("loading… {} commits", self.nodes.len()));
@@ -557,6 +558,7 @@ impl App {
                     {
                         self.nodes[idx]
                             .set_conflict_hunks(file_idx, super::Loadable::Loaded(hunks));
+                        self.restore_conflict_picks(idx, file_idx);
                         deferred.rebuild.add_entry(idx);
                         deferred.scroll = true;
                     }
