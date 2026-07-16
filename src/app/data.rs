@@ -11,6 +11,7 @@ type NodeCache = (
     Loadable<Vec<crate::dag::FileChange>>,
     Loadable<crate::dag::LineStats>,
     Vec<Loadable<crate::dag::DiffResult>>,
+    Vec<Loadable<Vec<crate::dag::ConflictHunkKind>>>,
 );
 
 /// Cursor position captured before a refresh, keyed by stable IDs so it can
@@ -109,7 +110,11 @@ impl App {
             .into_iter()
             .map(|mut n| {
                 let diffs = n.take_diffs();
-                (n.commit.graph_id.clone(), (n.files, n.stats, diffs))
+                let conflict_hunks = n.take_conflict_hunks();
+                (
+                    n.commit.graph_id.clone(),
+                    (n.files, n.stats, diffs, conflict_hunks),
+                )
             })
             .collect();
 
@@ -164,7 +169,11 @@ impl App {
             }
             let mut node = super::DagNode::new(entry.commit, graph, parents);
             // Restore cached data if this commit survived the refresh.
-            if let Some((files, stats, diffs)) = stream.old_caches.remove(&node.commit.graph_id) {
+            // Same commit ID means identical content, so conflict hunks
+            // (including any picks) are still valid.
+            if let Some((files, stats, diffs, conflict_hunks)) =
+                stream.old_caches.remove(&node.commit.graph_id)
+            {
                 if !files.should_request() {
                     node.files = files;
                 }
@@ -173,6 +182,9 @@ impl App {
                 }
                 if !diffs.is_empty() {
                     node.restore_diffs(diffs);
+                }
+                if !conflict_hunks.is_empty() {
+                    node.restore_conflict_hunks(conflict_hunks);
                 }
             }
             self.nodes.push(node);
@@ -394,15 +406,28 @@ impl App {
                             change_id: change_id.clone(),
                             path: file.path.clone(),
                         };
-                        if self.unfolded_files.contains(&fold_key)
-                            && self.nodes[idx].diff_should_request(file_idx)
-                        {
-                            self.nodes[idx].set_diff_state(file_idx, Loadable::Loading);
-                            self.pending_repo_requests.push(RepoRequest::load_file_diff(
-                                commit_id.clone(),
-                                file.path.clone(),
-                                file.old_path.clone(),
-                            ));
+                        if self.unfolded_files.contains(&fold_key) {
+                            if self.nodes[idx].diff_should_request(file_idx) {
+                                self.nodes[idx].set_diff_state(file_idx, Loadable::Loading);
+                                self.pending_repo_requests.push(RepoRequest::load_file_diff(
+                                    commit_id.clone(),
+                                    file.path.clone(),
+                                    file.old_path.clone(),
+                                ));
+                            }
+                            // Conflicted files show hunks instead of the
+                            // diff — re-request those too (a rewritten
+                            // commit gets a fresh node with no hunk cache).
+                            if file.has_conflict
+                                && self.nodes[idx].conflict_hunks_should_request(file_idx)
+                            {
+                                self.nodes[idx].set_conflict_hunks(file_idx, Loadable::Loading);
+                                self.pending_repo_requests
+                                    .push(RepoRequest::load_conflict_hunks(
+                                        commit_id.clone(),
+                                        file.path.clone(),
+                                    ));
+                            }
                         }
                     }
 

@@ -268,7 +268,9 @@ impl AppAction {
             | AppAction::ConflictUnpick
             | AppAction::ConflictApplyPicks
             | AppAction::ResolveOurs
-            | AppAction::ResolveTheirs => true,
+            | AppAction::ResolveTheirs
+            | AppAction::NextConflict
+            | AppAction::PrevConflict => true,
 
             AppAction::Quit
             | AppAction::MoveDown
@@ -352,8 +354,6 @@ impl AppAction {
             | AppAction::EnterVisualMode
             | AppAction::StartSearch
             | AppAction::NextMatch
-            | AppAction::NextConflict
-            | AppAction::PrevConflict
             | AppAction::PrevMatch
             | AppAction::GitPushBookmark
             | AppAction::TagSet

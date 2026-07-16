@@ -204,7 +204,7 @@ fn dispatch_action(
 
     let result = dispatch_action_after_hooks(app, registry, lua, action, flags);
 
-    if action.is_repeatable() && matches!(result, Action::RunJj(_) | Action::SuspendAndRunJj(_)) {
+    if action.is_repeatable() {
         app.last_repeatable = Some((action, flags));
     } else if action.is_mutation() {
         app.last_repeatable = None;
@@ -463,8 +463,12 @@ pub fn dispatch_action_after_hooks(
                         app.set_error(
                             "that side deleted the file — use C,o / C,t to take it whole-file",
                         );
-                    } else {
-                        app.pick_conflict_side(entry_idx, file_idx, hunk_idx, kind);
+                    } else if app
+                        .pick_conflict_side(entry_idx, file_idx, hunk_idx, kind)
+                        .is_some()
+                    {
+                        // Picked (not unpicked) — move on to the next conflict.
+                        app.jump_to_conflict(true);
                     }
                 }
                 None => {}

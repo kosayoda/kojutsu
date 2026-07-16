@@ -223,6 +223,20 @@ impl DagNode {
         self.diffs = diffs;
     }
 
+    /// Extract cached conflict hunks (used during DAG refresh).
+    pub fn take_conflict_hunks(&mut self) -> Vec<Loadable<Vec<crate::dag::ConflictHunkKind>>> {
+        std::mem::take(&mut self.conflict_hunks)
+    }
+
+    /// Preserve cached conflict hunks from another node (used during DAG
+    /// refresh; valid because the commit ID — and thus content — matched).
+    pub fn restore_conflict_hunks(
+        &mut self,
+        hunks: Vec<Loadable<Vec<crate::dag::ConflictHunkKind>>>,
+    ) {
+        self.conflict_hunks = hunks;
+    }
+
     /// Check if a diff should be requested for a file.
     pub fn diff_should_request(&self, fi: FileIdx) -> bool {
         self.diffs
@@ -836,15 +850,16 @@ impl App {
     /// Pure UI state — nothing is written until the picks are applied.
     /// Absent (deleted) terms cannot be picked here — content assembly
     /// could only produce an empty file, not a deletion; callers route
-    /// those to `jj resolve` builtins instead.
+    /// those to `jj resolve` builtins instead. Returns the hunk's
+    /// selection after the toggle (`None` = now unpicked).
     pub fn pick_conflict_side(
         &mut self,
         entry_idx: EntryIdx,
         file_idx: FileIdx,
         hunk_idx: crate::idx::ConflictHunkIdx,
         pick: ConflictTermKind,
-    ) {
-        self.set_conflict_pick(entry_idx, file_idx, hunk_idx, Some(pick));
+    ) -> Option<ConflictTermKind> {
+        self.set_conflict_pick(entry_idx, file_idx, hunk_idx, Some(pick))
     }
 
     /// Clear the pick on a conflict hunk.
@@ -863,17 +878,14 @@ impl App {
         file_idx: FileIdx,
         hunk_idx: crate::idx::ConflictHunkIdx,
         pick: Option<ConflictTermKind>,
-    ) {
-        let Some(hunk) = self.nodes[entry_idx]
+    ) -> Option<ConflictTermKind> {
+        let hunk = self.nodes[entry_idx]
             .conflict_hunks_mut(file_idx)
             .and_then(|l| match l {
                 Loadable::Loaded(h) => Some(h),
                 _ => None,
             })
-            .and_then(|hunks| hunks.get_mut(hunk_idx.raw()))
-        else {
-            return;
-        };
+            .and_then(|hunks| hunks.get_mut(hunk_idx.raw()))?;
         let new_selected = match hunk {
             crate::dag::ConflictHunkKind::Conflict { terms, selected } => match pick {
                 Some(kind) if terms.iter().any(|t| t.kind == kind && !t.absent) => {
@@ -885,16 +897,17 @@ impl App {
                     };
                     *selected
                 }
-                Some(_) => return,
+                Some(_) => return None,
                 None => {
                     *selected = None;
                     None
                 }
             },
-            crate::dag::ConflictHunkKind::Resolved { .. } => return,
+            crate::dag::ConflictHunkKind::Resolved { .. } => return None,
         };
         self.save_conflict_pick(entry_idx, file_idx, hunk_idx, new_selected);
         self.rebuild_rows();
+        new_selected
     }
 
     /// Write a pick through to the persistent store so it survives hunk

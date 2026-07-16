@@ -405,8 +405,10 @@ impl App {
     }
 
     /// Move the cursor to the next/previous conflict, wrapping around.
-    /// Stops at conflicted commit nodes and, within unfolded files, at
-    /// conflict hunk headers. Returns whether a conflict row was found.
+    /// Stops at the deepest visible level: hunk headers always; a
+    /// conflicted file row only when its hunks aren't rendered beneath it;
+    /// a conflicted commit node only when its file rows aren't rendered.
+    /// Returns whether a conflict row was found.
     pub fn jump_to_conflict(&mut self, forward: bool) -> bool {
         let n = self.rows.len();
         if n == 0 {
@@ -422,7 +424,24 @@ impl App {
                 }
             })
             .find(|&idx| match &self.rows[idx] {
-                DisplayRow::CommitNode { entry_idx } => self.nodes[*entry_idx].commit.has_conflict,
+                DisplayRow::CommitNode { entry_idx } => {
+                    self.nodes[*entry_idx].commit.has_conflict
+                        && !(self.is_commit_unfolded(*entry_idx)
+                            && self.files_for_entry(*entry_idx).is_some())
+                }
+                DisplayRow::FileChange {
+                    entry_idx,
+                    file_idx,
+                } => {
+                    self.files_for_entry(*entry_idx)
+                        .and_then(|f| f.get(file_idx.raw()))
+                        .is_some_and(|f| f.has_conflict)
+                        && !(self.is_file_unfolded(*entry_idx, *file_idx)
+                            && self.nodes[*entry_idx]
+                                .conflict_hunks(*file_idx)
+                                .and_then(|l| l.loaded())
+                                .is_some())
+                }
                 DisplayRow::ConflictHeader { .. } => true,
                 _ => false,
             });
