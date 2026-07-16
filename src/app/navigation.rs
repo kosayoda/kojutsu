@@ -404,6 +404,36 @@ impl App {
         }
     }
 
+    /// Move the cursor to the next/previous conflict, wrapping around.
+    /// Stops at conflicted commit nodes and, within unfolded files, at
+    /// conflict hunk headers. Returns whether a conflict row was found.
+    pub fn jump_to_conflict(&mut self, forward: bool) -> bool {
+        let n = self.rows.len();
+        if n == 0 {
+            return false;
+        }
+        let cur = self.cursor.raw();
+        let pos = (1..=n)
+            .map(|step| {
+                if forward {
+                    (cur + step) % n
+                } else {
+                    (cur + n - step) % n
+                }
+            })
+            .find(|&idx| match &self.rows[idx] {
+                DisplayRow::CommitNode { entry_idx } => self.nodes[*entry_idx].commit.has_conflict,
+                DisplayRow::ConflictHeader { .. } => true,
+                _ => false,
+            });
+        if let Some(pos) = pos {
+            self.cursor = RowIdx::new(pos);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Jump to the commit (or bookmark-view entry) with this bookmark.
     /// Returns whether it was found.
     pub fn jump_to_bookmark(&mut self, name: &crate::types::BookmarkName) -> bool {

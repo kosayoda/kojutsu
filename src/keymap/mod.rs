@@ -113,6 +113,7 @@ pub enum AppAction {
     EditRevset,
     EditRevsetInEditor,
     ResetRevset,
+    ToggleConflictedRevset,
     BookmarkCreate,
     BookmarkSet,
     BookmarkDelete,
@@ -163,6 +164,8 @@ pub enum AppAction {
     StartSearch,
     NextMatch,
     PrevMatch,
+    NextConflict,
+    PrevConflict,
     GitPushBookmark,
     TagSet,
     TagDelete,
@@ -309,6 +312,7 @@ impl AppAction {
             | AppAction::EditRevset
             | AppAction::EditRevsetInEditor
             | AppAction::ResetRevset
+            | AppAction::ToggleConflictedRevset
             | AppAction::BookmarkCreate
             | AppAction::BookmarkSet
             | AppAction::BookmarkDelete
@@ -344,6 +348,8 @@ impl AppAction {
             | AppAction::EnterVisualMode
             | AppAction::StartSearch
             | AppAction::NextMatch
+            | AppAction::NextConflict
+            | AppAction::PrevConflict
             | AppAction::PrevMatch
             | AppAction::GitPushBookmark
             | AppAction::TagSet
@@ -523,6 +529,8 @@ impl AppAction {
             | AppAction::EnterVisualMode
             | AppAction::StartSearch
             | AppAction::NextMatch
+            | AppAction::NextConflict
+            | AppAction::PrevConflict
             | AppAction::PrevMatch
             | AppAction::SelectPreset
             | AppAction::SwitchPreset1
@@ -561,6 +569,7 @@ impl AppAction {
             | AppAction::EditRevset
             | AppAction::EditRevsetInEditor
             | AppAction::ResetRevset
+            | AppAction::ToggleConflictedRevset
             | AppAction::TagViewJumpToCommit
             | AppAction::BookmarkViewJumpToCommit
             | AppAction::RepeatLast => false,

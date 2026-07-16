@@ -19,6 +19,10 @@ use super::Action;
 /// Number of rows to jump for page-up/page-down style navigation.
 use super::PAGE_SIZE;
 
+/// Revset the conflicted-filter toggle switches to (and recognizes to
+/// switch back from).
+const CONFLICTED_REVSET: &str = "conflicted()";
+
 /// Build the appropriate `ChangeSelection` from the current app state.
 pub(super) fn build_change_selection(app: &App) -> ChangeSelection {
     match app.selection_kind() {
@@ -437,6 +441,18 @@ pub fn dispatch_action_after_hooks(
             app.search_prev();
             Action::None
         }
+        AppAction::NextConflict => {
+            if !app.jump_to_conflict(true) {
+                app.set_error("no conflicts in current view");
+            }
+            Action::None
+        }
+        AppAction::PrevConflict => {
+            if !app.jump_to_conflict(false) {
+                app.set_error("no conflicts in current view");
+            }
+            Action::None
+        }
         AppAction::Refresh => Action::Refresh,
         AppAction::SelectPreset => {
             if app.revset.presets.is_empty() {
@@ -463,6 +479,15 @@ pub fn dispatch_action_after_hooks(
             app.revset.active_preset = None;
             app.request_revset_load_no_snapshot(None);
             Action::None
+        }
+        AppAction::ToggleConflictedRevset => {
+            app.revset.active_preset = None;
+            if app.revset.current.as_str() == CONFLICTED_REVSET {
+                app.request_revset_load_no_snapshot(None);
+                Action::None
+            } else {
+                Action::UpdateRevset(CONFLICTED_REVSET.to_string())
+            }
         }
         AppAction::SwitchPreset1
         | AppAction::SwitchPreset2

@@ -296,6 +296,19 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind2("shift-c", "t", ResolveTheirs, "take theirs", C, dag()),
         bind2("shift-c", "b", ConflictPickBase, "take base", C, dag()),
         bind2("shift-c", "m", ResolveMergeTool, "merge tool", C, dag()),
+        bind2(
+            "shift-c",
+            "r",
+            ToggleConflictedRevset,
+            "conflicted() revset",
+            C,
+            dag(),
+        ),
+        // Next/prev navigation prefixes
+        prefix("]", "next", N, dag()),
+        prefix("[", "prev", N, dag()),
+        bind2("]", "c", NextConflict, "next conflict", N, dag()),
+        bind2("[", "c", PrevConflict, "prev conflict", N, dag()),
         // Fix
         bind("f", Fix, "fix", C, dag()),
         // Run prefix
@@ -592,4 +605,16 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     ]);
 
     specs
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `parse_key` panics on specs it cannot parse, so building the default
+    /// bindings exercises every key string.
+    #[test]
+    fn default_bindings_build() {
+        assert!(!default_bindings().is_empty());
+    }
 }
