@@ -4,7 +4,7 @@ mod list;
 mod modal;
 mod view;
 
-pub use view::dag::resolution_command;
+pub use view::dag::{maybe_offer_apply, resolution_command};
 
 pub use action::{dispatch_action_after_hooks, has_conflict_context, has_file_context};
 
@@ -68,6 +68,16 @@ pub enum Action {
         change_id: crate::types::ChangeId,
         path: crate::types::RepoPath,
         content: String,
+        flags: crate::keymap::CommandFlags,
+    },
+    /// Suspend TUI, edit one conflict hunk's resolution in $EDITOR; store
+    /// it as the hunk's pick (pure UI state until picks are applied).
+    EditConflictHunk {
+        entry_idx: crate::idx::EntryIdx,
+        file_idx: crate::idx::FileIdx,
+        hunk_idx: crate::idx::ConflictHunkIdx,
+        seed: String,
+        path: crate::types::RepoPath,
         flags: crate::keymap::CommandFlags,
     },
     /// Pre-hooks completed after yielding; dispatch the deferred action.

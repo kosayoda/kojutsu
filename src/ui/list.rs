@@ -474,9 +474,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|hunks| hunks.get(hunk_idx.raw()))
                         .and_then(|h| match h {
                             crate::dag::ConflictHunkKind::Conflict {
-                                selected: Some(kind),
+                                selected: Some(pick),
                                 ..
-                            } => Some(kind.label(h.num_sides())),
+                            } => Some(match pick {
+                                crate::dag::ConflictPick::Term(kind) => kind.label(h.num_sides()),
+                                crate::dag::ConflictPick::Edited(_) => "edited".to_string(),
+                            }),
                             _ => None,
                         });
                     let mut spans = vec![
@@ -557,7 +560,9 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                                         None => TermLine::Note("(empty)".to_string()),
                                     }
                                 };
-                                let is_selected = *selected == Some(term.kind);
+                                let is_selected =
+                                    selected.as_ref().and_then(crate::dag::ConflictPick::term)
+                                        == Some(term.kind);
                                 Some((line, is_selected, term.kind, hunk.num_sides()))
                             }
                             _ => None,
@@ -667,6 +672,44 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                                 .fg(theme.muted)
                                 .add_modifier(Modifier::ITALIC),
                         ),
+                    ])]
+                }
+                DisplayRow::ConflictEdited {
+                    entry_idx,
+                    file_idx,
+                    hunk_idx,
+                    line_idx,
+                } => {
+                    let line = app
+                        .nodes
+                        .get(*entry_idx)
+                        .and_then(|n| n.conflict_hunks(*file_idx))
+                        .and_then(|l| l.loaded())
+                        .and_then(|hunks| hunks.get(hunk_idx.raw()))
+                        .and_then(|hunk| match hunk {
+                            crate::dag::ConflictHunkKind::Conflict {
+                                selected: Some(crate::dag::ConflictPick::Edited(text)),
+                                ..
+                            } => Some(text.lines.get(line_idx.raw()).cloned()),
+                            _ => None,
+                        });
+                    // Selection color: an edited block is the user's chosen
+                    // content, and it must not read as a side ([ours] is
+                    // added-green).
+                    let style = Style::default()
+                        .fg(theme.selection)
+                        .add_modifier(Modifier::BOLD);
+                    let (text, style) = match line {
+                        Some(Some(text)) => (text, style),
+                        // Placeholder for an edit that resolved to nothing.
+                        Some(None) => ("(empty)".to_string(), style.add_modifier(Modifier::ITALIC)),
+                        None => (String::new(), style),
+                    };
+                    vec![Line::from(vec![
+                        Span::raw("          "),
+                        Span::styled(format!("{:<8}", "[edited]"), style),
+                        Span::raw(" "),
+                        Span::styled(text, style),
                     ])]
                 }
                 DisplayRow::InterdiffHeader => {

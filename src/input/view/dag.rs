@@ -148,6 +148,12 @@ pub(in crate::input) fn dispatch(
                 file_idx,
                 hunk_idx,
                 ..
+            })
+            | Some(DisplayRow::ConflictEdited {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                ..
             }) = app.rows.get(app.cursor.raw())
             {
                 let (entry_idx, file_idx, hunk_idx) = (*entry_idx, *file_idx, *hunk_idx);
@@ -155,6 +161,76 @@ pub(in crate::input) fn dispatch(
             } else {
                 app.set_error("per-hunk only — use on a conflict hunk row");
             }
+            Action::None
+        }
+        AppAction::ConflictEditHunk => {
+            // Hand-edit this hunk's resolution in $EDITOR, seeded with the
+            // current pick (or the materialized markers if unpicked).
+            if let Some(DisplayRow::ConflictHeader {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            })
+            | Some(DisplayRow::ConflictTerm {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                ..
+            })
+            | Some(DisplayRow::ConflictEdited {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                ..
+            }) = app.rows.get(app.cursor.raw())
+            {
+                let (entry_idx, file_idx, hunk_idx) = (*entry_idx, *file_idx, *hunk_idx);
+                let Some(path) = app
+                    .files_for_entry(entry_idx)
+                    .and_then(|f| f.get(file_idx.raw()))
+                    .map(|f| f.path.clone())
+                else {
+                    return Action::None;
+                };
+                let seed = app.nodes[entry_idx]
+                    .conflict_hunks(file_idx)
+                    .and_then(|l| l.loaded())
+                    .and_then(|hunks| hunks.get(hunk_idx.raw()))
+                    .and_then(|hunk| match hunk {
+                        crate::dag::ConflictHunkKind::Conflict {
+                            terms, selected, ..
+                        } => Some(match selected {
+                            Some(crate::dag::ConflictPick::Edited(text)) => {
+                                let mut s = String::new();
+                                text.write_to(&mut s);
+                                s
+                            }
+                            Some(crate::dag::ConflictPick::Term(kind)) => terms
+                                .iter()
+                                .find(|t| t.kind == *kind)
+                                .map(|t| {
+                                    let mut s = String::new();
+                                    t.text.write_to(&mut s);
+                                    s
+                                })
+                                .unwrap_or_default(),
+                            None => crate::repo::hunk_markers(terms),
+                        }),
+                        _ => None,
+                    });
+                let Some(seed) = seed else {
+                    return Action::None;
+                };
+                return Action::EditConflictHunk {
+                    entry_idx,
+                    file_idx,
+                    hunk_idx,
+                    seed,
+                    path,
+                    flags,
+                };
+            }
+            app.set_error("per-hunk only — use on a conflict hunk row");
             Action::None
         }
         AppAction::ConflictApplyPicks => {
@@ -732,7 +808,7 @@ fn picked_term_is_absent(
 /// After a pick, offer to apply immediately when every hunk in the file
 /// is picked — Enter (or `a`) applies, Esc keeps accumulating. Returns
 /// whether the prompt was shown.
-pub(in crate::input) fn maybe_offer_apply(
+pub fn maybe_offer_apply(
     app: &mut App,
     entry_idx: crate::idx::EntryIdx,
     file_idx: crate::idx::FileIdx,

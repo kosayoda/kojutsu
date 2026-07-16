@@ -882,6 +882,41 @@ fn default_materialize_options() -> ConflictMaterializeOptions {
     }
 }
 
+/// Materialize a conflict hunk's terms as git-style markers (the same
+/// text jj would produce). Terms are stored in jj's interleaved order,
+/// so the merge can be rebuilt directly.
+pub fn hunk_markers(terms: &[crate::dag::ConflictTerm]) -> String {
+    let merge = Merge::from_vec(
+        terms
+            .iter()
+            .map(|t| {
+                let mut s = String::new();
+                t.text.write_to(&mut s);
+                bstr::BString::from(s)
+            })
+            .collect::<Vec<_>>(),
+    );
+    let materialized = jj_lib::conflicts::materialize_merge_result_to_bytes(
+        &merge,
+        &ConflictLabels::unlabeled(),
+        &default_materialize_options(),
+    );
+    String::from_utf8_lossy(&materialized).into_owned()
+}
+
+/// Whether any line looks like a git-style conflict marker (7+ repeats of
+/// a marker character at line start). Used to reject hand-edited hunk
+/// resolutions that still contain markers.
+pub fn has_conflict_markers(content: &str) -> bool {
+    content.lines().any(|l| {
+        let mut chars = l.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        matches!(first, '<' | '>' | '=' | '|') && chars.take_while(|c| *c == first).count() >= 6
+    })
+}
+
 /// Assemble file content from conflict hunks: resolved hunks and picked
 /// hunks contribute their text; unpicked hunks are re-materialized as
 /// conflict markers, which jj parses back into a conflicted state
@@ -895,33 +930,18 @@ pub fn assemble_resolution(hunks: &[crate::dag::ConflictHunkKind]) -> (String, b
             crate::dag::ConflictHunkKind::Resolved { text, .. } => text.write_to(&mut content),
             crate::dag::ConflictHunkKind::Conflict {
                 terms, selected, ..
-            } => {
-                if let Some(kind) = selected
-                    && let Some(term) = terms.iter().find(|t| t.kind == *kind)
-                {
-                    term.text.write_to(&mut content);
-                } else {
-                    complete = false;
-                    // Terms are stored in jj's interleaved order, so the
-                    // merge can be rebuilt directly.
-                    let merge = Merge::from_vec(
-                        terms
-                            .iter()
-                            .map(|t| {
-                                let mut s = String::new();
-                                t.text.write_to(&mut s);
-                                bstr::BString::from(s)
-                            })
-                            .collect::<Vec<_>>(),
-                    );
-                    let materialized = jj_lib::conflicts::materialize_merge_result_to_bytes(
-                        &merge,
-                        &ConflictLabels::unlabeled(),
-                        &default_materialize_options(),
-                    );
-                    content.push_str(&String::from_utf8_lossy(&materialized));
+            } => match selected {
+                Some(crate::dag::ConflictPick::Term(kind)) => {
+                    if let Some(term) = terms.iter().find(|t| t.kind == *kind) {
+                        term.text.write_to(&mut content);
+                    }
                 }
-            }
+                Some(crate::dag::ConflictPick::Edited(text)) => text.write_to(&mut content),
+                None => {
+                    complete = false;
+                    content.push_str(&hunk_markers(terms));
+                }
+            },
         }
     }
     (content, complete)
@@ -1389,8 +1409,8 @@ mod tests {
     /// parse back into a conflicted state.
     #[test]
     fn assemble_resolution_partial_keeps_markers() {
-        use crate::dag::{ConflictHunkKind, ConflictText};
-        let terms = |sel: Option<ConflictTermKind>| ConflictHunkKind::Conflict {
+        use crate::dag::{ConflictHunkKind, ConflictPick, ConflictText};
+        let terms = |sel: Option<ConflictPick>| ConflictHunkKind::Conflict {
             terms: conflict_terms(
                 &Merge::from_removes_adds(vec!["base\n"], vec!["ours\n", "theirs\n"]),
                 &[false; 3],
@@ -1403,7 +1423,7 @@ mod tests {
                 text: ConflictText::from_bytes(b"ctx1\n"),
                 expanded: false,
             },
-            terms(Some(ConflictTermKind::Side(1))),
+            terms(Some(ConflictPick::Term(ConflictTermKind::Side(1)))),
             ConflictHunkKind::Resolved {
                 text: ConflictText::from_bytes(b"ctx2\n"),
                 expanded: false,
@@ -1412,17 +1432,26 @@ mod tests {
         ];
         let (content, complete) = assemble_resolution(&hunks);
         assert!(!complete);
-        println!("---assembled---\n{content}---end---");
         // Picked hunk resolved to theirs; unpicked hunk keeps markers.
         assert!(content.starts_with("ctx1\ntheirs\nctx2\n<<<<<<<"));
         assert!(content.contains("|||||||"));
         assert!(content.contains("======="));
         assert!(content.contains(">>>>>>>"));
+        assert!(has_conflict_markers(&content));
 
-        let all_picked = vec![terms(Some(ConflictTermKind::Side(0)))];
+        let all_picked = vec![terms(Some(ConflictPick::Term(ConflictTermKind::Side(0))))];
         let (content, complete) = assemble_resolution(&all_picked);
         assert!(complete);
         assert_eq!(content, "ours\n");
+        assert!(!has_conflict_markers(&content));
+
+        // An edited pick contributes its text verbatim.
+        let edited = vec![terms(Some(ConflictPick::Edited(ConflictText::from_bytes(
+            b"merged by hand\n",
+        ))))];
+        let (content, complete) = assemble_resolution(&edited);
+        assert!(complete);
+        assert_eq!(content, "merged by hand\n");
     }
 
     /// Sides get word-level tokens against their base (one token list per

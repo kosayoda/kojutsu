@@ -395,7 +395,7 @@ impl ConflictTermKind {
 /// Text content stored as display lines. `str::lines` drops the final
 /// newline, so whether the content ended with one is kept separately for
 /// faithful reassembly.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ConflictText {
     pub lines: Vec<String>,
     pub trailing_newline: bool,
@@ -442,6 +442,25 @@ pub struct ConflictTerm {
 /// resolved hunk; the rest hides behind an expandable gap row.
 pub const CONFLICT_CONTEXT_LINES: usize = 3;
 
+/// A hunk's resolution choice.
+#[derive(Clone, PartialEq, Eq)]
+pub enum ConflictPick {
+    /// One of the hunk's terms (a side or the base).
+    Term(ConflictTermKind),
+    /// A hand-edited resolution.
+    Edited(ConflictText),
+}
+
+impl ConflictPick {
+    /// The picked term's kind, if the pick is a term.
+    pub fn term(&self) -> Option<ConflictTermKind> {
+        match self {
+            Self::Term(kind) => Some(*kind),
+            Self::Edited(_) => None,
+        }
+    }
+}
+
 #[derive(Clone)]
 pub enum ConflictHunkKind {
     /// Auto-resolved section — just context lines.
@@ -455,8 +474,8 @@ pub enum ConflictHunkKind {
     Conflict {
         /// Terms in jj's materialized order: side 1, base 1, side 2, ...
         terms: Vec<ConflictTerm>,
-        /// Which term the user picked (None = unresolved).
-        selected: Option<ConflictTermKind>,
+        /// The user's pick for this hunk (None = unresolved).
+        selected: Option<ConflictPick>,
         /// Whether the base block is collapsed to a one-line stub (tab on
         /// a base row toggles it). Starts expanded: a side that purely
         /// deleted content shows no highlight, so the base is the only

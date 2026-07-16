@@ -148,6 +148,7 @@ impl ActionRegistry {
             (ConflictUnpick, f, false, true),
             (ConflictApplyPicks, f, false, true),
             (ConflictEditFile, f, false, true),
+            (ConflictEditHunk, f, false, true),
             (TagSet, c, false, false),
             (TagDelete, c, false, false),
             (Interdiff, c, false, false),

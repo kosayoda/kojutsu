@@ -121,6 +121,13 @@ pub enum DisplayRow {
         file_idx: FileIdx,
         hunk_idx: ConflictHunkIdx,
     },
+    /// A line of a hunk's hand-edited resolution, shown above the terms.
+    ConflictEdited {
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: ConflictHunkIdx,
+        line_idx: ConflictLineIdx,
+    },
     /// Header row in the interdiff view.
     InterdiffHeader,
     /// A file change row in the interdiff view.
@@ -151,7 +158,8 @@ impl DisplayRow {
             | Self::ConflictHeader { entry_idx, .. }
             | Self::ConflictTerm { entry_idx, .. }
             | Self::ConflictContext { entry_idx, .. }
-            | Self::ConflictGap { entry_idx, .. } => Some(entry_idx),
+            | Self::ConflictGap { entry_idx, .. }
+            | Self::ConflictEdited { entry_idx, .. } => Some(entry_idx),
             _ => None,
         }
     }
@@ -184,6 +192,11 @@ impl DisplayRow {
                 ..
             }
             | Self::ConflictGap {
+                entry_idx,
+                file_idx,
+                ..
+            }
+            | Self::ConflictEdited {
                 entry_idx,
                 file_idx,
                 ..

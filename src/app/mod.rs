@@ -70,7 +70,7 @@ impl DeferredWork {
     }
 }
 
-use crate::dag::{ConflictTermKind, DiffLine, FileChange, LineStats};
+use crate::dag::{ConflictPick, ConflictTermKind, DiffLine, FileChange, LineStats};
 use crate::idx::{EntryIdx, EvoLogIdx, FileIdx, IndexVec, RowIdx};
 use crate::types::SmallVec;
 
@@ -355,7 +355,7 @@ pub struct App {
     /// Conflict hunk picks, persisted across reloads. Keyed by commit ID —
     /// identical ID means identical content and thus identical hunk
     /// indices; a rewritten commit gets a new ID, invalidating its picks.
-    pub conflict_picks: HashMap<(CommitId, RepoPath), HashMap<usize, ConflictTermKind>>,
+    pub conflict_picks: HashMap<(CommitId, RepoPath), HashMap<usize, ConflictPick>>,
 }
 
 impl std::fmt::Debug for App {
@@ -858,8 +858,29 @@ impl App {
         file_idx: FileIdx,
         hunk_idx: crate::idx::ConflictHunkIdx,
         pick: ConflictTermKind,
-    ) -> Option<ConflictTermKind> {
-        self.set_conflict_pick(entry_idx, file_idx, hunk_idx, Some(pick))
+    ) -> Option<ConflictPick> {
+        self.set_conflict_pick(
+            entry_idx,
+            file_idx,
+            hunk_idx,
+            Some(ConflictPick::Term(pick)),
+        )
+    }
+
+    /// Store a hand-edited resolution for a hunk.
+    pub fn set_conflict_edited(
+        &mut self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: crate::idx::ConflictHunkIdx,
+        text: crate::dag::ConflictText,
+    ) {
+        self.set_conflict_pick(
+            entry_idx,
+            file_idx,
+            hunk_idx,
+            Some(ConflictPick::Edited(text)),
+        );
     }
 
     /// Clear the pick on a conflict hunk.
@@ -877,8 +898,8 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
         hunk_idx: crate::idx::ConflictHunkIdx,
-        pick: Option<ConflictTermKind>,
-    ) -> Option<ConflictTermKind> {
+        pick: Option<ConflictPick>,
+    ) -> Option<ConflictPick> {
         let hunk = self.nodes[entry_idx]
             .conflict_hunks_mut(file_idx)
             .and_then(|l| match l {
@@ -890,16 +911,23 @@ impl App {
             crate::dag::ConflictHunkKind::Conflict {
                 terms, selected, ..
             } => match pick {
-                Some(kind) if terms.iter().any(|t| t.kind == kind && !t.absent) => {
+                Some(ConflictPick::Term(kind))
+                    if terms.iter().any(|t| t.kind == kind && !t.absent) =>
+                {
                     // Re-picking the selected term unpicks it.
-                    *selected = if *selected == Some(kind) {
+                    *selected = if selected.as_ref().and_then(ConflictPick::term) == Some(kind) {
                         None
                     } else {
-                        Some(kind)
+                        Some(ConflictPick::Term(kind))
                     };
-                    *selected
+                    selected.clone()
                 }
-                Some(_) => return None,
+                Some(ConflictPick::Term(_)) => return None,
+                Some(edited @ ConflictPick::Edited(_)) => {
+                    // An edit always replaces the current pick.
+                    *selected = Some(edited);
+                    selected.clone()
+                }
                 None => {
                     *selected = None;
                     None
@@ -907,7 +935,7 @@ impl App {
             },
             crate::dag::ConflictHunkKind::Resolved { .. } => return None,
         };
-        self.save_conflict_pick(entry_idx, file_idx, hunk_idx, new_selected);
+        self.save_conflict_pick(entry_idx, file_idx, hunk_idx, new_selected.clone());
         self.rebuild_rows();
         new_selected
     }
@@ -919,7 +947,7 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
         hunk_idx: crate::idx::ConflictHunkIdx,
-        pick: Option<ConflictTermKind>,
+        pick: Option<ConflictPick>,
     ) {
         let Some(path) = self
             .files_for_entry(entry_idx)
@@ -930,11 +958,11 @@ impl App {
         };
         let key = (self.nodes[entry_idx].commit.graph_id.clone(), path);
         match pick {
-            Some(kind) => {
+            Some(pick) => {
                 self.conflict_picks
                     .entry(key)
                     .or_default()
-                    .insert(hunk_idx.raw(), kind);
+                    .insert(hunk_idx.raw(), pick);
             }
             None => {
                 if let Some(picks) = self.conflict_picks.get_mut(&key) {
@@ -968,13 +996,23 @@ impl App {
                     _ => None,
                 })
         {
-            for (hi, kind) in picks {
+            for (hi, pick) in picks {
                 if let Some(crate::dag::ConflictHunkKind::Conflict {
                     terms, selected, ..
                 }) = hunks.get_mut(hi)
-                    && terms.iter().any(|t| t.kind == kind && !t.absent)
                 {
-                    *selected = Some(kind);
+                    // Term picks must still name a present term; edited
+                    // picks are always applicable (same commit ID means
+                    // identical hunks).
+                    let valid = match &pick {
+                        ConflictPick::Term(kind) => {
+                            terms.iter().any(|t| t.kind == *kind && !t.absent)
+                        }
+                        ConflictPick::Edited(_) => true,
+                    };
+                    if valid {
+                        *selected = Some(pick);
+                    }
                 }
             }
         }

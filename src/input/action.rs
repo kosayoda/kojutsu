@@ -639,6 +639,7 @@ pub fn dispatch_action_after_hooks(
         | AppAction::ConflictUnpick
         | AppAction::ConflictApplyPicks
         | AppAction::ConflictEditFile
+        | AppAction::ConflictEditHunk
         | AppAction::FileUntrack
         | AppAction::Commit
         | AppAction::CommitWithMessage
@@ -876,6 +877,7 @@ pub fn has_conflict_context(app: &App) -> bool {
         Some(
             DisplayRow::ConflictHeader { .. }
                 | DisplayRow::ConflictTerm { .. }
+                | DisplayRow::ConflictEdited { .. }
                 | DisplayRow::FileChange { .. }
                 | DisplayRow::DiffLine { .. }
         )

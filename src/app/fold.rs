@@ -355,14 +355,28 @@ impl App {
                                     }
                                     crate::dag::ConflictHunkKind::Conflict {
                                         terms,
+                                        selected,
                                         base_folded,
-                                        ..
                                     } => {
                                         rows.push(DisplayRow::ConflictHeader {
                                             entry_idx,
                                             file_idx,
                                             hunk_idx: ConflictHunkIdx::new(hi),
                                         });
+                                        // A hand-edited resolution renders
+                                        // above the terms.
+                                        if let Some(crate::dag::ConflictPick::Edited(text)) =
+                                            selected
+                                        {
+                                            for li in 0..text.lines.len().max(1) {
+                                                rows.push(DisplayRow::ConflictEdited {
+                                                    entry_idx,
+                                                    file_idx,
+                                                    hunk_idx: ConflictHunkIdx::new(hi),
+                                                    line_idx: ConflictLineIdx::new(li),
+                                                });
+                                            }
+                                        }
                                         // Display order: sides first, bases
                                         // last (dimmed; folded to a stub by
                                         // default). Storage order stays
