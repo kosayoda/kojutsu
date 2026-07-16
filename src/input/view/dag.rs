@@ -81,6 +81,9 @@ pub(in crate::input) fn dispatch(
                         return Action::None;
                     }
                 };
+                if picked_term_is_absent(app, entry_idx, file_idx, hunk_idx, pick) {
+                    return resolve_by_deletion(app, entry_idx, file_idx, pick, flags);
+                }
                 let result = app.pick_conflict_side(entry_idx, file_idx, hunk_idx, pick);
                 return write_conflict_resolution(app, entry_idx, result, flags);
             }
@@ -152,6 +155,9 @@ pub(in crate::input) fn dispatch(
                     AppAction::ConflictPickTheirs => crate::dag::ConflictTermKind::Side(1),
                     _ => crate::dag::ConflictTermKind::Base(0),
                 };
+                if picked_term_is_absent(app, entry_idx, file_idx, hunk_idx, pick) {
+                    return resolve_by_deletion(app, entry_idx, file_idx, pick, flags);
+                }
                 let result = app.pick_conflict_side(entry_idx, file_idx, hunk_idx, pick);
                 return write_conflict_resolution(app, entry_idx, result, flags);
             }
@@ -665,6 +671,54 @@ fn arrange(app: &mut App, flags: CommandFlags, direction: ArrangeDirection) -> A
                 targets: smallvec![target_id],
                 kind,
             },
+        },
+        flags,
+    })
+}
+
+fn picked_term_is_absent(
+    app: &App,
+    entry_idx: crate::idx::EntryIdx,
+    file_idx: crate::idx::FileIdx,
+    hunk_idx: crate::idx::ConflictHunkIdx,
+    pick: crate::dag::ConflictTermKind,
+) -> bool {
+    app.conflict_term(entry_idx, file_idx, hunk_idx, pick)
+        .is_some_and(|t| t.absent)
+}
+
+/// Resolve a conflict by taking an absent (deleted) term. Content assembly
+/// could only produce an empty file, not a deletion, so route to jj's
+/// builtin whole-file tools, which delete the path. Absence is a file-level
+/// state, so whole-file resolution matches the pick's meaning.
+fn resolve_by_deletion(
+    app: &mut App,
+    entry_idx: crate::idx::EntryIdx,
+    file_idx: crate::idx::FileIdx,
+    pick: crate::dag::ConflictTermKind,
+    flags: CommandFlags,
+) -> Action {
+    let tool = match pick {
+        crate::dag::ConflictTermKind::Side(0) => crate::jj_command::ResolveTool::Ours,
+        crate::dag::ConflictTermKind::Side(1) => crate::jj_command::ResolveTool::Theirs,
+        _ => {
+            app.set_error(
+                "cannot delete the file by picking this term — jj only supports taking ours/theirs",
+            );
+            return Action::None;
+        }
+    };
+    let Some(file) = app
+        .files_for_entry(entry_idx)
+        .and_then(|f| f.get(file_idx.raw()))
+    else {
+        return Action::None;
+    };
+    Action::RunJj(JJCommand {
+        kind: JJCommandKind::Resolve {
+            change_id: app.change_id(entry_idx),
+            path: Str::from(file.path.as_str()),
+            tool,
         },
         flags,
     })

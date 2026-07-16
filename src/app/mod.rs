@@ -805,8 +805,28 @@ impl App {
         self.views.tag_entries.get(tag_idx.raw())
     }
 
+    /// Look up a term of a conflict hunk by kind.
+    pub fn conflict_term(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: crate::idx::ConflictHunkIdx,
+        kind: crate::dag::ConflictTermKind,
+    ) -> Option<&crate::dag::ConflictTerm> {
+        let hunks = self.nodes[entry_idx].conflict_hunks(file_idx)?.loaded()?;
+        match hunks.get(hunk_idx.raw())? {
+            crate::dag::ConflictHunkKind::Conflict { terms, .. } => {
+                terms.iter().find(|t| t.kind == kind)
+            }
+            _ => None,
+        }
+    }
+
     /// Pick a conflict term for a hunk. Returns whether the file was fully
-    /// resolved (all hunks picked) and written to disk.
+    /// resolved (all hunks picked) and written to disk. Absent (deleted)
+    /// terms cannot be picked here — content assembly could only produce
+    /// an empty file, not a deletion; callers route those to `jj resolve`
+    /// builtins instead.
     pub fn pick_conflict_side(
         &mut self,
         entry_idx: EntryIdx,
@@ -831,7 +851,7 @@ impl App {
         if let crate::dag::ConflictHunkKind::Conflict {
             terms, selected, ..
         } = hunk
-            && terms.iter().any(|t| t.kind == pick)
+            && terms.iter().any(|t| t.kind == pick && !t.absent)
         {
             *selected = Some(pick);
         }

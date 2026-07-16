@@ -411,6 +411,10 @@ impl ConflictText {
 #[derive(Clone)]
 pub struct ConflictTerm {
     pub kind: ConflictTermKind,
+    /// The file does not exist on this term (deleted, or never created).
+    /// Absent terms materialize as empty content, so this flag is the only
+    /// way to distinguish deletion from an empty file.
+    pub absent: bool,
     pub text: ConflictText,
 }
 

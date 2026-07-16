@@ -337,6 +337,9 @@ impl JjRepo {
             hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
             same_change: jj_lib::merge::SameChange::Accept,
         };
+        // `ids` parallels `contents` term-for-term; a `None` id means the
+        // file is absent on that term (materialized as empty content).
+        let absent: Vec<bool> = materialized.ids.iter().map(|id| id.is_none()).collect();
         let merge_result = jj_lib::files::merge_hunks(&materialized.contents, &merge_options);
 
         let hunks = match merge_result {
@@ -354,7 +357,7 @@ impl JjRepo {
                         }
                     } else {
                         ConflictHunkKind::Conflict {
-                            terms: conflict_terms(&hunk),
+                            terms: conflict_terms(&hunk, &absent),
                             selected: None,
                         }
                     }
@@ -692,8 +695,9 @@ impl JjRepo {
 /// Tag each term of a conflicted merge hunk with its kind. A `Merge`
 /// interleaves positive and negative terms, starting positive: side 1,
 /// base 1, side 2, base 2, ... — this is the only place that may depend
-/// on that ordering.
-fn conflict_terms<T: AsRef<[u8]>>(hunk: &Merge<T>) -> Vec<ConflictTerm> {
+/// on that ordering. `absent` flags file absence per term, in the same
+/// interleaved order.
+fn conflict_terms<T: AsRef<[u8]>>(hunk: &Merge<T>, absent: &[bool]) -> Vec<ConflictTerm> {
     hunk.iter()
         .enumerate()
         .map(|(i, term)| ConflictTerm {
@@ -702,6 +706,7 @@ fn conflict_terms<T: AsRef<[u8]>>(hunk: &Merge<T>) -> Vec<ConflictTerm> {
             } else {
                 ConflictTermKind::Base(i / 2)
             },
+            absent: absent.get(i).copied().unwrap_or(false),
             text: ConflictText::from_bytes(term.as_ref()),
         })
         .collect()
@@ -1096,7 +1101,7 @@ mod tests {
     #[test]
     fn conflict_terms_tags_sides_and_bases() {
         let hunk = Merge::from_removes_adds(vec!["base\n"], vec!["ours\n", "theirs\n"]);
-        let terms = conflict_terms(&hunk);
+        let terms = conflict_terms(&hunk, &[false; 3]);
         let tagged: Vec<(ConflictTermKind, &str)> = terms
             .iter()
             .map(|t| (t.kind, t.text.lines[0].as_str()))
@@ -1112,7 +1117,7 @@ mod tests {
             vec!["base1\n", "base2\n"],
             vec!["side1\n", "side2\n", "side3\n"],
         );
-        let terms = conflict_terms(&hunk);
+        let terms = conflict_terms(&hunk, &[false; 5]);
         assert_eq!(terms.len(), 5);
         let sides: Vec<&str> = terms
             .iter()
@@ -1126,5 +1131,23 @@ mod tests {
             .collect();
         assert_eq!(sides, ["side1", "side2", "side3"]);
         assert_eq!(bases, ["base1", "base2"]);
+    }
+
+    /// A modify/delete conflict: the deleting side materializes as empty
+    /// content, distinguished from a genuinely empty file only by the
+    /// absent flag (interleaved order: side 1, base 1, side 2).
+    #[test]
+    fn conflict_terms_tags_absent_terms() {
+        let hunk = Merge::from_removes_adds(vec!["base\n"], vec!["", "theirs\n"]);
+        let terms = conflict_terms(&hunk, &[true, false, false]);
+        for t in &terms {
+            match t.kind {
+                ConflictTermKind::Side(0) => {
+                    assert!(t.absent);
+                    assert!(t.text.lines.is_empty());
+                }
+                _ => assert!(!t.absent),
+            }
+        }
     }
 }

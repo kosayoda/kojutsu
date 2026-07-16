@@ -498,18 +498,27 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|hunk| match hunk {
                             crate::dag::ConflictHunkKind::Conflict { terms, selected } => {
                                 let term = terms.get(term_idx.raw())?;
-                                let line = term
-                                    .text
-                                    .lines
-                                    .get(line_idx.raw())
-                                    .cloned()
-                                    .unwrap_or_default();
+                                // A missing line is the placeholder row for an
+                                // empty term (deleted or emptied file).
+                                let line = match term.text.lines.get(line_idx.raw()) {
+                                    Some(l) => l.clone(),
+                                    None if term.absent => "(file deleted)".to_string(),
+                                    None => "(empty)".to_string(),
+                                };
+                                let is_placeholder = term.text.lines.get(line_idx.raw()).is_none();
                                 let is_selected = *selected == Some(term.kind);
-                                Some((line, is_selected, term.kind, hunk.num_sides()))
+                                Some((
+                                    line,
+                                    is_placeholder,
+                                    is_selected,
+                                    term.kind,
+                                    hunk.num_sides(),
+                                ))
                             }
                             _ => None,
                         });
-                    let Some((line_text, is_selected, kind, num_sides)) = text else {
+                    let Some((line_text, is_placeholder, is_selected, kind, num_sides)) = text
+                    else {
                         return vec![Line::raw("")];
                     };
                     let label = format!("[{}]", kind.label(num_sides));
@@ -518,13 +527,16 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         ConflictTermKind::Side(_) => theme.change_id,
                         ConflictTermKind::Base(_) => theme.accent,
                     };
-                    let style = if is_selected {
+                    let mut style = if is_selected {
                         Style::default()
                             .fg(term_color)
                             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
                     } else {
                         Style::default().fg(term_color)
                     };
+                    if is_placeholder {
+                        style = style.add_modifier(Modifier::ITALIC);
+                    }
                     vec![Line::from(vec![
                         Span::raw("          "),
                         Span::styled(format!("{label:<8}"), style),

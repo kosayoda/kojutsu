@@ -337,7 +337,10 @@ impl App {
                                             hunk_idx: ConflictHunkIdx::new(hi),
                                         });
                                         for (ti, term) in terms.iter().enumerate() {
-                                            for li in 0..term.text.lines.len() {
+                                            // Empty terms (deleted or emptied
+                                            // file) still get one row so the
+                                            // side is visible and pickable.
+                                            for li in 0..term.text.lines.len().max(1) {
                                                 rows.push(DisplayRow::ConflictTerm {
                                                     entry_idx,
                                                     file_idx,
