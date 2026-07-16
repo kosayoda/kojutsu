@@ -320,14 +320,37 @@ impl App {
                             // Show conflict hunks instead of diff.
                             for (hi, hunk) in hunks.iter().enumerate() {
                                 match hunk {
-                                    crate::dag::ConflictHunkKind::Resolved { text } => {
-                                        for li in 0..text.lines.len() {
+                                    crate::dag::ConflictHunkKind::Resolved { text, .. } => {
+                                        // Trim to context around adjacent
+                                        // conflicts; the hidden middle is an
+                                        // expandable gap row.
+                                        let push_ctx = |li: usize, rows: &mut Vec<_>| {
                                             rows.push(DisplayRow::ConflictContext {
                                                 entry_idx,
                                                 file_idx,
                                                 hunk_idx: ConflictHunkIdx::new(hi),
                                                 line_idx: ConflictLineIdx::new(li),
                                             });
+                                        };
+                                        let n = text.lines.len();
+                                        if let Some((head, tail, _)) =
+                                            hunk.trimmed_context(hi == 0, hi == hunks.len() - 1)
+                                        {
+                                            for li in 0..head {
+                                                push_ctx(li, rows);
+                                            }
+                                            rows.push(DisplayRow::ConflictGap {
+                                                entry_idx,
+                                                file_idx,
+                                                hunk_idx: ConflictHunkIdx::new(hi),
+                                            });
+                                            for li in (n - tail)..n {
+                                                push_ctx(li, rows);
+                                            }
+                                        } else {
+                                            for li in 0..n {
+                                                push_ctx(li, rows);
+                                            }
                                         }
                                     }
                                     crate::dag::ConflictHunkKind::Conflict {
@@ -663,6 +686,13 @@ impl App {
             ) => {
                 self.toggle_file_fold(*entry_idx, *file_idx);
             }
+            Some(DisplayRow::ConflictGap {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            }) => {
+                self.expand_conflict_context(*entry_idx, *file_idx, *hunk_idx);
+            }
             Some(DisplayRow::OpLogItem { op_log_idx }) => {
                 self.toggle_op_fold(*op_log_idx);
             }
@@ -780,6 +810,27 @@ impl App {
         self.rebuild_entry_rows(entry_idx);
         if self.is_commit_unfolded(entry_idx) {
             self.scroll_to_show_children();
+        }
+    }
+
+    /// Expand a trimmed resolved section to its full content (tab on the
+    /// gap row).
+    pub(crate) fn expand_conflict_context(
+        &mut self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: ConflictHunkIdx,
+    ) {
+        if let Some(crate::dag::ConflictHunkKind::Resolved { expanded, .. }) = self.nodes[entry_idx]
+            .conflict_hunks_mut(file_idx)
+            .and_then(|l| match l {
+                super::Loadable::Loaded(h) => Some(h),
+                _ => None,
+            })
+            .and_then(|hunks| hunks.get_mut(hunk_idx.raw()))
+        {
+            *expanded = true;
+            self.rebuild_entry_rows(entry_idx);
         }
     }
 

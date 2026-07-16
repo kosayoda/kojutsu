@@ -447,10 +447,19 @@ pub struct ConflictTerm {
     pub token_lines: Vec<Vec<DiffToken>>,
 }
 
+/// Context lines kept visible on each conflict-adjacent edge of a
+/// resolved hunk; the rest hides behind an expandable gap row.
+pub const CONFLICT_CONTEXT_LINES: usize = 3;
+
 #[derive(Clone)]
 pub enum ConflictHunkKind {
     /// Auto-resolved section — just context lines.
-    Resolved { text: ConflictText },
+    Resolved {
+        text: ConflictText,
+        /// Whether the user expanded this section past the trimmed
+        /// context (tab on the gap row).
+        expanded: bool,
+    },
     /// Conflicted section with multiple terms to choose from.
     Conflict {
         /// Terms in jj's materialized order: side 1, base 1, side 2, ...
@@ -472,6 +481,30 @@ impl ConflictHunkKind {
             Self::Resolved { .. } => 0,
             Self::Conflict { terms, .. } => terms.len().div_ceil(2),
         }
+    }
+
+    /// Context trimming for a resolved hunk: `(head, tail, hidden)` — how
+    /// many leading/trailing lines stay visible next to adjacent conflicts
+    /// and how many hide behind a gap row. `first`/`last` say whether the
+    /// hunk starts/ends the file (edges with no adjacent conflict keep no
+    /// context). `None` = show every line (expanded, small, or not a
+    /// resolved hunk).
+    pub fn trimmed_context(&self, first: bool, last: bool) -> Option<(usize, usize, usize)> {
+        let Self::Resolved { text, expanded } = self else {
+            return None;
+        };
+        if *expanded {
+            return None;
+        }
+        let n = text.lines.len();
+        let head = if first { 0 } else { CONFLICT_CONTEXT_LINES };
+        let tail = if last { 0 } else { CONFLICT_CONTEXT_LINES };
+        let hidden = n.saturating_sub(head + tail);
+        // A one-line gap saves nothing over showing the line.
+        if hidden < 2 {
+            return None;
+        }
+        Some((head, tail, hidden))
     }
 }
 

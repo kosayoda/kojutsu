@@ -114,6 +114,13 @@ pub enum DisplayRow {
         hunk_idx: ConflictHunkIdx,
         line_idx: ConflictLineIdx,
     },
+    /// Hidden middle of a trimmed resolved section ("… N lines …");
+    /// tab expands it.
+    ConflictGap {
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: ConflictHunkIdx,
+    },
     /// Header row in the interdiff view.
     InterdiffHeader,
     /// A file change row in the interdiff view.
@@ -143,7 +150,8 @@ impl DisplayRow {
             | Self::DiffLine { entry_idx, .. }
             | Self::ConflictHeader { entry_idx, .. }
             | Self::ConflictTerm { entry_idx, .. }
-            | Self::ConflictContext { entry_idx, .. } => Some(entry_idx),
+            | Self::ConflictContext { entry_idx, .. }
+            | Self::ConflictGap { entry_idx, .. } => Some(entry_idx),
             _ => None,
         }
     }
@@ -171,6 +179,11 @@ impl DisplayRow {
                 ..
             }
             | Self::ConflictContext {
+                entry_idx,
+                file_idx,
+                ..
+            }
+            | Self::ConflictGap {
                 entry_idx,
                 file_idx,
                 ..

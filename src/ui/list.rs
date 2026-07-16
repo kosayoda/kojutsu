@@ -628,7 +628,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             hunks.get(hunk_idx.raw())
                         })
                         .and_then(|hunk| match hunk {
-                            crate::dag::ConflictHunkKind::Resolved { text } => {
+                            crate::dag::ConflictHunkKind::Resolved { text, .. } => {
                                 text.lines.get(line_idx.raw()).cloned()
                             }
                             _ => None,
@@ -637,6 +637,35 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     vec![Line::from(vec![
                         Span::raw("        "),
                         Span::styled(text, Style::default().fg(theme.muted)),
+                    ])]
+                }
+                DisplayRow::ConflictGap {
+                    entry_idx,
+                    file_idx,
+                    hunk_idx,
+                } => {
+                    let hidden = app
+                        .nodes
+                        .get(*entry_idx)
+                        .and_then(|n| n.conflict_hunks(*file_idx))
+                        .and_then(|l| l.loaded())
+                        .and_then(|hunks| {
+                            let hunk = hunks.get(hunk_idx.raw())?;
+                            hunk.trimmed_context(
+                                hunk_idx.raw() == 0,
+                                hunk_idx.raw() == hunks.len() - 1,
+                            )
+                        })
+                        .map(|(_, _, hidden)| hidden)
+                        .unwrap_or_default();
+                    vec![Line::from(vec![
+                        Span::raw("        "),
+                        Span::styled(
+                            format!("── … {hidden} lines … (tab) ──"),
+                            Style::default()
+                                .fg(theme.muted)
+                                .add_modifier(Modifier::ITALIC),
+                        ),
                     ])]
                 }
                 DisplayRow::InterdiffHeader => {

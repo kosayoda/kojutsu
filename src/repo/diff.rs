@@ -350,6 +350,7 @@ impl JjRepo {
             jj_lib::files::MergeResult::Resolved(content) => {
                 vec![ConflictHunkKind::Resolved {
                     text: ConflictText::from_bytes(&content),
+                    expanded: false,
                 }]
             }
             jj_lib::files::MergeResult::Conflict(merge_hunks) => merge_hunks
@@ -358,6 +359,7 @@ impl JjRepo {
                     if let Some(resolved) = hunk.as_resolved() {
                         ConflictHunkKind::Resolved {
                             text: ConflictText::from_bytes(resolved.as_ref()),
+                            expanded: false,
                         }
                     } else {
                         ConflictHunkKind::Conflict {
@@ -793,7 +795,7 @@ pub fn assemble_resolution(hunks: &[crate::dag::ConflictHunkKind]) -> (String, b
     let mut complete = true;
     for hunk in hunks {
         match hunk {
-            crate::dag::ConflictHunkKind::Resolved { text } => text.write_to(&mut content),
+            crate::dag::ConflictHunkKind::Resolved { text, .. } => text.write_to(&mut content),
             crate::dag::ConflictHunkKind::Conflict {
                 terms, selected, ..
             } => {
@@ -1272,10 +1274,12 @@ mod tests {
         let hunks = vec![
             ConflictHunkKind::Resolved {
                 text: ConflictText::from_bytes(b"ctx1\n"),
+                expanded: false,
             },
             terms(Some(ConflictTermKind::Side(1))),
             ConflictHunkKind::Resolved {
                 text: ConflictText::from_bytes(b"ctx2\n"),
+                expanded: false,
             },
             terms(None),
         ];
