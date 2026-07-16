@@ -24,7 +24,7 @@ use pollster::FutureExt as _;
 use super::JjRepo;
 use crate::dag::{
     CommitDetails, ConflictTerm, ConflictTermKind, ConflictText, DiffLine, DiffLineKind,
-    DiffResult, FileChange, FileStatus, LineStats,
+    DiffResult, DiffToken, DiffTokenKind, FileChange, FileStatus, LineStats,
 };
 use crate::types::{CommitId as UiCommitId, RepoPath};
 
@@ -363,6 +363,7 @@ impl JjRepo {
                         ConflictHunkKind::Conflict {
                             terms: conflict_terms(&hunk, &absent),
                             selected: None,
+                            base_folded: false,
                         }
                     }
                 })
@@ -708,18 +709,67 @@ impl JjRepo {
 /// on that ordering. `absent` flags file absence per term, in the same
 /// interleaved order.
 fn conflict_terms<T: AsRef<[u8]>>(hunk: &Merge<T>, absent: &[bool]) -> Vec<ConflictTerm> {
+    let bases: Vec<&[u8]> = hunk.removes().map(|t| t.as_ref()).collect();
     hunk.iter()
         .enumerate()
-        .map(|(i, term)| ConflictTerm {
-            kind: if i % 2 == 0 {
+        .map(|(i, term)| {
+            let kind = if i % 2 == 0 {
                 ConflictTermKind::Side(i / 2)
             } else {
                 ConflictTermKind::Base(i / 2)
-            },
-            absent: absent.get(i).copied().unwrap_or(false),
-            text: ConflictText::from_bytes(term.as_ref()),
+            };
+            let is_absent = absent.get(i).copied().unwrap_or(false);
+            // Highlight each side's changes against its base (jj pairs
+            // side n+1 with base n; both sides of a 2-sided conflict pair
+            // with the single base). Bases get no highlighting.
+            let token_lines = match kind {
+                ConflictTermKind::Side(n) if !is_absent => bases
+                    .get(n.saturating_sub(1))
+                    .map(|base| side_token_lines(base, term.as_ref()))
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            };
+            ConflictTerm {
+                kind,
+                absent: is_absent,
+                text: ConflictText::from_bytes(term.as_ref()),
+                token_lines,
+            }
         })
         .collect()
+}
+
+/// Word-level tokens for each line of a conflict side, marking what the
+/// side changed relative to its base. Returns one token list per side
+/// line (removed-only lines belong to the base and are skipped).
+fn side_token_lines(base: &[u8], side: &[u8]) -> Vec<Vec<DiffToken>> {
+    let contents = Diff::new(bstr::BStr::new(base), bstr::BStr::new(side));
+    // Full context so every unchanged side line is present too.
+    let hunks = unified::unified_diff_hunks(contents, u32::MAX as usize, Default::default());
+    let mut lines = Vec::new();
+    for hunk in &hunks {
+        for (line_type, tokens) in &hunk.lines {
+            if matches!(line_type, DiffLineType::Removed) {
+                continue;
+            }
+            let mut diff_tokens: Vec<DiffToken> = tokens
+                .iter()
+                .filter(|(_, bytes)| !bytes.is_empty())
+                .map(|(tag, bytes)| DiffToken {
+                    text: String::from_utf8_lossy(bytes).into_owned(),
+                    kind: match tag {
+                        DiffTokenType::Matching => DiffTokenKind::Unchanged,
+                        DiffTokenType::Different => DiffTokenKind::Added,
+                    },
+                })
+                .collect();
+            if let Some(last) = diff_tokens.last_mut() {
+                last.text = last.text.trim_end_matches('\n').to_string();
+            }
+            lines.push(diff_tokens);
+        }
+    }
+    lines
 }
 
 fn default_materialize_options() -> ConflictMaterializeOptions {
@@ -744,7 +794,9 @@ pub fn assemble_resolution(hunks: &[crate::dag::ConflictHunkKind]) -> (String, b
     for hunk in hunks {
         match hunk {
             crate::dag::ConflictHunkKind::Resolved { text } => text.write_to(&mut content),
-            crate::dag::ConflictHunkKind::Conflict { terms, selected } => {
+            crate::dag::ConflictHunkKind::Conflict {
+                terms, selected, ..
+            } => {
                 if let Some(kind) = selected
                     && let Some(term) = terms.iter().find(|t| t.kind == *kind)
                 {
@@ -1215,6 +1267,7 @@ mod tests {
                 &[false; 3],
             ),
             selected: sel,
+            base_folded: false,
         };
         let hunks = vec![
             ConflictHunkKind::Resolved {
@@ -1239,5 +1292,30 @@ mod tests {
         let (content, complete) = assemble_resolution(&all_picked);
         assert!(complete);
         assert_eq!(content, "ours\n");
+    }
+
+    /// Sides get word-level tokens against their base (one token list per
+    /// side line); bases get none.
+    #[test]
+    fn conflict_terms_compute_side_tokens() {
+        let hunk = Merge::from_removes_adds(
+            vec!["shared base\n"],
+            vec!["shared ours\n", "shared theirs\nextra\n"],
+        );
+        let terms = conflict_terms(&hunk, &[false; 3]);
+        for t in &terms {
+            match t.kind {
+                ConflictTermKind::Side(_) => {
+                    assert_eq!(t.token_lines.len(), t.text.lines.len());
+                    let first = &t.token_lines[0];
+                    assert!(first.iter().any(|tok| tok.kind == DiffTokenKind::Added));
+                    assert!(
+                        first.iter().any(|tok| tok.kind == DiffTokenKind::Unchanged
+                            && tok.text.contains("shared"))
+                    );
+                }
+                ConflictTermKind::Base(_) => assert!(t.token_lines.is_empty()),
+            }
+        }
     }
 }

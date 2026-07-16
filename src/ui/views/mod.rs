@@ -183,7 +183,7 @@ pub(super) fn push_ref_entry_suffix(
     }
 }
 
-fn push_diff_tokens(
+pub(super) fn push_diff_tokens(
     spans: &mut Vec<Span<'static>>,
     diff_line: &DiffLine,
     base_style: Style,

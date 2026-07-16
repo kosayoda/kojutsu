@@ -887,7 +887,9 @@ impl App {
             })
             .and_then(|hunks| hunks.get_mut(hunk_idx.raw()))?;
         let new_selected = match hunk {
-            crate::dag::ConflictHunkKind::Conflict { terms, selected } => match pick {
+            crate::dag::ConflictHunkKind::Conflict {
+                terms, selected, ..
+            } => match pick {
                 Some(kind) if terms.iter().any(|t| t.kind == kind && !t.absent) => {
                     // Re-picking the selected term unpicks it.
                     *selected = if *selected == Some(kind) {
@@ -967,8 +969,9 @@ impl App {
                 })
         {
             for (hi, kind) in picks {
-                if let Some(crate::dag::ConflictHunkKind::Conflict { terms, selected }) =
-                    hunks.get_mut(hi)
+                if let Some(crate::dag::ConflictHunkKind::Conflict {
+                    terms, selected, ..
+                }) = hunks.get_mut(hi)
                     && terms.iter().any(|t| t.kind == kind && !t.absent)
                 {
                     *selected = Some(kind);

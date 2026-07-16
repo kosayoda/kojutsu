@@ -512,7 +512,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     line_idx,
                 } => {
                     use crate::dag::ConflictTermKind;
-                    let text = app
+                    enum TermLine {
+                        Text(String, Vec<crate::dag::DiffToken>),
+                        /// Placeholder or folded-base stub, rendered italic.
+                        Note(String),
+                    }
+                    let info = app
                         .nodes
                         .get(*entry_idx)
                         .and_then(|n| n.conflict_hunks(*file_idx))
@@ -521,53 +526,92 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             hunks.get(hunk_idx.raw())
                         })
                         .and_then(|hunk| match hunk {
-                            crate::dag::ConflictHunkKind::Conflict { terms, selected } => {
+                            crate::dag::ConflictHunkKind::Conflict {
+                                terms,
+                                selected,
+                                base_folded,
+                            } => {
                                 let term = terms.get(term_idx.raw())?;
-                                // A missing line is the placeholder row for an
-                                // empty term (deleted or emptied file).
-                                let line = match term.text.lines.get(line_idx.raw()) {
-                                    Some(l) => l.clone(),
-                                    None if term.absent => "(file deleted)".to_string(),
-                                    None => "(empty)".to_string(),
+                                let line = if !term.kind.is_side() && *base_folded {
+                                    // Folded base stub.
+                                    let n = term.text.lines.len();
+                                    TermLine::Note(if term.absent {
+                                        "(file deleted)".to_string()
+                                    } else {
+                                        format!("… {n} line{} (tab)", if n == 1 { "" } else { "s" })
+                                    })
+                                } else {
+                                    match term.text.lines.get(line_idx.raw()) {
+                                        Some(l) => TermLine::Text(
+                                            l.clone(),
+                                            term.token_lines
+                                                .get(line_idx.raw())
+                                                .cloned()
+                                                .unwrap_or_default(),
+                                        ),
+                                        // Placeholder row for an empty term
+                                        // (deleted or emptied file).
+                                        None if term.absent => {
+                                            TermLine::Note("(file deleted)".to_string())
+                                        }
+                                        None => TermLine::Note("(empty)".to_string()),
+                                    }
                                 };
-                                let is_placeholder = term.text.lines.get(line_idx.raw()).is_none();
                                 let is_selected = *selected == Some(term.kind);
-                                Some((
-                                    line,
-                                    is_placeholder,
-                                    is_selected,
-                                    term.kind,
-                                    hunk.num_sides(),
-                                ))
+                                Some((line, is_selected, term.kind, hunk.num_sides()))
                             }
                             _ => None,
                         });
-                    let Some((line_text, is_placeholder, is_selected, kind, num_sides)) = text
-                    else {
+                    let Some((line, is_selected, kind, num_sides)) = info else {
                         return vec![Line::raw("")];
                     };
-                    let label = format!("[{}]", kind.label(num_sides));
                     let term_color = match kind {
                         ConflictTermKind::Side(0) => theme.added,
                         ConflictTermKind::Side(_) => theme.change_id,
-                        ConflictTermKind::Base(_) => theme.accent,
+                        ConflictTermKind::Base(_) => theme.muted,
                     };
-                    let mut style = if is_selected {
-                        Style::default()
-                            .fg(term_color)
-                            .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-                    } else {
-                        Style::default().fg(term_color)
-                    };
-                    if is_placeholder {
-                        style = style.add_modifier(Modifier::ITALIC);
+                    let mut base_style = Style::default().fg(term_color);
+                    if is_selected {
+                        base_style = base_style.add_modifier(Modifier::BOLD);
                     }
-                    vec![Line::from(vec![
+                    let label_style = if is_selected {
+                        base_style.add_modifier(Modifier::UNDERLINED)
+                    } else {
+                        base_style
+                    };
+                    let label = format!("[{}]", kind.label(num_sides));
+                    let mut spans = vec![
                         Span::raw("          "),
-                        Span::styled(format!("{label:<8}"), style),
+                        Span::styled(format!("{label:<8}"), label_style),
                         Span::raw(" "),
-                        Span::styled(line_text, style),
-                    ])]
+                    ];
+                    match line {
+                        TermLine::Note(text) => {
+                            spans.push(Span::styled(
+                                text,
+                                base_style.add_modifier(Modifier::ITALIC),
+                            ));
+                        }
+                        TermLine::Text(content, tokens) => {
+                            let diff_line = crate::dag::DiffLine {
+                                kind: crate::dag::DiffLineKind::Context,
+                                content,
+                                tokens,
+                                old_line: None,
+                                new_line: None,
+                            };
+                            super::views::push_diff_tokens(
+                                &mut spans,
+                                &diff_line,
+                                base_style,
+                                app.diff_underline,
+                                row_search.as_ref(),
+                                theme,
+                                &tab_spaces,
+                            );
+                        }
+                    }
+                    vec![Line::from(spans)]
                 }
                 DisplayRow::ConflictContext {
                     entry_idx,

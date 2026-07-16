@@ -379,6 +379,10 @@ pub enum ConflictTermKind {
 }
 
 impl ConflictTermKind {
+    pub fn is_side(self) -> bool {
+        matches!(self, Self::Side(_))
+    }
+
     /// Human-readable label. Two-sided conflicts use the familiar
     /// ours/theirs/base; n-way conflicts fall back to numbered terms.
     pub fn label(self, num_sides: usize) -> String {
@@ -437,6 +441,10 @@ pub struct ConflictTerm {
     /// way to distinguish deletion from an empty file.
     pub absent: bool,
     pub text: ConflictText,
+    /// Word-level tokens per line, highlighting what this side changed
+    /// relative to its base. Empty for base and absent terms. Parallel to
+    /// `text.lines` when present.
+    pub token_lines: Vec<Vec<DiffToken>>,
 }
 
 #[derive(Clone)]
@@ -449,6 +457,11 @@ pub enum ConflictHunkKind {
         terms: Vec<ConflictTerm>,
         /// Which term the user picked (None = unresolved).
         selected: Option<ConflictTermKind>,
+        /// Whether the base block is collapsed to a one-line stub (tab on
+        /// a base row toggles it). Starts expanded: a side that purely
+        /// deleted content shows no highlight, so the base is the only
+        /// place that change is visible.
+        base_folded: bool,
     },
 }
 

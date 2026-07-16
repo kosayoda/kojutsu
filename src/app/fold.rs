@@ -330,17 +330,43 @@ impl App {
                                             });
                                         }
                                     }
-                                    crate::dag::ConflictHunkKind::Conflict { terms, .. } => {
+                                    crate::dag::ConflictHunkKind::Conflict {
+                                        terms,
+                                        base_folded,
+                                        ..
+                                    } => {
                                         rows.push(DisplayRow::ConflictHeader {
                                             entry_idx,
                                             file_idx,
                                             hunk_idx: ConflictHunkIdx::new(hi),
                                         });
-                                        for (ti, term) in terms.iter().enumerate() {
-                                            // Empty terms (deleted or emptied
-                                            // file) still get one row so the
-                                            // side is visible and pickable.
-                                            for li in 0..term.text.lines.len().max(1) {
+                                        // Display order: sides first, bases
+                                        // last (dimmed; folded to a stub by
+                                        // default). Storage order stays
+                                        // interleaved for assembly.
+                                        let display_order = terms
+                                            .iter()
+                                            .enumerate()
+                                            .filter(|(_, t)| t.kind.is_side())
+                                            .chain(
+                                                terms
+                                                    .iter()
+                                                    .enumerate()
+                                                    .filter(|(_, t)| !t.kind.is_side()),
+                                            );
+                                        for (ti, term) in display_order {
+                                            // A folded base renders as a
+                                            // one-line stub.
+                                            let n = if !term.kind.is_side() && *base_folded {
+                                                1
+                                            } else {
+                                                // Empty terms (deleted or
+                                                // emptied file) still get one
+                                                // row so the side is visible
+                                                // and pickable.
+                                                term.text.lines.len().max(1)
+                                            };
+                                            for li in 0..n {
                                                 rows.push(DisplayRow::ConflictTerm {
                                                     entry_idx,
                                                     file_idx,
@@ -608,6 +634,35 @@ impl App {
                 // Folding on a diff line folds the parent file.
                 self.toggle_file_fold(*entry_idx, *file_idx);
             }
+            Some(DisplayRow::ConflictTerm {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                term_idx,
+                ..
+            }) => {
+                // On a base row, toggle the base block; on a side row,
+                // fold the parent file (mirrors diff-line behavior).
+                let (entry_idx, file_idx, hunk_idx, term_idx) =
+                    (*entry_idx, *file_idx, *hunk_idx, *term_idx);
+                if !self.toggle_conflict_base_fold(entry_idx, file_idx, hunk_idx, term_idx) {
+                    self.toggle_file_fold(entry_idx, file_idx);
+                }
+            }
+            Some(
+                DisplayRow::ConflictHeader {
+                    entry_idx,
+                    file_idx,
+                    ..
+                }
+                | DisplayRow::ConflictContext {
+                    entry_idx,
+                    file_idx,
+                    ..
+                },
+            ) => {
+                self.toggle_file_fold(*entry_idx, *file_idx);
+            }
             Some(DisplayRow::OpLogItem { op_log_idx }) => {
                 self.toggle_op_fold(*op_log_idx);
             }
@@ -725,6 +780,37 @@ impl App {
         self.rebuild_entry_rows(entry_idx);
         if self.is_commit_unfolded(entry_idx) {
             self.scroll_to_show_children();
+        }
+    }
+
+    /// Toggle the base block of a conflict hunk between its one-line stub
+    /// and full content. Returns whether the term was a base (side terms
+    /// are not handled here).
+    pub(crate) fn toggle_conflict_base_fold(
+        &mut self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunk_idx: ConflictHunkIdx,
+        term_idx: ConflictTermIdx,
+    ) -> bool {
+        let Some(crate::dag::ConflictHunkKind::Conflict {
+            terms, base_folded, ..
+        }) = self.nodes[entry_idx]
+            .conflict_hunks_mut(file_idx)
+            .and_then(|l| match l {
+                super::Loadable::Loaded(h) => Some(h),
+                _ => None,
+            })
+            .and_then(|hunks| hunks.get_mut(hunk_idx.raw()))
+        else {
+            return false;
+        };
+        if terms.get(term_idx.raw()).is_some_and(|t| !t.kind.is_side()) {
+            *base_folded = !*base_folded;
+            self.rebuild_entry_rows(entry_idx);
+            true
+        } else {
+            false
         }
     }
 
