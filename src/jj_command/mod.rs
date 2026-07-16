@@ -241,6 +241,9 @@ pub enum ResolveTool {
     Ours,
     Theirs,
     Default,
+    /// Apply pre-resolved content from a file (written by the per-hunk
+    /// picker) via a merge tool that invokes kojutsu itself.
+    Content(std::path::PathBuf),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

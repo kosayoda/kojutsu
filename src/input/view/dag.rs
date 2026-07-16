@@ -72,6 +72,7 @@ pub(in crate::input) fn dispatch(
                 ..
             }) = app.rows.get(app.cursor.raw())
             {
+                let (entry_idx, file_idx, hunk_idx) = (*entry_idx, *file_idx, *hunk_idx);
                 let pick = match action {
                     AppAction::ResolveOurs => crate::dag::ConflictTermKind::Side(0),
                     AppAction::ResolveTheirs => crate::dag::ConflictTermKind::Side(1),
@@ -80,8 +81,8 @@ pub(in crate::input) fn dispatch(
                         return Action::None;
                     }
                 };
-                let result = app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, pick);
-                return write_conflict_resolution(app, result);
+                let result = app.pick_conflict_side(entry_idx, file_idx, hunk_idx, pick);
+                return write_conflict_resolution(app, entry_idx, result, flags);
             }
 
             let (entry_idx, file_idx) = match app.rows.get(app.cursor.raw()) {
@@ -145,19 +146,16 @@ pub(in crate::input) fn dispatch(
                 ..
             }) = app.rows.get(app.cursor.raw())
             {
+                let (entry_idx, file_idx, hunk_idx) = (*entry_idx, *file_idx, *hunk_idx);
                 let pick = match action {
                     AppAction::ConflictPickOurs => crate::dag::ConflictTermKind::Side(0),
                     AppAction::ConflictPickTheirs => crate::dag::ConflictTermKind::Side(1),
                     _ => crate::dag::ConflictTermKind::Base(0),
                 };
-                let result = app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, pick);
-                let action = write_conflict_resolution(app, result);
-                if matches!(action, Action::Refresh) {
-                    return action;
-                }
-            } else {
-                app.set_error("per-hunk only — use on a conflict hunk row");
+                let result = app.pick_conflict_side(entry_idx, file_idx, hunk_idx, pick);
+                return write_conflict_resolution(app, entry_idx, result, flags);
             }
+            app.set_error("per-hunk only — use on a conflict hunk row");
             Action::None
         }
         AppAction::FileUntrack => {
@@ -672,18 +670,45 @@ fn arrange(app: &mut App, flags: CommandFlags, direction: ArrangeDirection) -> A
     })
 }
 
-fn write_conflict_resolution(app: &mut App, result: crate::app::ConflictPickResult) -> Action {
+/// Apply a completed per-hunk resolution by running `jj resolve` with a
+/// merge tool that copies the assembled content into place. Going through
+/// jj (rather than writing to the working copy) resolves the conflict in
+/// the commit it actually lives in, rebases descendants, and records one
+/// undoable operation.
+fn write_conflict_resolution(
+    app: &mut App,
+    entry_idx: crate::idx::EntryIdx,
+    result: crate::app::ConflictPickResult,
+    flags: CommandFlags,
+) -> Action {
     match result {
         crate::app::ConflictPickResult::FileResolved { path, content } => {
-            let full_path = std::path::Path::new(&app.repo_root).join(path.as_str());
-            if std::fs::write(&full_path, &content).is_ok() {
-                app.set_status(format!("resolved {}", path));
-                Action::Refresh
-            } else {
-                app.set_error(format!("failed to write {}", path));
-                Action::None
+            match persist_resolved_content(&content) {
+                Ok(content_path) => Action::RunJj(JJCommand {
+                    kind: JJCommandKind::Resolve {
+                        change_id: app.change_id(entry_idx),
+                        path: Str::from(path.as_str()),
+                        tool: crate::jj_command::ResolveTool::Content(content_path),
+                    },
+                    flags,
+                }),
+                Err(e) => {
+                    app.set_error(format!("failed to stage resolution for {path}: {e}"));
+                    Action::None
+                }
             }
         }
         crate::app::ConflictPickResult::Pending => Action::None,
     }
+}
+
+/// Persist resolved file content to a temp file for the
+/// `--apply-resolution` merge tool, which removes it after applying.
+fn persist_resolved_content(content: &str) -> std::io::Result<std::path::PathBuf> {
+    use std::io::Write as _;
+    let mut tmp = tempfile::NamedTempFile::new()?;
+    tmp.write_all(content.as_bytes())?;
+    tmp.flush()?;
+    let (_, path) = tmp.keep().map_err(|e| e.error)?;
+    Ok(path)
 }

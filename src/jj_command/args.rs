@@ -538,6 +538,23 @@ impl JJCommand {
                     ResolveTool::Ours => args.push(flag("--tool=:ours")),
                     ResolveTool::Theirs => args.push(flag("--tool=:theirs")),
                     ResolveTool::Default => {}
+                    ResolveTool::Content(content_path) => {
+                        let exe = std::env::current_exe().unwrap_or_else(|_| "kojutsu".into());
+                        args.extend([
+                            flag("--tool"),
+                            arg("kojutsu-apply"),
+                            flag("--config"),
+                            arg(format!(
+                                "merge-tools.kojutsu-apply.program={}",
+                                toml_string_escape(&exe.display().to_string())
+                            )),
+                            flag("--config"),
+                            arg(format!(
+                                "merge-tools.kojutsu-apply.merge-args=[\"--apply-resolution\", {}, \"$output\"]",
+                                toml_string_escape(&content_path.display().to_string())
+                            )),
+                        ]);
+                    }
                 }
                 args.push(fileset_arg(path));
                 args

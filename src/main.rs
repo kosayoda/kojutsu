@@ -61,6 +61,11 @@ struct Cli {
     #[arg(long, hide = true)]
     apply_diff: Option<PathBuf>,
 
+    /// Internal: copy pre-resolved conflict content to a merge tool's
+    /// output file (invoked by jj as `--apply-resolution CONTENT OUTPUT`).
+    #[arg(long, hide = true, num_args = 2, value_names = ["CONTENT", "OUTPUT"])]
+    apply_resolution: Option<Vec<PathBuf>>,
+
     /// Internal: left directory for diff tool mode (positional).
     #[arg(hide = true)]
     diff_left: Option<PathBuf>,
@@ -99,6 +104,16 @@ fn main() -> Result<()> {
 
     if cli.generate_lua_types {
         print!("{}", kojutsu::lua::generate_type_definitions());
+        return Ok(());
+    }
+
+    // Merge tool mode: copy pre-resolved content to the output file and exit.
+    if let Some(paths) = &cli.apply_resolution {
+        let [content, output] = paths.as_slice() else {
+            color_eyre::eyre::bail!("--apply-resolution requires CONTENT and OUTPUT paths");
+        };
+        std::fs::copy(content, output)?;
+        let _ = std::fs::remove_file(content);
         return Ok(());
     }
 
