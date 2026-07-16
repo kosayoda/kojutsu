@@ -23,8 +23,8 @@ use pollster::FutureExt as _;
 
 use super::JjRepo;
 use crate::dag::{
-    CommitDetails, ConflictTerm, ConflictTermKind, DiffLine, DiffLineKind, DiffResult, FileChange,
-    FileStatus, LineStats,
+    CommitDetails, ConflictTerm, ConflictTermKind, ConflictText, DiffLine, DiffLineKind,
+    DiffResult, FileChange, FileStatus, LineStats,
 };
 use crate::types::{CommitId as UiCommitId, RepoPath};
 
@@ -341,21 +341,17 @@ impl JjRepo {
 
         let hunks = match merge_result {
             jj_lib::files::MergeResult::Resolved(content) => {
-                let lines = String::from_utf8_lossy(&content)
-                    .lines()
-                    .map(String::from)
-                    .collect();
-                vec![ConflictHunkKind::Resolved { lines }]
+                vec![ConflictHunkKind::Resolved {
+                    text: ConflictText::from_bytes(&content),
+                }]
             }
             jj_lib::files::MergeResult::Conflict(merge_hunks) => merge_hunks
                 .into_iter()
                 .map(|hunk| {
                     if let Some(resolved) = hunk.as_resolved() {
-                        let lines = String::from_utf8_lossy(resolved.as_ref())
-                            .lines()
-                            .map(String::from)
-                            .collect();
-                        ConflictHunkKind::Resolved { lines }
+                        ConflictHunkKind::Resolved {
+                            text: ConflictText::from_bytes(resolved.as_ref()),
+                        }
                     } else {
                         ConflictHunkKind::Conflict {
                             terms: conflict_terms(&hunk),
@@ -706,10 +702,7 @@ fn conflict_terms<T: AsRef<[u8]>>(hunk: &Merge<T>) -> Vec<ConflictTerm> {
             } else {
                 ConflictTermKind::Base(i / 2)
             },
-            lines: String::from_utf8_lossy(term.as_ref())
-                .lines()
-                .map(String::from)
-                .collect(),
+            text: ConflictText::from_bytes(term.as_ref()),
         })
         .collect()
 }
@@ -1106,7 +1099,7 @@ mod tests {
         let terms = conflict_terms(&hunk);
         let tagged: Vec<(ConflictTermKind, &str)> = terms
             .iter()
-            .map(|t| (t.kind, t.lines[0].as_str()))
+            .map(|t| (t.kind, t.text.lines[0].as_str()))
             .collect();
         assert!(tagged.contains(&(ConflictTermKind::Side(0), "ours")));
         assert!(tagged.contains(&(ConflictTermKind::Side(1), "theirs")));
@@ -1124,12 +1117,12 @@ mod tests {
         let sides: Vec<&str> = terms
             .iter()
             .filter(|t| matches!(t.kind, ConflictTermKind::Side(_)))
-            .map(|t| t.lines[0].as_str())
+            .map(|t| t.text.lines[0].as_str())
             .collect();
         let bases: Vec<&str> = terms
             .iter()
             .filter(|t| matches!(t.kind, ConflictTermKind::Base(_)))
-            .map(|t| t.lines[0].as_str())
+            .map(|t| t.text.lines[0].as_str())
             .collect();
         assert_eq!(sides, ["side1", "side2", "side3"]);
         assert_eq!(bases, ["base1", "base2"]);

@@ -320,8 +320,8 @@ impl App {
                             // Show conflict hunks instead of diff.
                             for (hi, hunk) in hunks.iter().enumerate() {
                                 match hunk {
-                                    crate::dag::ConflictHunkKind::Resolved { lines } => {
-                                        for li in 0..lines.len() {
+                                    crate::dag::ConflictHunkKind::Resolved { text } => {
+                                        for li in 0..text.lines.len() {
                                             rows.push(DisplayRow::ConflictContext {
                                                 entry_idx,
                                                 file_idx,
@@ -337,7 +337,7 @@ impl App {
                                             hunk_idx: ConflictHunkIdx::new(hi),
                                         });
                                         for (ti, term) in terms.iter().enumerate() {
-                                            for li in 0..term.lines.len() {
+                                            for li in 0..term.text.lines.len() {
                                                 rows.push(DisplayRow::ConflictTerm {
                                                     entry_idx,
                                                     file_idx,

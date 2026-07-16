@@ -498,8 +498,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         .and_then(|hunk| match hunk {
                             crate::dag::ConflictHunkKind::Conflict { terms, selected } => {
                                 let term = terms.get(term_idx.raw())?;
-                                let line =
-                                    term.lines.get(line_idx.raw()).cloned().unwrap_or_default();
+                                let line = term
+                                    .text
+                                    .lines
+                                    .get(line_idx.raw())
+                                    .cloned()
+                                    .unwrap_or_default();
                                 let is_selected = *selected == Some(term.kind);
                                 Some((line, is_selected, term.kind, hunk.num_sides()))
                             }
@@ -543,8 +547,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             hunks.get(hunk_idx.raw())
                         })
                         .and_then(|hunk| match hunk {
-                            crate::dag::ConflictHunkKind::Resolved { lines } => {
-                                lines.get(line_idx.raw()).cloned()
+                            crate::dag::ConflictHunkKind::Resolved { text } => {
+                                text.lines.get(line_idx.raw()).cloned()
                             }
                             _ => None,
                         })

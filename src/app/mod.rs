@@ -847,11 +847,8 @@ impl App {
             let mut content = String::new();
             for h in hunks.iter() {
                 match h {
-                    crate::dag::ConflictHunkKind::Resolved { lines } => {
-                        for line in lines {
-                            content.push_str(line);
-                            content.push('\n');
-                        }
+                    crate::dag::ConflictHunkKind::Resolved { text } => {
+                        text.write_to(&mut content);
                     }
                     crate::dag::ConflictHunkKind::Conflict {
                         terms, selected, ..
@@ -859,10 +856,7 @@ impl App {
                         if let Some(kind) = selected
                             && let Some(term) = terms.iter().find(|t| t.kind == *kind)
                         {
-                            for line in &term.lines {
-                                content.push_str(line);
-                                content.push('\n');
-                            }
+                            term.text.write_to(&mut content);
                         }
                     }
                 }

@@ -376,17 +376,48 @@ impl ConflictTermKind {
     }
 }
 
-/// One term of a conflict hunk: a side's or base's content lines.
+/// Text content stored as display lines. `str::lines` drops the final
+/// newline, so whether the content ended with one is kept separately for
+/// faithful reassembly.
+#[derive(Clone)]
+pub struct ConflictText {
+    pub lines: Vec<String>,
+    pub trailing_newline: bool,
+}
+
+impl ConflictText {
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self {
+            lines: String::from_utf8_lossy(bytes)
+                .lines()
+                .map(String::from)
+                .collect(),
+            trailing_newline: bytes.ends_with(b"\n"),
+        }
+    }
+
+    /// Append the content to `out`, restoring line terminators.
+    pub fn write_to(&self, out: &mut String) {
+        for (i, line) in self.lines.iter().enumerate() {
+            out.push_str(line);
+            if i + 1 < self.lines.len() || self.trailing_newline {
+                out.push('\n');
+            }
+        }
+    }
+}
+
+/// One term of a conflict hunk: a side's or base's content.
 #[derive(Clone)]
 pub struct ConflictTerm {
     pub kind: ConflictTermKind,
-    pub lines: Vec<String>,
+    pub text: ConflictText,
 }
 
 #[derive(Clone)]
 pub enum ConflictHunkKind {
     /// Auto-resolved section — just context lines.
-    Resolved { lines: Vec<String> },
+    Resolved { text: ConflictText },
     /// Conflicted section with multiple terms to choose from.
     Conflict {
         /// Terms in jj's materialized order: side 1, base 1, side 2, ...
@@ -524,5 +555,20 @@ impl DiffLineKind {
     /// Whether this line kind can be individually selected (added or removed).
     pub fn is_selectable(self) -> bool {
         matches!(self, Self::Added | Self::Removed)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn conflict_text_round_trips_content() {
+        for content in ["a\nb\n", "a\nb", "", "\n", "a\n\n", "no newline"] {
+            let text = ConflictText::from_bytes(content.as_bytes());
+            let mut out = String::new();
+            text.write_to(&mut out);
+            assert_eq!(out, content, "round trip failed for {content:?}");
+        }
     }
 }
