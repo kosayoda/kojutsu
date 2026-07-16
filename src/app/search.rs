@@ -306,7 +306,7 @@ impl App {
             | DisplayRow::OpLogLoadMore
             | DisplayRow::EvoLogGraphLink { .. }
             | DisplayRow::ConflictHeader { .. }
-            | DisplayRow::ConflictSide { .. }
+            | DisplayRow::ConflictTerm { .. }
             | DisplayRow::ConflictContext { .. } => false,
             DisplayRow::EvoLogItem { evolog_idx } => {
                 let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) else {

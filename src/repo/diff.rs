@@ -23,7 +23,8 @@ use pollster::FutureExt as _;
 
 use super::JjRepo;
 use crate::dag::{
-    CommitDetails, DiffLine, DiffLineKind, DiffResult, FileChange, FileStatus, LineStats,
+    CommitDetails, ConflictTerm, ConflictTermKind, DiffLine, DiffLineKind, DiffResult, FileChange,
+    FileStatus, LineStats,
 };
 use crate::types::{CommitId as UiCommitId, RepoPath};
 
@@ -346,35 +347,23 @@ impl JjRepo {
                     .collect();
                 vec![ConflictHunkKind::Resolved { lines }]
             }
-            jj_lib::files::MergeResult::Conflict(merge_hunks) => {
-                merge_hunks
-                    .into_iter()
-                    .map(|hunk| {
-                        if let Some(resolved) = hunk.as_resolved() {
-                            let lines = String::from_utf8_lossy(resolved.as_ref())
-                                .lines()
-                                .map(String::from)
-                                .collect();
-                            ConflictHunkKind::Resolved { lines }
-                        } else {
-                            // Collect each side's content as lines.
-                            let sides: Vec<Vec<String>> = hunk
-                                .iter()
-                                .map(|side| {
-                                    String::from_utf8_lossy(side.as_ref())
-                                        .lines()
-                                        .map(String::from)
-                                        .collect()
-                                })
-                                .collect();
-                            ConflictHunkKind::Conflict {
-                                sides,
-                                selected: None,
-                            }
+            jj_lib::files::MergeResult::Conflict(merge_hunks) => merge_hunks
+                .into_iter()
+                .map(|hunk| {
+                    if let Some(resolved) = hunk.as_resolved() {
+                        let lines = String::from_utf8_lossy(resolved.as_ref())
+                            .lines()
+                            .map(String::from)
+                            .collect();
+                        ConflictHunkKind::Resolved { lines }
+                    } else {
+                        ConflictHunkKind::Conflict {
+                            terms: conflict_terms(&hunk),
+                            selected: None,
                         }
-                    })
-                    .collect()
-            }
+                    }
+                })
+                .collect(),
         };
 
         Ok(hunks)
@@ -702,6 +691,27 @@ impl JjRepo {
             _ => color_eyre::eyre::bail!("path is not a regular file"),
         }
     }
+}
+
+/// Tag each term of a conflicted merge hunk with its kind. A `Merge`
+/// interleaves positive and negative terms, starting positive: side 1,
+/// base 1, side 2, base 2, ... — this is the only place that may depend
+/// on that ordering.
+fn conflict_terms<T: AsRef<[u8]>>(hunk: &Merge<T>) -> Vec<ConflictTerm> {
+    hunk.iter()
+        .enumerate()
+        .map(|(i, term)| ConflictTerm {
+            kind: if i % 2 == 0 {
+                ConflictTermKind::Side(i / 2)
+            } else {
+                ConflictTermKind::Base(i / 2)
+            },
+            lines: String::from_utf8_lossy(term.as_ref())
+                .lines()
+                .map(String::from)
+                .collect(),
+        })
+        .collect()
 }
 
 fn default_materialize_options() -> ConflictMaterializeOptions {
@@ -1080,5 +1090,48 @@ fn hunks_to_color_words_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut 
             }
         }
         builder.flush(out);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `Merge::from_removes_adds` is jj's canonical constructor: adds are
+    /// the sides, removes are the bases. Pin that our tagging recovers
+    /// them correctly from the interleaved iteration order.
+    #[test]
+    fn conflict_terms_tags_sides_and_bases() {
+        let hunk = Merge::from_removes_adds(vec!["base\n"], vec!["ours\n", "theirs\n"]);
+        let terms = conflict_terms(&hunk);
+        let tagged: Vec<(ConflictTermKind, &str)> = terms
+            .iter()
+            .map(|t| (t.kind, t.lines[0].as_str()))
+            .collect();
+        assert!(tagged.contains(&(ConflictTermKind::Side(0), "ours")));
+        assert!(tagged.contains(&(ConflictTermKind::Side(1), "theirs")));
+        assert!(tagged.contains(&(ConflictTermKind::Base(0), "base")));
+    }
+
+    #[test]
+    fn conflict_terms_tags_n_way_merges() {
+        let hunk = Merge::from_removes_adds(
+            vec!["base1\n", "base2\n"],
+            vec!["side1\n", "side2\n", "side3\n"],
+        );
+        let terms = conflict_terms(&hunk);
+        assert_eq!(terms.len(), 5);
+        let sides: Vec<&str> = terms
+            .iter()
+            .filter(|t| matches!(t.kind, ConflictTermKind::Side(_)))
+            .map(|t| t.lines[0].as_str())
+            .collect();
+        let bases: Vec<&str> = terms
+            .iter()
+            .filter(|t| matches!(t.kind, ConflictTermKind::Base(_)))
+            .map(|t| t.lines[0].as_str())
+            .collect();
+        assert_eq!(sides, ["side1", "side2", "side3"]);
+        assert_eq!(bases, ["base1", "base2"]);
     }
 }

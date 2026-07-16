@@ -348,17 +348,62 @@ pub enum FileStatus {
     Error,
 }
 
+/// Identifies one term of a conflict hunk. jj represents a conflict as
+/// alternating positive terms ("sides", the contents to merge) and negative
+/// terms ("bases", the common ancestors diffed away); ordinals are 0-based.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ConflictTermKind {
+    Side(usize),
+    Base(usize),
+}
+
+impl ConflictTermKind {
+    /// Human-readable label. Two-sided conflicts use the familiar
+    /// ours/theirs/base; n-way conflicts fall back to numbered terms.
+    pub fn label(self, num_sides: usize) -> String {
+        if num_sides <= 2 {
+            match self {
+                Self::Side(0) => "ours".to_string(),
+                Self::Side(_) => "theirs".to_string(),
+                Self::Base(_) => "base".to_string(),
+            }
+        } else {
+            match self {
+                Self::Side(n) => format!("side {}", n + 1),
+                Self::Base(n) => format!("base {}", n + 1),
+            }
+        }
+    }
+}
+
+/// One term of a conflict hunk: a side's or base's content lines.
+#[derive(Clone)]
+pub struct ConflictTerm {
+    pub kind: ConflictTermKind,
+    pub lines: Vec<String>,
+}
+
 #[derive(Clone)]
 pub enum ConflictHunkKind {
     /// Auto-resolved section — just context lines.
     Resolved { lines: Vec<String> },
-    /// Conflicted section with multiple sides to choose from.
+    /// Conflicted section with multiple terms to choose from.
     Conflict {
-        /// Each side's content lines.
-        sides: Vec<Vec<String>>,
-        /// Which side the user picked (None = unresolved).
-        selected: Option<usize>,
+        /// Terms in jj's materialized order: side 1, base 1, side 2, ...
+        terms: Vec<ConflictTerm>,
+        /// Which term the user picked (None = unresolved).
+        selected: Option<ConflictTermKind>,
     },
+}
+
+impl ConflictHunkKind {
+    /// Number of positive terms (sides) in a conflict hunk; 0 for resolved.
+    pub fn num_sides(&self) -> usize {
+        match self {
+            Self::Resolved { .. } => 0,
+            Self::Conflict { terms, .. } => terms.len().div_ceil(2),
+        }
+    }
 }
 
 /// A token within a diff line (for word-level highlighting).

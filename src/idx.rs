@@ -93,11 +93,11 @@ define_idx!(
     pub ConflictHunkIdx
 );
 define_idx!(
-    /// Index into sides of a conflict hunk.
-    pub ConflictSideIdx
+    /// Index into the terms of a conflict hunk.
+    pub ConflictTermIdx
 );
 define_idx!(
-    /// Index into lines within a conflict side or context.
+    /// Index into lines within a conflict term or context.
     pub ConflictLineIdx
 );
 define_idx!(

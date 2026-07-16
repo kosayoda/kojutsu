@@ -787,7 +787,7 @@ pub fn has_conflict_context(app: &App) -> bool {
         app.rows.get(app.cursor.raw()),
         Some(
             DisplayRow::ConflictHeader { .. }
-                | DisplayRow::ConflictSide { .. }
+                | DisplayRow::ConflictTerm { .. }
                 | DisplayRow::FileChange { .. }
                 | DisplayRow::DiffLine { .. }
         )

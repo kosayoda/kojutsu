@@ -805,14 +805,14 @@ impl App {
         self.views.tag_entries.get(tag_idx.raw())
     }
 
-    /// Pick a conflict side for a hunk. Returns whether the file was fully
+    /// Pick a conflict term for a hunk. Returns whether the file was fully
     /// resolved (all hunks picked) and written to disk.
     pub fn pick_conflict_side(
         &mut self,
         entry_idx: EntryIdx,
         file_idx: FileIdx,
         hunk_idx: crate::idx::ConflictHunkIdx,
-        side: usize,
+        pick: crate::dag::ConflictTermKind,
     ) -> ConflictPickResult {
         let hi = hunk_idx.raw();
         let Some(hunks) =
@@ -829,11 +829,11 @@ impl App {
             return ConflictPickResult::Pending;
         };
         if let crate::dag::ConflictHunkKind::Conflict {
-            sides, selected, ..
+            terms, selected, ..
         } = hunk
-            && side < sides.len()
+            && terms.iter().any(|t| t.kind == pick)
         {
-            *selected = Some(side);
+            *selected = Some(pick);
         }
 
         // Check if all conflict hunks are now resolved.
@@ -854,12 +854,12 @@ impl App {
                         }
                     }
                     crate::dag::ConflictHunkKind::Conflict {
-                        sides, selected, ..
+                        terms, selected, ..
                     } => {
-                        if let Some(si) = selected
-                            && let Some(side_lines) = sides.get(*si)
+                        if let Some(kind) = selected
+                            && let Some(term) = terms.iter().find(|t| t.kind == *kind)
                         {
-                            for line in side_lines {
+                            for line in &term.lines {
                                 content.push_str(line);
                                 content.push('\n');
                             }

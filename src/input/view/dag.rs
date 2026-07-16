@@ -65,22 +65,22 @@ pub(in crate::input) fn dispatch(
                 file_idx,
                 hunk_idx,
             })
-            | Some(DisplayRow::ConflictSide {
+            | Some(DisplayRow::ConflictTerm {
                 entry_idx,
                 file_idx,
                 hunk_idx,
                 ..
             }) = app.rows.get(app.cursor.raw())
             {
-                let side = match action {
-                    AppAction::ResolveOurs => 0,
-                    AppAction::ResolveTheirs => 1,
+                let pick = match action {
+                    AppAction::ResolveOurs => crate::dag::ConflictTermKind::Side(0),
+                    AppAction::ResolveTheirs => crate::dag::ConflictTermKind::Side(1),
                     _ => {
                         app.set_error("merge tool is for whole-file only");
                         return Action::None;
                     }
                 };
-                let result = app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, side);
+                let result = app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, pick);
                 return write_conflict_resolution(app, result);
             }
 
@@ -138,19 +138,19 @@ pub(in crate::input) fn dispatch(
                 file_idx,
                 hunk_idx,
             })
-            | Some(DisplayRow::ConflictSide {
+            | Some(DisplayRow::ConflictTerm {
                 entry_idx,
                 file_idx,
                 hunk_idx,
                 ..
             }) = app.rows.get(app.cursor.raw())
             {
-                let side = match action {
-                    AppAction::ConflictPickOurs => 0,
-                    AppAction::ConflictPickTheirs => 1,
-                    _ => 2, // base
+                let pick = match action {
+                    AppAction::ConflictPickOurs => crate::dag::ConflictTermKind::Side(0),
+                    AppAction::ConflictPickTheirs => crate::dag::ConflictTermKind::Side(1),
+                    _ => crate::dag::ConflictTermKind::Base(0),
                 };
-                let result = app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, side);
+                let result = app.pick_conflict_side(*entry_idx, *file_idx, *hunk_idx, pick);
                 let action = write_conflict_resolution(app, result);
                 if matches!(action, Action::Refresh) {
                     return action;

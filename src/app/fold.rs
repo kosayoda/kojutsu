@@ -1,7 +1,7 @@
 use super::{ActiveView, App, Loadable};
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, CommandLogIdx, ConflictHunkIdx,
-    ConflictLineIdx, ConflictSideIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx,
+    ConflictLineIdx, ConflictTermIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx,
     FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, RowIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
@@ -330,19 +330,19 @@ impl App {
                                             });
                                         }
                                     }
-                                    crate::dag::ConflictHunkKind::Conflict { sides, .. } => {
+                                    crate::dag::ConflictHunkKind::Conflict { terms, .. } => {
                                         rows.push(DisplayRow::ConflictHeader {
                                             entry_idx,
                                             file_idx,
                                             hunk_idx: ConflictHunkIdx::new(hi),
                                         });
-                                        for (si, side) in sides.iter().enumerate() {
-                                            for li in 0..side.len() {
-                                                rows.push(DisplayRow::ConflictSide {
+                                        for (ti, term) in terms.iter().enumerate() {
+                                            for li in 0..term.lines.len() {
+                                                rows.push(DisplayRow::ConflictTerm {
                                                     entry_idx,
                                                     file_idx,
                                                     hunk_idx: ConflictHunkIdx::new(hi),
-                                                    side_idx: ConflictSideIdx::new(si),
+                                                    term_idx: ConflictTermIdx::new(ti),
                                                     line_idx: ConflictLineIdx::new(li),
                                                 });
                                             }
@@ -492,7 +492,7 @@ fn dag_cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>;
             None,
         ],
         Some(
-            DisplayRow::ConflictSide {
+            DisplayRow::ConflictTerm {
                 entry_idx,
                 file_idx,
                 hunk_idx,

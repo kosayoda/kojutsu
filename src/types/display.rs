@@ -1,6 +1,6 @@
 use crate::idx::{
     AnnotateDetailIdx, AnnotateLineIdx, BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx,
-    CommandLogIdx, ConflictHunkIdx, ConflictLineIdx, ConflictSideIdx, DescriptionLineIdx,
+    CommandLogIdx, ConflictHunkIdx, ConflictLineIdx, ConflictTermIdx, DescriptionLineIdx,
     DiffLineIdx, EntryIdx, EvoLogIdx, FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx,
     TagDetailIdx, TagIdx, WorkspaceIdx,
 };
@@ -99,12 +99,12 @@ pub enum DisplayRow {
         file_idx: FileIdx,
         hunk_idx: ConflictHunkIdx,
     },
-    /// A line from a conflict side (ours/theirs/base).
-    ConflictSide {
+    /// A line from a conflict term (a side or base).
+    ConflictTerm {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
         hunk_idx: ConflictHunkIdx,
-        side_idx: ConflictSideIdx,
+        term_idx: ConflictTermIdx,
         line_idx: ConflictLineIdx,
     },
     /// A resolved (context) line within a conflict view.
@@ -142,7 +142,7 @@ impl DisplayRow {
             | Self::FileChange { entry_idx, .. }
             | Self::DiffLine { entry_idx, .. }
             | Self::ConflictHeader { entry_idx, .. }
-            | Self::ConflictSide { entry_idx, .. }
+            | Self::ConflictTerm { entry_idx, .. }
             | Self::ConflictContext { entry_idx, .. } => Some(entry_idx),
             _ => None,
         }
@@ -165,7 +165,7 @@ impl DisplayRow {
                 file_idx,
                 ..
             }
-            | Self::ConflictSide {
+            | Self::ConflictTerm {
                 entry_idx,
                 file_idx,
                 ..

@@ -479,13 +479,14 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         ),
                     ])]
                 }
-                DisplayRow::ConflictSide {
+                DisplayRow::ConflictTerm {
                     entry_idx,
                     file_idx,
                     hunk_idx,
-                    side_idx,
+                    term_idx,
                     line_idx,
                 } => {
+                    use crate::dag::ConflictTermKind;
                     let text = app
                         .nodes
                         .get(*entry_idx)
@@ -495,41 +496,34 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             hunks.get(hunk_idx.raw())
                         })
                         .and_then(|hunk| match hunk {
-                            crate::dag::ConflictHunkKind::Conflict {
-                                sides, selected, ..
-                            } => {
-                                let line = sides
-                                    .get(side_idx.raw())
-                                    .and_then(|s| s.get(line_idx.raw()))
-                                    .cloned()
-                                    .unwrap_or_default();
-                                let is_selected = *selected == Some(side_idx.raw());
-                                Some((line, is_selected, side_idx.raw()))
+                            crate::dag::ConflictHunkKind::Conflict { terms, selected } => {
+                                let term = terms.get(term_idx.raw())?;
+                                let line =
+                                    term.lines.get(line_idx.raw()).cloned().unwrap_or_default();
+                                let is_selected = *selected == Some(term.kind);
+                                Some((line, is_selected, term.kind, hunk.num_sides()))
                             }
                             _ => None,
-                        })
-                        .unwrap_or_default();
-                    let (line_text, is_selected, si) = text;
-                    let label = match si {
-                        0 => "[ours]  ",
-                        1 => "[theirs]",
-                        _ => "[base]  ",
+                        });
+                    let Some((line_text, is_selected, kind, num_sides)) = text else {
+                        return vec![Line::raw("")];
                     };
-                    let side_color = match si {
-                        0 => theme.added,
-                        1 => theme.change_id,
-                        _ => theme.accent,
+                    let label = format!("[{}]", kind.label(num_sides));
+                    let term_color = match kind {
+                        ConflictTermKind::Side(0) => theme.added,
+                        ConflictTermKind::Side(_) => theme.change_id,
+                        ConflictTermKind::Base(_) => theme.accent,
                     };
                     let style = if is_selected {
                         Style::default()
-                            .fg(side_color)
+                            .fg(term_color)
                             .add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
                     } else {
-                        Style::default().fg(side_color)
+                        Style::default().fg(term_color)
                     };
                     vec![Line::from(vec![
                         Span::raw("          "),
-                        Span::styled(label, style),
+                        Span::styled(format!("{label:<8}"), style),
                         Span::raw(" "),
                         Span::styled(line_text, style),
                     ])]
