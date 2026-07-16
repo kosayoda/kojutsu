@@ -360,6 +360,37 @@ fn main() -> Result<()> {
                 open_revision_in_editor(&repo_path, &commit_id, &path, line, &mut terminal);
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
             }
+            Action::EditConflictResolution {
+                change_id,
+                path,
+                content,
+                flags,
+            } => {
+                terminal_events.stop();
+                let edited = edit_content_in_editor(&content, path.as_str(), &mut terminal);
+                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+                match edited {
+                    Some(edited) if edited != content => {
+                        match kojutsu::input::resolution_command(change_id, &path, &edited, flags) {
+                            Ok(cmd) => {
+                                let action_label = app.last_action_label.take();
+                                run_jj_command(
+                                    &mut app,
+                                    &repo_path,
+                                    cmd,
+                                    action_label,
+                                    &event_tx,
+                                    false,
+                                );
+                            }
+                            Err(e) => {
+                                app.set_error(format!("failed to stage resolution: {e}"));
+                            }
+                        }
+                    }
+                    _ => app.set_status("edit cancelled - no changes"),
+                }
+            }
             Action::CheckoutAndEdit {
                 commit_id,
                 path,
@@ -582,6 +613,42 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
                 vec![],
             );
         }
+    }
+}
+
+/// Suspend the TUI, open `content` in $EDITOR (temp file suffixed like
+/// `path` for syntax highlighting), and return the edited content.
+/// `None` = cancelled (editor failed or exited non-zero).
+fn edit_content_in_editor(
+    content: &str,
+    path: &str,
+    terminal: &mut kojutsu::terminal::Term,
+) -> Option<String> {
+    use std::io::Write;
+
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    let suffix = std::path::Path::new(path)
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let mut tmpfile = tempfile::Builder::new().suffix(&suffix).tempfile().ok()?;
+    tmpfile.write_all(content.as_bytes()).ok()?;
+    tmpfile.flush().ok()?;
+    let tmp_path = tmpfile.path().to_path_buf();
+
+    let _ = kojutsu::terminal::restore();
+    let status = std::process::Command::new(&editor).arg(&tmp_path).status();
+    *terminal = match kojutsu::terminal::init() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("fatal: failed to re-init terminal: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    match status {
+        Ok(s) if s.success() => std::fs::read_to_string(&tmp_path).ok(),
+        _ => None,
     }
 }
 

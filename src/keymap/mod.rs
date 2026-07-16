@@ -151,6 +151,7 @@ pub enum AppAction {
     ConflictPickBase,
     ConflictUnpick,
     ConflictApplyPicks,
+    ConflictEditFile,
     ToggleIgnoreImmutable,
     ToggleIgnoreWorkingCopy,
     ToggleDebug,
@@ -280,6 +281,7 @@ impl AppAction {
             | AppAction::PageDown
             | AppAction::PageUp
             | AppAction::JumpToWorkingCopy
+            | AppAction::ConflictEditFile
             | AppAction::MoveToTop
             | AppAction::MoveToBottom
             | AppAction::MoveToScreenTop
@@ -476,6 +478,7 @@ impl AppAction {
             | AppAction::ResolveTheirs
             | AppAction::ResolveMergeTool
             | AppAction::ConflictApplyPicks
+            | AppAction::ConflictEditFile
             | AppAction::WorkspaceAdd
             | AppAction::WorkspaceForget
             | AppAction::WorkspaceRename

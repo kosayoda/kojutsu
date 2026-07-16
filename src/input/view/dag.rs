@@ -171,6 +171,41 @@ pub(in crate::input) fn dispatch(
             };
             apply_conflict_resolution(app, entry_idx, path, content, flags)
         }
+        AppAction::ConflictEditFile => {
+            // Hand-edit the resolution: picked hunks applied, unpicked
+            // hunks as markers. Applied via jj resolve on editor exit.
+            let Some((entry_idx, file_idx)) =
+                app.rows.get(app.cursor.raw()).and_then(|r| r.dag_file())
+            else {
+                app.set_error("cursor must be on a conflicted file");
+                return Action::None;
+            };
+            let Some(file) = app
+                .files_for_entry(entry_idx)
+                .and_then(|f| f.get(file_idx.raw()))
+            else {
+                return Action::None;
+            };
+            if !file.has_conflict {
+                app.set_error("no conflict on this file");
+                return Action::None;
+            }
+            let path = file.path.clone();
+            let Some(hunks) = app.nodes[entry_idx]
+                .conflict_hunks(file_idx)
+                .and_then(|l| l.loaded())
+            else {
+                app.set_error("conflict hunks not loaded — unfold the file first (tab)");
+                return Action::None;
+            };
+            let (content, _complete) = crate::repo::assemble_resolution(hunks);
+            Action::EditConflictResolution {
+                change_id: app.change_id(entry_idx),
+                path,
+                content,
+                flags,
+            }
+        }
         AppAction::FileUntrack => {
             let paths = app.selected_file_paths();
             if paths.is_empty() {
@@ -731,6 +766,26 @@ pub(in crate::input) fn maybe_offer_apply(
             false
         }
     }
+}
+
+/// Build the `jj resolve` command that applies resolution content
+/// (staged in a temp file for the `--apply-resolution` merge tool).
+/// Content containing markers stays conflicted — jj parses them back.
+pub fn resolution_command(
+    change_id: ChangeId,
+    path: &crate::types::RepoPath,
+    content: &str,
+    flags: CommandFlags,
+) -> std::io::Result<JJCommand> {
+    let content_path = persist_resolved_content(content)?;
+    Ok(JJCommand {
+        kind: JJCommandKind::Resolve {
+            change_id,
+            path: Str::from(path.as_str()),
+            tool: crate::jj_command::ResolveTool::Content(content_path),
+        },
+        flags,
+    })
 }
 
 /// Apply accumulated picks by running `jj resolve` with a merge tool that

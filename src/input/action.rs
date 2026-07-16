@@ -638,6 +638,7 @@ pub fn dispatch_action_after_hooks(
         | AppAction::ConflictPickBase
         | AppAction::ConflictUnpick
         | AppAction::ConflictApplyPicks
+        | AppAction::ConflictEditFile
         | AppAction::FileUntrack
         | AppAction::Commit
         | AppAction::CommitWithMessage

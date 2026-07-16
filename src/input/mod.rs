@@ -4,6 +4,8 @@ mod list;
 mod modal;
 mod view;
 
+pub use view::dag::resolution_command;
+
 pub use action::{dispatch_action_after_hooks, has_conflict_context, has_file_context};
 
 use ratatui::crossterm::event::{
@@ -58,6 +60,15 @@ pub enum Action {
         commit_id: crate::types::CommitId,
         path: crate::types::RepoPath,
         line: usize,
+    },
+    /// Suspend TUI, edit an assembled conflict resolution (picks applied,
+    /// unpicked hunks as markers) in $EDITOR; apply via `jj resolve` if
+    /// changed.
+    EditConflictResolution {
+        change_id: crate::types::ChangeId,
+        path: crate::types::RepoPath,
+        content: String,
+        flags: crate::keymap::CommandFlags,
     },
     /// Pre-hooks completed after yielding; dispatch the deferred action.
     DeferredDispatch {
