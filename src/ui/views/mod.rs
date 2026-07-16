@@ -120,7 +120,7 @@ pub(super) fn render_simple_diff_line(
     let Some(diff_line) = diff_line else {
         return vec![Line::raw("")];
     };
-    let (base_style, prefix) = match diff_line.kind {
+    let (mut base_style, prefix) = match diff_line.kind {
         DiffLineKind::Added => (Style::default().fg(theme.added), "+"),
         DiffLineKind::Removed => (Style::default().fg(theme.error), "-"),
         DiffLineKind::Context => (Style::default().fg(theme.muted), " "),
@@ -131,6 +131,9 @@ pub(super) fn render_simple_diff_line(
             "@",
         ),
     };
+    if diff_line.conflict_region {
+        base_style = base_style.add_modifier(Modifier::DIM);
+    }
     let mut spans = vec![
         gutter_span(search, theme),
         Span::styled(format!("    {prefix} "), base_style),

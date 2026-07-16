@@ -369,7 +369,7 @@ pub(crate) fn render_diff_line(
     tab_str: &str,
 ) -> Vec<Line<'static>> {
     let mut spans = vec![gutter_span(search, theme)];
-    let is_selectable = diff_line.kind.is_selectable();
+    let is_selectable = diff_line.is_selectable();
     if is_selectable {
         let bar = if flags.in_visual { "│" } else { " " };
         let sel = if flags.is_selected { "▎" } else { " " };
@@ -379,12 +379,15 @@ pub(crate) fn render_diff_line(
         spans.push(Span::raw("  "));
     }
 
-    let (marker, style) = match diff_line.kind {
+    let (marker, mut style) = match diff_line.kind {
         DiffLineKind::Header => (" ", Style::default().fg(theme.accent)),
         DiffLineKind::Context => (" ", Style::default().fg(theme.muted)),
         DiffLineKind::Added => ("+", Style::default().fg(theme.added)),
         DiffLineKind::Removed => ("-", Style::default().fg(theme.error)),
     };
+    if diff_line.conflict_region {
+        style = style.add_modifier(Modifier::DIM);
+    }
 
     let line_num_style = Style::default().fg(theme.muted);
     if show_line_numbers && diff_line.kind != DiffLineKind::Header {

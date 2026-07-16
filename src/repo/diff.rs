@@ -33,18 +33,34 @@ const BINARY_SNIFF_SIZE: usize = 8000;
 
 /// One side of a file diff, extracted with a size cap.
 enum DiffSideContent {
-    Text(bstr::BString),
+    Text {
+        content: bstr::BString,
+        /// 1-based line ranges that are materialized conflict regions
+        /// (markers plus the term content between them). Empty for
+        /// unconflicted sides.
+        conflict_regions: Vec<std::ops::Range<u32>>,
+    },
     Binary,
     /// Regular file larger than the diff size limit; content not loaded.
     TooLarge,
+}
+
+impl DiffSideContent {
+    fn text(content: impl Into<bstr::BString>) -> Self {
+        Self::Text {
+            content: content.into(),
+            conflict_regions: Vec::new(),
+        }
+    }
 }
 
 /// Materialize one side of a file diff. Regular files are read through a
 /// size cap (`limit` bytes — a memory guard, not a latency cap; diff work
 /// runs on background workers) so oversized blobs are never fully loaded
 /// (jj's `git_diff_part` reads whole files before its binary check and has
-/// no cap); other tree values (symlinks, conflicts, submodules) still go
-/// through `git_diff_part`.
+/// no cap). Conflicted files materialize hunk by hunk so the conflict
+/// regions' line ranges are tracked exactly; other tree values (symlinks,
+/// submodules) still go through `git_diff_part`.
 fn materialize_diff_side(
     store: &Arc<Store>,
     path: &JjRepoPath,
@@ -54,39 +70,91 @@ fn materialize_diff_side(
     limit: usize,
 ) -> Result<DiffSideContent> {
     let materialized = materialize_tree_value(store, path, value, labels).block_on()?;
-    if let MaterializedTreeValue::File(mut file) = materialized {
-        let read_err = |e: futures::io::Error| {
-            color_eyre::eyre::eyre!("failed to read {}: {e}", path.as_internal_file_string())
-        };
-        // Sniff the first 8k for a null byte (git's binary heuristic) so
-        // binary blobs are detected without reading their full content.
-        let mut contents = Vec::new();
-        (&mut file.reader)
-            .take(BINARY_SNIFF_SIZE as u64)
-            .read_to_end(&mut contents)
-            .block_on()
-            .map_err(read_err)?;
-        if contents.contains(&0) {
-            return Ok(DiffSideContent::Binary);
+    match materialized {
+        MaterializedTreeValue::File(mut file) => {
+            let read_err = |e: futures::io::Error| {
+                color_eyre::eyre::eyre!("failed to read {}: {e}", path.as_internal_file_string())
+            };
+            // Sniff the first 8k for a null byte (git's binary heuristic) so
+            // binary blobs are detected without reading their full content.
+            let mut contents = Vec::new();
+            (&mut file.reader)
+                .take(BINARY_SNIFF_SIZE as u64)
+                .read_to_end(&mut contents)
+                .block_on()
+                .map_err(read_err)?;
+            if contents.contains(&0) {
+                return Ok(DiffSideContent::Binary);
+            }
+            (&mut file.reader)
+                .take(limit.saturating_add(1).saturating_sub(contents.len()) as u64)
+                .read_to_end(&mut contents)
+                .block_on()
+                .map_err(read_err)?;
+            if contents.len() > limit {
+                return Ok(DiffSideContent::TooLarge);
+            }
+            Ok(DiffSideContent::text(contents))
         }
-        (&mut file.reader)
-            .take(limit.saturating_add(1).saturating_sub(contents.len()) as u64)
-            .read_to_end(&mut contents)
-            .block_on()
-            .map_err(read_err)?;
-        if contents.len() > limit {
-            return Ok(DiffSideContent::TooLarge);
+        MaterializedTreeValue::FileConflict(conflict) => {
+            Ok(materialize_conflict_with_regions(&conflict.contents))
         }
-        return Ok(DiffSideContent::Text(contents.into()));
+        other => {
+            let part = git_diff_part(path, other, materialize_options)
+                .block_on()
+                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
+            Ok(if part.content.is_binary {
+                DiffSideContent::Binary
+            } else {
+                DiffSideContent::text(part.content.contents)
+            })
+        }
     }
-    let part = git_diff_part(path, materialized, materialize_options)
-        .block_on()
-        .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-    Ok(if part.content.is_binary {
-        DiffSideContent::Binary
-    } else {
-        DiffSideContent::Text(part.content.contents)
-    })
+}
+
+/// Materialize a conflicted file the same way jj does (per-hunk markers),
+/// while recording which 1-based output line ranges are conflict regions.
+fn materialize_conflict_with_regions(contents: &Merge<bstr::BString>) -> DiffSideContent {
+    let options = default_materialize_options();
+    let mut out: Vec<u8> = Vec::new();
+    let mut regions = Vec::new();
+    let mut line: u32 = 1;
+    let append = |bytes: &[u8], out: &mut Vec<u8>| -> u32 {
+        let mut n = bytes.iter().filter(|b| **b == b'\n').count() as u32;
+        if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+            n += 1;
+        }
+        out.extend_from_slice(bytes);
+        n
+    };
+    match jj_lib::files::merge_hunks(contents, &options.merge) {
+        jj_lib::files::MergeResult::Resolved(content) => {
+            append(content.as_ref(), &mut out);
+        }
+        jj_lib::files::MergeResult::Conflict(merge_hunks) => {
+            for hunk in merge_hunks {
+                if let Some(resolved) = hunk.as_resolved() {
+                    line += append(resolved.as_ref(), &mut out);
+                } else {
+                    let materialized = jj_lib::conflicts::materialize_merge_result_to_bytes(
+                        &hunk,
+                        &ConflictLabels::unlabeled(),
+                        &options,
+                    );
+                    let n = append(materialized.as_ref(), &mut out);
+                    regions.push(line..line + n);
+                    line += n;
+                }
+            }
+        }
+    }
+    if out.contains(&0) {
+        return DiffSideContent::Binary;
+    }
+    DiffSideContent::Text {
+        content: out.into(),
+        conflict_regions: regions,
+    }
 }
 
 /// A single-line placeholder shown instead of a real diff (binary or
@@ -98,6 +166,7 @@ fn placeholder_diff(text: impl Into<String>) -> DiffResult {
         tokens: vec![],
         old_line: None,
         new_line: None,
+        conflict_region: false,
     };
     DiffResult {
         git: vec![line.clone()],
@@ -243,7 +312,12 @@ impl JjRepo {
                 &materialize_options,
                 self.diff_size_limit,
             )?;
-            let (DiffSideContent::Text(before), DiffSideContent::Text(after)) = (before, after)
+            let (
+                DiffSideContent::Text {
+                    content: before, ..
+                },
+                DiffSideContent::Text { content: after, .. },
+            ) = (before, after)
             else {
                 continue;
             };
@@ -443,7 +517,13 @@ impl JjRepo {
                 &materialize_options,
                 self.diff_size_limit,
             )?;
-            if let (DiffSideContent::Text(before), DiffSideContent::Text(after)) = (before, after) {
+            if let (
+                DiffSideContent::Text {
+                    content: before, ..
+                },
+                DiffSideContent::Text { content: after, .. },
+            ) = (before, after)
+            {
                 let contents = Diff::new(before.as_ref(), after.as_ref());
                 let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
                 file_stats = count_line_stats(&hunks);
@@ -521,8 +601,17 @@ impl JjRepo {
             self.diff_size_limit,
         )?;
 
-        let (before, after) = match (before, after) {
-            (DiffSideContent::Text(b), DiffSideContent::Text(a)) => (b, a),
+        let (before, before_regions, after, after_regions) = match (before, after) {
+            (
+                DiffSideContent::Text {
+                    content: b,
+                    conflict_regions: br,
+                },
+                DiffSideContent::Text {
+                    content: a,
+                    conflict_regions: ar,
+                },
+            ) => (b, br, a, ar),
             (DiffSideContent::TooLarge, _) | (_, DiffSideContent::TooLarge) => {
                 return Ok(too_large_placeholder(self.diff_size_limit));
             }
@@ -540,6 +629,8 @@ impl JjRepo {
         hunks_to_diff_lines(&hunks, &mut git_lines);
         let mut cw_lines = Vec::new();
         hunks_to_color_words_lines(&hunks, &mut cw_lines);
+        mark_conflict_regions(&mut git_lines, &before_regions, &after_regions);
+        mark_conflict_regions(&mut cw_lines, &before_regions, &after_regions);
         Ok(DiffResult {
             git: git_lines,
             color_words: cw_lines,
@@ -639,7 +730,13 @@ impl JjRepo {
                 &materialize_options,
                 self.diff_size_limit,
             )?;
-            if let (DiffSideContent::Text(before), DiffSideContent::Text(after)) = (before, after) {
+            if let (
+                DiffSideContent::Text {
+                    content: before, ..
+                },
+                DiffSideContent::Text { content: after, .. },
+            ) = (before, after)
+            {
                 let contents = Diff::new(before.as_ref(), after.as_ref());
                 let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
                 file_stats = count_line_stats(&hunks);
@@ -845,6 +942,26 @@ fn count_line_stats(hunks: &[unified::UnifiedDiffHunk<'_>]) -> LineStats {
     stats
 }
 
+/// Whether a 1-based line number falls in any of the given ranges.
+fn in_regions(regions: &[std::ops::Range<u32>], line: Option<u32>) -> bool {
+    line.is_some_and(|l| regions.iter().any(|r| r.contains(&l)))
+}
+
+/// Mark diff lines lying in a conflict region on either side.
+fn mark_conflict_regions(
+    lines: &mut [DiffLine],
+    before_regions: &[std::ops::Range<u32>],
+    after_regions: &[std::ops::Range<u32>],
+) {
+    if before_regions.is_empty() && after_regions.is_empty() {
+        return;
+    }
+    for l in lines {
+        l.conflict_region = l.kind != DiffLineKind::Header
+            && (in_regions(before_regions, l.old_line) || in_regions(after_regions, l.new_line));
+    }
+}
+
 fn hunks_to_diff_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut Vec<DiffLine>) {
     for hunk in hunks {
         out.push(DiffLine {
@@ -859,6 +976,7 @@ fn hunks_to_diff_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut Vec<Dif
             tokens: vec![],
             old_line: None,
             new_line: None,
+            conflict_region: false,
         });
 
         let mut old_line = hunk.left_line_range.start as u32 + 1;
@@ -909,6 +1027,7 @@ fn hunks_to_diff_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut Vec<Dif
                 tokens: diff_tokens,
                 old_line: ol,
                 new_line: nl,
+                conflict_region: false,
             });
         }
     }
@@ -1018,6 +1137,7 @@ impl ColorWordBuilder {
                                     tokens: std::mem::take(&mut tokens),
                                     old_line: Some(self.old_line),
                                     new_line: Some(self.new_line),
+                                    conflict_region: false,
                                 });
                                 self.old_line += 1;
                                 self.new_line += 1;
@@ -1043,6 +1163,7 @@ impl ColorWordBuilder {
                                     tokens: std::mem::take(&mut tokens),
                                     old_line: Some(self.old_line),
                                     new_line: None,
+                                    conflict_region: false,
                                 });
                                 self.old_line += 1;
                             }
@@ -1063,6 +1184,7 @@ impl ColorWordBuilder {
                                     tokens: std::mem::take(&mut tokens),
                                     old_line: None,
                                     new_line: Some(self.new_line),
+                                    conflict_region: false,
                                 });
                                 self.new_line += 1;
                             }
@@ -1095,6 +1217,7 @@ impl ColorWordBuilder {
                     } else {
                         None
                     },
+                    conflict_region: false,
                 });
             }
 
@@ -1111,6 +1234,7 @@ impl ColorWordBuilder {
                     }],
                     old_line: Some(self.old_line),
                     new_line: None,
+                    conflict_region: false,
                 });
                 self.old_line += 1;
             }
@@ -1124,6 +1248,7 @@ impl ColorWordBuilder {
                     }],
                     old_line: None,
                     new_line: Some(self.new_line),
+                    conflict_region: false,
                 });
                 self.new_line += 1;
             }
@@ -1153,6 +1278,7 @@ fn hunks_to_color_words_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut 
             tokens: vec![],
             old_line: None,
             new_line: None,
+            conflict_region: false,
         });
 
         let mut builder = ColorWordBuilder::new(
@@ -1188,6 +1314,7 @@ fn hunks_to_color_words_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut 
                         }],
                         old_line: Some(builder.old_line),
                         new_line: Some(builder.new_line),
+                        conflict_region: false,
                     });
                     builder.old_line += 1;
                     builder.new_line += 1;
@@ -1321,5 +1448,50 @@ mod tests {
                 ConflictTermKind::Base(_) => assert!(t.token_lines.is_empty()),
             }
         }
+    }
+
+    /// Conflicted sides materialize with exact line ranges for the
+    /// conflict regions (markers plus term content), so diff lines inside
+    /// them can be tagged without parsing marker text back out.
+    #[test]
+    fn conflict_materialization_tracks_regions() {
+        let contents = Merge::from_removes_adds(
+            vec![bstr::BString::from("ctx\nbase\ntail\n")],
+            vec![
+                bstr::BString::from("ctx\nours\ntail\n"),
+                bstr::BString::from("ctx\ntheirs\ntail\n"),
+            ],
+        );
+        let DiffSideContent::Text {
+            content,
+            conflict_regions,
+        } = materialize_conflict_with_regions(&contents)
+        else {
+            panic!("expected text");
+        };
+        let text = content.to_string();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(conflict_regions.len(), 1);
+        let region = &conflict_regions[0];
+        // 1-based, end-exclusive: the region covers exactly the marker
+        // block; the shared context lines around it stay outside.
+        assert_eq!(lines[0], "ctx");
+        assert!(lines[(region.start - 1) as usize].starts_with("<<<<<<<"));
+        assert!(lines[(region.end - 2) as usize].starts_with(">>>>>>>"));
+        assert_eq!(*lines.last().unwrap(), "tail");
+        assert_eq!(region.end as usize - 1, lines.len() - 1);
+
+        // Fully resolvable merge: no regions.
+        let resolved = Merge::from_removes_adds(
+            vec![bstr::BString::from("a\n")],
+            vec![bstr::BString::from("b\n"), bstr::BString::from("a\n")],
+        );
+        let DiffSideContent::Text {
+            conflict_regions, ..
+        } = materialize_conflict_with_regions(&resolved)
+        else {
+            panic!("expected text");
+        };
+        assert!(conflict_regions.is_empty());
     }
 }

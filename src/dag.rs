@@ -342,15 +342,6 @@ pub struct FileChange {
 }
 
 impl FileChange {
-    /// Whether line-level operations (line/hunk selection for squash,
-    /// commit, restore, …) are meaningful for this file's diff. They
-    /// require both diff sides to be plain file content — a conflicted
-    /// side is materialized marker text, and moving partial marker lines
-    /// between commits produces malformed conflicts.
-    pub fn supports_line_ops(&self) -> bool {
-        !self.has_conflict && !self.baseline_conflicted
-    }
-
     /// A resolved conflict: the baseline was conflicted and this commit
     /// resolves it (jj diff labels these "Resolved conflict in …").
     pub fn is_conflict_resolution(&self) -> bool {
@@ -536,6 +527,18 @@ pub struct DiffLine {
     pub old_line: Option<u32>,
     /// Line number in the new (added) file. `None` for removed lines and headers.
     pub new_line: Option<u32>,
+    /// The line lies in a materialized conflict region (markers plus the
+    /// term content between them) on either side of the diff.
+    pub conflict_region: bool,
+}
+
+impl DiffLine {
+    /// Whether this line can be individually selected. Added/removed
+    /// lines only, and never inside a conflict region — moving partial
+    /// conflict encodings between commits produces malformed conflicts.
+    pub fn is_selectable(&self) -> bool {
+        self.kind.is_selectable() && !self.conflict_region
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

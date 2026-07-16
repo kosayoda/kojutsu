@@ -599,6 +599,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                                 tokens,
                                 old_line: None,
                                 new_line: None,
+                                conflict_region: false,
                             };
                             super::views::push_diff_tokens(
                                 &mut spans,

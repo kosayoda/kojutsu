@@ -641,6 +641,12 @@ fn push_change_selection(args: &mut Vec<TaggedArg>, selection: &ChangeSelection)
                     "merge-tools.kojutsu-select.edit-args=[\"--apply-diff\", {}, \"$left\", \"$right\"]",
                     toml_string_escape(&json_path.display().to_string())
                 )),
+                // Selections carry line numbers computed against kojutsu's
+                // git-style conflict materialization; pin jj's tool-side
+                // materialization to match so lines align in conflicted
+                // files.
+                flag("--config"),
+                arg("ui.conflict-marker-style=\"git\""),
             ]);
         }
     }

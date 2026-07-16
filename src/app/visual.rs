@@ -76,18 +76,11 @@ impl App {
                 file_idx,
                 line_idx,
             }) => {
-                if !self
-                    .files_for_entry(*entry_idx)
-                    .and_then(|f| f.get(file_idx.raw()))
-                    .is_some_and(|f| f.supports_line_ops())
-                {
-                    return;
-                }
                 let Some(diff_lines) = self.diff_lines(*entry_idx, *file_idx) else {
                     return;
                 };
                 let dl = &diff_lines[line_idx.raw()];
-                if dl.kind.is_selectable() {
+                if dl.is_selectable() {
                     self.visual.mode = Some(VisualMode::Lines {
                         anchor: self.cursor,
                     });
@@ -608,7 +601,7 @@ impl App {
                         let idx = DiffLineIdx::new(*i);
                         idx >= vr.start_line && idx <= vr.end_line
                     })
-                    .filter(|(_, dl)| dl.kind.is_selectable())
+                    .filter(|(_, dl)| dl.is_selectable())
                     .map(|(_, dl)| Selection::Line {
                         file_ref: FileRef {
                             change_id: vr.change_id.clone(),
