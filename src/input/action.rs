@@ -400,6 +400,17 @@ pub fn dispatch_action_after_hooks(
                     file_idx,
                     line_idx,
                 }) => {
+                    if !app
+                        .files_for_entry(*entry_idx)
+                        .and_then(|f| f.get(file_idx.raw()))
+                        .is_some_and(|f| f.supports_line_ops())
+                    {
+                        app.set_error(
+                            "line selection isn't available on conflict diffs — \
+                             resolve the conflict or select the whole file",
+                        );
+                        return Action::None;
+                    }
                     let Some(diff_lines) = app.diff_lines(*entry_idx, *file_idx) else {
                         return Action::None;
                     };

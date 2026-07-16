@@ -333,8 +333,29 @@ pub struct FileChange {
     pub old_path: Option<RepoPath>,
     pub status: FileStatus,
     pub has_conflict: bool,
+    /// The diff baseline (e.g. the auto-merged parents of a merge commit)
+    /// was conflicted, so the diff is shown against materialized conflict
+    /// markers rather than plain file content.
+    pub baseline_conflicted: bool,
     /// Per-file line stats (added/removed counts).
     pub stats: LineStats,
+}
+
+impl FileChange {
+    /// Whether line-level operations (line/hunk selection for squash,
+    /// commit, restore, …) are meaningful for this file's diff. They
+    /// require both diff sides to be plain file content — a conflicted
+    /// side is materialized marker text, and moving partial marker lines
+    /// between commits produces malformed conflicts.
+    pub fn supports_line_ops(&self) -> bool {
+        !self.has_conflict && !self.baseline_conflicted
+    }
+
+    /// A resolved conflict: the baseline was conflicted and this commit
+    /// resolves it (jj diff labels these "Resolved conflict in …").
+    pub fn is_conflict_resolution(&self) -> bool {
+        self.baseline_conflicted && !self.has_conflict
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

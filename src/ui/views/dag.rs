@@ -349,6 +349,12 @@ pub(crate) fn render_file_line(
             search,
         );
     }
+    if file.is_conflict_resolution() {
+        spans.push(Span::styled(
+            " (resolved)",
+            Style::default().fg(theme.added),
+        ));
+    }
     push_line_stats(&mut spans, file.stats, true, theme);
     vec![Line::from(spans)]
 }

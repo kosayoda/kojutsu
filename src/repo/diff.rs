@@ -168,6 +168,7 @@ impl JjRepo {
                         old_path: None,
                         status: FileStatus::Error,
                         has_conflict: false,
+                        baseline_conflicted: false,
                         stats: LineStats::default(),
                     });
                     continue;
@@ -206,11 +207,13 @@ impl JjRepo {
             };
 
             let has_conflict = !values.after.is_resolved();
+            let baseline_conflicted = !values.before.is_resolved();
             changes.push(FileChange {
                 path: RepoPath::new(&target_path),
                 old_path: old_path.clone(),
                 status,
                 has_conflict,
+                baseline_conflicted,
                 stats: LineStats::default(),
             });
 
@@ -266,6 +269,7 @@ impl JjRepo {
                         old_path: None,
                         status: FileStatus::Modified,
                         has_conflict: true,
+                        baseline_conflicted: true,
                         stats: LineStats::default(),
                     });
                 }
@@ -400,6 +404,7 @@ impl JjRepo {
                         old_path: None,
                         status: FileStatus::Error,
                         has_conflict: false,
+                        baseline_conflicted: false,
                         stats: LineStats::default(),
                     });
                     continue;
@@ -415,6 +420,7 @@ impl JjRepo {
                 (false, false) => continue,
             };
             let has_conflict = !values.after.is_resolved();
+            let baseline_conflicted = !values.before.is_resolved();
 
             // Compute line stats by materializing + diffing.
             let mut file_stats = LineStats::default();
@@ -445,6 +451,7 @@ impl JjRepo {
                 old_path: None,
                 status,
                 has_conflict,
+                baseline_conflicted,
                 stats: file_stats,
             });
         }
@@ -594,6 +601,7 @@ impl JjRepo {
                         old_path: None,
                         status: FileStatus::Error,
                         has_conflict: false,
+                        baseline_conflicted: false,
                         stats: LineStats::default(),
                     });
                     continue;
@@ -609,6 +617,7 @@ impl JjRepo {
                 (false, false) => continue,
             };
             let has_conflict = !values.after.is_resolved();
+            let baseline_conflicted = !values.before.is_resolved();
 
             let mut file_stats = LineStats::default();
             let before = materialize_diff_side(
@@ -638,6 +647,7 @@ impl JjRepo {
                 old_path: None,
                 status,
                 has_conflict,
+                baseline_conflicted,
                 stats: file_stats,
             });
         }
