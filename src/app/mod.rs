@@ -542,6 +542,11 @@ impl App {
         self.nodes.iter().any(|n| n.commit.is_working_copy())
     }
 
+    /// Number of conflicted commits in the current entries.
+    pub fn conflicted_commit_count(&self) -> usize {
+        self.nodes.iter().filter(|n| n.commit.has_conflict).count()
+    }
+
     /// Row index of a commit's `CommitNode` in the display rows.
     pub fn row_of_commit(&self, entry_idx: EntryIdx) -> Option<RowIdx> {
         Some(RowIdx::new(self.nodes.get(entry_idx)?.row))

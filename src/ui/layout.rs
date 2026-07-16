@@ -246,6 +246,20 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
             Style::default().fg(theme.warning),
         ));
     }
+    let conflicted = app.conflicted_commit_count();
+    if conflicted > 0 {
+        let noun = if conflicted == 1 {
+            "conflict"
+        } else {
+            "conflicts"
+        };
+        wc_spans.push(Span::styled(
+            format!(" {conflicted} {noun} "),
+            Style::default()
+                .fg(theme.error)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
 
     let block = Block::default()
         .borders(Borders::TOP)
