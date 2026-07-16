@@ -1199,6 +1199,8 @@ impl App {
             ("0", self.peek_top()),
             ("$", self.peek_bottom()),
             ("@", self.peek_working_copy()),
+            ("]", self.peek_conflict(true)),
+            ("[", self.peek_conflict(false)),
         ];
 
         let mut labels: Vec<(String, RowIdx)> = Vec::new();
@@ -1242,7 +1244,11 @@ impl App {
                     | DisplayRow::FileChange { .. }
                     | DisplayRow::EvoLogFileChange { .. }
                     | DisplayRow::InterdiffFileChange { .. }
-                    | DisplayRow::AnnotateLine { .. } => Some(idx),
+                    | DisplayRow::AnnotateLine { .. }
+                    | DisplayRow::ConflictHeader { .. } => Some(idx),
+                    // First line of each conflict term: jump onto a side,
+                    // then space picks it.
+                    DisplayRow::ConflictTerm { line_idx, .. } if line_idx.raw() == 0 => Some(idx),
                     _ if self.is_hunk_header(idx) => Some(idx),
                     _ => None,
                 }

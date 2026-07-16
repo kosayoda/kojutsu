@@ -404,18 +404,17 @@ impl App {
         }
     }
 
-    /// Move the cursor to the next/previous conflict, wrapping around.
+    /// Row of the next/previous conflict from the cursor, wrapping around.
     /// Stops at the deepest visible level: hunk headers always; a
     /// conflicted file row only when its hunks aren't rendered beneath it;
     /// a conflicted commit node only when its file rows aren't rendered.
-    /// Returns whether a conflict row was found.
-    pub fn jump_to_conflict(&mut self, forward: bool) -> bool {
+    pub fn peek_conflict(&self, forward: bool) -> Option<RowIdx> {
         let n = self.rows.len();
         if n == 0 {
-            return false;
+            return None;
         }
         let cur = self.cursor.raw();
-        let pos = (1..=n)
+        (1..=n)
             .map(|step| {
                 if forward {
                     (cur + step) % n
@@ -444,9 +443,15 @@ impl App {
                 }
                 DisplayRow::ConflictHeader { .. } => true,
                 _ => false,
-            });
-        if let Some(pos) = pos {
-            self.cursor = RowIdx::new(pos);
+            })
+            .map(RowIdx::new)
+    }
+
+    /// Move the cursor to the next/previous conflict, wrapping around.
+    /// Returns whether a conflict row was found.
+    pub fn jump_to_conflict(&mut self, forward: bool) -> bool {
+        if let Some(pos) = self.peek_conflict(forward) {
+            self.cursor = pos;
             true
         } else {
             false
