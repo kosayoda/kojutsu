@@ -4,9 +4,9 @@ use crate::app::{App, AppMode};
 use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{
-    ArrangeDirection, BookmarkName, ChangeId, DisplayRow, MessageMode, PendingCommand,
-    PendingSelection, RebaseKind, RebaseSource, RebaseTarget, SelectionKind, SmallVec, SplitKind,
-    SquashKind, Str, TargetOperation,
+    ArrangeDirection, BookmarkName, ChangeId, DisplayRow, FollowUpAction, FollowUpOption,
+    MessageMode, PendingCommand, PendingSelection, RebaseKind, RebaseSource, RebaseTarget,
+    SelectionKind, SmallVec, SplitKind, SquashKind, Str, TargetOperation,
 };
 
 use crate::input::Action;
@@ -126,7 +126,12 @@ pub(in crate::input) fn dispatch(
                     );
                     return Action::None;
                 }
-                app.pick_conflict_side(entry_idx, file_idx, hunk_idx, pick);
+                if app
+                    .pick_conflict_side(entry_idx, file_idx, hunk_idx, pick)
+                    .is_some()
+                {
+                    maybe_offer_apply(app, entry_idx, file_idx, flags);
+                }
             } else {
                 app.set_error("per-hunk only — use on a conflict hunk row");
             }
@@ -687,6 +692,45 @@ fn picked_term_is_absent(
 ) -> bool {
     app.conflict_term(entry_idx, file_idx, hunk_idx, pick)
         .is_some_and(|t| t.absent)
+}
+
+/// After a pick, offer to apply immediately when every hunk in the file
+/// is picked — Enter (or `a`) applies, Esc keeps accumulating. Returns
+/// whether the prompt was shown.
+pub(in crate::input) fn maybe_offer_apply(
+    app: &mut App,
+    entry_idx: crate::idx::EntryIdx,
+    file_idx: crate::idx::FileIdx,
+    flags: CommandFlags,
+) -> bool {
+    let Some((path, content, true)) = app.conflict_resolution(entry_idx, file_idx) else {
+        return false;
+    };
+    match persist_resolved_content(&content) {
+        Ok(content_path) => {
+            let cmd = JJCommand {
+                kind: JJCommandKind::Resolve {
+                    change_id: app.change_id(entry_idx),
+                    path: Str::from(path.as_str()),
+                    tool: crate::jj_command::ResolveTool::Content(content_path),
+                },
+                flags,
+            };
+            app.mode = AppMode::FollowUp {
+                prompt: format!("all conflicts in {path} picked"),
+                options: vec![FollowUpOption {
+                    key: 'a',
+                    label: "apply resolution",
+                    action: FollowUpAction::Execute(cmd),
+                }],
+            };
+            true
+        }
+        Err(e) => {
+            app.set_error(format!("failed to stage resolution for {path}: {e}"));
+            false
+        }
+    }
 }
 
 /// Apply accumulated picks by running `jj resolve` with a merge tool that

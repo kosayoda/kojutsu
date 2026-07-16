@@ -470,8 +470,14 @@ pub(super) fn draw_follow_up(
         if i > 0 {
             spans.push(Span::raw("  "));
         }
+        // Enter accepts the first (primary) option.
+        let keys = if i == 0 {
+            format!("({}/enter)", opt.key)
+        } else {
+            format!("({})", opt.key)
+        };
         spans.push(Span::styled(
-            format!("({})", opt.key),
+            keys,
             Style::default()
                 .fg(theme.selection)
                 .add_modifier(Modifier::BOLD),

@@ -571,6 +571,18 @@ pub(super) fn handle_follow_up(app: &mut App, key: KeyEvent) -> Action {
         return Action::None;
     }
 
+    // Enter accepts the first (primary) option.
+    if key.code == KeyCode::Enter {
+        let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+        let AppMode::FollowUp { mut options, .. } = mode else {
+            return Action::None;
+        };
+        if options.is_empty() {
+            return Action::None;
+        }
+        return super::action::execute_follow_up(app, options.remove(0).action);
+    }
+
     let c = match key.code {
         KeyCode::Char(c) => c,
         _ => return Action::None,

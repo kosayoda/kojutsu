@@ -467,8 +467,11 @@ pub fn dispatch_action_after_hooks(
                         .pick_conflict_side(entry_idx, file_idx, hunk_idx, kind)
                         .is_some()
                     {
-                        // Picked (not unpicked) — move on to the next conflict.
-                        app.jump_to_conflict(true);
+                        // Picked (not unpicked): offer to apply if that was
+                        // the last hunk, otherwise move to the next conflict.
+                        if !super::view::dag::maybe_offer_apply(app, entry_idx, file_idx, flags) {
+                            app.jump_to_conflict(true);
+                        }
                     }
                 }
                 None => {}
