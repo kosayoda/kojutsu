@@ -392,9 +392,7 @@ fn main() -> Result<()> {
                 }
             }
             Action::EditConflictHunk {
-                entry_idx,
-                file_idx,
-                hunk_idx,
+                hunk,
                 seed,
                 path,
                 flags,
@@ -408,12 +406,15 @@ fn main() -> Result<()> {
                             app.set_error("markers remain — resolve the hunk fully or cancel");
                         } else {
                             app.set_conflict_edited(
-                                entry_idx,
-                                file_idx,
-                                hunk_idx,
+                                hunk,
                                 kojutsu::dag::ConflictText::from_bytes(edited.as_bytes()),
                             );
-                            kojutsu::input::maybe_offer_apply(&mut app, entry_idx, file_idx, flags);
+                            kojutsu::input::maybe_offer_apply(
+                                &mut app,
+                                hunk.entry_idx,
+                                hunk.file_idx,
+                                flags,
+                            );
                         }
                     }
                     _ => app.set_status("edit cancelled - no changes"),

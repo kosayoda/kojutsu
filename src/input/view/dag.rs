@@ -4,9 +4,9 @@ use crate::app::{App, AppMode};
 use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{
-    ArrangeDirection, BookmarkName, ChangeId, DisplayRow, FollowUpAction, FollowUpOption,
-    MessageMode, PendingCommand, PendingSelection, RebaseKind, RebaseSource, RebaseTarget,
-    SelectionKind, SmallVec, SplitKind, SquashKind, Str, TargetOperation,
+    ArrangeDirection, BookmarkName, ChangeId, FollowUpAction, FollowUpOption, MessageMode,
+    PendingCommand, PendingSelection, RebaseKind, RebaseSource, RebaseTarget, SelectionKind,
+    SmallVec, SplitKind, SquashKind, Str, TargetOperation,
 };
 
 use crate::input::Action;
@@ -102,35 +102,24 @@ pub(in crate::input) fn dispatch(
         AppAction::ConflictPickOurs
         | AppAction::ConflictPickTheirs
         | AppAction::ConflictPickBase => {
-            if let Some(DisplayRow::ConflictHeader {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-            })
-            | Some(DisplayRow::ConflictTerm {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-                ..
-            }) = app.rows.get(app.cursor.raw())
+            if let Some(hunk) = app
+                .rows
+                .get(app.cursor.raw())
+                .and_then(|r| r.conflict_hunk())
             {
-                let (entry_idx, file_idx, hunk_idx) = (*entry_idx, *file_idx, *hunk_idx);
                 let pick = match action {
                     AppAction::ConflictPickOurs => crate::dag::ConflictTermKind::Side(0),
                     AppAction::ConflictPickTheirs => crate::dag::ConflictTermKind::Side(1),
                     _ => crate::dag::ConflictTermKind::Base(0),
                 };
-                if picked_term_is_absent(app, entry_idx, file_idx, hunk_idx, pick) {
+                if picked_term_is_absent(app, hunk, pick) {
                     app.set_error(
                         "that side deleted the file — use C,o / C,t to take it whole-file",
                     );
                     return Action::None;
                 }
-                if app
-                    .pick_conflict_side(entry_idx, file_idx, hunk_idx, pick)
-                    .is_some()
-                {
-                    maybe_offer_apply(app, entry_idx, file_idx, flags);
+                if app.pick_conflict_side(hunk, pick).is_some() {
+                    maybe_offer_apply(app, hunk.entry_idx, hunk.file_idx, flags);
                 }
             } else {
                 app.set_error("per-hunk only — use on a conflict hunk row");
@@ -138,26 +127,12 @@ pub(in crate::input) fn dispatch(
             Action::None
         }
         AppAction::ConflictUnpick => {
-            if let Some(DisplayRow::ConflictHeader {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-            })
-            | Some(DisplayRow::ConflictTerm {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-                ..
-            })
-            | Some(DisplayRow::ConflictEdited {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-                ..
-            }) = app.rows.get(app.cursor.raw())
+            if let Some(hunk) = app
+                .rows
+                .get(app.cursor.raw())
+                .and_then(|r| r.conflict_hunk())
             {
-                let (entry_idx, file_idx, hunk_idx) = (*entry_idx, *file_idx, *hunk_idx);
-                app.unpick_conflict(entry_idx, file_idx, hunk_idx);
+                app.unpick_conflict(hunk);
             } else {
                 app.set_error("per-hunk only — use on a conflict hunk row");
             }
@@ -166,72 +141,56 @@ pub(in crate::input) fn dispatch(
         AppAction::ConflictEditHunk => {
             // Hand-edit this hunk's resolution in $EDITOR, seeded with the
             // current pick (or the materialized markers if unpicked).
-            if let Some(DisplayRow::ConflictHeader {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-            })
-            | Some(DisplayRow::ConflictTerm {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-                ..
-            })
-            | Some(DisplayRow::ConflictEdited {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-                ..
-            }) = app.rows.get(app.cursor.raw())
-            {
-                let (entry_idx, file_idx, hunk_idx) = (*entry_idx, *file_idx, *hunk_idx);
-                let Some(path) = app
-                    .files_for_entry(entry_idx)
-                    .and_then(|f| f.get(file_idx.raw()))
-                    .map(|f| f.path.clone())
-                else {
-                    return Action::None;
-                };
-                let seed = app.nodes[entry_idx]
-                    .conflict_hunks(file_idx)
-                    .and_then(|l| l.loaded())
-                    .and_then(|hunks| hunks.get(hunk_idx.raw()))
-                    .and_then(|hunk| match hunk {
-                        crate::dag::ConflictHunkKind::Conflict {
-                            terms, selected, ..
-                        } => Some(match selected {
-                            Some(crate::dag::ConflictPick::Edited(text)) => {
+            let Some(hunk) = app
+                .rows
+                .get(app.cursor.raw())
+                .and_then(|r| r.conflict_hunk())
+            else {
+                app.set_error("per-hunk only — use on a conflict hunk row");
+                return Action::None;
+            };
+            let Some(path) = app
+                .files_for_entry(hunk.entry_idx)
+                .and_then(|f| f.get(hunk.file_idx.raw()))
+                .map(|f| f.path.clone())
+            else {
+                return Action::None;
+            };
+            let seed = app.nodes[hunk.entry_idx]
+                .conflict_hunks(hunk.file_idx)
+                .and_then(|l| l.loaded())
+                .and_then(|hunks| hunks.get(hunk.hunk_idx.raw()))
+                .and_then(|h| match h {
+                    crate::dag::ConflictHunkKind::Conflict {
+                        terms, selected, ..
+                    } => Some(match selected {
+                        Some(crate::dag::ConflictPick::Edited(text)) => {
+                            let mut s = String::new();
+                            text.write_to(&mut s);
+                            s
+                        }
+                        Some(crate::dag::ConflictPick::Term(kind)) => terms
+                            .iter()
+                            .find(|t| t.kind == *kind)
+                            .map(|t| {
                                 let mut s = String::new();
-                                text.write_to(&mut s);
+                                t.text.write_to(&mut s);
                                 s
-                            }
-                            Some(crate::dag::ConflictPick::Term(kind)) => terms
-                                .iter()
-                                .find(|t| t.kind == *kind)
-                                .map(|t| {
-                                    let mut s = String::new();
-                                    t.text.write_to(&mut s);
-                                    s
-                                })
-                                .unwrap_or_default(),
-                            None => crate::repo::hunk_markers(terms),
-                        }),
-                        _ => None,
-                    });
-                let Some(seed) = seed else {
-                    return Action::None;
-                };
-                return Action::EditConflictHunk {
-                    entry_idx,
-                    file_idx,
-                    hunk_idx,
-                    seed,
-                    path,
-                    flags,
-                };
+                            })
+                            .unwrap_or_default(),
+                        None => crate::repo::hunk_markers(terms),
+                    }),
+                    _ => None,
+                });
+            let Some(seed) = seed else {
+                return Action::None;
+            };
+            Action::EditConflictHunk {
+                hunk,
+                seed,
+                path,
+                flags,
             }
-            app.set_error("per-hunk only — use on a conflict hunk row");
-            Action::None
         }
         AppAction::ConflictApplyPicks => {
             let Some((entry_idx, file_idx)) =
@@ -796,13 +755,10 @@ fn arrange(app: &mut App, flags: CommandFlags, direction: ArrangeDirection) -> A
 
 fn picked_term_is_absent(
     app: &App,
-    entry_idx: crate::idx::EntryIdx,
-    file_idx: crate::idx::FileIdx,
-    hunk_idx: crate::idx::ConflictHunkIdx,
+    hunk: crate::types::ConflictHunkRef,
     pick: crate::dag::ConflictTermKind,
 ) -> bool {
-    app.conflict_term(entry_idx, file_idx, hunk_idx, pick)
-        .is_some_and(|t| t.absent)
+    app.conflict_term(hunk, pick).is_some_and(|t| t.absent)
 }
 
 /// After a pick, offer to apply immediately when every hunk in the file

@@ -5,6 +5,16 @@ use crate::idx::{
     TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 
+/// Addresses one conflict hunk in the DAG view by row indices. Valid only
+/// until the next row/entry rebuild — for state that must survive reloads
+/// or suspends, key by `(CommitId, RepoPath)` instead.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ConflictHunkRef {
+    pub entry_idx: EntryIdx,
+    pub file_idx: FileIdx,
+    pub hunk_idx: ConflictHunkIdx,
+}
+
 /// One visual row in the list.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DisplayRow {
@@ -201,6 +211,36 @@ impl DisplayRow {
                 file_idx,
                 ..
             } => Some((entry_idx, file_idx)),
+            _ => None,
+        }
+    }
+
+    /// The conflict hunk this row belongs to, if it is part of a conflicted
+    /// hunk's display block (header, term, or edited-resolution line).
+    /// Context and gap rows belong to resolved hunks and return `None`.
+    pub fn conflict_hunk(self) -> Option<ConflictHunkRef> {
+        match self {
+            Self::ConflictHeader {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            }
+            | Self::ConflictTerm {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                ..
+            }
+            | Self::ConflictEdited {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                ..
+            } => Some(ConflictHunkRef {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            }),
             _ => None,
         }
     }

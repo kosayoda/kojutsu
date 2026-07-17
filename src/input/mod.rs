@@ -73,9 +73,7 @@ pub enum Action {
     /// Suspend TUI, edit one conflict hunk's resolution in $EDITOR; store
     /// it as the hunk's pick (pure UI state until picks are applied).
     EditConflictHunk {
-        entry_idx: crate::idx::EntryIdx,
-        file_idx: crate::idx::FileIdx,
-        hunk_idx: crate::idx::ConflictHunkIdx,
+        hunk: crate::types::ConflictHunkRef,
         seed: String,
         path: crate::types::RepoPath,
         flags: crate::keymap::CommandFlags,

@@ -379,13 +379,11 @@ pub fn dispatch_action_after_hooks(
                 Commit(EntryIdx),
                 File(EntryIdx, FileIdx),
                 DiffLine(EntryIdx, FileIdx, DiffLineIdx, DiffLineKind),
-                ConflictTerm(
-                    EntryIdx,
-                    FileIdx,
-                    crate::idx::ConflictHunkIdx,
-                    crate::dag::ConflictTermKind,
-                    bool,
-                ),
+                ConflictTerm {
+                    hunk: crate::types::ConflictHunkRef,
+                    kind: crate::dag::ConflictTermKind,
+                    absent: bool,
+                },
             }
             let target = match app.rows.get(app.cursor.raw()) {
                 Some(DisplayRow::CommitNode { entry_idx }) => {
@@ -418,33 +416,25 @@ pub fn dispatch_action_after_hooks(
                 // On a conflict term row, space toggles the pick for the
                 // side under the cursor (the only way to pick sides beyond
                 // ours/theirs/base in n-way merges).
-                Some(DisplayRow::ConflictTerm {
-                    entry_idx,
-                    file_idx,
-                    hunk_idx,
-                    term_idx,
-                    ..
-                }) => app
-                    .nodes
-                    .get(*entry_idx)
-                    .and_then(|n| n.conflict_hunks(*file_idx))
-                    .and_then(|l| l.loaded())
-                    .and_then(|hunks| hunks.get(hunk_idx.raw()))
-                    .and_then(|h| match h {
-                        crate::dag::ConflictHunkKind::Conflict { terms, .. } => {
-                            terms.get(term_idx.raw())
-                        }
-                        _ => None,
-                    })
-                    .map(|term| {
-                        SelectTarget::ConflictTerm(
-                            *entry_idx,
-                            *file_idx,
-                            *hunk_idx,
-                            term.kind,
-                            term.absent,
-                        )
-                    }),
+                Some(row @ DisplayRow::ConflictTerm { term_idx, .. }) => {
+                    let hunk = row.conflict_hunk().expect("ConflictTerm row has a hunk");
+                    app.nodes
+                        .get(hunk.entry_idx)
+                        .and_then(|n| n.conflict_hunks(hunk.file_idx))
+                        .and_then(|l| l.loaded())
+                        .and_then(|hunks| hunks.get(hunk.hunk_idx.raw()))
+                        .and_then(|h| match h {
+                            crate::dag::ConflictHunkKind::Conflict { terms, .. } => {
+                                terms.get(term_idx.raw())
+                            }
+                            _ => None,
+                        })
+                        .map(|term| SelectTarget::ConflictTerm {
+                            hunk,
+                            kind: term.kind,
+                            absent: term.absent,
+                        })
+                }
                 _ => None,
             };
             match target {
@@ -465,18 +455,20 @@ pub fn dispatch_action_after_hooks(
                         DiffLineKind::Context => {} // no-op
                     }
                 }
-                Some(SelectTarget::ConflictTerm(entry_idx, file_idx, hunk_idx, kind, absent)) => {
+                Some(SelectTarget::ConflictTerm { hunk, kind, absent }) => {
                     if absent {
                         app.set_error(
                             "that side deleted the file — use C,o / C,t to take it whole-file",
                         );
-                    } else if app
-                        .pick_conflict_side(entry_idx, file_idx, hunk_idx, kind)
-                        .is_some()
-                    {
+                    } else if app.pick_conflict_side(hunk, kind).is_some() {
                         // Picked (not unpicked): offer to apply if that was
                         // the last hunk, otherwise move to the next conflict.
-                        if !super::view::dag::maybe_offer_apply(app, entry_idx, file_idx, flags) {
+                        if !super::view::dag::maybe_offer_apply(
+                            app,
+                            hunk.entry_idx,
+                            hunk.file_idx,
+                            flags,
+                        ) {
                             app.jump_to_conflict(true);
                         }
                     }
@@ -872,16 +864,13 @@ pub fn has_file_context(app: &App) -> bool {
 }
 
 pub fn has_conflict_context(app: &App) -> bool {
-    matches!(
-        app.rows.get(app.cursor.raw()),
-        Some(
-            DisplayRow::ConflictHeader { .. }
-                | DisplayRow::ConflictTerm { .. }
-                | DisplayRow::ConflictEdited { .. }
-                | DisplayRow::FileChange { .. }
-                | DisplayRow::DiffLine { .. }
-        )
-    )
+    app.rows.get(app.cursor.raw()).is_some_and(|row| {
+        row.conflict_hunk().is_some()
+            || matches!(
+                row,
+                DisplayRow::FileChange { .. } | DisplayRow::DiffLine { .. }
+            )
+    })
 }
 
 /// Extract the file path and line number from the current cursor position.
