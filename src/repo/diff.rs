@@ -411,14 +411,10 @@ impl JjRepo {
             return Ok(vec![]);
         };
 
-        let merge_options = jj_lib::tree_merge::MergeOptions {
-            hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
-            same_change: jj_lib::merge::SameChange::Accept,
-        };
         // `ids` parallels `contents` term-for-term; a `None` id means the
         // file is absent on that term (materialized as empty content).
         let absent: Vec<bool> = materialized.ids.iter().map(|id| id.is_none()).collect();
-        let merge_result = jj_lib::files::merge_hunks(&materialized.contents, &merge_options);
+        let merge_result = jj_lib::files::merge_hunks(&materialized.contents, &merge_options());
 
         let hunks = match merge_result {
             jj_lib::files::MergeResult::Resolved(content) => {
@@ -808,6 +804,15 @@ impl JjRepo {
 /// on that ordering. `absent` flags file absence per term, in the same
 /// interleaved order.
 fn conflict_terms<T: AsRef<[u8]>>(hunk: &Merge<T>, absent: &[bool]) -> Vec<ConflictTerm> {
+    // `absent` is built from `materialized.ids`, which jj keeps at the same
+    // arity as `contents` (the source of these terms). A mismatch means
+    // that invariant broke; catch it in tests/debug rather than silently
+    // treating a missing flag as "present".
+    debug_assert_eq!(
+        hunk.iter().count(),
+        absent.len(),
+        "absent flags must parallel the merge terms"
+    );
     let bases: Vec<&[u8]> = hunk.removes().map(|t| t.as_ref()).collect();
     hunk.iter()
         .enumerate()
@@ -871,30 +876,47 @@ fn side_token_lines(base: &[u8], side: &[u8]) -> Vec<Vec<DiffToken>> {
     lines
 }
 
+/// Line-level hunk splitting with same-change acceptance. Must be the same
+/// options everywhere so the picker's hunk boundaries, the diff view's
+/// conflict regions, and re-materialized markers all agree.
+fn merge_options() -> jj_lib::tree_merge::MergeOptions {
+    jj_lib::tree_merge::MergeOptions {
+        hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
+        same_change: jj_lib::merge::SameChange::Accept,
+    }
+}
+
 fn default_materialize_options() -> ConflictMaterializeOptions {
     ConflictMaterializeOptions {
         marker_style: jj_lib::conflicts::ConflictMarkerStyle::Git,
         marker_len: None,
-        merge: jj_lib::tree_merge::MergeOptions {
-            hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
-            same_change: jj_lib::merge::SameChange::Accept,
-        },
+        merge: merge_options(),
     }
 }
 
 /// Materialize a conflict hunk's terms as git-style markers (the same
-/// text jj would produce). Terms are stored in jj's interleaved order,
-/// so the merge can be rebuilt directly.
+/// text jj would produce). The `Merge` is rebuilt by term kind — sides as
+/// adds, bases as removes, each ordered by ordinal — rather than trusting
+/// the Vec's position, so markers are correct regardless of storage order.
 pub fn hunk_markers(terms: &[crate::dag::ConflictTerm]) -> String {
-    let merge = Merge::from_vec(
-        terms
-            .iter()
-            .map(|t| {
-                let mut s = String::new();
-                t.text.write_to(&mut s);
-                bstr::BString::from(s)
-            })
-            .collect::<Vec<_>>(),
+    let term_bytes = |t: &crate::dag::ConflictTerm| {
+        let mut s = String::new();
+        t.text.write_to(&mut s);
+        bstr::BString::from(s)
+    };
+    let mut sides: Vec<(usize, bstr::BString)> = Vec::new();
+    let mut bases: Vec<(usize, bstr::BString)> = Vec::new();
+    for t in terms {
+        match t.kind {
+            ConflictTermKind::Side(n) => sides.push((n, term_bytes(t))),
+            ConflictTermKind::Base(n) => bases.push((n, term_bytes(t))),
+        }
+    }
+    sides.sort_by_key(|(n, _)| *n);
+    bases.sort_by_key(|(n, _)| *n);
+    let merge = Merge::from_removes_adds(
+        bases.into_iter().map(|(_, b)| b),
+        sides.into_iter().map(|(_, s)| s),
     );
     let materialized = jj_lib::conflicts::materialize_merge_result_to_bytes(
         &merge,
@@ -932,8 +954,15 @@ pub fn assemble_resolution(hunks: &[crate::dag::ConflictHunkKind]) -> (String, b
                 terms, selected, ..
             } => match selected {
                 Some(crate::dag::ConflictPick::Term(kind)) => {
-                    if let Some(term) = terms.iter().find(|t| t.kind == *kind) {
-                        term.text.write_to(&mut content);
+                    match terms.iter().find(|t| t.kind == *kind) {
+                        Some(term) => term.text.write_to(&mut content),
+                        // The pick names no present term (shouldn't happen).
+                        // Fall back to markers so the hunk stays conflicted
+                        // rather than silently vanishing from the file.
+                        None => {
+                            complete = false;
+                            content.push_str(&hunk_markers(terms));
+                        }
                     }
                 }
                 Some(crate::dag::ConflictPick::Edited(text)) => text.write_to(&mut content),
@@ -1452,6 +1481,31 @@ mod tests {
         let (content, complete) = assemble_resolution(&edited);
         assert!(complete);
         assert_eq!(content, "merged by hand\n");
+
+        // A pick naming no present term must not silently drop the hunk:
+        // it falls back to markers and reports incomplete.
+        let dangling = vec![terms(Some(ConflictPick::Term(ConflictTermKind::Side(9))))];
+        let (content, complete) = assemble_resolution(&dangling);
+        assert!(!complete);
+        assert!(has_conflict_markers(&content));
+    }
+
+    /// `hunk_markers` rebuilds by term kind, so a reordered `terms` Vec
+    /// still produces jj's canonical interleaved marker layout.
+    #[test]
+    fn hunk_markers_independent_of_term_order() {
+        let terms = conflict_terms(
+            &Merge::from_removes_adds(vec!["base\n"], vec!["ours\n", "theirs\n"]),
+            &[false; 3],
+        );
+        let canonical = hunk_markers(&terms);
+        let mut shuffled = terms;
+        shuffled.reverse();
+        assert_eq!(hunk_markers(&shuffled), canonical);
+        // Sanity: the markers actually contain both sides in order.
+        let ours = canonical.find("ours").unwrap();
+        let theirs = canonical.find("theirs").unwrap();
+        assert!(ours < theirs);
     }
 
     /// Sides get word-level tokens against their base (one token list per
