@@ -392,9 +392,10 @@ fn main() -> Result<()> {
                 }
             }
             Action::EditConflictHunk {
-                hunk,
-                seed,
+                commit_id,
                 path,
+                hunk_idx,
+                seed,
                 flags,
             } => {
                 terminal_events.stop();
@@ -402,20 +403,9 @@ fn main() -> Result<()> {
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
                 match edited {
                     Some(edited) if edited != seed => {
-                        if kojutsu::repo::has_conflict_markers(&edited) {
-                            app.set_error("markers remain — resolve the hunk fully or cancel");
-                        } else {
-                            app.set_conflict_edited(
-                                hunk,
-                                kojutsu::dag::ConflictText::from_bytes(edited.as_bytes()),
-                            );
-                            kojutsu::input::maybe_offer_apply(
-                                &mut app,
-                                hunk.entry_idx,
-                                hunk.file_idx,
-                                flags,
-                            );
-                        }
+                        kojutsu::input::complete_hunk_edit(
+                            &mut app, &commit_id, &path, hunk_idx, &edited, flags,
+                        );
                     }
                     _ => app.set_status("edit cancelled - no changes"),
                 }

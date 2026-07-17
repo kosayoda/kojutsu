@@ -4,7 +4,7 @@ mod list;
 mod modal;
 mod view;
 
-pub use view::dag::{maybe_offer_apply, resolution_command};
+pub use view::dag::{complete_hunk_edit, resolution_command};
 
 pub use action::{dispatch_action_after_hooks, has_conflict_context, has_file_context};
 
@@ -72,10 +72,12 @@ pub enum Action {
     },
     /// Suspend TUI, edit one conflict hunk's resolution in $EDITOR; store
     /// it as the hunk's pick (pure UI state until picks are applied).
+    /// Addressed by stable IDs — row indices must not cross a suspend.
     EditConflictHunk {
-        hunk: crate::types::ConflictHunkRef,
-        seed: String,
+        commit_id: crate::types::CommitId,
         path: crate::types::RepoPath,
+        hunk_idx: crate::idx::ConflictHunkIdx,
+        seed: String,
         flags: crate::keymap::CommandFlags,
     },
     /// Pre-hooks completed after yielding; dispatch the deferred action.

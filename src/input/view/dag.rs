@@ -186,9 +186,10 @@ pub(in crate::input) fn dispatch(
                 return Action::None;
             };
             Action::EditConflictHunk {
-                hunk,
-                seed,
+                commit_id: app.commit_id(hunk.entry_idx).clone(),
                 path,
+                hunk_idx: hunk.hunk_idx,
+                seed,
                 flags,
             }
         }
@@ -761,10 +762,37 @@ fn picked_term_is_absent(
     app.conflict_term(hunk, pick).is_some_and(|t| t.absent)
 }
 
+/// Complete a hand-edit of one conflict hunk: validate, store it as the
+/// hunk's pick, and offer to apply if the file is now fully picked.
+/// Addressed by stable IDs so it survives reloads while the editor was
+/// open — a vanished commit is reported, never silently dropped.
+pub fn complete_hunk_edit(
+    app: &mut App,
+    commit_id: &crate::types::CommitId,
+    path: &crate::types::RepoPath,
+    hunk_idx: crate::idx::ConflictHunkIdx,
+    edited: &str,
+    flags: CommandFlags,
+) {
+    if crate::repo::has_conflict_markers(edited) {
+        app.set_error("markers remain — resolve the hunk fully or cancel");
+        return;
+    }
+    let Some(hunk) = app.resolve_conflict_hunk(commit_id, path, hunk_idx) else {
+        app.set_error("commit changed while editing — edit not applied");
+        return;
+    };
+    app.set_conflict_edited(
+        hunk,
+        crate::dag::ConflictText::from_bytes(edited.as_bytes()),
+    );
+    maybe_offer_apply(app, hunk.entry_idx, hunk.file_idx, flags);
+}
+
 /// After a pick, offer to apply immediately when every hunk in the file
 /// is picked — Enter (or `a`) applies, Esc keeps accumulating. Returns
 /// whether the prompt was shown.
-pub fn maybe_offer_apply(
+pub(in crate::input) fn maybe_offer_apply(
     app: &mut App,
     entry_idx: crate::idx::EntryIdx,
     file_idx: crate::idx::FileIdx,

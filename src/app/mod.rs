@@ -1399,4 +1399,23 @@ impl App {
     pub fn entry_by_commit_id(&self, commit_id: &CommitId) -> Option<EntryIdx> {
         self.commit_index.get(commit_id).copied()
     }
+
+    /// Resolve a stable conflict-hunk address back to row indices. `None`
+    /// when the commit is no longer present (e.g. rewritten while the
+    /// address crossed a suspend point) — same commit ID means identical
+    /// content, so a surviving `hunk_idx` is still valid.
+    pub fn resolve_conflict_hunk(
+        &self,
+        commit_id: &CommitId,
+        path: &RepoPath,
+        hunk_idx: crate::idx::ConflictHunkIdx,
+    ) -> Option<ConflictHunkRef> {
+        let entry_idx = self.entry_by_commit_id(commit_id)?;
+        let file_idx = self.file_idx_by_path(entry_idx, path)?;
+        Some(ConflictHunkRef {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+        })
+    }
 }
