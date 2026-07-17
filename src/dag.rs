@@ -468,39 +468,22 @@ impl ConflictPick {
     }
 }
 
+/// Pure conflict data as materialized from the repo. All user-facing UI
+/// state (picks, base-fold, gap-expansion) lives App-side in `conflict_ui`,
+/// keyed by `(CommitId, RepoPath, hunk_idx)`, so these values carry no
+/// interaction state and can be freely reloaded.
 #[derive(Clone)]
 pub enum ConflictHunkKind {
     /// Auto-resolved section — just context lines.
-    Resolved {
-        text: ConflictText,
-        /// Whether the user expanded this section past the trimmed
-        /// context (tab on the gap row).
-        expanded: bool,
-    },
+    Resolved { text: ConflictText },
     /// Conflicted section with multiple terms to choose from.
     Conflict {
         /// Terms in jj's materialized order: side 1, base 1, side 2, ...
         terms: Vec<ConflictTerm>,
-        /// The user's pick for this hunk (None = unresolved).
-        selected: Option<ConflictPick>,
-        /// Whether the base block is collapsed to a one-line stub (tab on
-        /// a base row toggles it). Starts expanded: a side that purely
-        /// deleted content shows no highlight, so the base is the only
-        /// place that change is visible.
-        base_folded: bool,
     },
 }
 
 impl ConflictHunkKind {
-    /// The term kind currently picked for this hunk, if a term (not an
-    /// edit) is selected. Used to mark the picked side in the UI.
-    pub fn picked_term(&self) -> Option<ConflictTermKind> {
-        match self {
-            Self::Conflict { selected, .. } => selected.as_ref().and_then(ConflictPick::term),
-            Self::Resolved { .. } => None,
-        }
-    }
-
     /// Number of positive terms (sides) in a conflict hunk; 0 for resolved.
     pub fn num_sides(&self) -> usize {
         match self {
@@ -513,13 +496,18 @@ impl ConflictHunkKind {
     /// many leading/trailing lines stay visible next to adjacent conflicts
     /// and how many hide behind a gap row. `first`/`last` say whether the
     /// hunk starts/ends the file (edges with no adjacent conflict keep no
-    /// context). `None` = show every line (expanded, small, or not a
-    /// resolved hunk).
-    pub fn trimmed_context(&self, first: bool, last: bool) -> Option<(usize, usize, usize)> {
-        let Self::Resolved { text, expanded } = self else {
+    /// context). `expanded` (App-side UI state) shows every line. `None` =
+    /// show every line (expanded, small, or not a resolved hunk).
+    pub fn trimmed_context(
+        &self,
+        expanded: bool,
+        first: bool,
+        last: bool,
+    ) -> Option<(usize, usize, usize)> {
+        let Self::Resolved { text } = self else {
             return None;
         };
-        if *expanded {
+        if expanded {
             return None;
         }
         let n = text.lines.len();

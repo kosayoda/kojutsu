@@ -315,9 +315,15 @@ impl App {
                     if self.is_file_unfolded(entry_idx, file_idx) {
                         if let Some(hunks) = self.conflict_hunks_loaded(entry_idx, file_idx) {
                             // Show conflict hunks instead of diff.
+                            let last_hunk = hunks.len() - 1;
                             for (hi, hunk) in hunks.iter().enumerate() {
+                                let hunk_ref = crate::types::ConflictHunkRef {
+                                    entry_idx,
+                                    file_idx,
+                                    hunk_idx: ConflictHunkIdx::new(hi),
+                                };
                                 match hunk {
-                                    crate::dag::ConflictHunkKind::Resolved { text, .. } => {
+                                    crate::dag::ConflictHunkKind::Resolved { text } => {
                                         // Trim to context around adjacent
                                         // conflicts; the hidden middle is an
                                         // expandable gap row.
@@ -330,9 +336,11 @@ impl App {
                                             });
                                         };
                                         let n = text.lines.len();
-                                        if let Some((head, tail, _)) =
-                                            hunk.trimmed_context(hi == 0, hi == hunks.len() - 1)
-                                        {
+                                        if let Some((head, tail, _)) = hunk.trimmed_context(
+                                            self.hunk_expanded(hunk_ref),
+                                            hi == 0,
+                                            hi == last_hunk,
+                                        ) {
                                             for li in 0..head {
                                                 push_ctx(li, rows);
                                             }
@@ -350,11 +358,7 @@ impl App {
                                             }
                                         }
                                     }
-                                    crate::dag::ConflictHunkKind::Conflict {
-                                        terms,
-                                        selected,
-                                        base_folded,
-                                    } => {
+                                    crate::dag::ConflictHunkKind::Conflict { terms } => {
                                         rows.push(DisplayRow::ConflictHeader {
                                             entry_idx,
                                             file_idx,
@@ -363,7 +367,7 @@ impl App {
                                         // A hand-edited resolution renders
                                         // above the terms.
                                         if let Some(crate::dag::ConflictPick::Edited(text)) =
-                                            selected
+                                            self.hunk_pick(hunk_ref)
                                         {
                                             for li in 0..text.lines.len().max(1) {
                                                 rows.push(DisplayRow::ConflictEdited {
@@ -374,6 +378,7 @@ impl App {
                                                 });
                                             }
                                         }
+                                        let base_folded = self.hunk_base_folded(hunk_ref);
                                         // Display order: sides first, bases
                                         // last (dimmed; folded to a stub by
                                         // default). Storage order stays
@@ -391,7 +396,7 @@ impl App {
                                         for (ti, term) in display_order {
                                             // A folded base renders as a
                                             // one-line stub.
-                                            let n = if !term.kind.is_side() && *base_folded {
+                                            let n = if !term.kind.is_side() && base_folded {
                                                 1
                                             } else {
                                                 // Empty terms (deleted or
@@ -837,10 +842,11 @@ impl App {
             file_idx,
             hunk_idx,
         };
-        if let Some(crate::dag::ConflictHunkKind::Resolved { expanded, .. }) =
-            self.conflict_hunk_mut(hunk)
-        {
-            *expanded = true;
+        if matches!(
+            self.conflict_hunk(hunk),
+            Some(crate::dag::ConflictHunkKind::Resolved { .. })
+        ) {
+            self.update_hunk_ui(hunk, |s| s.expanded = true);
             self.rebuild_entry_rows(entry_idx);
         }
     }
@@ -860,19 +866,16 @@ impl App {
             file_idx,
             hunk_idx,
         };
-        let Some(crate::dag::ConflictHunkKind::Conflict {
-            terms, base_folded, ..
-        }) = self.conflict_hunk_mut(hunk)
-        else {
-            return false;
-        };
-        if terms.get(term_idx.raw()).is_some_and(|t| !t.kind.is_side()) {
-            *base_folded = !*base_folded;
+        let is_base = matches!(
+            self.conflict_hunk(hunk),
+            Some(crate::dag::ConflictHunkKind::Conflict { terms })
+                if terms.get(term_idx.raw()).is_some_and(|t| !t.kind.is_side())
+        );
+        if is_base {
+            self.update_hunk_ui(hunk, |s| s.base_folded = !s.base_folded);
             self.rebuild_entry_rows(entry_idx);
-            true
-        } else {
-            false
         }
+        is_base
     }
 
     pub(crate) fn toggle_file_fold(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {

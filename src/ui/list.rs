@@ -466,18 +466,20 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                             (num, total)
                         })
                         .unwrap_or((0, 0));
-                    let picked = hunks
-                        .and_then(|hunks| hunks.get(hunk_idx.raw()))
-                        .and_then(|h| match h {
-                            crate::dag::ConflictHunkKind::Conflict {
-                                selected: Some(pick),
-                                ..
-                            } => Some(match pick {
-                                crate::dag::ConflictPick::Term(kind) => kind.label(h.num_sides()),
-                                crate::dag::ConflictPick::Edited(_) => "edited".to_string(),
-                            }),
-                            _ => None,
-                        });
+                    let hunk_ref = ConflictHunkRef {
+                        entry_idx: *entry_idx,
+                        file_idx: *file_idx,
+                        hunk_idx: *hunk_idx,
+                    };
+                    let picked = app.hunk_pick(hunk_ref).map(|pick| match pick {
+                        crate::dag::ConflictPick::Term(kind) => {
+                            let sides = hunks
+                                .and_then(|h| h.get(hunk_idx.raw()))
+                                .map_or(0, |h| h.num_sides());
+                            kind.label(sides)
+                        }
+                        crate::dag::ConflictPick::Edited(_) => "edited".to_string(),
+                    });
                     let mut spans = vec![
                         Span::raw("        "),
                         Span::styled(
@@ -521,12 +523,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         file_idx: *file_idx,
                         hunk_idx: *hunk_idx,
                     };
+                    let base_folded = app.hunk_base_folded(hunk_ref);
+                    let picked_term = app.hunk_picked_term(hunk_ref);
                     let info = app.conflict_hunk(hunk_ref).and_then(|h| match h {
-                        crate::dag::ConflictHunkKind::Conflict {
-                            terms, base_folded, ..
-                        } => {
+                        crate::dag::ConflictHunkKind::Conflict { terms } => {
                             let term = terms.get(term_idx.raw())?;
-                            let line = if !term.kind.is_side() && *base_folded {
+                            let line = if !term.kind.is_side() && base_folded {
                                 // Folded base stub.
                                 let n = term.text.lines.len();
                                 TermLine::Note(if term.absent {
@@ -551,7 +553,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                                     None => TermLine::Note("(empty)".to_string()),
                                 }
                             };
-                            let is_selected = h.picked_term() == Some(term.kind);
+                            let is_selected = picked_term == Some(term.kind);
                             Some((line, is_selected, term.kind, h.num_sides()))
                         }
                         _ => None,
@@ -638,11 +640,18 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     file_idx,
                     hunk_idx,
                 } => {
+                    let hunk_ref = ConflictHunkRef {
+                        entry_idx: *entry_idx,
+                        file_idx: *file_idx,
+                        hunk_idx: *hunk_idx,
+                    };
+                    let expanded = app.hunk_expanded(hunk_ref);
                     let hunks = app.conflict_hunks_loaded(*entry_idx, *file_idx);
                     let hidden = hunks
                         .and_then(|hunks| {
                             let hunk = hunks.get(hunk_idx.raw())?;
                             hunk.trimmed_context(
+                                expanded,
                                 hunk_idx.raw() == 0,
                                 hunk_idx.raw() == hunks.len() - 1,
                             )
@@ -670,13 +679,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         file_idx: *file_idx,
                         hunk_idx: *hunk_idx,
                     };
-                    let line = app.conflict_hunk(hunk_ref).and_then(|h| match h {
-                        crate::dag::ConflictHunkKind::Conflict {
-                            selected: Some(crate::dag::ConflictPick::Edited(text)),
-                            ..
-                        } => Some(text.lines.get(line_idx.raw()).cloned()),
+                    let line = match app.hunk_pick(hunk_ref) {
+                        Some(crate::dag::ConflictPick::Edited(text)) => {
+                            Some(text.lines.get(line_idx.raw()).cloned())
+                        }
                         _ => None,
-                    });
+                    };
                     // Selection color: an edited block is the user's chosen
                     // content, and it must not read as a side ([ours] is
                     // added-green).

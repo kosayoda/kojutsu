@@ -156,14 +156,13 @@ pub(in crate::input) fn dispatch(
             else {
                 return Action::None;
             };
+            let pick = app.hunk_pick(hunk).cloned();
             let seed = app.conflict_hunk(hunk).and_then(|h| match h {
-                crate::dag::ConflictHunkKind::Conflict {
-                    terms, selected, ..
-                } => Some(match selected {
+                crate::dag::ConflictHunkKind::Conflict { terms } => Some(match pick {
                     Some(crate::dag::ConflictPick::Edited(text)) => text.to_content(),
                     Some(crate::dag::ConflictPick::Term(kind)) => terms
                         .iter()
-                        .find(|t| t.kind == *kind)
+                        .find(|t| t.kind == kind)
                         .map(|t| t.text.to_content())
                         .unwrap_or_default(),
                     None => crate::repo::hunk_markers(terms),
@@ -214,15 +213,10 @@ pub(in crate::input) fn dispatch(
                 app.set_error("no conflict on this file");
                 return Action::None;
             }
-            let path = file.path.clone();
-            let Some(hunks) = app.nodes[entry_idx]
-                .conflict_hunks(file_idx)
-                .and_then(|l| l.loaded())
-            else {
+            let Some((path, content)) = app.conflict_file_content(entry_idx, file_idx) else {
                 app.set_error("conflict hunks not loaded — unfold the file first (tab)");
                 return Action::None;
             };
-            let (content, _complete) = crate::repo::assemble_resolution(hunks);
             Action::EditConflictResolution {
                 change_id: app.change_id(entry_idx),
                 path,
