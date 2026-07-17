@@ -645,8 +645,10 @@ pub struct AnnotateLineData {
 }
 
 impl DiffLineKind {
-    /// Whether this line kind can be individually selected (added or removed).
-    pub fn is_selectable(self) -> bool {
+    /// Whether this line kind can be individually selected (added or
+    /// removed). Callers outside this module want `DiffLine::is_selectable`,
+    /// which also excludes conflict-region lines.
+    fn is_selectable(self) -> bool {
         matches!(self, Self::Added | Self::Removed)
     }
 }

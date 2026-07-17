@@ -1,5 +1,4 @@
 use super::{App, PersistentVisualRange, VisualMode};
-use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, RowIdx};
 use crate::keymap::AppAction;
 use crate::types::{DisplayRow, FileRef, Selection, SelectionKind, VisualRange};
@@ -318,17 +317,28 @@ impl App {
         }
     }
 
+    /// Whether the diff line at `(entry, file, line)` can be individually
+    /// selected — the single selectability test for line visual mode.
+    /// Excludes context lines and conflict-region lines (which the pick
+    /// path rejects), so highlight and selection agree.
+    fn diff_line_selectable(&self, entry: EntryIdx, file: FileIdx, line: DiffLineIdx) -> bool {
+        self.diff_lines(entry, file)
+            .and_then(|lines| lines.get(line.raw()))
+            .is_some_and(|dl| dl.is_selectable())
+    }
+
     fn is_valid_line_visual_row(&self, row: RowIdx, entry: EntryIdx, file: FileIdx) -> bool {
-        match self.rows.get(row.raw()) {
-            Some(DisplayRow::DiffLine {
-                entry_idx,
-                file_idx,
-                line_idx,
-            }) if *entry_idx == entry && *file_idx == file => self
-                .diff_lines(*entry_idx, *file_idx)
-                .and_then(|lines| lines.get(line_idx.raw()))
-                .is_some_and(|dl| dl.kind != DiffLineKind::Context),
-            _ => false,
+        if let Some(DisplayRow::DiffLine {
+            entry_idx,
+            file_idx,
+            line_idx,
+        }) = self.rows.get(row.raw())
+        {
+            *entry_idx == entry
+                && *file_idx == file
+                && self.diff_line_selectable(*entry_idx, *file_idx, *line_idx)
+        } else {
+            false
         }
     }
 
@@ -352,11 +362,7 @@ impl App {
                     file_idx,
                     line_idx,
                 } if *entry_idx == entry && *file_idx == file => {
-                    let is_selectable = self
-                        .diff_lines(*entry_idx, *file_idx)
-                        .and_then(|lines| lines.get(line_idx.raw()))
-                        .is_some_and(|dl| dl.kind != DiffLineKind::Context);
-                    if is_selectable {
+                    if self.diff_line_selectable(*entry_idx, *file_idx, *line_idx) {
                         last_valid = Some(RowIdx::new(j));
                     }
                 }
@@ -490,12 +496,9 @@ impl App {
                     file_idx,
                     line_idx,
                 } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
-                    // Skip context lines.
-                    if self
-                        .diff_lines(*entry_idx, *file_idx)
-                        .and_then(|lines| lines.get(line_idx.raw()))
-                        .is_some_and(|dl| dl.kind == DiffLineKind::Context)
-                    {
+                    // Skip lines that can't be selected (context, conflict
+                    // regions).
+                    if !self.diff_line_selectable(*entry_idx, *file_idx, *line_idx) {
                         continue;
                     }
                     self.cursor = RowIdx::new(j);
@@ -518,12 +521,9 @@ impl App {
                     file_idx,
                     line_idx,
                 } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
-                    // Skip context lines.
-                    if self
-                        .diff_lines(*entry_idx, *file_idx)
-                        .and_then(|lines| lines.get(line_idx.raw()))
-                        .is_some_and(|dl| dl.kind == DiffLineKind::Context)
-                    {
+                    // Skip lines that can't be selected (context, conflict
+                    // regions).
+                    if !self.diff_line_selectable(*entry_idx, *file_idx, *line_idx) {
                         continue;
                     }
                     self.cursor = RowIdx::new(j);
