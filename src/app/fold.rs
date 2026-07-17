@@ -303,7 +303,7 @@ impl App {
                     });
                 }
             }
-            if let Some(files) = self.files_for_entry(entry_idx) {
+            if let Some(files) = self.shown_files(entry_idx) {
                 for file_idx_raw in 0..files.len() {
                     let file_idx = FileIdx::new(file_idx_raw);
                     rows.push(DisplayRow::FileChange {
@@ -313,9 +313,8 @@ impl App {
 
                     // If this file is unfolded, show diff lines or conflict hunks.
                     if self.is_file_unfolded(entry_idx, file_idx) {
-                        if let Some(hunks) = self.conflict_hunks_loaded(entry_idx, file_idx) {
+                        if let Some(hunks) = self.shown_conflict_hunks(entry_idx, file_idx) {
                             // Show conflict hunks instead of diff.
-                            let last_hunk = hunks.len() - 1;
                             for (hi, hunk) in hunks.iter().enumerate() {
                                 let hunk_ref = crate::types::ConflictHunkRef {
                                     entry_idx,
@@ -336,11 +335,7 @@ impl App {
                                             });
                                         };
                                         let n = text.lines.len();
-                                        if let Some(trim) = hunk.trimmed_context(
-                                            self.hunk_expanded(hunk_ref),
-                                            hi == 0,
-                                            hi == last_hunk,
-                                        ) {
+                                        if let Some(trim) = self.hunk_trimmed_context(hunk_ref) {
                                             for li in 0..trim.head {
                                                 push_ctx(li, rows);
                                             }
@@ -567,6 +562,17 @@ fn dag_cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>;
                 ..
             }
             | DisplayRow::ConflictContext {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                ..
+            }
+            | DisplayRow::ConflictGap {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            }
+            | DisplayRow::ConflictEdited {
                 entry_idx,
                 file_idx,
                 hunk_idx,

@@ -843,6 +843,19 @@ fn conflict_terms<T: AsRef<[u8]>>(hunk: &Merge<T>, absent: &[bool]) -> Vec<Confl
 /// Word-level tokens for each line of a conflict side, marking what the
 /// side changed relative to its base. Returns one token list per side
 /// line (removed-only lines belong to the base and are skipped).
+/// Map a word-diff token tag to its display kind. A `Different` token is
+/// Removed on a removed line and Added otherwise, so the line's type
+/// disambiguates.
+fn diff_token_kind(tag: &DiffTokenType, line_type: &DiffLineType) -> DiffTokenKind {
+    match tag {
+        DiffTokenType::Matching => DiffTokenKind::Unchanged,
+        DiffTokenType::Different => match line_type {
+            DiffLineType::Removed => DiffTokenKind::Removed,
+            _ => DiffTokenKind::Added,
+        },
+    }
+}
+
 fn side_token_lines(base: &[u8], side: &[u8]) -> Vec<Vec<DiffToken>> {
     let contents = Diff::new(bstr::BStr::new(base), bstr::BStr::new(side));
     // Full context so every unchanged side line is present too.
@@ -858,10 +871,7 @@ fn side_token_lines(base: &[u8], side: &[u8]) -> Vec<Vec<DiffToken>> {
                 .filter(|(_, bytes)| !bytes.is_empty())
                 .map(|(tag, bytes)| DiffToken {
                     text: String::from_utf8_lossy(bytes).into_owned(),
-                    kind: match tag {
-                        DiffTokenType::Matching => DiffTokenKind::Unchanged,
-                        DiffTokenType::Different => DiffTokenKind::Added,
-                    },
+                    kind: diff_token_kind(tag, line_type),
                 })
                 .collect();
             if let Some(last) = diff_tokens.last_mut() {
@@ -1035,13 +1045,7 @@ fn hunks_to_diff_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut Vec<Dif
                 let text = String::from_utf8_lossy(bytes);
                 full_text.push_str(&text);
                 let text = text.into_owned();
-                let kind = match tag {
-                    DiffTokenType::Matching => crate::dag::DiffTokenKind::Unchanged,
-                    DiffTokenType::Different => match line_type {
-                        DiffLineType::Removed => crate::dag::DiffTokenKind::Removed,
-                        _ => crate::dag::DiffTokenKind::Added,
-                    },
-                };
+                let kind = diff_token_kind(tag, line_type);
                 diff_tokens.push(crate::dag::DiffToken { text, kind });
             }
             if let Some(last) = diff_tokens.last_mut() {

@@ -248,11 +248,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
     }
     let conflicted = app.conflicted_commit_count();
     if conflicted > 0 {
-        let noun = if conflicted == 1 {
-            "conflict"
-        } else {
-            "conflicts"
-        };
+        let noun = crate::pluralize!(conflicted, "conflict", "conflicts");
         wc_spans.push(Span::styled(
             format!(" {conflicted} {noun} "),
             Style::default()

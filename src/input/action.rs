@@ -457,9 +457,7 @@ pub fn dispatch_action_after_hooks(
                 }
                 Some(SelectTarget::ConflictTerm { hunk, kind, absent }) => {
                     if absent {
-                        app.set_error(
-                            "that side deleted the file — use C,o / C,t to take it whole-file",
-                        );
+                        app.set_error(super::view::dag::ERR_SIDE_DELETED);
                     } else if app.pick_conflict_term(hunk, kind).is_some() {
                         // Picked (not unpicked): offer to apply if that was
                         // the last hunk, otherwise move to the next conflict.
@@ -529,17 +527,21 @@ pub fn dispatch_action_after_hooks(
         AppAction::EditRevsetInEditor => Action::EditRevsetInEditor,
         AppAction::ResetRevset => {
             app.revset.active_preset = None;
+            app.revset.conflicted_prev = None;
             app.request_revset_load_no_snapshot(None);
             Action::None
         }
         AppAction::ToggleConflictedRevset => {
             app.revset.active_preset = None;
-            if app.revset.current.as_str() == CONFLICTED_REVSET {
-                app.request_revset_load_no_snapshot(None);
-                Action::None
+            if let Some(prev) = app.revset.conflicted_prev.take() {
+                // Toggle off: return to the revset we were viewing before.
+                app.request_revset_load_no_snapshot(Some(prev.to_string()));
             } else {
-                Action::UpdateRevset(CONFLICTED_REVSET.to_string())
+                // Toggle on: remember where we were so we can come back.
+                app.revset.conflicted_prev = Some(app.revset.current.clone());
+                app.request_revset_load_no_snapshot(Some(CONFLICTED_REVSET.to_string()));
             }
+            Action::None
         }
         AppAction::SwitchPreset1
         | AppAction::SwitchPreset2
@@ -553,6 +555,7 @@ pub fn dispatch_action_after_hooks(
             } else {
                 // No preset at this slot — use jj's default revset.
                 app.revset.active_preset = None;
+                app.revset.conflicted_prev = None;
                 app.request_revset_load_no_snapshot(None);
                 Action::None
             }

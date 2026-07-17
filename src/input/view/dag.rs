@@ -16,6 +16,13 @@ use crate::input::bookmark::{
     enter_bookmark_text_input, enter_remote_bookmark_select, enter_tag_delete,
 };
 
+/// Shown when a per-hunk conflict action fires off a conflict hunk row.
+pub(in crate::input) const ERR_NOT_ON_HUNK: &str = "per-hunk only — use on a conflict hunk row";
+/// Shown when picking a side that deleted the file (assembly can't express
+/// a deletion, only empty content).
+pub(in crate::input) const ERR_SIDE_DELETED: &str =
+    "that side deleted the file — use C,o / C,t to take it whole-file";
+
 pub(in crate::input) fn dispatch(
     app: &mut App,
     lua: &crate::lua::LuaEngine,
@@ -113,16 +120,14 @@ pub(in crate::input) fn dispatch(
                     _ => crate::conflict::ConflictTermKind::Base(0),
                 };
                 if picked_term_is_absent(app, hunk, pick) {
-                    app.set_error(
-                        "that side deleted the file — use C,o / C,t to take it whole-file",
-                    );
+                    app.set_error(ERR_SIDE_DELETED);
                     return Action::None;
                 }
                 if app.pick_conflict_term(hunk, pick).is_some() {
                     maybe_offer_apply(app, hunk.entry_idx, hunk.file_idx, flags);
                 }
             } else {
-                app.set_error("per-hunk only — use on a conflict hunk row");
+                app.set_error(ERR_NOT_ON_HUNK);
             }
             Action::None
         }
@@ -134,7 +139,7 @@ pub(in crate::input) fn dispatch(
             {
                 app.unpick_conflict(hunk);
             } else {
-                app.set_error("per-hunk only — use on a conflict hunk row");
+                app.set_error(ERR_NOT_ON_HUNK);
             }
             Action::None
         }
@@ -146,7 +151,7 @@ pub(in crate::input) fn dispatch(
                 .get(app.cursor.raw())
                 .and_then(|r| r.conflict_hunk())
             else {
-                app.set_error("per-hunk only — use on a conflict hunk row");
+                app.set_error(ERR_NOT_ON_HUNK);
                 return Action::None;
             };
             let Some(path) = app

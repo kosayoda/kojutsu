@@ -101,6 +101,11 @@ pub struct RevsetConfig {
     pub active_preset: Option<usize>,
     /// Named revset presets from config.
     pub presets: &'static [crate::theme::Preset],
+    /// The revset in effect before the `conflicted()` toggle was turned on,
+    /// so toggling off returns there instead of jj's default. `Some` also
+    /// *is* the "toggle currently on" state, replacing string-equality
+    /// inference. Cleared by any other revset change.
+    pub conflicted_prev: Option<Str>,
 }
 
 /// State for the operation log view.

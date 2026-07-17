@@ -408,6 +408,7 @@ impl App {
                 pending: None,
                 active_preset: None,
                 presets,
+                conflicted_prev: None,
             },
             glyphs,
             default_search_scopes: SearchScopes::DEFAULT,
@@ -900,6 +901,21 @@ impl App {
         self.hunk_ui(hunk).is_some_and(|s| s.expanded)
     }
 
+    /// Context trimming for a resolved hunk, deriving the first/last-hunk
+    /// edge flags from its position in the file. The single source for those
+    /// flags, so the row builder and the gap renderer can't disagree on how
+    /// many lines are hidden.
+    pub fn hunk_trimmed_context(
+        &self,
+        hunk: ConflictHunkRef,
+    ) -> Option<crate::conflict::TrimmedContext> {
+        let hunks = self.conflict_hunks_loaded(hunk.entry_idx, hunk.file_idx)?;
+        let idx = hunk.hunk_idx.raw();
+        hunks
+            .get(idx)?
+            .trimmed_context(self.hunk_expanded(hunk), idx == 0, idx == hunks.len() - 1)
+    }
+
     /// Mutate a hunk's UI state, then drop the entry if it returned to the
     /// default (keeps the map sparse and prunable).
     fn update_hunk_ui(&mut self, hunk: ConflictHunkRef, f: impl FnOnce(&mut HunkUiState)) {
@@ -1184,6 +1200,30 @@ impl App {
 
     pub fn files_for_entry(&self, entry_idx: EntryIdx) -> Option<&Vec<FileChange>> {
         self.nodes[entry_idx].files.loaded()
+    }
+
+    /// The file changes the DAG actually emits rows for under a commit:
+    /// its loaded files when the commit is unfolded, else `None`. The single
+    /// source for "are file rows shown" — used both when building rows and
+    /// when navigation decides whether a commit node is a conflict's
+    /// deepest-visible representation.
+    pub fn shown_files(&self, entry_idx: EntryIdx) -> Option<&Vec<FileChange>> {
+        self.is_commit_unfolded(entry_idx)
+            .then(|| self.files_for_entry(entry_idx))
+            .flatten()
+    }
+
+    /// The conflict hunks the DAG actually emits rows for under a file:
+    /// its loaded hunks when the file is unfolded, else `None`. Companion to
+    /// [`shown_files`](Self::shown_files) for the conflict level.
+    pub fn shown_conflict_hunks(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+    ) -> Option<&[crate::conflict::ConflictHunkKind]> {
+        self.is_file_unfolded(entry_idx, file_idx)
+            .then(|| self.conflict_hunks_loaded(entry_idx, file_idx))
+            .flatten()
     }
 
     pub fn diff_format(&self) -> DiffFormat {

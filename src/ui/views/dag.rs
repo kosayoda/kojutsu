@@ -489,12 +489,15 @@ pub(crate) fn render_conflict_header(
             (num, total)
         })
         .unwrap_or((0, 0));
+    // The label color tracks the block it names: term picks render green
+    // ([ours]/[theirs]/[base] are added-green), a hand edit renders in the
+    // selection color like the [edited] block.
     let picked = app.hunk_pick(hunk).map(|pick| match pick {
         ConflictPick::Term(kind) => {
             let sides = app.conflict_hunk(hunk).map_or(0, |h| h.num_sides());
-            kind.label(sides)
+            (kind.label(sides), theme.added)
         }
-        ConflictPick::Edited(_) => "edited".to_string(),
+        ConflictPick::Edited(_) => ("edited".to_string(), theme.selection),
     });
     let bold_error = Style::default()
         .fg(theme.error)
@@ -503,12 +506,10 @@ pub(crate) fn render_conflict_header(
         Span::raw("        "),
         Span::styled(format!("── conflict {num} of {total}"), bold_error),
     ];
-    if let Some(label) = picked {
+    if let Some((label, color)) = picked {
         spans.push(Span::styled(
             format!(" · picked: {label}"),
-            Style::default()
-                .fg(theme.added)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(color).add_modifier(Modifier::BOLD),
         ));
     }
     spans.push(Span::styled(" ──", bold_error));
@@ -542,7 +543,7 @@ pub(crate) fn render_conflict_term(
                 TermLine::Note(if term.absent {
                     "(file deleted)".to_string()
                 } else {
-                    format!("… {n} line{} (tab)", if n == 1 { "" } else { "s" })
+                    format!("… {n} {} (tab)", crate::pluralize!(n, "line", "lines"))
                 })
             } else {
                 match term.text.lines.get(line_idx.raw()) {
@@ -632,17 +633,8 @@ pub(crate) fn render_conflict_gap(
     hunk: ConflictHunkRef,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
-    let expanded = app.hunk_expanded(hunk);
     let hidden = app
-        .conflict_hunks_loaded(hunk.entry_idx, hunk.file_idx)
-        .and_then(|hunks| {
-            let h = hunks.get(hunk.hunk_idx.raw())?;
-            h.trimmed_context(
-                expanded,
-                hunk.hunk_idx.raw() == 0,
-                hunk.hunk_idx.raw() == hunks.len() - 1,
-            )
-        })
+        .hunk_trimmed_context(hunk)
         .map(|trim| trim.hidden)
         .unwrap_or_default();
     vec![Line::from(vec![

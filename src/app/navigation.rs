@@ -420,10 +420,13 @@ impl App {
                 NavDirection::Backward => (cur + n - step) % n,
             })
             .find(|&idx| match &self.rows[idx] {
+                // A conflicted commit/file is a stop only when its deeper
+                // rows aren't shown — otherwise land on those instead. The
+                // `shown_*` helpers are the same source the row builder uses,
+                // so this can't drift from what's actually on screen.
                 DisplayRow::CommitNode { entry_idx } => {
                     self.nodes[*entry_idx].commit.has_conflict
-                        && !(self.is_commit_unfolded(*entry_idx)
-                            && self.files_for_entry(*entry_idx).is_some())
+                        && self.shown_files(*entry_idx).is_none()
                 }
                 DisplayRow::FileChange {
                     entry_idx,
@@ -432,8 +435,7 @@ impl App {
                     self.files_for_entry(*entry_idx)
                         .and_then(|f| f.get(file_idx.raw()))
                         .is_some_and(|f| f.has_conflict)
-                        && !(self.is_file_unfolded(*entry_idx, *file_idx)
-                            && self.conflict_hunks_loaded(*entry_idx, *file_idx).is_some())
+                        && self.shown_conflict_hunks(*entry_idx, *file_idx).is_none()
                 }
                 DisplayRow::ConflictHeader { .. } => true,
                 _ => false,

@@ -565,6 +565,8 @@ fn suspend_and_run(
 }
 
 fn update_revset(app: &mut App, revset_str: String) {
+    // An explicit revset change leaves any active conflicted() toggle.
+    app.revset.conflicted_prev = None;
     app.request_revset_load_no_snapshot(Some(revset_str));
 }
 
