@@ -449,261 +449,78 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     entry_idx,
                     file_idx,
                     hunk_idx,
-                } => {
-                    let hunks = app.conflict_hunks_loaded(*entry_idx, *file_idx);
-                    let (num, total) = hunks
-                        .map(|hunks| {
-                            let mut num = 0usize;
-                            let mut total = 0usize;
-                            for (i, h) in hunks.iter().enumerate() {
-                                if matches!(h, crate::dag::ConflictHunkKind::Conflict { .. }) {
-                                    total += 1;
-                                    if i <= hunk_idx.raw() {
-                                        num += 1;
-                                    }
-                                }
-                            }
-                            (num, total)
-                        })
-                        .unwrap_or((0, 0));
-                    let hunk_ref = ConflictHunkRef {
+                } => render_conflict_header(
+                    app,
+                    ConflictHunkRef {
                         entry_idx: *entry_idx,
                         file_idx: *file_idx,
                         hunk_idx: *hunk_idx,
-                    };
-                    let picked = app.hunk_pick(hunk_ref).map(|pick| match pick {
-                        crate::dag::ConflictPick::Term(kind) => {
-                            let sides = hunks
-                                .and_then(|h| h.get(hunk_idx.raw()))
-                                .map_or(0, |h| h.num_sides());
-                            kind.label(sides)
-                        }
-                        crate::dag::ConflictPick::Edited(_) => "edited".to_string(),
-                    });
-                    let mut spans = vec![
-                        Span::raw("        "),
-                        Span::styled(
-                            format!("── conflict {num} of {total}"),
-                            Style::default()
-                                .fg(theme.error)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ];
-                    if let Some(label) = picked {
-                        spans.push(Span::styled(
-                            format!(" · picked: {label}"),
-                            Style::default()
-                                .fg(theme.added)
-                                .add_modifier(Modifier::BOLD),
-                        ));
-                    }
-                    spans.push(Span::styled(
-                        " ──",
-                        Style::default()
-                            .fg(theme.error)
-                            .add_modifier(Modifier::BOLD),
-                    ));
-                    vec![Line::from(spans)]
-                }
+                    },
+                    theme,
+                ),
                 DisplayRow::ConflictTerm {
                     entry_idx,
                     file_idx,
                     hunk_idx,
                     term_idx,
                     line_idx,
-                } => {
-                    use crate::dag::ConflictTermKind;
-                    enum TermLine {
-                        Text(String, Vec<crate::dag::DiffToken>),
-                        /// Placeholder or folded-base stub, rendered italic.
-                        Note(String),
-                    }
-                    let hunk_ref = ConflictHunkRef {
+                } => render_conflict_term(
+                    app,
+                    ConflictHunkRef {
                         entry_idx: *entry_idx,
                         file_idx: *file_idx,
                         hunk_idx: *hunk_idx,
-                    };
-                    let base_folded = app.hunk_base_folded(hunk_ref);
-                    let picked_term = app.hunk_picked_term(hunk_ref);
-                    let info = app.conflict_hunk(hunk_ref).and_then(|h| match h {
-                        crate::dag::ConflictHunkKind::Conflict { terms } => {
-                            let term = terms.get(term_idx.raw())?;
-                            let line = if !term.kind.is_side() && base_folded {
-                                // Folded base stub.
-                                let n = term.text.lines.len();
-                                TermLine::Note(if term.absent {
-                                    "(file deleted)".to_string()
-                                } else {
-                                    format!("… {n} line{} (tab)", if n == 1 { "" } else { "s" })
-                                })
-                            } else {
-                                match term.text.lines.get(line_idx.raw()) {
-                                    Some(l) => TermLine::Text(
-                                        l.clone(),
-                                        term.token_lines
-                                            .get(line_idx.raw())
-                                            .cloned()
-                                            .unwrap_or_default(),
-                                    ),
-                                    // Placeholder row for an empty term
-                                    // (deleted or emptied file).
-                                    None if term.absent => {
-                                        TermLine::Note("(file deleted)".to_string())
-                                    }
-                                    None => TermLine::Note("(empty)".to_string()),
-                                }
-                            };
-                            let is_selected = picked_term == Some(term.kind);
-                            Some((line, is_selected, term.kind, h.num_sides()))
-                        }
-                        _ => None,
-                    });
-                    let Some((line, is_selected, kind, num_sides)) = info else {
-                        return vec![Line::raw("")];
-                    };
-                    let term_color = match kind {
-                        ConflictTermKind::Side(0) => theme.added,
-                        ConflictTermKind::Side(_) => theme.change_id,
-                        ConflictTermKind::Base(_) => theme.muted,
-                    };
-                    let mut base_style = Style::default().fg(term_color);
-                    if is_selected {
-                        base_style = base_style.add_modifier(Modifier::BOLD);
-                    }
-                    let label_style = if is_selected {
-                        base_style.add_modifier(Modifier::UNDERLINED)
-                    } else {
-                        base_style
-                    };
-                    let label = format!("[{}]", kind.label(num_sides));
-                    let mut spans = vec![
-                        Span::raw("          "),
-                        Span::styled(format!("{label:<8}"), label_style),
-                        Span::raw(" "),
-                    ];
-                    match line {
-                        TermLine::Note(text) => {
-                            spans.push(Span::styled(
-                                text,
-                                base_style.add_modifier(Modifier::ITALIC),
-                            ));
-                        }
-                        TermLine::Text(content, tokens) => {
-                            let diff_line = crate::dag::DiffLine {
-                                kind: crate::dag::DiffLineKind::Context,
-                                content,
-                                tokens,
-                                old_line: None,
-                                new_line: None,
-                                conflict_region: false,
-                            };
-                            super::views::push_diff_tokens(
-                                &mut spans,
-                                &diff_line,
-                                base_style,
-                                app.diff_underline,
-                                row_search.as_ref(),
-                                theme,
-                                &tab_spaces,
-                            );
-                        }
-                    }
-                    vec![Line::from(spans)]
-                }
+                    },
+                    *term_idx,
+                    *line_idx,
+                    app.diff_underline,
+                    row_search.as_ref(),
+                    theme,
+                    &tab_spaces,
+                ),
                 DisplayRow::ConflictContext {
                     entry_idx,
                     file_idx,
                     hunk_idx,
                     line_idx,
-                } => {
-                    let hunk_ref = ConflictHunkRef {
+                } => render_conflict_context(
+                    app,
+                    ConflictHunkRef {
                         entry_idx: *entry_idx,
                         file_idx: *file_idx,
                         hunk_idx: *hunk_idx,
-                    };
-                    let text = app
-                        .conflict_hunk(hunk_ref)
-                        .and_then(|h| match h {
-                            crate::dag::ConflictHunkKind::Resolved { text, .. } => {
-                                text.lines.get(line_idx.raw()).cloned()
-                            }
-                            _ => None,
-                        })
-                        .unwrap_or_default();
-                    vec![Line::from(vec![
-                        Span::raw("        "),
-                        Span::styled(text, Style::default().fg(theme.muted)),
-                    ])]
-                }
+                    },
+                    *line_idx,
+                    theme,
+                ),
                 DisplayRow::ConflictGap {
                     entry_idx,
                     file_idx,
                     hunk_idx,
-                } => {
-                    let hunk_ref = ConflictHunkRef {
+                } => render_conflict_gap(
+                    app,
+                    ConflictHunkRef {
                         entry_idx: *entry_idx,
                         file_idx: *file_idx,
                         hunk_idx: *hunk_idx,
-                    };
-                    let expanded = app.hunk_expanded(hunk_ref);
-                    let hunks = app.conflict_hunks_loaded(*entry_idx, *file_idx);
-                    let hidden = hunks
-                        .and_then(|hunks| {
-                            let hunk = hunks.get(hunk_idx.raw())?;
-                            hunk.trimmed_context(
-                                expanded,
-                                hunk_idx.raw() == 0,
-                                hunk_idx.raw() == hunks.len() - 1,
-                            )
-                        })
-                        .map(|(_, _, hidden)| hidden)
-                        .unwrap_or_default();
-                    vec![Line::from(vec![
-                        Span::raw("        "),
-                        Span::styled(
-                            format!("── … {hidden} lines … (tab) ──"),
-                            Style::default()
-                                .fg(theme.muted)
-                                .add_modifier(Modifier::ITALIC),
-                        ),
-                    ])]
-                }
+                    },
+                    theme,
+                ),
                 DisplayRow::ConflictEdited {
                     entry_idx,
                     file_idx,
                     hunk_idx,
                     line_idx,
-                } => {
-                    let hunk_ref = ConflictHunkRef {
+                } => render_conflict_edited(
+                    app,
+                    ConflictHunkRef {
                         entry_idx: *entry_idx,
                         file_idx: *file_idx,
                         hunk_idx: *hunk_idx,
-                    };
-                    let line = match app.hunk_pick(hunk_ref) {
-                        Some(crate::dag::ConflictPick::Edited(text)) => {
-                            Some(text.lines.get(line_idx.raw()).cloned())
-                        }
-                        _ => None,
-                    };
-                    // Selection color: an edited block is the user's chosen
-                    // content, and it must not read as a side ([ours] is
-                    // added-green).
-                    let style = Style::default()
-                        .fg(theme.selection)
-                        .add_modifier(Modifier::BOLD);
-                    let (text, style) = match line {
-                        Some(Some(text)) => (text, style),
-                        // Placeholder for an edit that resolved to nothing.
-                        Some(None) => ("(empty)".to_string(), style.add_modifier(Modifier::ITALIC)),
-                        None => (String::new(), style),
-                    };
-                    vec![Line::from(vec![
-                        Span::raw("          "),
-                        Span::styled(format!("{:<8}", "[edited]"), style),
-                        Span::raw(" "),
-                        Span::styled(text, style),
-                    ])]
-                }
+                    },
+                    *line_idx,
+                    theme,
+                ),
                 DisplayRow::InterdiffHeader => {
                     let (from, to) = app
                         .interdiff

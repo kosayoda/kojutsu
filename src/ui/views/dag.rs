@@ -1,11 +1,16 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
+use crate::app::App;
+use crate::dag::{
+    CommitInfo, ConflictHunkKind, ConflictPick, ConflictTermKind, DiffLine, DiffLineKind,
+    FileChange, FileStatus, LineStats,
+};
+use crate::idx::{ConflictLineIdx, ConflictTermIdx};
 use crate::theme::{Config, Theme};
-use crate::types::{FileSelectionState, SearchScopes};
+use crate::types::{ConflictHunkRef, FileSelectionState, SearchScopes};
 
-use super::{RenderFlags, push_graph_node_spans, push_line_stats};
+use super::{RenderFlags, push_diff_tokens, push_graph_node_spans, push_line_stats};
 use crate::ui::search::{
     SearchRender, SearchRowState, contains_query, gutter_span, push_searchable, search_gutter,
 };
@@ -396,7 +401,8 @@ pub(crate) fn render_diff_line(
         spans.push(Span::styled(marker, style));
         super::push_diff_tokens(
             &mut spans,
-            diff_line,
+            &diff_line.content,
+            &diff_line.tokens,
             style,
             diff_underline,
             search,
@@ -413,7 +419,8 @@ pub(crate) fn render_diff_line(
         spans.push(Span::styled(prefix, style));
         super::push_diff_tokens(
             &mut spans,
-            diff_line,
+            &diff_line.content,
+            &diff_line.tokens,
             style,
             diff_underline,
             search,
@@ -461,4 +468,221 @@ fn diff_path_parts<'a>(old: &'a str, new: &'a str) -> (&'a str, &'a str, &'a str
         &new[pre..pre + (new_rest.len() - (old_rest.len() - suf))],
         &old[pre + suf..],
     )
+}
+
+pub(crate) fn render_conflict_header(
+    app: &App,
+    hunk: ConflictHunkRef,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let hunks = app.conflict_hunks_loaded(hunk.entry_idx, hunk.file_idx);
+    let (num, total) = hunks
+        .map(|hunks| {
+            let mut num = 0usize;
+            let mut total = 0usize;
+            for (i, h) in hunks.iter().enumerate() {
+                if matches!(h, ConflictHunkKind::Conflict { .. }) {
+                    total += 1;
+                    if i <= hunk.hunk_idx.raw() {
+                        num += 1;
+                    }
+                }
+            }
+            (num, total)
+        })
+        .unwrap_or((0, 0));
+    let picked = app.hunk_pick(hunk).map(|pick| match pick {
+        ConflictPick::Term(kind) => {
+            let sides = app.conflict_hunk(hunk).map_or(0, |h| h.num_sides());
+            kind.label(sides)
+        }
+        ConflictPick::Edited(_) => "edited".to_string(),
+    });
+    let bold_error = Style::default()
+        .fg(theme.error)
+        .add_modifier(Modifier::BOLD);
+    let mut spans = vec![
+        Span::raw("        "),
+        Span::styled(format!("── conflict {num} of {total}"), bold_error),
+    ];
+    if let Some(label) = picked {
+        spans.push(Span::styled(
+            format!(" · picked: {label}"),
+            Style::default()
+                .fg(theme.added)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    spans.push(Span::styled(" ──", bold_error));
+    vec![Line::from(spans)]
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_conflict_term(
+    app: &App,
+    hunk: ConflictHunkRef,
+    term_idx: ConflictTermIdx,
+    line_idx: ConflictLineIdx,
+    diff_underline: bool,
+    search: Option<&SearchRender<'_>>,
+    theme: &Theme,
+    tab_str: &str,
+) -> Vec<Line<'static>> {
+    // A term line is either real content (with word tokens) or an italic
+    // note (folded-base stub, deleted/empty placeholder).
+    enum TermLine {
+        Text(String, Vec<crate::dag::DiffToken>),
+        Note(String),
+    }
+    let base_folded = app.hunk_base_folded(hunk);
+    let picked_term = app.hunk_picked_term(hunk);
+    let info = app.conflict_hunk(hunk).and_then(|h| match h {
+        ConflictHunkKind::Conflict { terms } => {
+            let term = terms.get(term_idx.raw())?;
+            let line = if !term.kind.is_side() && base_folded {
+                let n = term.text.lines.len();
+                TermLine::Note(if term.absent {
+                    "(file deleted)".to_string()
+                } else {
+                    format!("… {n} line{} (tab)", if n == 1 { "" } else { "s" })
+                })
+            } else {
+                match term.text.lines.get(line_idx.raw()) {
+                    Some(l) => TermLine::Text(
+                        l.clone(),
+                        term.token_lines
+                            .get(line_idx.raw())
+                            .cloned()
+                            .unwrap_or_default(),
+                    ),
+                    None if term.absent => TermLine::Note("(file deleted)".to_string()),
+                    None => TermLine::Note("(empty)".to_string()),
+                }
+            };
+            let is_selected = picked_term == Some(term.kind);
+            Some((line, is_selected, term.kind, h.num_sides()))
+        }
+        _ => None,
+    });
+    let Some((line, is_selected, kind, num_sides)) = info else {
+        return vec![Line::raw("")];
+    };
+    let term_color = match kind {
+        ConflictTermKind::Side(0) => theme.added,
+        ConflictTermKind::Side(_) => theme.change_id,
+        ConflictTermKind::Base(_) => theme.muted,
+    };
+    let mut base_style = Style::default().fg(term_color);
+    if is_selected {
+        base_style = base_style.add_modifier(Modifier::BOLD);
+    }
+    let label_style = if is_selected {
+        base_style.add_modifier(Modifier::UNDERLINED)
+    } else {
+        base_style
+    };
+    let label = format!("[{}]", kind.label(num_sides));
+    let mut spans = vec![
+        Span::raw("          "),
+        Span::styled(format!("{label:<8}"), label_style),
+        Span::raw(" "),
+    ];
+    match line {
+        TermLine::Note(text) => {
+            spans.push(Span::styled(
+                text,
+                base_style.add_modifier(Modifier::ITALIC),
+            ));
+        }
+        TermLine::Text(content, tokens) => {
+            push_diff_tokens(
+                &mut spans,
+                &content,
+                &tokens,
+                base_style,
+                diff_underline,
+                search,
+                theme,
+                tab_str,
+            );
+        }
+    }
+    vec![Line::from(spans)]
+}
+
+pub(crate) fn render_conflict_context(
+    app: &App,
+    hunk: ConflictHunkRef,
+    line_idx: ConflictLineIdx,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let text = app
+        .conflict_hunk(hunk)
+        .and_then(|h| match h {
+            ConflictHunkKind::Resolved { text } => text.lines.get(line_idx.raw()).cloned(),
+            _ => None,
+        })
+        .unwrap_or_default();
+    vec![Line::from(vec![
+        Span::raw("        "),
+        Span::styled(text, Style::default().fg(theme.muted)),
+    ])]
+}
+
+pub(crate) fn render_conflict_gap(
+    app: &App,
+    hunk: ConflictHunkRef,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let expanded = app.hunk_expanded(hunk);
+    let hidden = app
+        .conflict_hunks_loaded(hunk.entry_idx, hunk.file_idx)
+        .and_then(|hunks| {
+            let h = hunks.get(hunk.hunk_idx.raw())?;
+            h.trimmed_context(
+                expanded,
+                hunk.hunk_idx.raw() == 0,
+                hunk.hunk_idx.raw() == hunks.len() - 1,
+            )
+        })
+        .map(|(_, _, hidden)| hidden)
+        .unwrap_or_default();
+    vec![Line::from(vec![
+        Span::raw("        "),
+        Span::styled(
+            format!("── … {hidden} lines … (tab) ──"),
+            Style::default()
+                .fg(theme.muted)
+                .add_modifier(Modifier::ITALIC),
+        ),
+    ])]
+}
+
+pub(crate) fn render_conflict_edited(
+    app: &App,
+    hunk: ConflictHunkRef,
+    line_idx: ConflictLineIdx,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let line = match app.hunk_pick(hunk) {
+        Some(ConflictPick::Edited(text)) => Some(text.lines.get(line_idx.raw()).cloned()),
+        _ => None,
+    };
+    // Selection color: an edited block is the user's chosen content and
+    // must not read as a side ([ours] is added-green).
+    let style = Style::default()
+        .fg(theme.selection)
+        .add_modifier(Modifier::BOLD);
+    let (text, style) = match line {
+        Some(Some(text)) => (text, style),
+        // Placeholder for an edit that resolved to nothing.
+        Some(None) => ("(empty)".to_string(), style.add_modifier(Modifier::ITALIC)),
+        None => (String::new(), style),
+    };
+    vec![Line::from(vec![
+        Span::raw("          "),
+        Span::styled(format!("{:<8}", "[edited]"), style),
+        Span::raw(" "),
+        Span::styled(text, style),
+    ])]
 }

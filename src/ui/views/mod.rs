@@ -18,7 +18,9 @@ use itertools::Itertools;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::dag::{DiffLine, DiffLineKind, DiffTokenKind, FileStatus, LineStats, ShortId};
+use crate::dag::{
+    DiffLine, DiffLineKind, DiffToken, DiffTokenKind, FileStatus, LineStats, ShortId,
+};
 use crate::theme::{Config, Theme};
 use crate::types::SearchScopes;
 
@@ -140,7 +142,8 @@ pub(super) fn render_simple_diff_line(
     ];
     push_diff_tokens(
         &mut spans,
-        diff_line,
+        &diff_line.content,
+        &diff_line.tokens,
         base_style,
         diff_underline,
         search,
@@ -186,27 +189,26 @@ pub(super) fn push_ref_entry_suffix(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn push_diff_tokens(
     spans: &mut Vec<Span<'static>>,
-    diff_line: &DiffLine,
+    content: &str,
+    tokens: &[DiffToken],
     base_style: Style,
     underline: bool,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
     tab_str: &str,
 ) {
-    let has_tokens = diff_line
-        .tokens
-        .iter()
-        .any(|t| t.kind != DiffTokenKind::Unchanged);
+    let has_tokens = tokens.iter().any(|t| t.kind != DiffTokenKind::Unchanged);
 
     if !has_tokens || search.is_some_and(|s| s.row_state != super::search::SearchRowState::None) {
-        let content = diff_line.content.replace('\t', tab_str);
+        let content = content.replace('\t', tab_str);
         push_searchable(spans, &content, SearchScopes::LINE, base_style, search);
         return;
     }
 
-    for token in &diff_line.tokens {
+    for token in tokens {
         if token.text.is_empty() {
             continue;
         }
