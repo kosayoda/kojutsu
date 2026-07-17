@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use super::{AppAction, SelectionKindSet};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -8,14 +6,198 @@ pub enum ActionId {
     Lua(u16),
 }
 
-struct ActionMeta {
-    selection_support: SelectionKindSet,
-    requires_file: bool,
-    requires_conflict: bool,
+/// What context an action needs to be available. `File` and `Conflict`
+/// were previously two independent bools that were never both set — an
+/// enum makes the exclusivity structural.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Requires {
+    /// Available anywhere.
+    Nothing,
+    /// Needs the cursor on a file (or its diff).
+    File,
+    /// Needs the cursor on a conflict hunk (or conflicted file).
+    Conflict,
+}
+
+/// Static metadata for an action: which selection kinds it supports and
+/// what context it requires.
+#[derive(Debug, Clone, Copy)]
+pub struct ActionMeta {
+    pub selection_support: SelectionKindSet,
+    pub requires: Requires,
+}
+
+impl AppAction {
+    /// Static metadata for this action.
+    pub fn meta(self) -> ActionMeta {
+        use AppAction::*;
+        let s = SelectionKindSet::ALL;
+        let c = SelectionKindSet::COMMIT;
+        let cf = SelectionKindSet::COMMIT.union(SelectionKindSet::FILE);
+        let f = SelectionKindSet::FILE;
+        let m = |selection_support, requires| ActionMeta {
+            selection_support,
+            requires,
+        };
+        match self {
+            // Conflict hunk actions — need the cursor on a conflict.
+            ResolveOurs | ResolveTheirs | ResolveMergeTool | ConflictPickOurs
+            | ConflictPickTheirs | ConflictPickBase | ConflictUnpick | ConflictApplyPicks
+            | ConflictEditFile | ConflictEditHunk => m(f, Requires::Conflict),
+
+            // File actions — need the cursor on a file.
+            FileUntrack | FileAnnotate => m(f, Requires::File),
+            EditFileWorkingCopy | EditFileAtRevision | CheckoutAndEditFile => m(cf, Requires::File),
+
+            // Commit + file selection, no context requirement.
+            Absorb | Diffedit | Fix => m(cf, Requires::Nothing),
+
+            // Whole-selection commands (operate on any selection kind).
+            Commit | CommitWithMessage | Squash | SquashInto | SquashOnto | SquashAfter
+            | SquashBefore | Restore | RestoreFrom | RestoreInto | Split | SplitOnto
+            | SplitAfter | SplitBefore => m(s, Requires::Nothing),
+
+            // Commit-scoped commands.
+            Abandon
+            | Describe
+            | DescribeInEditor
+            | Edit
+            | New
+            | NewInsertAfter
+            | NewInsertBefore
+            | RebaseRevision
+            | RebaseSource
+            | RebaseBranch
+            | BookmarkCreate
+            | BookmarkSet
+            | BookmarkDelete
+            | BookmarkForget
+            | BookmarkMove
+            | BookmarkRename
+            | BookmarkAdvance
+            | BookmarkTrack
+            | BookmarkUntrack
+            | Undo
+            | Redo
+            | GitFetch
+            | GitFetchAllRemotes
+            | GitPush
+            | GitPushAll
+            | GitPushChange
+            | GitPushBookmark
+            | GitExport
+            | GitImport
+            | Duplicate
+            | DuplicateOnto
+            | Parallelize
+            | SimplifyParents
+            | Revert
+            | ExpandAncestors
+            | Run
+            | TagSet
+            | TagDelete
+            | Interdiff
+            | EvoLogInterdiff
+            | AnnotateGoToCommit
+            | AnnotateTimeTravel
+            | AnnotateForward
+            | ToggleAnnotateSeparator => m(c, Requires::Nothing),
+
+            // Navigation, toggles, view switches, and view-local actions —
+            // no selection semantics, available anywhere.
+            Quit
+            | MoveDown
+            | MoveUp
+            | MoveDownSection
+            | MoveUpSection
+            | PageDown
+            | PageUp
+            | JumpToWorkingCopy
+            | MoveToTop
+            | MoveToBottom
+            | MoveToScreenTop
+            | MoveToScreenMiddle
+            | MoveToScreenBottom
+            | ScrollLeft
+            | ScrollRight
+            | ToggleFold
+            | Refresh
+            | ExpandDescendants
+            | EditRevset
+            | EditRevsetInEditor
+            | ResetRevset
+            | ToggleConflictedRevset
+            | ShowHelp
+            | ArrangeUp
+            | ArrangeDown
+            | ToggleIgnoreImmutable
+            | ToggleIgnoreWorkingCopy
+            | ToggleDebug
+            | ToggleGitDiff
+            | ToggleLineNumbers
+            | ToggleDiffUnderline
+            | WorkspaceAdd
+            | WorkspaceForget
+            | WorkspaceList
+            | WorkspaceRename
+            | ToggleSelect
+            | EnterVisualMode
+            | StartSearch
+            | NextMatch
+            | PrevMatch
+            | NextConflict
+            | PrevConflict
+            | SelectPreset
+            | SwitchPreset1
+            | SwitchPreset2
+            | SwitchPreset3
+            | SwitchPreset4
+            | SwitchPreset5
+            | SwitchToDagView
+            | SwitchToBookmarkView
+            | SwitchToTagView
+            | BookmarkViewDelete
+            | BookmarkViewTrack
+            | BookmarkViewUntrack
+            | BookmarkViewPush
+            | BookmarkViewJumpToCommit
+            | BookmarkViewEdit
+            | BookmarkViewRename
+            | BookmarkViewMove
+            | BookmarkViewForget
+            | BookmarkViewSet
+            | BookmarkViewFetchDefault
+            | BookmarkViewFetchBookmark
+            | BookmarkViewFetchAllRemotes
+            | BookmarkViewInterdiff
+            | TagViewDelete
+            | TagViewSet
+            | TagViewJumpToCommit
+            | TagViewEdit
+            | SwitchToOpLogView
+            | SwitchToWorkspaceView
+            | SwitchToEvoLogView
+            | SwitchToCommandLogView
+            | Jump
+            | WorkspaceViewForget
+            | WorkspaceViewJumpToCommit
+            | EvoLogRestore
+            | EvoLogEdit
+            | EvoLogNew
+            | OpLogRestore
+            | OpLogRevert
+            | OpLogAbandon
+            | OpLogFilterWorkspace
+            | CommandMode
+            | FileList
+            | RepeatLast => m(s, Requires::Nothing),
+        }
+    }
 }
 
 pub struct ActionRegistry {
-    builtins: HashMap<AppAction, ActionMeta>,
+    /// Metadata for Lua-registered actions, indexed by `ActionId::Lua`.
+    /// Builtin metadata comes from [`AppAction::meta`].
     lua_meta: Vec<ActionMeta>,
 }
 
@@ -27,150 +209,45 @@ impl Default for ActionRegistry {
 
 impl ActionRegistry {
     pub fn new() -> Self {
-        let mut reg = Self {
-            builtins: HashMap::new(),
+        Self {
             lua_meta: Vec::new(),
-        };
-        reg.register_builtins();
-        reg
-    }
-
-    fn get(&self, id: ActionId) -> Option<&ActionMeta> {
-        match id {
-            ActionId::Builtin(a) => self.builtins.get(&a),
-            ActionId::Lua(idx) => self.lua_meta.get(idx as usize),
         }
     }
 
-    pub fn register_lua(
-        &mut self,
-        selection_support: SelectionKindSet,
-        requires_file: bool,
-        requires_conflict: bool,
-    ) -> ActionId {
+    fn meta(&self, id: ActionId) -> Option<ActionMeta> {
+        match id {
+            ActionId::Builtin(a) => Some(a.meta()),
+            ActionId::Lua(idx) => self.lua_meta.get(idx as usize).copied(),
+        }
+    }
+
+    /// Register a Lua action's selection support. Lua actions are never
+    /// file- or conflict-gated.
+    pub fn register_lua(&mut self, selection_support: SelectionKindSet) -> ActionId {
         let id = self.lua_meta.len() as u16;
         self.lua_meta.push(ActionMeta {
             selection_support,
-            requires_file,
-            requires_conflict,
+            requires: Requires::Nothing,
         });
         ActionId::Lua(id)
     }
 
     pub fn selection_support(&self, id: ActionId) -> SelectionKindSet {
-        self.get(id)
+        self.meta(id)
             .map(|m| m.selection_support)
             .unwrap_or(SelectionKindSet::ALL)
     }
 
     pub fn requires_file(&self, id: ActionId) -> bool {
-        self.get(id).map(|m| m.requires_file).unwrap_or(false)
+        self.meta(id).is_some_and(|m| m.requires == Requires::File)
     }
 
     pub fn requires_conflict(&self, id: ActionId) -> bool {
-        self.get(id).map(|m| m.requires_conflict).unwrap_or(false)
+        self.meta(id)
+            .is_some_and(|m| m.requires == Requires::Conflict)
     }
 
     pub fn find_by_name(&self, name: &str) -> Option<ActionId> {
         name.parse::<AppAction>().ok().map(ActionId::Builtin)
-    }
-
-    fn register_builtins(&mut self) {
-        use AppAction::*;
-
-        let s = SelectionKindSet::ALL;
-        let c = SelectionKindSet::COMMIT;
-        let cf = SelectionKindSet::COMMIT.union(SelectionKindSet::FILE);
-        let f = SelectionKindSet::FILE;
-
-        let entries: &[(AppAction, SelectionKindSet, bool, bool)] = &[
-            (Abandon, c, false, false),
-            (Absorb, cf, false, false),
-            (Commit, s, false, false),
-            (CommitWithMessage, s, false, false),
-            (Describe, c, false, false),
-            (DescribeInEditor, c, false, false),
-            (Diffedit, cf, false, false),
-            (Edit, c, false, false),
-            (New, c, false, false),
-            (NewInsertAfter, c, false, false),
-            (NewInsertBefore, c, false, false),
-            (Squash, s, false, false),
-            (SquashInto, s, false, false),
-            (SquashOnto, s, false, false),
-            (SquashAfter, s, false, false),
-            (SquashBefore, s, false, false),
-            (RebaseRevision, c, false, false),
-            (RebaseSource, c, false, false),
-            (RebaseBranch, c, false, false),
-            (Restore, s, false, false),
-            (RestoreFrom, s, false, false),
-            (RestoreInto, s, false, false),
-            (Split, s, false, false),
-            (SplitOnto, s, false, false),
-            (SplitAfter, s, false, false),
-            (SplitBefore, s, false, false),
-            (BookmarkCreate, c, false, false),
-            (BookmarkSet, c, false, false),
-            (BookmarkDelete, c, false, false),
-            (BookmarkForget, c, false, false),
-            (BookmarkMove, c, false, false),
-            (BookmarkRename, c, false, false),
-            (BookmarkAdvance, c, false, false),
-            (BookmarkTrack, c, false, false),
-            (BookmarkUntrack, c, false, false),
-            (Undo, c, false, false),
-            (Redo, c, false, false),
-            (GitFetch, c, false, false),
-            (GitFetchAllRemotes, c, false, false),
-            (GitPush, c, false, false),
-            (GitPushAll, c, false, false),
-            (GitPushChange, c, false, false),
-            (GitPushBookmark, c, false, false),
-            (GitExport, c, false, false),
-            (GitImport, c, false, false),
-            (Duplicate, c, false, false),
-            (DuplicateOnto, c, false, false),
-            (Parallelize, c, false, false),
-            (SimplifyParents, c, false, false),
-            (Revert, c, false, false),
-            (ExpandAncestors, c, false, false),
-            (Fix, cf, false, false),
-            (Run, c, false, false),
-            (FileUntrack, f, true, false),
-            (FileAnnotate, f, true, false),
-            (ResolveOurs, f, false, true),
-            (ResolveTheirs, f, false, true),
-            (ResolveMergeTool, f, false, true),
-            (ConflictPickOurs, f, false, true),
-            (ConflictPickTheirs, f, false, true),
-            (ConflictPickBase, f, false, true),
-            (ConflictUnpick, f, false, true),
-            (ConflictApplyPicks, f, false, true),
-            (ConflictEditFile, f, false, true),
-            (ConflictEditHunk, f, false, true),
-            (TagSet, c, false, false),
-            (TagDelete, c, false, false),
-            (Interdiff, c, false, false),
-            (EvoLogInterdiff, c, false, false),
-            (AnnotateGoToCommit, c, false, false),
-            (AnnotateTimeTravel, c, false, false),
-            (AnnotateForward, c, false, false),
-            (ToggleAnnotateSeparator, c, false, false),
-            (EditFileWorkingCopy, cf, true, false),
-            (EditFileAtRevision, cf, true, false),
-            (CheckoutAndEditFile, cf, true, false),
-        ];
-
-        for &(action, sel, req_file, req_conflict) in entries {
-            self.builtins.insert(
-                action,
-                ActionMeta {
-                    selection_support: sel,
-                    requires_file: req_file,
-                    requires_conflict: req_conflict,
-                },
-            );
-        }
     }
 }

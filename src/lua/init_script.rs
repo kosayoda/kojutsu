@@ -259,7 +259,7 @@ impl LuaEngine {
                 );
                 SelectionKindSet::ALL
             };
-            let action_id = registry.register_lua(selection_support, false, false);
+            let action_id = registry.register_lua(selection_support);
 
             self.commands.push(LuaCommand {
                 name: reg.name.clone(),
