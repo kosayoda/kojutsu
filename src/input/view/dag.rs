@@ -801,51 +801,50 @@ pub(in crate::input) fn maybe_offer_apply(
     let Some((path, content, true)) = app.conflict_resolution(entry_idx, file_idx) else {
         return false;
     };
-    match persist_resolved_content(&content) {
-        Ok(content_path) => {
-            let cmd = JJCommand {
-                kind: JJCommandKind::Resolve {
-                    change_id: app.change_id(entry_idx),
-                    path: Str::from(path.as_str()),
-                    tool: crate::jj_command::ResolveTool::Content(content_path),
-                },
+    // Carry the content, not a temp file: declining the prompt must leave
+    // nothing to clean up. The file is staged only when the option runs.
+    app.mode = AppMode::FollowUp {
+        prompt: format!("all conflicts in {path} picked"),
+        options: vec![FollowUpOption {
+            key: 'a',
+            label: "apply resolution",
+            action: FollowUpAction::ResolveConflict {
+                change_id: app.change_id(entry_idx),
+                path,
+                content,
                 flags,
-            };
-            app.mode = AppMode::FollowUp {
-                prompt: format!("all conflicts in {path} picked"),
-                options: vec![FollowUpOption {
-                    key: 'a',
-                    label: "apply resolution",
-                    action: FollowUpAction::Execute(cmd),
-                }],
-            };
-            true
-        }
-        Err(e) => {
-            app.set_error(format!("failed to stage resolution for {path}: {e}"));
-            false
-        }
-    }
+            },
+        }],
+    };
+    true
 }
 
-/// Build the `jj resolve` command that applies resolution content
-/// (staged in a temp file for the `--apply-resolution` merge tool).
-/// Content containing markers stays conflicted — jj parses them back.
-pub fn resolution_command(
+/// Stage resolution `content` to a temp file and wrap it in the
+/// `jj resolve` command that applies it via the `--apply-resolution` merge
+/// tool. The sole constructor of `ResolveTool::Content` commands; reports
+/// a staging failure on `app` and returns `None`. Content containing
+/// markers stays conflicted — jj parses them back.
+pub fn staged_resolution(
+    app: &mut App,
     change_id: ChangeId,
     path: &crate::types::RepoPath,
     content: &str,
     flags: CommandFlags,
-) -> std::io::Result<JJCommand> {
-    let content_path = persist_resolved_content(content)?;
-    Ok(JJCommand {
-        kind: JJCommandKind::Resolve {
-            change_id,
-            path: Str::from(path.as_str()),
-            tool: crate::jj_command::ResolveTool::Content(content_path),
-        },
-        flags,
-    })
+) -> Option<JJCommand> {
+    match persist_resolved_content(content) {
+        Ok(content_path) => Some(JJCommand {
+            kind: JJCommandKind::Resolve {
+                change_id,
+                path: Str::from(path.as_str()),
+                tool: crate::jj_command::ResolveTool::Content(content_path),
+            },
+            flags,
+        }),
+        Err(e) => {
+            app.set_error(format!("failed to stage resolution for {path}: {e}"));
+            None
+        }
+    }
 }
 
 /// Apply accumulated picks by running `jj resolve` with a merge tool that
@@ -861,19 +860,10 @@ fn apply_conflict_resolution(
     content: String,
     flags: CommandFlags,
 ) -> Action {
-    match persist_resolved_content(&content) {
-        Ok(content_path) => Action::RunJj(JJCommand {
-            kind: JJCommandKind::Resolve {
-                change_id: app.change_id(entry_idx),
-                path: Str::from(path.as_str()),
-                tool: crate::jj_command::ResolveTool::Content(content_path),
-            },
-            flags,
-        }),
-        Err(e) => {
-            app.set_error(format!("failed to stage resolution for {path}: {e}"));
-            Action::None
-        }
+    let change_id = app.change_id(entry_idx);
+    match staged_resolution(app, change_id, &path, &content, flags) {
+        Some(cmd) => Action::RunJj(cmd),
+        None => Action::None,
     }
 }
 

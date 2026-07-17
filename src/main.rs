@@ -371,21 +371,18 @@ fn main() -> Result<()> {
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
                 match edited {
                     Some(edited) if edited != content => {
-                        match kojutsu::input::resolution_command(change_id, &path, &edited, flags) {
-                            Ok(cmd) => {
-                                let action_label = app.last_action_label.take();
-                                run_jj_command(
-                                    &mut app,
-                                    &repo_path,
-                                    cmd,
-                                    action_label,
-                                    &event_tx,
-                                    false,
-                                );
-                            }
-                            Err(e) => {
-                                app.set_error(format!("failed to stage resolution: {e}"));
-                            }
+                        if let Some(cmd) = kojutsu::input::staged_resolution(
+                            &mut app, change_id, &path, &edited, flags,
+                        ) {
+                            let action_label = app.last_action_label.take();
+                            run_jj_command(
+                                &mut app,
+                                &repo_path,
+                                cmd,
+                                action_label,
+                                &event_tx,
+                                false,
+                            );
                         }
                     }
                     _ => app.set_status("edit cancelled - no changes"),

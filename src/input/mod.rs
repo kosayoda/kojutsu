@@ -4,7 +4,7 @@ mod list;
 mod modal;
 mod view;
 
-pub use view::dag::{complete_hunk_edit, resolution_command};
+pub use view::dag::{complete_hunk_edit, staged_resolution};
 
 pub use action::{dispatch_action_after_hooks, has_conflict_context, has_file_context};
 

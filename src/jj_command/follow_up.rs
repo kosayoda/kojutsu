@@ -3,8 +3,8 @@ use strum::IntoEnumIterator;
 use crate::keymap::CommandFlags;
 use crate::types::{
     BookmarkName, ChangeId, ChangeSelection, CommitId, MessageMode, PendingCommand,
-    PendingCommitSelect, ReadyCommand, RebaseKind, RebaseSource, RebaseTarget, SmallVec, SmallVec1,
-    SplitTarget, SquashTarget, Str, TagName, TargetOperation, WorkspaceName,
+    PendingCommitSelect, ReadyCommand, RebaseKind, RebaseSource, RebaseTarget, RepoPath, SmallVec,
+    SmallVec1, SplitTarget, SquashTarget, Str, TagName, TargetOperation, WorkspaceName,
 };
 
 use super::{JJCommand, JJCommandKind};
@@ -23,6 +23,15 @@ pub enum FollowUpAction {
     },
     WidenRevset {
         change_id: String,
+    },
+    /// Stage the resolution content and run `jj resolve`. The content is
+    /// carried (not a temp file) so declining the prompt leaves nothing to
+    /// clean up; the file is written only when this executes.
+    ResolveConflict {
+        change_id: ChangeId,
+        path: RepoPath,
+        content: String,
+        flags: CommandFlags,
     },
     EnterInterdiff {
         from: CommitId,

@@ -539,15 +539,8 @@ impl JJCommand {
                     ResolveTool::Theirs => args.push(flag("--tool=:theirs")),
                     ResolveTool::Default => {}
                     ResolveTool::Content(content_path) => {
-                        let exe = std::env::current_exe().unwrap_or_else(|_| "kojutsu".into());
+                        args.extend(self_invoking_tool("kojutsu-apply"));
                         args.extend([
-                            flag("--tool"),
-                            arg("kojutsu-apply"),
-                            flag("--config"),
-                            arg(format!(
-                                "merge-tools.kojutsu-apply.program={}",
-                                toml_string_escape(&exe.display().to_string())
-                            )),
                             flag("--config"),
                             arg(format!(
                                 "merge-tools.kojutsu-apply.merge-args=[\"--apply-resolution\", {}, \"$output\"]",
@@ -626,16 +619,9 @@ fn push_change_selection(args: &mut Vec<TaggedArg>, selection: &ChangeSelection)
             args.extend(paths.iter().map(|p| fileset_arg(p)));
         }
         ChangeSelection::Lines(json_path) => {
-            let exe = std::env::current_exe().unwrap_or_else(|_| "kojutsu".into());
+            args.push(flag("--interactive"));
+            args.extend(self_invoking_tool("kojutsu-select"));
             args.extend([
-                flag("--interactive"),
-                flag("--tool"),
-                arg("kojutsu-select"),
-                flag("--config"),
-                arg(format!(
-                    "merge-tools.kojutsu-select.program={}",
-                    toml_string_escape(&exe.display().to_string())
-                )),
                 flag("--config"),
                 arg(format!(
                     "merge-tools.kojutsu-select.edit-args=[\"--apply-diff\", {}, \"$left\", \"$right\"]",
@@ -650,6 +636,23 @@ fn push_change_selection(args: &mut Vec<TaggedArg>, selection: &ChangeSelection)
             ]);
         }
     }
+}
+
+/// Configure a merge tool that re-invokes the running kojutsu binary:
+/// `--tool <name> --config merge-tools.<name>.program=<exe>`. Callers
+/// append the tool-specific `*-args` and any extra configs. Single home
+/// for the injection-sensitive program-path construction.
+fn self_invoking_tool(name: &str) -> Vec<TaggedArg> {
+    let exe = std::env::current_exe().unwrap_or_else(|_| "kojutsu".into());
+    vec![
+        flag("--tool"),
+        arg(name.to_string()),
+        flag("--config"),
+        arg(format!(
+            "merge-tools.{name}.program={}",
+            toml_string_escape(&exe.display().to_string())
+        )),
+    ]
 }
 
 fn fileset_arg(path: &str) -> TaggedArg {

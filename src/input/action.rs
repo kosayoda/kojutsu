@@ -995,6 +995,15 @@ pub(super) fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action
             app.revset.active_preset = None;
             Action::UpdateRevset(new_revset)
         }
+        FollowUpAction::ResolveConflict {
+            change_id,
+            path,
+            content,
+            flags,
+        } => match super::view::dag::staged_resolution(app, change_id, &path, &content, flags) {
+            Some(cmd) => run_cmd(cmd),
+            None => Action::None,
+        },
         FollowUpAction::EnterInterdiff {
             from,
             to,
