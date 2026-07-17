@@ -381,7 +381,7 @@ pub fn dispatch_action_after_hooks(
                 DiffLine(EntryIdx, FileIdx, DiffLineIdx, DiffLineKind),
                 ConflictTerm {
                     hunk: crate::types::ConflictHunkRef,
-                    kind: crate::dag::ConflictTermKind,
+                    kind: crate::conflict::ConflictTermKind,
                     absent: bool,
                 },
             }
@@ -424,7 +424,7 @@ pub fn dispatch_action_after_hooks(
                         .and_then(|l| l.loaded())
                         .and_then(|hunks| hunks.get(hunk.hunk_idx.raw()))
                         .and_then(|h| match h {
-                            crate::dag::ConflictHunkKind::Conflict { terms, .. } => {
+                            crate::conflict::ConflictHunkKind::Conflict { terms, .. } => {
                                 terms.get(term_idx.raw())
                             }
                             _ => None,

@@ -323,7 +323,7 @@ impl App {
                                     hunk_idx: ConflictHunkIdx::new(hi),
                                 };
                                 match hunk {
-                                    crate::dag::ConflictHunkKind::Resolved { text } => {
+                                    crate::conflict::ConflictHunkKind::Resolved { text } => {
                                         // Trim to context around adjacent
                                         // conflicts; the hidden middle is an
                                         // expandable gap row.
@@ -358,7 +358,7 @@ impl App {
                                             }
                                         }
                                     }
-                                    crate::dag::ConflictHunkKind::Conflict { terms } => {
+                                    crate::conflict::ConflictHunkKind::Conflict { terms } => {
                                         rows.push(DisplayRow::ConflictHeader {
                                             entry_idx,
                                             file_idx,
@@ -366,7 +366,7 @@ impl App {
                                         });
                                         // A hand-edited resolution renders
                                         // above the terms.
-                                        if let Some(crate::dag::ConflictPick::Edited(text)) =
+                                        if let Some(crate::conflict::ConflictPick::Edited(text)) =
                                             self.hunk_pick(hunk_ref)
                                         {
                                             for li in 0..text.lines.len().max(1) {
@@ -844,7 +844,7 @@ impl App {
         };
         if matches!(
             self.conflict_hunk(hunk),
-            Some(crate::dag::ConflictHunkKind::Resolved { .. })
+            Some(crate::conflict::ConflictHunkKind::Resolved { .. })
         ) {
             self.update_hunk_ui(hunk, |s| s.expanded = true);
             self.rebuild_entry_rows(entry_idx);
@@ -868,7 +868,7 @@ impl App {
         };
         let is_base = matches!(
             self.conflict_hunk(hunk),
-            Some(crate::dag::ConflictHunkKind::Conflict { terms })
+            Some(crate::conflict::ConflictHunkKind::Conflict { terms })
                 if terms.get(term_idx.raw()).is_some_and(|t| !t.kind.is_side())
         );
         if is_base {

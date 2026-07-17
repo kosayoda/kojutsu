@@ -2,10 +2,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::app::App;
-use crate::dag::{
-    CommitInfo, ConflictHunkKind, ConflictPick, ConflictTermKind, DiffLine, DiffLineKind,
-    FileChange, FileStatus, LineStats,
-};
+use crate::conflict::{ConflictHunkKind, ConflictPick, ConflictTermKind};
+use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
 use crate::idx::{ConflictLineIdx, ConflictTermIdx};
 use crate::theme::{Config, Theme};
 use crate::types::{ConflictHunkRef, FileSelectionState, SearchScopes};

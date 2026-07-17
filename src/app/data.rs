@@ -11,7 +11,7 @@ type NodeCache = (
     Loadable<Vec<crate::dag::FileChange>>,
     Loadable<crate::dag::LineStats>,
     Vec<Loadable<crate::dag::DiffResult>>,
-    Vec<Loadable<Vec<crate::dag::ConflictHunkKind>>>,
+    Vec<Loadable<Vec<crate::conflict::ConflictHunkKind>>>,
 );
 
 /// Cursor position captured before a refresh, keyed by stable IDs so it can

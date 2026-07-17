@@ -1,4 +1,5 @@
 pub mod app;
+pub mod conflict;
 pub mod dag;
 pub mod diff_tool;
 pub mod graph;

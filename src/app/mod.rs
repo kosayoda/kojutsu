@@ -70,7 +70,8 @@ impl DeferredWork {
     }
 }
 
-use crate::dag::{ConflictPick, ConflictTermKind, DiffLine, FileChange, LineStats};
+use crate::conflict::{ConflictPick, ConflictTermKind};
+use crate::dag::{DiffLine, FileChange, LineStats};
 use crate::idx::{EntryIdx, EvoLogIdx, FileIdx, IndexVec, RowIdx};
 use crate::types::SmallVec;
 
@@ -121,7 +122,7 @@ pub struct DagNode {
     /// Lazily loaded diff results (both formats), parallel to `files` (indexed by FileIdx).
     diffs: Vec<Loadable<crate::dag::DiffResult>>,
     /// Lazily loaded conflict hunks, parallel to `files` (for conflicted files).
-    conflict_hunks: Vec<Loadable<Vec<crate::dag::ConflictHunkKind>>>,
+    conflict_hunks: Vec<Loadable<Vec<crate::conflict::ConflictHunkKind>>>,
 }
 
 /// Which diff format to display.
@@ -176,7 +177,7 @@ impl DagNode {
     pub fn conflict_hunks(
         &self,
         fi: FileIdx,
-    ) -> Option<&Loadable<Vec<crate::dag::ConflictHunkKind>>> {
+    ) -> Option<&Loadable<Vec<crate::conflict::ConflictHunkKind>>> {
         self.conflict_hunks.get(fi.raw())
     }
 
@@ -198,7 +199,7 @@ impl DagNode {
     pub fn set_conflict_hunks(
         &mut self,
         fi: FileIdx,
-        state: Loadable<Vec<crate::dag::ConflictHunkKind>>,
+        state: Loadable<Vec<crate::conflict::ConflictHunkKind>>,
     ) {
         let i = fi.raw();
         self.ensure_conflict_hunks(i + 1);
@@ -216,7 +217,7 @@ impl DagNode {
     }
 
     /// Extract cached conflict hunks (used during DAG refresh).
-    pub fn take_conflict_hunks(&mut self) -> Vec<Loadable<Vec<crate::dag::ConflictHunkKind>>> {
+    pub fn take_conflict_hunks(&mut self) -> Vec<Loadable<Vec<crate::conflict::ConflictHunkKind>>> {
         std::mem::take(&mut self.conflict_hunks)
     }
 
@@ -224,7 +225,7 @@ impl DagNode {
     /// refresh; valid because the commit ID — and thus content — matched).
     pub fn restore_conflict_hunks(
         &mut self,
-        hunks: Vec<Loadable<Vec<crate::dag::ConflictHunkKind>>>,
+        hunks: Vec<Loadable<Vec<crate::conflict::ConflictHunkKind>>>,
     ) {
         self.conflict_hunks = hunks;
     }
@@ -842,7 +843,7 @@ impl App {
         &self,
         entry_idx: EntryIdx,
         file_idx: FileIdx,
-    ) -> Option<&[crate::dag::ConflictHunkKind]> {
+    ) -> Option<&[crate::conflict::ConflictHunkKind]> {
         self.nodes
             .get(entry_idx)?
             .conflict_hunks(file_idx)?
@@ -851,7 +852,10 @@ impl App {
     }
 
     /// A single loaded conflict hunk by index.
-    pub fn conflict_hunk(&self, hunk: ConflictHunkRef) -> Option<&crate::dag::ConflictHunkKind> {
+    pub fn conflict_hunk(
+        &self,
+        hunk: ConflictHunkRef,
+    ) -> Option<&crate::conflict::ConflictHunkKind> {
         self.conflict_hunks_loaded(hunk.entry_idx, hunk.file_idx)?
             .get(hunk.hunk_idx.raw())
     }
@@ -920,10 +924,10 @@ impl App {
     pub fn conflict_term(
         &self,
         hunk: ConflictHunkRef,
-        kind: crate::dag::ConflictTermKind,
-    ) -> Option<&crate::dag::ConflictTerm> {
+        kind: crate::conflict::ConflictTermKind,
+    ) -> Option<&crate::conflict::ConflictTerm> {
         match self.conflict_hunk(hunk)? {
-            crate::dag::ConflictHunkKind::Conflict { terms, .. } => {
+            crate::conflict::ConflictHunkKind::Conflict { terms, .. } => {
                 terms.iter().find(|t| t.kind == kind)
             }
             _ => None,
@@ -945,7 +949,11 @@ impl App {
     }
 
     /// Store a hand-edited resolution for a hunk.
-    pub fn set_conflict_edited(&mut self, hunk: ConflictHunkRef, text: crate::dag::ConflictText) {
+    pub fn set_conflict_edited(
+        &mut self,
+        hunk: ConflictHunkRef,
+        text: crate::conflict::ConflictText,
+    ) {
         self.set_conflict_pick(hunk, Some(ConflictPick::Edited(text)));
     }
 
@@ -962,7 +970,7 @@ impl App {
         // Validate the request against the (pure) hunk, producing an owned
         // pick, before touching the UI-state map.
         let new_pick = {
-            let Some(crate::dag::ConflictHunkKind::Conflict { terms }) =
+            let Some(crate::conflict::ConflictHunkKind::Conflict { terms }) =
                 self.conflict_hunk(hunk_ref)
             else {
                 return None;

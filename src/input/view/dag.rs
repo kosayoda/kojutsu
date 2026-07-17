@@ -108,9 +108,9 @@ pub(in crate::input) fn dispatch(
                 .and_then(|r| r.conflict_hunk())
             {
                 let pick = match action {
-                    AppAction::ConflictPickOurs => crate::dag::ConflictTermKind::Side(0),
-                    AppAction::ConflictPickTheirs => crate::dag::ConflictTermKind::Side(1),
-                    _ => crate::dag::ConflictTermKind::Base(0),
+                    AppAction::ConflictPickOurs => crate::conflict::ConflictTermKind::Side(0),
+                    AppAction::ConflictPickTheirs => crate::conflict::ConflictTermKind::Side(1),
+                    _ => crate::conflict::ConflictTermKind::Base(0),
                 };
                 if picked_term_is_absent(app, hunk, pick) {
                     app.set_error(
@@ -158,9 +158,9 @@ pub(in crate::input) fn dispatch(
             };
             let pick = app.hunk_pick(hunk).cloned();
             let seed = app.conflict_hunk(hunk).and_then(|h| match h {
-                crate::dag::ConflictHunkKind::Conflict { terms } => Some(match pick {
-                    Some(crate::dag::ConflictPick::Edited(text)) => text.to_content(),
-                    Some(crate::dag::ConflictPick::Term(kind)) => terms
+                crate::conflict::ConflictHunkKind::Conflict { terms } => Some(match pick {
+                    Some(crate::conflict::ConflictPick::Edited(text)) => text.to_content(),
+                    Some(crate::conflict::ConflictPick::Term(kind)) => terms
                         .iter()
                         .find(|t| t.kind == kind)
                         .map(|t| t.text.to_content())
@@ -739,7 +739,7 @@ fn arrange(app: &mut App, flags: CommandFlags, direction: ArrangeDirection) -> A
 fn picked_term_is_absent(
     app: &App,
     hunk: crate::types::ConflictHunkRef,
-    pick: crate::dag::ConflictTermKind,
+    pick: crate::conflict::ConflictTermKind,
 ) -> bool {
     app.conflict_term(hunk, pick).is_some_and(|t| t.absent)
 }
@@ -766,7 +766,7 @@ pub fn complete_hunk_edit(
     };
     app.set_conflict_edited(
         hunk,
-        crate::dag::ConflictText::from_bytes(edited.as_bytes()),
+        crate::conflict::ConflictText::from_bytes(edited.as_bytes()),
     );
     maybe_offer_apply(app, hunk.entry_idx, hunk.file_idx, flags);
 }

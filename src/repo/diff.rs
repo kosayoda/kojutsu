@@ -22,9 +22,10 @@ use jj_lib::store::Store;
 use pollster::FutureExt as _;
 
 use super::JjRepo;
+use crate::conflict::{ConflictTerm, ConflictTermKind, ConflictText};
 use crate::dag::{
-    CommitDetails, ConflictTerm, ConflictTermKind, ConflictText, DiffLine, DiffLineKind,
-    DiffResult, DiffToken, DiffTokenKind, FileChange, FileStatus, LineStats,
+    CommitDetails, DiffLine, DiffLineKind, DiffResult, DiffToken, DiffTokenKind, FileChange,
+    FileStatus, LineStats,
 };
 use crate::types::{CommitId as UiCommitId, RepoPath};
 
@@ -387,8 +388,8 @@ impl JjRepo {
         &self,
         commit_id: &UiCommitId,
         path: &RepoPath,
-    ) -> Result<Vec<crate::dag::ConflictHunkKind>> {
-        use crate::dag::ConflictHunkKind;
+    ) -> Result<Vec<crate::conflict::ConflictHunkKind>> {
+        use crate::conflict::ConflictHunkKind;
 
         let repo = self.repo.as_ref();
         let backend_id = BackendCommitId::try_from_hex(commit_id.as_str())
@@ -894,8 +895,8 @@ fn default_materialize_options() -> ConflictMaterializeOptions {
 /// text jj would produce). The `Merge` is rebuilt by term kind — sides as
 /// adds, bases as removes, each ordered by ordinal — rather than trusting
 /// the Vec's position, so markers are correct regardless of storage order.
-pub fn hunk_markers(terms: &[crate::dag::ConflictTerm]) -> String {
-    let term_bytes = |t: &crate::dag::ConflictTerm| bstr::BString::from(t.text.to_content());
+pub fn hunk_markers(terms: &[crate::conflict::ConflictTerm]) -> String {
+    let term_bytes = |t: &crate::conflict::ConflictTerm| bstr::BString::from(t.text.to_content());
     let mut sides: Vec<(usize, bstr::BString)> = Vec::new();
     let mut bases: Vec<(usize, bstr::BString)> = Vec::new();
     for t in terms {
@@ -938,16 +939,16 @@ pub fn has_conflict_markers(content: &str) -> bool {
 /// (`merge-tool-edits-conflict-markers`). Returns the content and whether
 /// every hunk was resolved or picked.
 pub fn assemble_resolution(
-    hunks: &[crate::dag::ConflictHunkKind],
-    picks: &std::collections::HashMap<usize, crate::dag::ConflictPick>,
+    hunks: &[crate::conflict::ConflictHunkKind],
+    picks: &std::collections::HashMap<usize, crate::conflict::ConflictPick>,
 ) -> (String, bool) {
     let mut content = String::new();
     let mut complete = true;
     for (i, hunk) in hunks.iter().enumerate() {
         match hunk {
-            crate::dag::ConflictHunkKind::Resolved { text } => text.write_to(&mut content),
-            crate::dag::ConflictHunkKind::Conflict { terms } => match picks.get(&i) {
-                Some(crate::dag::ConflictPick::Term(kind)) => {
+            crate::conflict::ConflictHunkKind::Resolved { text } => text.write_to(&mut content),
+            crate::conflict::ConflictHunkKind::Conflict { terms } => match picks.get(&i) {
+                Some(crate::conflict::ConflictPick::Term(kind)) => {
                     match terms.iter().find(|t| t.kind == *kind) {
                         Some(term) => term.text.write_to(&mut content),
                         // The pick names no present term (shouldn't happen).
@@ -959,7 +960,7 @@ pub fn assemble_resolution(
                         }
                     }
                 }
-                Some(crate::dag::ConflictPick::Edited(text)) => text.write_to(&mut content),
+                Some(crate::conflict::ConflictPick::Edited(text)) => text.write_to(&mut content),
                 None => {
                     complete = false;
                     content.push_str(&hunk_markers(terms));
@@ -1432,7 +1433,7 @@ mod tests {
     /// parse back into a conflicted state.
     #[test]
     fn assemble_resolution_partial_keeps_markers() {
-        use crate::dag::{ConflictHunkKind, ConflictPick, ConflictText};
+        use crate::conflict::{ConflictHunkKind, ConflictPick, ConflictText};
         use std::collections::HashMap;
         let conflict = || ConflictHunkKind::Conflict {
             terms: conflict_terms(

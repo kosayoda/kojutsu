@@ -207,7 +207,7 @@ pub enum RepoResult {
     ConflictHunks {
         commit_id: CommitId,
         path: RepoPath,
-        result: Result<Vec<crate::dag::ConflictHunkKind>, RepoError>,
+        result: Result<Vec<crate::conflict::ConflictHunkKind>, RepoError>,
     },
     OpDiff {
         op_id: OperationId,
