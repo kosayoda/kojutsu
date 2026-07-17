@@ -370,7 +370,7 @@ fn main() -> Result<()> {
                 let edited = edit_content_in_editor(&content, path.as_str(), &mut terminal);
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
                 match edited {
-                    Some(edited) if edited != content => {
+                    EditOutcome::Edited(edited) => {
                         if let Some(cmd) = kojutsu::input::staged_resolution(
                             &mut app, change_id, &path, &edited, flags,
                         ) {
@@ -385,7 +385,10 @@ fn main() -> Result<()> {
                             );
                         }
                     }
-                    _ => app.set_status("edit cancelled - no changes"),
+                    EditOutcome::Failed(e) => app.set_error(format!("editor: {e}")),
+                    EditOutcome::Unchanged | EditOutcome::Cancelled => {
+                        app.set_status("edit cancelled - no changes")
+                    }
                 }
             }
             Action::EditConflictHunk {
@@ -399,12 +402,15 @@ fn main() -> Result<()> {
                 let edited = edit_content_in_editor(&seed, path.as_str(), &mut terminal);
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
                 match edited {
-                    Some(edited) if edited != seed => {
+                    EditOutcome::Edited(edited) => {
                         kojutsu::input::complete_hunk_edit(
                             &mut app, &commit_id, &path, hunk_idx, &edited, flags,
                         );
                     }
-                    _ => app.set_status("edit cancelled - no changes"),
+                    EditOutcome::Failed(e) => app.set_error(format!("editor: {e}")),
+                    EditOutcome::Unchanged | EditOutcome::Cancelled => {
+                        app.set_status("edit cancelled - no changes")
+                    }
                 }
             }
             Action::CheckoutAndEdit {
@@ -562,13 +568,44 @@ fn update_revset(app: &mut App, revset_str: String) {
     app.request_revset_load_no_snapshot(Some(revset_str));
 }
 
+/// Suspend the TUI, run `$EDITOR` with `args`, and re-init the terminal
+/// afterward. Re-init failure is fatal — the TUI cannot continue. The
+/// event reader thread is the caller's responsibility (stop before, spawn
+/// after). Returns the editor's exit status, or the spawn error.
+fn run_editor_suspended(
+    terminal: &mut kojutsu::terminal::Term,
+    args: &[&std::ffi::OsStr],
+) -> std::io::Result<std::process::ExitStatus> {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
+    let _ = kojutsu::terminal::restore();
+    let status = std::process::Command::new(&editor).args(args).status();
+    *terminal = match kojutsu::terminal::init() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("fatal: failed to re-init terminal: {e}");
+            std::process::exit(1);
+        }
+    };
+    status
+}
+
+/// Outcome of editing content in `$EDITOR`.
+enum EditOutcome {
+    /// Saved with changed content.
+    Edited(String),
+    /// Saved, but the content was unchanged.
+    Unchanged,
+    /// Editor exited non-zero (user cancelled, e.g. `:cq`).
+    Cancelled,
+    /// The editor couldn't be run, or the temp file couldn't be
+    /// written/read.
+    Failed(String),
+}
+
 fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) {
     use std::io::Write;
 
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
     let revset_text = app.revset_input_text();
-
-    // Write current revset to a temp file.
     let mut tmpfile = match tempfile::NamedTempFile::new() {
         Ok(f) => f,
         Err(e) => {
@@ -585,86 +622,64 @@ fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) 
     let _ = writeln!(tmpfile, "{revset_text}");
     let path = tmpfile.path().to_path_buf();
 
-    // Suspend TUI and open editor.
-    let _ = kojutsu::terminal::restore();
-    let status = std::process::Command::new(&editor).arg(&path).status();
-    *terminal = match kojutsu::terminal::init() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("fatal: failed to re-init terminal: {e}");
-            std::process::exit(1);
-        }
+    let report_error = |app: &mut App, msg: String| {
+        app.mode = AppMode::command_output(
+            "revset editor".to_string(),
+            None,
+            msg.into_bytes(),
+            false,
+            vec![],
+        );
     };
-
-    match status {
-        Ok(s) if s.success() => {
-            // Read back the edited revset.
-            match std::fs::read_to_string(&path) {
-                Ok(content) => {
-                    let new_revset = content.trim().to_string();
-                    if !new_revset.is_empty() {
-                        update_revset(app, new_revset);
-                    }
-                }
-                Err(e) => {
-                    app.mode = AppMode::command_output(
-                        "revset editor".to_string(),
-                        None,
-                        format!("failed to read temp file: {e}").into_bytes(),
-                        false,
-                        vec![],
-                    );
+    match run_editor_suspended(terminal, &[path.as_os_str()]) {
+        Ok(s) if s.success() => match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                let new_revset = content.trim().to_string();
+                if !new_revset.is_empty() {
+                    update_revset(app, new_revset);
                 }
             }
-        }
-        Ok(_) => {
-            // Editor exited with non-zero -- user cancelled.
-        }
-        Err(e) => {
-            app.mode = AppMode::command_output(
-                "revset editor".to_string(),
-                None,
-                format!("failed to run {editor}: {e}").into_bytes(),
-                false,
-                vec![],
-            );
-        }
+            Err(e) => report_error(app, format!("failed to read temp file: {e}")),
+        },
+        // Non-zero exit: user cancelled, nothing to do.
+        Ok(_) => {}
+        Err(e) => report_error(app, format!("failed to run editor: {e}")),
     }
 }
 
 /// Suspend the TUI, open `content` in $EDITOR (temp file suffixed like
-/// `path` for syntax highlighting), and return the edited content.
-/// `None` = cancelled (editor failed or exited non-zero).
+/// `path` for syntax highlighting), and report what happened.
 fn edit_content_in_editor(
     content: &str,
     path: &str,
     terminal: &mut kojutsu::terminal::Term,
-) -> Option<String> {
+) -> EditOutcome {
     use std::io::Write;
 
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
     let suffix = std::path::Path::new(path)
         .extension()
         .map(|e| format!(".{}", e.to_string_lossy()))
         .unwrap_or_default();
-    let mut tmpfile = tempfile::Builder::new().suffix(&suffix).tempfile().ok()?;
-    tmpfile.write_all(content.as_bytes()).ok()?;
-    tmpfile.flush().ok()?;
+    let staged = (|| -> std::io::Result<tempfile::NamedTempFile> {
+        let mut tmpfile = tempfile::Builder::new().suffix(&suffix).tempfile()?;
+        tmpfile.write_all(content.as_bytes())?;
+        tmpfile.flush()?;
+        Ok(tmpfile)
+    })();
+    let tmpfile = match staged {
+        Ok(f) => f,
+        Err(e) => return EditOutcome::Failed(format!("temp file: {e}")),
+    };
     let tmp_path = tmpfile.path().to_path_buf();
 
-    let _ = kojutsu::terminal::restore();
-    let status = std::process::Command::new(&editor).arg(&tmp_path).status();
-    *terminal = match kojutsu::terminal::init() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("fatal: failed to re-init terminal: {e}");
-            std::process::exit(1);
-        }
-    };
-
-    match status {
-        Ok(s) if s.success() => std::fs::read_to_string(&tmp_path).ok(),
-        _ => None,
+    match run_editor_suspended(terminal, &[tmp_path.as_os_str()]) {
+        Ok(s) if s.success() => match std::fs::read_to_string(&tmp_path) {
+            Ok(edited) if edited != content => EditOutcome::Edited(edited),
+            Ok(_) => EditOutcome::Unchanged,
+            Err(e) => EditOutcome::Failed(format!("read: {e}")),
+        },
+        Ok(_) => EditOutcome::Cancelled,
+        Err(e) => EditOutcome::Failed(format!("run editor: {e}")),
     }
 }
 
@@ -919,20 +934,12 @@ fn open_file_in_editor(
     line: usize,
     terminal: &mut kojutsu::terminal::Term,
 ) {
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
     let full_path = repo_path.join(file_path);
-    let _ = kojutsu::terminal::restore();
-    let _ = std::process::Command::new(&editor)
-        .arg(format!("+{line}"))
-        .arg(&full_path)
-        .status();
-    *terminal = match kojutsu::terminal::init() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("fatal: failed to re-init terminal: {e}");
-            std::process::exit(1);
-        }
-    };
+    let plus_line = format!("+{line}");
+    let _ = run_editor_suspended(
+        terminal,
+        &[std::ffi::OsStr::new(&plus_line), full_path.as_os_str()],
+    );
 }
 
 fn open_revision_in_editor(
@@ -942,8 +949,6 @@ fn open_revision_in_editor(
     line: usize,
     terminal: &mut kojutsu::terminal::Term,
 ) {
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
-
     // Extract file extension for the temp file name.
     let ext = file_path.as_str().rsplit('.').next().unwrap_or("txt");
     let name = file_path.as_str().rsplit('/').next().unwrap_or("file");
@@ -967,18 +972,11 @@ fn open_revision_in_editor(
             use std::io::Write;
             let _ = tmpfile.write_all(&bytes);
             let _ = tmpfile.flush();
-            let _ = kojutsu::terminal::restore();
-            let _ = std::process::Command::new(&editor)
-                .arg(format!("+{line}"))
-                .arg(tmpfile.path())
-                .status();
-            *terminal = match kojutsu::terminal::init() {
-                Ok(t) => t,
-                Err(e) => {
-                    eprintln!("fatal: failed to re-init terminal: {e}");
-                    std::process::exit(1);
-                }
-            };
+            let plus_line = format!("+{line}");
+            let _ = run_editor_suspended(
+                terminal,
+                &[std::ffi::OsStr::new(&plus_line), tmpfile.path().as_os_str()],
+            );
         }
         Err(e) => {
             tracing::warn!("failed to get file at revision: {e}");
