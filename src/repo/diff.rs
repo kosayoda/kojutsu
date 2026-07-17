@@ -936,18 +936,20 @@ pub fn has_conflict_markers(content: &str) -> bool {
 /// (keyed by hunk index). Resolved hunks and picked hunks contribute
 /// their text; unpicked hunks are re-materialized as conflict markers,
 /// which jj parses back into a conflicted state
-/// (`merge-tool-edits-conflict-markers`). Returns the content and whether
-/// every hunk was resolved or picked.
+/// (`merge-tool-edits-conflict-markers`). Returns the assembled content and
+/// whether every hunk was resolved or picked.
 pub fn assemble_resolution(
     hunks: &[crate::conflict::ConflictHunkKind],
-    picks: &std::collections::HashMap<usize, crate::conflict::ConflictPick>,
-) -> (String, bool) {
+    picks: &std::collections::HashMap<crate::idx::ConflictHunkIdx, crate::conflict::ConflictPick>,
+) -> crate::conflict::Resolution {
     let mut content = String::new();
     let mut complete = true;
     for (i, hunk) in hunks.iter().enumerate() {
         match hunk {
             crate::conflict::ConflictHunkKind::Resolved { text } => text.write_to(&mut content),
-            crate::conflict::ConflictHunkKind::Conflict { terms } => match picks.get(&i) {
+            crate::conflict::ConflictHunkKind::Conflict { terms } => match picks
+                .get(&crate::idx::ConflictHunkIdx::new(i))
+            {
                 Some(crate::conflict::ConflictPick::Term(kind)) => {
                     match terms.iter().find(|t| t.kind == *kind) {
                         Some(term) => term.text.write_to(&mut content),
@@ -968,7 +970,7 @@ pub fn assemble_resolution(
             },
         }
     }
-    (content, complete)
+    crate::conflict::Resolution { content, complete }
 }
 
 /// Count added/removed lines from unified diff hunks.
@@ -1434,6 +1436,7 @@ mod tests {
     #[test]
     fn assemble_resolution_partial_keeps_markers() {
         use crate::conflict::{ConflictHunkKind, ConflictPick, ConflictText};
+        use crate::idx::ConflictHunkIdx;
         use std::collections::HashMap;
         let conflict = || ConflictHunkKind::Conflict {
             terms: conflict_terms(
@@ -1447,37 +1450,46 @@ mod tests {
 
         // Hunk 1 picked (theirs), hunk 3 unpicked → keeps markers.
         let hunks = vec![ctx(b"ctx1\n"), conflict(), ctx(b"ctx2\n"), conflict()];
-        let picks = HashMap::from([(1, ConflictPick::Term(ConflictTermKind::Side(1)))]);
-        let (content, complete) = assemble_resolution(&hunks, &picks);
-        assert!(!complete);
-        assert!(content.starts_with("ctx1\ntheirs\nctx2\n<<<<<<<"));
-        assert!(content.contains("|||||||"));
-        assert!(content.contains("======="));
-        assert!(content.contains(">>>>>>>"));
-        assert!(has_conflict_markers(&content));
+        let picks = HashMap::from([(
+            ConflictHunkIdx::new(1),
+            ConflictPick::Term(ConflictTermKind::Side(1)),
+        )]);
+        let res = assemble_resolution(&hunks, &picks);
+        assert!(!res.complete);
+        assert!(res.content.starts_with("ctx1\ntheirs\nctx2\n<<<<<<<"));
+        assert!(res.content.contains("|||||||"));
+        assert!(res.content.contains("======="));
+        assert!(res.content.contains(">>>>>>>"));
+        assert!(has_conflict_markers(&res.content));
 
         // Fully picked (ours).
-        let picks = HashMap::from([(0, ConflictPick::Term(ConflictTermKind::Side(0)))]);
-        let (content, complete) = assemble_resolution(&[conflict()], &picks);
-        assert!(complete);
-        assert_eq!(content, "ours\n");
-        assert!(!has_conflict_markers(&content));
+        let picks = HashMap::from([(
+            ConflictHunkIdx::new(0),
+            ConflictPick::Term(ConflictTermKind::Side(0)),
+        )]);
+        let res = assemble_resolution(&[conflict()], &picks);
+        assert!(res.complete);
+        assert_eq!(res.content, "ours\n");
+        assert!(!has_conflict_markers(&res.content));
 
         // An edited pick contributes its text verbatim.
         let picks = HashMap::from([(
-            0,
+            ConflictHunkIdx::new(0),
             ConflictPick::Edited(ConflictText::from_bytes(b"merged\n")),
         )]);
-        let (content, complete) = assemble_resolution(&[conflict()], &picks);
-        assert!(complete);
-        assert_eq!(content, "merged\n");
+        let res = assemble_resolution(&[conflict()], &picks);
+        assert!(res.complete);
+        assert_eq!(res.content, "merged\n");
 
         // A pick naming no present term must not silently drop the hunk:
         // it falls back to markers and reports incomplete.
-        let picks = HashMap::from([(0, ConflictPick::Term(ConflictTermKind::Side(9)))]);
-        let (content, complete) = assemble_resolution(&[conflict()], &picks);
-        assert!(!complete);
-        assert!(has_conflict_markers(&content));
+        let picks = HashMap::from([(
+            ConflictHunkIdx::new(0),
+            ConflictPick::Term(ConflictTermKind::Side(9)),
+        )]);
+        let res = assemble_resolution(&[conflict()], &picks);
+        assert!(!res.complete);
+        assert!(has_conflict_markers(&res.content));
     }
 
     /// `hunk_markers` rebuilds by term kind, so a reordered `terms` Vec

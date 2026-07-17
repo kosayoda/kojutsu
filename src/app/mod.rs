@@ -72,7 +72,7 @@ impl DeferredWork {
 
 use crate::conflict::{ConflictPick, ConflictTermKind};
 use crate::dag::{DiffLine, FileChange, LineStats};
-use crate::idx::{EntryIdx, EvoLogIdx, FileIdx, IndexVec, RowIdx};
+use crate::idx::{ConflictHunkIdx, EntryIdx, EvoLogIdx, FileIdx, IndexVec, RowIdx};
 use crate::types::SmallVec;
 
 use crate::keymap::CommandFlags;
@@ -350,7 +350,7 @@ pub struct App {
     /// identical ID means identical content and thus identical hunk
     /// indices; a rewritten commit gets a new ID, dropping its state.
     /// Loaded `ConflictHunkKind`s stay pure repo data.
-    conflict_ui: HashMap<(CommitId, RepoPath), HashMap<usize, HunkUiState>>,
+    conflict_ui: HashMap<(CommitId, RepoPath), HashMap<ConflictHunkIdx, HunkUiState>>,
 }
 
 /// User-facing interaction state for one conflict hunk. Defaults are the
@@ -877,7 +877,7 @@ impl App {
     /// The stored UI state for a hunk, if it deviates from the default.
     fn hunk_ui(&self, hunk: ConflictHunkRef) -> Option<&HunkUiState> {
         let key = self.conflict_ui_key(hunk.entry_idx, hunk.file_idx)?;
-        self.conflict_ui.get(&key)?.get(&hunk.hunk_idx.raw())
+        self.conflict_ui.get(&key)?.get(&hunk.hunk_idx)
     }
 
     /// The current pick for a hunk (None = unpicked).
@@ -908,12 +908,12 @@ impl App {
         };
         {
             let file_map = self.conflict_ui.entry(key.clone()).or_default();
-            let state = file_map.entry(hunk.hunk_idx.raw()).or_default();
+            let state = file_map.entry(hunk.hunk_idx).or_default();
             f(state);
             if *state != HunkUiState::default() {
                 return;
             }
-            file_map.remove(&hunk.hunk_idx.raw());
+            file_map.remove(&hunk.hunk_idx);
             if !file_map.is_empty() {
                 return;
             }
@@ -1007,7 +1007,11 @@ impl App {
     }
 
     /// Owned copy of a file's per-hunk picks, keyed by hunk index.
-    fn file_picks(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> HashMap<usize, ConflictPick> {
+    fn file_picks(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+    ) -> HashMap<ConflictHunkIdx, ConflictPick> {
         self.conflict_ui_key(entry_idx, file_idx)
             .and_then(|key| self.conflict_ui.get(&key))
             .map(|m| {
@@ -1019,13 +1023,13 @@ impl App {
     }
 
     /// Assemble the file under the picks for a conflicted file. Returns the
-    /// path, content, and whether every hunk is resolved or picked — or
-    /// `None` if hunks aren't loaded or nothing has been picked yet.
+    /// path and the assembled [`Resolution`](crate::conflict::Resolution) —
+    /// or `None` if hunks aren't loaded or nothing has been picked yet.
     pub fn conflict_resolution(
         &self,
         entry_idx: EntryIdx,
         file_idx: FileIdx,
-    ) -> Option<(RepoPath, String, bool)> {
+    ) -> Option<(RepoPath, crate::conflict::Resolution)> {
         let hunks = self.conflict_hunks_loaded(entry_idx, file_idx)?;
         let picks = self.file_picks(entry_idx, file_idx);
         if picks.is_empty() {
@@ -1035,8 +1039,7 @@ impl App {
             .files_for_entry(entry_idx)
             .and_then(|f| f.get(file_idx.raw()))
             .map(|f| f.path.clone())?;
-        let (content, complete) = crate::repo::assemble_resolution(hunks, &picks);
-        Some((path, content, complete))
+        Some((path, crate::repo::assemble_resolution(hunks, &picks)))
     }
 
     /// Assemble a conflicted file's content for whole-file editing: picks
@@ -1054,8 +1057,10 @@ impl App {
             .and_then(|f| f.get(file_idx.raw()))
             .map(|f| f.path.clone())?;
         let picks = self.file_picks(entry_idx, file_idx);
-        let (content, _) = crate::repo::assemble_resolution(hunks, &picks);
-        Some((path, content))
+        Some((
+            path,
+            crate::repo::assemble_resolution(hunks, &picks).content,
+        ))
     }
 
     pub fn selected_op_log_entry(&self) -> Option<&OpLogEntry> {

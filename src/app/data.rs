@@ -7,12 +7,12 @@ use crate::repo_service::{RepoRequest, RepoResult};
 use crate::types::{ChangeId, CommitId, DisplayRow, RepoPath, SmallVec};
 
 /// Cached per-commit data carried across a refresh.
-type NodeCache = (
-    Loadable<Vec<crate::dag::FileChange>>,
-    Loadable<crate::dag::LineStats>,
-    Vec<Loadable<crate::dag::DiffResult>>,
-    Vec<Loadable<Vec<crate::conflict::ConflictHunkKind>>>,
-);
+struct DagNodeCache {
+    files: Loadable<Vec<crate::dag::FileChange>>,
+    stats: Loadable<crate::dag::LineStats>,
+    diffs: Vec<Loadable<crate::dag::DiffResult>>,
+    conflict_hunks: Vec<Loadable<Vec<crate::conflict::ConflictHunkKind>>>,
+}
 
 /// Cursor position captured before a refresh, keyed by stable IDs so it can
 /// be restored once its commit reappears in the streamed DAG.
@@ -27,7 +27,7 @@ pub(super) struct DagStreamState {
     /// Graph renderer holding renderdag column state across chunks.
     renderer: crate::graph::DagGraphRenderer,
     /// Caches from the pre-refresh nodes, restored as commits reappear.
-    old_caches: HashMap<CommitId, NodeCache>,
+    old_caches: HashMap<CommitId, DagNodeCache>,
     /// Cursor context to restore once its commit arrives.
     cursor_restore: Option<CursorContext>,
     /// Direct-edge child entries waiting for their parent commit to arrive
@@ -105,7 +105,7 @@ impl App {
         });
 
         // Collect old caches keyed by CommitId before replacing nodes.
-        let old_caches: HashMap<CommitId, NodeCache> = std::mem::take(&mut self.nodes)
+        let old_caches: HashMap<CommitId, DagNodeCache> = std::mem::take(&mut self.nodes)
             .into_vec()
             .into_iter()
             .map(|mut n| {
@@ -113,7 +113,12 @@ impl App {
                 let conflict_hunks = n.take_conflict_hunks();
                 (
                     n.commit.graph_id.clone(),
-                    (n.files, n.stats, diffs, conflict_hunks),
+                    DagNodeCache {
+                        files: n.files,
+                        stats: n.stats,
+                        diffs,
+                        conflict_hunks,
+                    },
                 )
             })
             .collect();
@@ -171,20 +176,18 @@ impl App {
             // Restore cached data if this commit survived the refresh.
             // Same commit ID means identical content, so conflict hunks
             // (including any picks) are still valid.
-            if let Some((files, stats, diffs, conflict_hunks)) =
-                stream.old_caches.remove(&node.commit.graph_id)
-            {
-                if !files.should_request() {
-                    node.files = files;
+            if let Some(cache) = stream.old_caches.remove(&node.commit.graph_id) {
+                if !cache.files.should_request() {
+                    node.files = cache.files;
                 }
-                if !stats.should_request() {
-                    node.stats = stats;
+                if !cache.stats.should_request() {
+                    node.stats = cache.stats;
                 }
-                if !diffs.is_empty() {
-                    node.restore_diffs(diffs);
+                if !cache.diffs.is_empty() {
+                    node.restore_diffs(cache.diffs);
                 }
-                if !conflict_hunks.is_empty() {
-                    node.restore_conflict_hunks(conflict_hunks);
+                if !cache.conflict_hunks.is_empty() {
+                    node.restore_conflict_hunks(cache.conflict_hunks);
                 }
             }
             self.nodes.push(node);

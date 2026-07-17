@@ -643,7 +643,7 @@ pub(crate) fn render_conflict_gap(
                 hunk.hunk_idx.raw() == hunks.len() - 1,
             )
         })
-        .map(|(_, _, hidden)| hidden)
+        .map(|trim| trim.hidden)
         .unwrap_or_default();
     vec![Line::from(vec![
         Span::raw("        "),

@@ -336,12 +336,12 @@ impl App {
                                             });
                                         };
                                         let n = text.lines.len();
-                                        if let Some((head, tail, _)) = hunk.trimmed_context(
+                                        if let Some(trim) = hunk.trimmed_context(
                                             self.hunk_expanded(hunk_ref),
                                             hi == 0,
                                             hi == last_hunk,
                                         ) {
-                                            for li in 0..head {
+                                            for li in 0..trim.head {
                                                 push_ctx(li, rows);
                                             }
                                             rows.push(DisplayRow::ConflictGap {
@@ -349,7 +349,7 @@ impl App {
                                                 file_idx,
                                                 hunk_idx: ConflictHunkIdx::new(hi),
                                             });
-                                            for li in (n - tail)..n {
+                                            for li in (n - trim.tail)..n {
                                                 push_ctx(li, rows);
                                             }
                                         } else {

@@ -94,6 +94,16 @@ pub struct ConflictTerm {
 /// resolved hunk; the rest hides behind an expandable gap row.
 pub const CONFLICT_CONTEXT_LINES: usize = 3;
 
+/// How a resolved hunk's lines split when trimmed: `head` leading and
+/// `tail` trailing lines stay visible next to adjacent conflicts, and
+/// `hidden` lines collapse behind a gap row between them.
+#[derive(Clone, Copy)]
+pub struct TrimmedContext {
+    pub head: usize,
+    pub tail: usize,
+    pub hidden: usize,
+}
+
 /// A hunk's resolution choice.
 #[derive(Clone, PartialEq, Eq)]
 pub enum ConflictPick {
@@ -111,6 +121,15 @@ impl ConflictPick {
             Self::Edited(_) => None,
         }
     }
+}
+
+/// A conflicted file assembled under the user's picks. `complete` is true
+/// when every hunk was resolved or picked, so the content is conflict-free;
+/// when false the content still carries markers for the unpicked hunks (jj
+/// parses those back into a conflicted state).
+pub struct Resolution {
+    pub content: String,
+    pub complete: bool,
 }
 
 /// Pure conflict data as materialized from the repo. All user-facing UI
@@ -137,9 +156,7 @@ impl ConflictHunkKind {
         }
     }
 
-    /// Context trimming for a resolved hunk: `(head, tail, hidden)` — how
-    /// many leading/trailing lines stay visible next to adjacent conflicts
-    /// and how many hide behind a gap row. `first`/`last` say whether the
+    /// Context trimming for a resolved hunk. `first`/`last` say whether the
     /// hunk starts/ends the file (edges with no adjacent conflict keep no
     /// context). `expanded` (App-side UI state) shows every line. `None` =
     /// show every line (expanded, small, or not a resolved hunk).
@@ -148,7 +165,7 @@ impl ConflictHunkKind {
         expanded: bool,
         first: bool,
         last: bool,
-    ) -> Option<(usize, usize, usize)> {
+    ) -> Option<TrimmedContext> {
         let Self::Resolved { text } = self else {
             return None;
         };
@@ -163,7 +180,7 @@ impl ConflictHunkKind {
         if hidden < 2 {
             return None;
         }
-        Some((head, tail, hidden))
+        Some(TrimmedContext { head, tail, hidden })
     }
 }
 

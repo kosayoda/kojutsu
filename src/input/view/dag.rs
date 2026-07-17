@@ -187,12 +187,11 @@ pub(in crate::input) fn dispatch(
                 app.set_error("cursor must be on a conflicted file");
                 return Action::None;
             };
-            let Some((path, content, _complete)) = app.conflict_resolution(entry_idx, file_idx)
-            else {
+            let Some((path, resolution)) = app.conflict_resolution(entry_idx, file_idx) else {
                 app.set_error("no picks to apply on this file");
                 return Action::None;
             };
-            apply_conflict_resolution(app, entry_idx, path, content, flags)
+            apply_conflict_resolution(app, entry_idx, path, resolution.content, flags)
         }
         AppAction::ConflictEditFile => {
             // Hand-edit the resolution: picked hunks applied, unpicked
@@ -780,9 +779,12 @@ pub(in crate::input) fn maybe_offer_apply(
     file_idx: crate::idx::FileIdx,
     flags: CommandFlags,
 ) -> bool {
-    let Some((path, content, true)) = app.conflict_resolution(entry_idx, file_idx) else {
+    let Some((path, resolution)) = app.conflict_resolution(entry_idx, file_idx) else {
         return false;
     };
+    if !resolution.complete {
+        return false;
+    }
     // Carry the content, not a temp file: declining the prompt must leave
     // nothing to clean up. The file is staged only when the option runs.
     app.mode = AppMode::FollowUp {
@@ -793,7 +795,7 @@ pub(in crate::input) fn maybe_offer_apply(
             action: FollowUpAction::ResolveConflict {
                 change_id: app.change_id(entry_idx),
                 path,
-                content,
+                content: resolution.content,
                 flags,
             },
         }],
