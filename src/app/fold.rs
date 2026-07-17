@@ -313,10 +313,7 @@ impl App {
 
                     // If this file is unfolded, show diff lines or conflict hunks.
                     if self.is_file_unfolded(entry_idx, file_idx) {
-                        if let Some(hunks) = self.nodes[entry_idx]
-                            .conflict_hunks(file_idx)
-                            .and_then(|l| l.loaded())
-                        {
+                        if let Some(hunks) = self.conflict_hunks_loaded(entry_idx, file_idx) {
                             // Show conflict hunks instead of diff.
                             for (hi, hunk) in hunks.iter().enumerate() {
                                 match hunk {
@@ -835,13 +832,13 @@ impl App {
         file_idx: FileIdx,
         hunk_idx: ConflictHunkIdx,
     ) {
-        if let Some(crate::dag::ConflictHunkKind::Resolved { expanded, .. }) = self.nodes[entry_idx]
-            .conflict_hunks_mut(file_idx)
-            .and_then(|l| match l {
-                super::Loadable::Loaded(h) => Some(h),
-                _ => None,
-            })
-            .and_then(|hunks| hunks.get_mut(hunk_idx.raw()))
+        let hunk = crate::types::ConflictHunkRef {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+        };
+        if let Some(crate::dag::ConflictHunkKind::Resolved { expanded, .. }) =
+            self.conflict_hunk_mut(hunk)
         {
             *expanded = true;
             self.rebuild_entry_rows(entry_idx);
@@ -858,15 +855,14 @@ impl App {
         hunk_idx: ConflictHunkIdx,
         term_idx: ConflictTermIdx,
     ) -> bool {
+        let hunk = crate::types::ConflictHunkRef {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+        };
         let Some(crate::dag::ConflictHunkKind::Conflict {
             terms, base_folded, ..
-        }) = self.nodes[entry_idx]
-            .conflict_hunks_mut(file_idx)
-            .and_then(|l| match l {
-                super::Loadable::Loaded(h) => Some(h),
-                _ => None,
-            })
-            .and_then(|hunks| hunks.get_mut(hunk_idx.raw()))
+        }) = self.conflict_hunk_mut(hunk)
         else {
             return false;
         };

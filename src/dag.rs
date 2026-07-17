@@ -421,6 +421,13 @@ impl ConflictText {
             }
         }
     }
+
+    /// The content as an owned string, with line terminators restored.
+    pub fn to_content(&self) -> String {
+        let mut s = String::new();
+        self.write_to(&mut s);
+        s
+    }
 }
 
 /// One term of a conflict hunk: a side's or base's content.
@@ -485,6 +492,15 @@ pub enum ConflictHunkKind {
 }
 
 impl ConflictHunkKind {
+    /// The term kind currently picked for this hunk, if a term (not an
+    /// edit) is selected. Used to mark the picked side in the UI.
+    pub fn picked_term(&self) -> Option<ConflictTermKind> {
+        match self {
+            Self::Conflict { selected, .. } => selected.as_ref().and_then(ConflictPick::term),
+            Self::Resolved { .. } => None,
+        }
+    }
+
     /// Number of positive terms (sides) in a conflict hunk; 0 for resolved.
     pub fn num_sides(&self) -> usize {
         match self {

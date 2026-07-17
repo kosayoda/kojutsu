@@ -14,7 +14,7 @@ use crate::app::{App, AppMode, TargetMode};
 use crate::idx::EntryIdx;
 use crate::theme::Config;
 use crate::types::ChangeId;
-use crate::types::{DisplayRow, SearchScopes};
+use crate::types::{ConflictHunkRef, DisplayRow, SearchScopes};
 
 pub(super) fn expand_tabs(s: &str, tab_spaces: &str) -> String {
     if s.contains('\t') {
@@ -450,11 +450,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     file_idx,
                     hunk_idx,
                 } => {
-                    let hunks = app
-                        .nodes
-                        .get(*entry_idx)
-                        .and_then(|n| n.conflict_hunks(*file_idx))
-                        .and_then(|l| l.loaded());
+                    let hunks = app.conflict_hunks_loaded(*entry_idx, *file_idx);
                     let (num, total) = hunks
                         .map(|hunks| {
                             let mut num = 0usize;
@@ -520,53 +516,46 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         /// Placeholder or folded-base stub, rendered italic.
                         Note(String),
                     }
-                    let info = app
-                        .nodes
-                        .get(*entry_idx)
-                        .and_then(|n| n.conflict_hunks(*file_idx))
-                        .and_then(|l| l.loaded())
-                        .and_then(|hunks: &Vec<crate::dag::ConflictHunkKind>| {
-                            hunks.get(hunk_idx.raw())
-                        })
-                        .and_then(|hunk| match hunk {
-                            crate::dag::ConflictHunkKind::Conflict {
-                                terms,
-                                selected,
-                                base_folded,
-                            } => {
-                                let term = terms.get(term_idx.raw())?;
-                                let line = if !term.kind.is_side() && *base_folded {
-                                    // Folded base stub.
-                                    let n = term.text.lines.len();
-                                    TermLine::Note(if term.absent {
-                                        "(file deleted)".to_string()
-                                    } else {
-                                        format!("… {n} line{} (tab)", if n == 1 { "" } else { "s" })
-                                    })
+                    let hunk_ref = ConflictHunkRef {
+                        entry_idx: *entry_idx,
+                        file_idx: *file_idx,
+                        hunk_idx: *hunk_idx,
+                    };
+                    let info = app.conflict_hunk(hunk_ref).and_then(|h| match h {
+                        crate::dag::ConflictHunkKind::Conflict {
+                            terms, base_folded, ..
+                        } => {
+                            let term = terms.get(term_idx.raw())?;
+                            let line = if !term.kind.is_side() && *base_folded {
+                                // Folded base stub.
+                                let n = term.text.lines.len();
+                                TermLine::Note(if term.absent {
+                                    "(file deleted)".to_string()
                                 } else {
-                                    match term.text.lines.get(line_idx.raw()) {
-                                        Some(l) => TermLine::Text(
-                                            l.clone(),
-                                            term.token_lines
-                                                .get(line_idx.raw())
-                                                .cloned()
-                                                .unwrap_or_default(),
-                                        ),
-                                        // Placeholder row for an empty term
-                                        // (deleted or emptied file).
-                                        None if term.absent => {
-                                            TermLine::Note("(file deleted)".to_string())
-                                        }
-                                        None => TermLine::Note("(empty)".to_string()),
+                                    format!("… {n} line{} (tab)", if n == 1 { "" } else { "s" })
+                                })
+                            } else {
+                                match term.text.lines.get(line_idx.raw()) {
+                                    Some(l) => TermLine::Text(
+                                        l.clone(),
+                                        term.token_lines
+                                            .get(line_idx.raw())
+                                            .cloned()
+                                            .unwrap_or_default(),
+                                    ),
+                                    // Placeholder row for an empty term
+                                    // (deleted or emptied file).
+                                    None if term.absent => {
+                                        TermLine::Note("(file deleted)".to_string())
                                     }
-                                };
-                                let is_selected =
-                                    selected.as_ref().and_then(crate::dag::ConflictPick::term)
-                                        == Some(term.kind);
-                                Some((line, is_selected, term.kind, hunk.num_sides()))
-                            }
-                            _ => None,
-                        });
+                                    None => TermLine::Note("(empty)".to_string()),
+                                }
+                            };
+                            let is_selected = h.picked_term() == Some(term.kind);
+                            Some((line, is_selected, term.kind, h.num_sides()))
+                        }
+                        _ => None,
+                    });
                     let Some((line, is_selected, kind, num_sides)) = info else {
                         return vec![Line::raw("")];
                     };
@@ -625,15 +614,14 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     hunk_idx,
                     line_idx,
                 } => {
+                    let hunk_ref = ConflictHunkRef {
+                        entry_idx: *entry_idx,
+                        file_idx: *file_idx,
+                        hunk_idx: *hunk_idx,
+                    };
                     let text = app
-                        .nodes
-                        .get(*entry_idx)
-                        .and_then(|n| n.conflict_hunks(*file_idx))
-                        .and_then(|l| l.loaded())
-                        .and_then(|hunks: &Vec<crate::dag::ConflictHunkKind>| {
-                            hunks.get(hunk_idx.raw())
-                        })
-                        .and_then(|hunk| match hunk {
+                        .conflict_hunk(hunk_ref)
+                        .and_then(|h| match h {
                             crate::dag::ConflictHunkKind::Resolved { text, .. } => {
                                 text.lines.get(line_idx.raw()).cloned()
                             }
@@ -650,11 +638,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     file_idx,
                     hunk_idx,
                 } => {
-                    let hidden = app
-                        .nodes
-                        .get(*entry_idx)
-                        .and_then(|n| n.conflict_hunks(*file_idx))
-                        .and_then(|l| l.loaded())
+                    let hunks = app.conflict_hunks_loaded(*entry_idx, *file_idx);
+                    let hidden = hunks
                         .and_then(|hunks| {
                             let hunk = hunks.get(hunk_idx.raw())?;
                             hunk.trimmed_context(
@@ -680,19 +665,18 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     hunk_idx,
                     line_idx,
                 } => {
-                    let line = app
-                        .nodes
-                        .get(*entry_idx)
-                        .and_then(|n| n.conflict_hunks(*file_idx))
-                        .and_then(|l| l.loaded())
-                        .and_then(|hunks| hunks.get(hunk_idx.raw()))
-                        .and_then(|hunk| match hunk {
-                            crate::dag::ConflictHunkKind::Conflict {
-                                selected: Some(crate::dag::ConflictPick::Edited(text)),
-                                ..
-                            } => Some(text.lines.get(line_idx.raw()).cloned()),
-                            _ => None,
-                        });
+                    let hunk_ref = ConflictHunkRef {
+                        entry_idx: *entry_idx,
+                        file_idx: *file_idx,
+                        hunk_idx: *hunk_idx,
+                    };
+                    let line = app.conflict_hunk(hunk_ref).and_then(|h| match h {
+                        crate::dag::ConflictHunkKind::Conflict {
+                            selected: Some(crate::dag::ConflictPick::Edited(text)),
+                            ..
+                        } => Some(text.lines.get(line_idx.raw()).cloned()),
+                        _ => None,
+                    });
                     // Selection color: an edited block is the user's chosen
                     // content, and it must not read as a side ([ours] is
                     // added-green).

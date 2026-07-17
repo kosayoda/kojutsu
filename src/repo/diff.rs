@@ -899,11 +899,7 @@ fn default_materialize_options() -> ConflictMaterializeOptions {
 /// adds, bases as removes, each ordered by ordinal — rather than trusting
 /// the Vec's position, so markers are correct regardless of storage order.
 pub fn hunk_markers(terms: &[crate::dag::ConflictTerm]) -> String {
-    let term_bytes = |t: &crate::dag::ConflictTerm| {
-        let mut s = String::new();
-        t.text.write_to(&mut s);
-        bstr::BString::from(s)
-    };
+    let term_bytes = |t: &crate::dag::ConflictTerm| bstr::BString::from(t.text.to_content());
     let mut sides: Vec<(usize, bstr::BString)> = Vec::new();
     let mut bases: Vec<(usize, bstr::BString)> = Vec::new();
     for t in terms {

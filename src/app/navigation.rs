@@ -436,10 +436,7 @@ impl App {
                         .and_then(|f| f.get(file_idx.raw()))
                         .is_some_and(|f| f.has_conflict)
                         && !(self.is_file_unfolded(*entry_idx, *file_idx)
-                            && self.nodes[*entry_idx]
-                                .conflict_hunks(*file_idx)
-                                .and_then(|l| l.loaded())
-                                .is_some())
+                            && self.conflict_hunks_loaded(*entry_idx, *file_idx).is_some())
                 }
                 DisplayRow::ConflictHeader { .. } => true,
                 _ => false,

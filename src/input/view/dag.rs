@@ -156,32 +156,20 @@ pub(in crate::input) fn dispatch(
             else {
                 return Action::None;
             };
-            let seed = app.nodes[hunk.entry_idx]
-                .conflict_hunks(hunk.file_idx)
-                .and_then(|l| l.loaded())
-                .and_then(|hunks| hunks.get(hunk.hunk_idx.raw()))
-                .and_then(|h| match h {
-                    crate::dag::ConflictHunkKind::Conflict {
-                        terms, selected, ..
-                    } => Some(match selected {
-                        Some(crate::dag::ConflictPick::Edited(text)) => {
-                            let mut s = String::new();
-                            text.write_to(&mut s);
-                            s
-                        }
-                        Some(crate::dag::ConflictPick::Term(kind)) => terms
-                            .iter()
-                            .find(|t| t.kind == *kind)
-                            .map(|t| {
-                                let mut s = String::new();
-                                t.text.write_to(&mut s);
-                                s
-                            })
-                            .unwrap_or_default(),
-                        None => crate::repo::hunk_markers(terms),
-                    }),
-                    _ => None,
-                });
+            let seed = app.conflict_hunk(hunk).and_then(|h| match h {
+                crate::dag::ConflictHunkKind::Conflict {
+                    terms, selected, ..
+                } => Some(match selected {
+                    Some(crate::dag::ConflictPick::Edited(text)) => text.to_content(),
+                    Some(crate::dag::ConflictPick::Term(kind)) => terms
+                        .iter()
+                        .find(|t| t.kind == *kind)
+                        .map(|t| t.text.to_content())
+                        .unwrap_or_default(),
+                    None => crate::repo::hunk_markers(terms),
+                }),
+                _ => None,
+            });
             let Some(seed) = seed else {
                 return Action::None;
             };

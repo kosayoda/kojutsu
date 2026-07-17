@@ -97,6 +97,13 @@ impl<T> Loadable<T> {
         }
     }
 
+    pub fn loaded_mut(&mut self) -> Option<&mut T> {
+        match self {
+            Self::Loaded(value) => Some(value),
+            _ => None,
+        }
+    }
+
     fn should_request(&self) -> bool {
         matches!(self, Self::NotRequested | Self::Failed(_))
     }
@@ -830,15 +837,57 @@ impl App {
     }
 
     /// Look up a term of a conflict hunk by kind.
+    /// Loaded conflict hunks for a file, or `None` if not yet loaded.
+    pub fn conflict_hunks_loaded(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+    ) -> Option<&[crate::dag::ConflictHunkKind]> {
+        self.nodes
+            .get(entry_idx)?
+            .conflict_hunks(file_idx)?
+            .loaded()
+            .map(Vec::as_slice)
+    }
+
+    /// A single loaded conflict hunk by index.
+    pub fn conflict_hunk(&self, hunk: ConflictHunkRef) -> Option<&crate::dag::ConflictHunkKind> {
+        self.conflict_hunks_loaded(hunk.entry_idx, hunk.file_idx)?
+            .get(hunk.hunk_idx.raw())
+    }
+
+    /// A single loaded conflict hunk by index, mutably.
+    pub fn conflict_hunk_mut(
+        &mut self,
+        hunk: ConflictHunkRef,
+    ) -> Option<&mut crate::dag::ConflictHunkKind> {
+        self.nodes
+            .get_mut(hunk.entry_idx)?
+            .conflict_hunks_mut(hunk.file_idx)?
+            .loaded_mut()?
+            .get_mut(hunk.hunk_idx.raw())
+    }
+
+    /// Persistence key for a file's conflict picks: content-addressed by
+    /// commit ID (identical ID means identical hunks) plus path.
+    fn conflict_pick_key(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+    ) -> Option<(CommitId, RepoPath)> {
+        let path = self
+            .files_for_entry(entry_idx)
+            .and_then(|f| f.get(file_idx.raw()))
+            .map(|f| f.path.clone())?;
+        Some((self.nodes[entry_idx].commit.graph_id.clone(), path))
+    }
+
     pub fn conflict_term(
         &self,
         hunk: ConflictHunkRef,
         kind: crate::dag::ConflictTermKind,
     ) -> Option<&crate::dag::ConflictTerm> {
-        let hunks = self.nodes[hunk.entry_idx]
-            .conflict_hunks(hunk.file_idx)?
-            .loaded()?;
-        match hunks.get(hunk.hunk_idx.raw())? {
+        match self.conflict_hunk(hunk)? {
             crate::dag::ConflictHunkKind::Conflict { terms, .. } => {
                 terms.iter().find(|t| t.kind == kind)
             }
@@ -875,13 +924,7 @@ impl App {
         hunk_ref: ConflictHunkRef,
         pick: Option<ConflictPick>,
     ) -> Option<ConflictPick> {
-        let hunk = self.nodes[hunk_ref.entry_idx]
-            .conflict_hunks_mut(hunk_ref.file_idx)
-            .and_then(|l| match l {
-                Loadable::Loaded(h) => Some(h),
-                _ => None,
-            })
-            .and_then(|hunks| hunks.get_mut(hunk_ref.hunk_idx.raw()))?;
+        let hunk = self.conflict_hunk_mut(hunk_ref)?;
         let new_selected = match hunk {
             crate::dag::ConflictHunkKind::Conflict {
                 terms, selected, ..
@@ -918,14 +961,9 @@ impl App {
     /// Write a pick through to the persistent store so it survives hunk
     /// reloads (see `conflict_picks`).
     fn save_conflict_pick(&mut self, hunk: ConflictHunkRef, pick: Option<ConflictPick>) {
-        let Some(path) = self
-            .files_for_entry(hunk.entry_idx)
-            .and_then(|f| f.get(hunk.file_idx.raw()))
-            .map(|f| f.path.clone())
-        else {
+        let Some(key) = self.conflict_pick_key(hunk.entry_idx, hunk.file_idx) else {
             return;
         };
-        let key = (self.nodes[hunk.entry_idx].commit.graph_id.clone(), path);
         match pick {
             Some(pick) => {
                 self.conflict_picks
@@ -946,42 +984,31 @@ impl App {
 
     /// Re-apply persisted picks to freshly loaded conflict hunks.
     pub(super) fn restore_conflict_picks(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
-        let Some(path) = self
-            .files_for_entry(entry_idx)
-            .and_then(|f| f.get(file_idx.raw()))
-            .map(|f| f.path.clone())
-        else {
+        let Some(key) = self.conflict_pick_key(entry_idx, file_idx) else {
             return;
         };
-        let key = (self.nodes[entry_idx].commit.graph_id.clone(), path);
         let Some(picks) = self.conflict_picks.get(&key).cloned() else {
             return;
         };
-        if let Some(hunks) =
-            self.nodes[entry_idx]
-                .conflict_hunks_mut(file_idx)
-                .and_then(|l| match l {
-                    Loadable::Loaded(h) => Some(h),
-                    _ => None,
-                })
-        {
-            for (hi, pick) in picks {
-                if let Some(crate::dag::ConflictHunkKind::Conflict {
-                    terms, selected, ..
-                }) = hunks.get_mut(hi)
-                {
-                    // Term picks must still name a present term; edited
-                    // picks are always applicable (same commit ID means
-                    // identical hunks).
-                    let valid = match &pick {
-                        ConflictPick::Term(kind) => {
-                            terms.iter().any(|t| t.kind == *kind && !t.absent)
-                        }
-                        ConflictPick::Edited(_) => true,
-                    };
-                    if valid {
-                        *selected = Some(pick);
-                    }
+        for (hi, pick) in picks {
+            let hunk = ConflictHunkRef {
+                entry_idx,
+                file_idx,
+                hunk_idx: crate::idx::ConflictHunkIdx::new(hi),
+            };
+            if let Some(crate::dag::ConflictHunkKind::Conflict {
+                terms, selected, ..
+            }) = self.conflict_hunk_mut(hunk)
+            {
+                // Term picks must still name a present term; edited picks
+                // are always applicable (same commit ID means identical
+                // hunks).
+                let valid = match &pick {
+                    ConflictPick::Term(kind) => terms.iter().any(|t| t.kind == *kind && !t.absent),
+                    ConflictPick::Edited(_) => true,
+                };
+                if valid {
+                    *selected = Some(pick);
                 }
             }
         }
@@ -1003,7 +1030,7 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
     ) -> Option<(RepoPath, String, bool)> {
-        let hunks = self.nodes[entry_idx].conflict_hunks(file_idx)?.loaded()?;
+        let hunks = self.conflict_hunks_loaded(entry_idx, file_idx)?;
         let any_picked = hunks.iter().any(|h| {
             matches!(
                 h,
