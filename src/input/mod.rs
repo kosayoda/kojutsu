@@ -61,10 +61,10 @@ pub enum Action {
         path: crate::types::RepoPath,
         line: usize,
     },
-    /// Suspend TUI, edit an assembled conflict resolution (picks applied,
-    /// unpicked hunks as markers) in $EDITOR; apply via `jj resolve` if
-    /// changed.
-    EditConflictResolution {
+    /// Suspend TUI, edit a whole conflicted file's assembled resolution
+    /// (picks applied, unpicked hunks as markers) in $EDITOR; apply via
+    /// `jj resolve` if changed. Whole-file counterpart to `EditConflictHunk`.
+    EditConflictFile {
         change_id: crate::types::ChangeId,
         path: crate::types::RepoPath,
         content: String,

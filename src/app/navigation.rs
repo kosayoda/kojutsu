@@ -1,7 +1,7 @@
 use super::App;
 use crate::dag::DiffLineKind;
 use crate::idx::{EntryIdx, RowIdx};
-use crate::types::DisplayRow;
+use crate::types::{DisplayRow, NavDirection};
 
 /// Rows of context kept visible above and below the cursor when scrolling.
 const SCROLL_PADDING: usize = 2;
@@ -408,19 +408,16 @@ impl App {
     /// Stops at the deepest visible level: hunk headers always; a
     /// conflicted file row only when its hunks aren't rendered beneath it;
     /// a conflicted commit node only when its file rows aren't rendered.
-    pub fn peek_conflict(&self, forward: bool) -> Option<RowIdx> {
+    pub fn peek_conflict(&self, direction: NavDirection) -> Option<RowIdx> {
         let n = self.rows.len();
         if n == 0 {
             return None;
         }
         let cur = self.cursor.raw();
         (1..=n)
-            .map(|step| {
-                if forward {
-                    (cur + step) % n
-                } else {
-                    (cur + n - step) % n
-                }
+            .map(|step| match direction {
+                NavDirection::Forward => (cur + step) % n,
+                NavDirection::Backward => (cur + n - step) % n,
             })
             .find(|&idx| match &self.rows[idx] {
                 DisplayRow::CommitNode { entry_idx } => {
@@ -446,8 +443,8 @@ impl App {
 
     /// Move the cursor to the next/previous conflict, wrapping around.
     /// Returns whether a conflict row was found.
-    pub fn jump_to_conflict(&mut self, forward: bool) -> bool {
-        if let Some(pos) = self.peek_conflict(forward) {
+    pub fn jump_to_conflict(&mut self, direction: NavDirection) -> bool {
+        if let Some(pos) = self.peek_conflict(direction) {
             self.cursor = pos;
             true
         } else {

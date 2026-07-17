@@ -460,7 +460,7 @@ pub fn dispatch_action_after_hooks(
                         app.set_error(
                             "that side deleted the file — use C,o / C,t to take it whole-file",
                         );
-                    } else if app.pick_conflict_side(hunk, kind).is_some() {
+                    } else if app.pick_conflict_term(hunk, kind).is_some() {
                         // Picked (not unpicked): offer to apply if that was
                         // the last hunk, otherwise move to the next conflict.
                         if !super::view::dag::maybe_offer_apply(
@@ -469,7 +469,7 @@ pub fn dispatch_action_after_hooks(
                             hunk.file_idx,
                             flags,
                         ) {
-                            app.jump_to_conflict(true);
+                            app.jump_to_conflict(crate::types::NavDirection::Forward);
                         }
                     }
                 }
@@ -494,13 +494,13 @@ pub fn dispatch_action_after_hooks(
             Action::None
         }
         AppAction::NextConflict => {
-            if !app.jump_to_conflict(true) {
+            if !app.jump_to_conflict(crate::types::NavDirection::Forward) {
                 app.set_error("no conflicts in current view");
             }
             Action::None
         }
         AppAction::PrevConflict => {
-            if !app.jump_to_conflict(false) {
+            if !app.jump_to_conflict(crate::types::NavDirection::Backward) {
                 app.set_error("no conflicts in current view");
             }
             Action::None

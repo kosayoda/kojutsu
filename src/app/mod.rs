@@ -940,7 +940,7 @@ impl App {
     /// could only produce an empty file, not a deletion; callers route
     /// those to `jj resolve` builtins instead. Returns the hunk's
     /// selection after the toggle (`None` = now unpicked).
-    pub fn pick_conflict_side(
+    pub fn pick_conflict_term(
         &mut self,
         hunk: ConflictHunkRef,
         pick: ConflictTermKind,
@@ -1245,8 +1245,11 @@ impl App {
             ("0", self.peek_top()),
             ("$", self.peek_bottom()),
             ("@", self.peek_working_copy()),
-            ("]", self.peek_conflict(true)),
-            ("[", self.peek_conflict(false)),
+            ("]", self.peek_conflict(crate::types::NavDirection::Forward)),
+            (
+                "[",
+                self.peek_conflict(crate::types::NavDirection::Backward),
+            ),
         ];
 
         let mut labels: Vec<(String, RowIdx)> = Vec::new();

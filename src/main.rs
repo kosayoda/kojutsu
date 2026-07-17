@@ -360,7 +360,7 @@ fn main() -> Result<()> {
                 open_revision_in_editor(&repo_path, &commit_id, &path, line, &mut terminal);
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
             }
-            Action::EditConflictResolution {
+            Action::EditConflictFile {
                 change_id,
                 path,
                 content,

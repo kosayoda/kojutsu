@@ -118,7 +118,7 @@ pub(in crate::input) fn dispatch(
                     );
                     return Action::None;
                 }
-                if app.pick_conflict_side(hunk, pick).is_some() {
+                if app.pick_conflict_term(hunk, pick).is_some() {
                     maybe_offer_apply(app, hunk.entry_idx, hunk.file_idx, flags);
                 }
             } else {
@@ -216,7 +216,7 @@ pub(in crate::input) fn dispatch(
                 app.set_error("conflict hunks not loaded — unfold the file first (tab)");
                 return Action::None;
             };
-            Action::EditConflictResolution {
+            Action::EditConflictFile {
                 change_id: app.change_id(entry_idx),
                 path,
                 content,

@@ -57,6 +57,13 @@ pub enum ArrangeDirection {
     Down,
 }
 
+/// Direction for row navigation (next/previous), wrapping around the list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NavDirection {
+    Forward,
+    Backward,
+}
+
 /// Rebase source mode.
 #[derive(Debug, Clone)]
 pub enum RebaseSource {
