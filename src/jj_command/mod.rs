@@ -254,6 +254,7 @@ pub enum CommandPartKind {
     Flag,
     Revision,
     String,
+    Fileset,
 }
 
 #[derive(Clone)]
@@ -309,21 +310,9 @@ impl JJCommand {
     }
 
     pub fn display(&self) -> String {
-        let parts = self.display_parts();
-        parts
+        self.display_parts()
             .iter()
-            .map(|p| {
-                if p.kind == CommandPartKind::String
-                    && p.text
-                        .contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c))
-                {
-                    shlex::try_quote(&p.text)
-                        .map(|q| q.into_owned())
-                        .unwrap_or_else(|_| p.text.clone())
-                } else {
-                    p.text.clone()
-                }
-            })
+            .map(|p| p.text.as_str())
             .collect::<Vec<_>>()
             .join(" ")
     }
@@ -339,14 +328,19 @@ impl JJCommand {
                 kind: CommandPartKind::Binary,
             },
         ];
-        parts.extend(
-            self.tagged_args()
-                .into_iter()
-                .map(|(text, kind)| CommandPart {
-                    text: text.to_string(),
-                    kind,
-                }),
-        );
+        parts.extend(self.tagged_args().into_iter().map(|(text, kind)| {
+            let text = if matches!(kind, CommandPartKind::String | CommandPartKind::Fileset)
+                && text
+                    .contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c))
+            {
+                shlex::try_quote(&text)
+                    .map(|q| q.into_owned())
+                    .unwrap_or_else(|_| text.to_string())
+            } else {
+                text.to_string()
+            };
+            CommandPart { text, kind }
+        }));
         parts
     }
 

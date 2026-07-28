@@ -32,7 +32,14 @@ impl JJCommand {
     pub fn args(&self) -> Vec<Str> {
         self.tagged_args()
             .into_iter()
-            .map(|(text, _)| text)
+            .map(|(text, kind)| {
+                if kind == CommandPartKind::Fileset {
+                    let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+                    format_compact!("\"{escaped}\"")
+                } else {
+                    text
+                }
+            })
             .collect()
     }
 
@@ -656,8 +663,7 @@ fn self_invoking_tool(name: &str) -> Vec<TaggedArg> {
 }
 
 fn fileset_arg(path: &str) -> TaggedArg {
-    let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
-    arg(format!("\"{escaped}\""))
+    (path.into(), CommandPartKind::Fileset)
 }
 
 fn push_global_flags(args: &mut Vec<TaggedArg>, flags: CommandFlags) {
