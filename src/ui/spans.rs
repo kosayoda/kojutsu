@@ -171,7 +171,8 @@ pub(super) fn command_parts_to_spans(
             CommandPartKind::Revision => Style::default()
                 .fg(theme.change_id)
                 .add_modifier(Modifier::BOLD),
-            CommandPartKind::String | CommandPartKind::Fileset => Style::default().fg(theme.text),
+            CommandPartKind::String => Style::default().fg(theme.added),
+            CommandPartKind::Fileset => Style::default().fg(theme.text),
         };
         spans.push(Span::styled(part.text.clone(), style));
     }
