@@ -8,7 +8,6 @@ use crossterm::event::{Event, KeyEventKind};
 use kojutsu::app::{App, AppMode, DeferredWork};
 use kojutsu::input::{self, Action};
 use kojutsu::jj_command::{JJCommand, JJCommandResult};
-use kojutsu::keymap::{self, Keymaps};
 use kojutsu::repo::JjRepo;
 use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind};
 use kojutsu::terminal::spawn_terminal_events;
@@ -160,14 +159,8 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let config = std::rc::Rc::new(kojutsu::theme::load_config());
-    let mut registry = keymap::ActionRegistry::new();
-    let default_specs = keymap::default_bindings();
-    let mut lua_engine = kojutsu::lua::LuaEngine::new(&repo_path, &mut registry, &default_specs);
-    let mut specs = default_specs;
-    specs.extend(lua_engine.take_extra_bindings());
-    let keymaps = Keymaps::build(specs, registry);
-    let lua_init_error = lua_engine.init_error.clone();
+    let runtime = kojutsu::lua::LuaRuntime::load(&repo_path);
+    let config = runtime.config.clone();
     let (event_tx, event_rx) = mpsc::channel();
     let (repo_requests, repo_responses) =
         RepoService::spawn(repo_path.clone(), config.diff.max_file_size_bytes());
@@ -204,7 +197,7 @@ fn main() -> Result<()> {
         app.enter_annotate_view(commit_id, path);
     }
 
-    if let Some(err) = lua_init_error {
+    if let Some(err) = runtime.init_error() {
         app.push_command_log(
             kojutsu::app::CommandLogKind::Warning,
             "init.lua error",
@@ -224,7 +217,7 @@ fn main() -> Result<()> {
     let mut events: Vec<AppEvent> = Vec::new();
     loop {
         if dirty {
-            terminal.draw(|frame| ui::draw(frame, &mut app, &keymaps))?;
+            terminal.draw(|frame| ui::draw(frame, &mut app, &runtime.keymaps))?;
             dirty = false;
         }
 
@@ -267,15 +260,15 @@ fn main() -> Result<()> {
                 } => {
                     dirty = true;
                     if for_lua {
-                        resume_lua_jj(&mut app, result, &lua_engine)
+                        resume_lua_jj(&mut app, result, &runtime.engine)
                     } else {
-                        finish_jj_command(&mut app, *result, *cmd, jump, label, &lua_engine)
+                        finish_jj_command(&mut app, *result, *cmd, jump, label, &runtime.engine)
                     }
                 }
                 AppEvent::Terminal(ev) => match ev {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         dirty = true;
-                        input::handle_key(&mut app, &keymaps, &lua_engine, key)
+                        input::handle_key(&mut app, &runtime.keymaps, &runtime.engine, key)
                     }
                     Event::Mouse(mouse) => {
                         dirty = true;
@@ -322,7 +315,7 @@ fn main() -> Result<()> {
                 if let Some(label) = action_label {
                     run_post_hooks_after_suspend(
                         &mut app,
-                        &lua_engine,
+                        &runtime.engine,
                         label,
                         &repo_path,
                         &event_tx,
@@ -431,11 +424,11 @@ fn main() -> Result<()> {
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
             }
             Action::DeferredDispatch { action, flags } => {
-                let keymap = keymaps.for_view(app.active_view);
+                let keymap = runtime.keymaps.for_view(app.active_view);
                 let result = input::dispatch_action_after_hooks(
                     &mut app,
-                    &keymaps.registry,
-                    &lua_engine,
+                    &runtime.keymaps.registry,
+                    &runtime.engine,
                     keymap,
                     action,
                     flags,
@@ -458,7 +451,7 @@ fn main() -> Result<()> {
                         if let Some(label) = action_label {
                             run_post_hooks_after_suspend(
                                 &mut app,
-                                &lua_engine,
+                                &runtime.engine,
                                 label,
                                 &repo_path,
                                 &event_tx,
@@ -472,7 +465,7 @@ fn main() -> Result<()> {
             }
             Action::None => {}
         }
-        lua_engine.flush_logs(&mut app);
+        runtime.engine.flush_logs(&mut app);
         flush_repo_requests(&mut app, &repo_requests);
     }
 

@@ -1,6 +1,7 @@
 mod api;
 pub(crate) mod helpers;
 mod init_script;
+mod runtime;
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -14,6 +15,7 @@ use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{ActionRegistry, AppAction, BindingSpec, CommandFlags};
 
 pub use helpers::generate_type_definitions;
+pub use runtime::LuaRuntime;
 
 struct LuaCommand {
     name: CompactString,
@@ -242,7 +244,9 @@ pub struct LuaEngine {
 }
 
 impl LuaEngine {
-    pub fn new(
+    /// Construct via [`LuaRuntime::load`] — the engine, the action registry
+    /// and the keymaps are only correct when built together.
+    pub(crate) fn new(
         repo_path: &Path,
         registry: &mut ActionRegistry,
         default_specs: &[BindingSpec],
@@ -287,7 +291,7 @@ impl LuaEngine {
         Self::without_config(Path::new("."))
     }
 
-    pub fn take_extra_bindings(&mut self) -> Vec<BindingSpec> {
+    pub(crate) fn take_extra_bindings(&mut self) -> Vec<BindingSpec> {
         std::mem::take(&mut self.extra_bindings)
     }
 
