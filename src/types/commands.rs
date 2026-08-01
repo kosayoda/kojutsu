@@ -75,7 +75,12 @@ pub enum PendingSelection {
         change_ids: SmallVec<ChangeId>,
         flags: CommandFlags,
     },
-    LuaResume,
+    /// Resume a Lua thread suspended on `kojutsu.ui.choose`. `multi` mirrors
+    /// the list's own multi-select flag: it decides whether the thread is
+    /// resumed with a single string or an array of them.
+    LuaResume {
+        multi: bool,
+    },
 }
 
 /// What to do after selecting a single commit in CommitSelect mode.

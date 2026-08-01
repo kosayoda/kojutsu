@@ -329,6 +329,16 @@ pub(super) fn resolve_selection(
                 flags,
             })
         }
+        // Resumes with an array when the plugin asked for a multi-select, so
+        // ticking several items isn't silently narrowed to the first one.
+        PendingSelection::LuaResume { multi } => {
+            match lua.resume_suspended(app, lua_selection_value(multi, names)) {
+                crate::lua::ResumeResult::Action(a) => a,
+                crate::lua::ResumeResult::DispatchAction { action, flags } => {
+                    Action::DeferredDispatch { action, flags }
+                }
+            }
+        }
         // Single-item operations: take the first name.
         PendingSelection::BookmarkMove {
             change_id, flags, ..
@@ -394,18 +404,64 @@ pub(super) fn resolve_selection(
             };
             super::modal::submit_run_command(app, change_ids, flags, selected)
         }
-        PendingSelection::LuaResume => {
-            let selected = names
-                .into_iter()
-                .next()
-                .map(|s| crate::lua::ResumeValue::Text(s.to_string()))
-                .unwrap_or(crate::lua::ResumeValue::None);
-            match lua.resume_suspended(app, selected) {
-                crate::lua::ResumeResult::Action(a) => a,
-                crate::lua::ResumeResult::DispatchAction { action, flags } => {
-                    Action::DeferredDispatch { action, flags }
-                }
-            }
-        }
+    }
+}
+
+/// The value a `kojutsu.ui.choose` thread is resumed with. A multi-select
+/// keeps every ticked item; a single-select keeps the first and reports an
+/// empty list as a dismissal.
+fn lua_selection_value(multi: bool, names: SmallVec<String>) -> crate::lua::ResumeValue {
+    if multi {
+        crate::lua::ResumeValue::List(names.into_iter().collect())
+    } else {
+        names
+            .into_iter()
+            .next()
+            .map(crate::lua::ResumeValue::Text)
+            .unwrap_or(crate::lua::ResumeValue::None)
+    }
+}
+
+#[cfg(test)]
+mod lua_selection_tests {
+    use super::{SmallVec, lua_selection_value};
+    use crate::lua::ResumeValue;
+
+    fn names(items: &[&str]) -> SmallVec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn multi_select_keeps_every_ticked_item() {
+        let ResumeValue::List(items) =
+            lua_selection_value(true, names(&["feature-a", "feature-b", "feature-c"]))
+        else {
+            panic!("expected a list");
+        };
+        assert_eq!(items, ["feature-a", "feature-b", "feature-c"]);
+    }
+
+    #[test]
+    fn multi_select_with_nothing_ticked_stays_a_list() {
+        let ResumeValue::List(items) = lua_selection_value(true, names(&[])) else {
+            panic!("expected a list");
+        };
+        assert!(items.is_empty());
+    }
+
+    #[test]
+    fn single_select_takes_the_first_name() {
+        let ResumeValue::Text(item) = lua_selection_value(false, names(&["feature-a"])) else {
+            panic!("expected a string");
+        };
+        assert_eq!(item, "feature-a");
+    }
+
+    #[test]
+    fn single_select_with_no_name_is_a_dismissal() {
+        assert!(matches!(
+            lua_selection_value(false, names(&[])),
+            ResumeValue::None
+        ));
     }
 }

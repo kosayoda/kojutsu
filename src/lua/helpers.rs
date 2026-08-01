@@ -126,7 +126,8 @@ pub fn generate_type_definitions() -> String {
     .unwrap();
     writeln!(
         out,
-        "---@field choose fun(title: string, items: string[], multi: boolean?): string?"
+        "---@field choose fun(title: string, items: string[], multi: boolean?): string|string[]|nil \
+         a single item, or every ticked item when multi is true"
     )
     .unwrap();
     writeln!(out).unwrap();

@@ -65,8 +65,10 @@ pub struct CommandOutcome<'a> {
 pub enum ResumeValue {
     /// Prompt dismissed without input.
     None,
-    /// Text input / list selection.
+    /// Text input / single-select list selection.
     Text(String),
+    /// Multi-select list selection; becomes a Lua array table.
+    List(Vec<String>),
     /// A yielded jj command finished (or was cancelled).
     JjResult(Box<crate::jj_command::JJCommandResult>),
 }
@@ -95,6 +97,83 @@ fn jj_result_table(
         table.set("code", code)?;
     }
     Ok(table)
+}
+
+/// Convert the value a suspended thread is resumed with into the Lua value the
+/// yield site receives. A conversion failure degrades to `nil`, which every
+/// yield site already treats as "dismissed".
+fn resume_value_to_lua(lua: &Lua, value: ResumeValue) -> mlua::Value {
+    let converted = match value {
+        ResumeValue::None => Ok(mlua::Value::Nil),
+        ResumeValue::Text(s) => lua.create_string(&s).map(mlua::Value::String),
+        // An array table even when empty: unlike a dismissed prompt (the
+        // thread is dropped, never resumed), "confirmed with nothing ticked"
+        // is a real answer.
+        ResumeValue::List(items) => (|| {
+            let table = lua.create_table()?;
+            for (i, item) in items.iter().enumerate() {
+                table.raw_set(i + 1, item.as_str())?;
+            }
+            Ok(mlua::Value::Table(table))
+        })(),
+        ResumeValue::JjResult(result) => jj_result_table(
+            lua,
+            result.success,
+            result.cancelled,
+            result.code,
+            &result.output,
+        )
+        .map(mlua::Value::Table),
+    };
+    converted.unwrap_or(mlua::Value::Nil)
+}
+
+#[cfg(test)]
+mod resume_value_tests {
+    use super::{Lua, ResumeValue, resume_value_to_lua};
+
+    #[test]
+    fn multi_select_resumes_with_an_array_table() {
+        let lua = Lua::new();
+        let value = resume_value_to_lua(
+            &lua,
+            ResumeValue::List(vec!["feature-a".into(), "feature-b".into()]),
+        );
+        let mlua::Value::Table(table) = value else {
+            panic!("expected a table");
+        };
+        assert_eq!(table.raw_len(), 2);
+        assert_eq!(table.raw_get::<String>(1).unwrap(), "feature-a");
+        assert_eq!(table.raw_get::<String>(2).unwrap(), "feature-b");
+    }
+
+    /// Ticking nothing and confirming is distinct from dismissing the prompt,
+    /// which drops the thread instead of resuming it.
+    #[test]
+    fn an_empty_multi_select_is_an_empty_table_not_nil() {
+        let lua = Lua::new();
+        let value = resume_value_to_lua(&lua, ResumeValue::List(Vec::new()));
+        let mlua::Value::Table(table) = value else {
+            panic!("expected a table");
+        };
+        assert_eq!(table.raw_len(), 0);
+    }
+
+    #[test]
+    fn single_select_resumes_with_a_bare_string() {
+        let lua = Lua::new();
+        let value = resume_value_to_lua(&lua, ResumeValue::Text("feature-a".into()));
+        let mlua::Value::String(s) = value else {
+            panic!("expected a string");
+        };
+        assert_eq!(s.to_str().unwrap(), "feature-a");
+    }
+
+    #[test]
+    fn a_dismissed_prompt_resumes_with_nil() {
+        let lua = Lua::new();
+        assert!(resume_value_to_lua(&lua, ResumeValue::None).is_nil());
+    }
 }
 
 enum SuspendedKind {
@@ -409,27 +488,7 @@ impl LuaEngine {
             state.pending_logs.clear();
         }
 
-        let lua_value = match value {
-            ResumeValue::None => mlua::Value::Nil,
-            ResumeValue::Text(s) => match self.lua.create_string(&s) {
-                Ok(ls) => mlua::Value::String(ls),
-                Err(_) => mlua::Value::Nil,
-            },
-            ResumeValue::JjResult(result) => {
-                match jj_result_table(
-                    &self.lua,
-                    result.success,
-                    result.cancelled,
-                    result.code,
-                    &result.output,
-                ) {
-                    Ok(t) => mlua::Value::Table(t),
-                    Err(_) => mlua::Value::Nil,
-                }
-            }
-        };
-
-        match thread.resume::<mlua::Value>(lua_value) {
+        match thread.resume::<mlua::Value>(resume_value_to_lua(&self.lua, value)) {
             Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
                 ResumeResult::Action(self.handle_yield(thread, value, app, kind))
             }
@@ -573,7 +632,7 @@ impl LuaEngine {
                         title,
                         items,
                         multi,
-                        crate::types::PendingSelection::LuaResume,
+                        crate::types::PendingSelection::LuaResume { multi },
                         false,
                     )),
                     Action::None,

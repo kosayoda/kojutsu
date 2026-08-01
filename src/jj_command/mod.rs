@@ -330,8 +330,7 @@ impl JJCommand {
         ];
         parts.extend(self.tagged_args().into_iter().map(|(text, kind)| {
             let text = if matches!(kind, CommandPartKind::String | CommandPartKind::Fileset)
-                && text
-                    .contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c))
+                && text.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c))
             {
                 shlex::try_quote(&text)
                     .map(|q| q.into_owned())
