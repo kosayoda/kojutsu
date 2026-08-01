@@ -629,6 +629,9 @@ impl App {
                     }
                 }
                 Err(error) => {
+                    self.evolog
+                        .files
+                        .insert(commit_id, super::Loadable::Failed(error.clone()));
                     let msg = format!("failed to load evolog details: {error}");
                     self.log_background_error(msg);
                 }
@@ -649,6 +652,9 @@ impl App {
                     }
                 }
                 Err(error) => {
+                    self.evolog
+                        .file_diffs
+                        .insert((commit_id, path), super::Loadable::Failed(error.clone()));
                     let msg = format!("failed to load evolog file diff: {error}");
                     self.log_background_error(msg);
                 }
@@ -913,5 +919,70 @@ impl App {
 
         entries.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         self.views.tag_entries = entries;
+    }
+}
+
+#[cfg(test)]
+mod repo_result_tests {
+    use super::super::{App, Loadable};
+    use crate::repo_service::{RepoError, RepoErrorKind, RepoResult};
+    use crate::types::{CommitId, RepoPath, SearchScopes};
+
+    fn test_app() -> App {
+        let glyphs: &'static crate::theme::GlyphChars =
+            Box::leak(Box::new(crate::theme::GlyphChars::default()));
+        App::new(
+            String::new(),
+            String::new(),
+            &[],
+            glyphs,
+            SearchScopes::DEFAULT,
+        )
+    }
+
+    fn failure() -> RepoError {
+        RepoError::new(RepoErrorKind::Operation, "boom")
+    }
+
+    /// A failed load has to land in `Failed`, not stay in `Loading`:
+    /// `should_request` retries `Failed` and never retries `Loading`, so a
+    /// transient error would otherwise wedge the entry forever.
+    #[test]
+    fn a_failed_evolog_detail_load_is_retryable() {
+        let mut app = test_app();
+        let commit_id = CommitId::new("abc123");
+        app.evolog
+            .files
+            .insert(commit_id.clone(), Loadable::Loading);
+
+        app.handle_repo_result(RepoResult::EvoLogDetails {
+            commit_id: commit_id.clone(),
+            result: Err(failure()),
+        });
+
+        assert!(matches!(
+            app.evolog.files.get(&commit_id),
+            Some(Loadable::Failed(_))
+        ));
+    }
+
+    #[test]
+    fn a_failed_evolog_file_diff_is_retryable() {
+        let mut app = test_app();
+        let commit_id = CommitId::new("abc123");
+        let path = RepoPath::new("a.rs");
+        let key = (commit_id.clone(), path.clone());
+        app.evolog.file_diffs.insert(key.clone(), Loadable::Loading);
+
+        app.handle_repo_result(RepoResult::EvoLogFileDiff {
+            commit_id,
+            path,
+            result: Err(failure()),
+        });
+
+        assert!(matches!(
+            app.evolog.file_diffs.get(&key),
+            Some(Loadable::Failed(_))
+        ));
     }
 }
