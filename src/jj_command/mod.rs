@@ -343,32 +343,92 @@ impl JJCommand {
         parts
     }
 
+    /// Whether the command needs the terminal handed to it, rather than being
+    /// run with its output captured.
+    ///
+    /// Two reasons, handled differently on purpose. A `--interactive` diff
+    /// editor is read back off the built args: several kinds pick that flag up
+    /// from `CommandFlags::INTERACTIVE` or from a line-level selection, and
+    /// restating those rules here is how the two copies drift — a kind that
+    /// gained the flag without gaining a case would launch a diff editor
+    /// against a closed stdin. Opening `$EDITOR` can't be read off the args,
+    /// since it's the *absence* of `-m` or a tool default, so those stay
+    /// listed; a miss there is milder, because captured runs set
+    /// `JJ_EDITOR=:` and the edit is simply skipped.
     pub fn is_interactive(&self) -> bool {
-        let flags = self.flags;
+        if self.args().iter().any(|a| a.as_str() == "--interactive") {
+            return true;
+        }
         match &self.kind {
-            JJCommandKind::DescribeInEditor { .. } | JJCommandKind::Diffedit { .. } => true,
-            JJCommandKind::Squash {
-                message, selection, ..
-            } => {
-                flags.contains(CommandFlags::INTERACTIVE)
-                    || matches!(message, MessageMode::Default)
-                    || matches!(selection, ChangeSelection::Lines(_))
-            }
-            JJCommandKind::Commit {
-                message, selection, ..
-            } => {
-                message.is_none()
-                    || flags.contains(CommandFlags::INTERACTIVE)
-                    || matches!(selection, ChangeSelection::Lines(_))
-            }
-            JJCommandKind::Restore { selection, .. } => {
-                flags.contains(CommandFlags::INTERACTIVE)
-                    || matches!(selection, ChangeSelection::Lines(_))
-            }
-            JJCommandKind::Split { .. } => true,
+            JJCommandKind::DescribeInEditor { .. }
+            | JJCommandKind::Diffedit { .. }
+            | JJCommandKind::Split { .. } => true,
+            JJCommandKind::Squash { message, .. } => matches!(message, MessageMode::Default),
+            JJCommandKind::Commit { message, .. } => message.is_none(),
             JJCommandKind::Resolve { tool, .. } => matches!(tool, ResolveTool::Default),
+            // A command line the user typed; assume it may want the terminal.
             JJCommandKind::Raw { .. } => true,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod is_interactive_tests {
+    use super::*;
+    use crate::types::{ChangeId, ChangeSelection, MessageMode};
+
+    fn squash(message: MessageMode, selection: ChangeSelection, flags: CommandFlags) -> JJCommand {
+        JJCommand {
+            kind: JJCommandKind::Squash {
+                change_id: ChangeId::new("qpvuntsm"),
+                target: None,
+                message,
+                selection,
+            },
+            flags,
+        }
+    }
+
+    #[test]
+    fn a_captured_squash_needs_no_terminal() {
+        let cmd = squash(
+            MessageMode::Inline("m".into()),
+            ChangeSelection::All,
+            CommandFlags::empty(),
+        );
+        assert!(!cmd.args().iter().any(|a| a.as_str() == "--interactive"));
+        assert!(!cmd.is_interactive());
+    }
+
+    /// The reason to read the args rather than restate the rules: every way a
+    /// command can acquire --interactive is covered by construction.
+    #[test]
+    fn anything_passing_interactive_is_interactive() {
+        let by_flag = squash(
+            MessageMode::Inline("m".into()),
+            ChangeSelection::All,
+            CommandFlags::INTERACTIVE,
+        );
+        assert!(by_flag.is_interactive());
+
+        let by_selection = squash(
+            MessageMode::Inline("m".into()),
+            ChangeSelection::Lines(std::path::PathBuf::from("/tmp/sel.json")),
+            CommandFlags::empty(),
+        );
+        assert!(by_selection.is_interactive());
+    }
+
+    /// Opening $EDITOR isn't visible in the args — it's the absence of -m.
+    #[test]
+    fn an_editor_message_still_needs_the_terminal() {
+        let cmd = squash(
+            MessageMode::Default,
+            ChangeSelection::All,
+            CommandFlags::empty(),
+        );
+        assert!(!cmd.args().iter().any(|a| a.as_str() == "--interactive"));
+        assert!(cmd.is_interactive());
     }
 }
