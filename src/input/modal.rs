@@ -259,9 +259,12 @@ fn submit_run_jobs(
     })
 }
 
-pub(super) fn handle_search_input(app: &mut App, key: KeyEvent) -> Action {
+pub(super) fn handle_search_input(
+    app: &mut App,
+    keymap: &crate::keymap::Keymap,
+    key: KeyEvent,
+) -> Action {
     use crate::types::SearchFocus;
-    use ratatui::crossterm::event::KeyModifiers;
 
     match key.code {
         KeyCode::Esc => {
@@ -277,30 +280,34 @@ pub(super) fn handle_search_input(app: &mut App, key: KeyEvent) -> Action {
             Action::None
         }
         _ => {
+            // Stepping through matches is the same action the DAG binds, so
+            // take it from the keymap — but only for keys that aren't text,
+            // which in the query field is anything printable.
+            if super::typed_char(&key).is_none()
+                && let Some(node) = keymap::key_event_to_node(&key)
+            {
+                match keymap.builtin_action(&node) {
+                    Some(crate::keymap::AppAction::NextMatch) => {
+                        app.search_next();
+                        return Action::None;
+                    }
+                    Some(crate::keymap::AppAction::PrevMatch) => {
+                        app.search_prev();
+                        return Action::None;
+                    }
+                    _ => {}
+                }
+            }
             let focus = app.search.as_ref().map(|s| s.focus);
             match focus {
-                Some(SearchFocus::Query) => match key.code {
-                    KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.search_next();
+                Some(SearchFocus::Query) => {
+                    if let Some(search) = &mut app.search {
+                        let mut input = search.input.clone();
+                        input.handle_event(&Event::Key(key));
+                        app.update_search_input(input);
                     }
-                    KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.search_prev();
-                    }
-                    _ => {
-                        if let Some(search) = &mut app.search {
-                            let mut input = search.input.clone();
-                            input.handle_event(&Event::Key(key));
-                            app.update_search_input(input);
-                        }
-                    }
-                },
+                }
                 Some(SearchFocus::Scopes) => match key.code {
-                    KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.search_next();
-                    }
-                    KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        app.search_prev();
-                    }
                     KeyCode::Char('0') => app.reset_search_scopes(),
                     KeyCode::Char('*') => app.enable_all_search_scopes(),
                     KeyCode::Char(ch) => {

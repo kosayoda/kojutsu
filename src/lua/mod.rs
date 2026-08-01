@@ -247,6 +247,17 @@ impl LuaEngine {
         registry: &mut ActionRegistry,
         default_specs: &[BindingSpec],
     ) -> Self {
+        let mut engine = Self::without_config(repo_path);
+        if engine.init_error.is_none() {
+            engine.load_init_script(registry, default_specs);
+        }
+        engine
+    }
+
+    /// An engine with the API registered but no `init.lua` loaded. Tests use
+    /// this so they don't depend on whatever config the machine happens to
+    /// have.
+    fn without_config(repo_path: &Path) -> Self {
         let lua = unsafe {
             Lua::unsafe_new_with(
                 mlua::StdLib::ALL_SAFE | mlua::StdLib::DEBUG,
@@ -267,11 +278,13 @@ impl LuaEngine {
 
         if let Err(e) = engine.register_persistent_functions() {
             engine.init_error = Some(format!("failed to register Lua API: {e}"));
-            return engine;
         }
-
-        engine.load_init_script(registry, default_specs);
         engine
+    }
+
+    #[cfg(test)]
+    pub fn for_test() -> Self {
+        Self::without_config(Path::new("."))
     }
 
     pub fn take_extra_bindings(&mut self) -> Vec<BindingSpec> {

@@ -67,9 +67,26 @@ fn list_jump(app: &mut App, to_end: bool) {
     }
 }
 
+/// Apply a movement action to the list's own cursor. The list has its own
+/// notion of where it is, so it interprets the action rather than dispatching
+/// it — but which key means which movement still comes from the keymap.
+fn list_navigate(app: &mut App, action: crate::keymap::AppAction) {
+    use crate::keymap::AppAction;
+    match action {
+        AppAction::MoveDown => list_move(app, 1),
+        AppAction::MoveUp => list_move(app, -1),
+        AppAction::PageDown => list_move(app, PAGE_SIZE as isize),
+        AppAction::PageUp => list_move(app, -(PAGE_SIZE as isize)),
+        AppAction::MoveToTop => list_jump(app, false),
+        AppAction::MoveToBottom => list_jump(app, true),
+        _ => {}
+    }
+}
+
 pub(super) fn handle_select_from_list(
     app: &mut App,
     lua: &crate::lua::LuaEngine,
+    keymap: &crate::keymap::Keymap,
     key: KeyEvent,
 ) -> Action {
     use keymap_parser::Key;
@@ -78,101 +95,57 @@ pub(super) fn handle_select_from_list(
     let ctrl = node
         .as_ref()
         .is_some_and(|n| (n.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0);
-    let node_key = node.map(|n| n.key);
+    let node_key = node.as_ref().map(|n| n.key.clone());
 
-    // While filtering, intercept all keys except Tab/Esc/Enter.
+    // While filtering, a printable key is filter text — that is the one thing
+    // that has to outrank the keymap, since a movement key bound to a letter
+    // must still type it here. Everything else falls through, so navigation
+    // keeps working and follows whatever the user bound.
     let is_filtering = matches!(&app.mode, AppMode::SelectFromList(s) if s.filtering);
     if is_filtering {
-        match key.code {
-            ratatui::crossterm::event::KeyCode::Char(c) if !ctrl => {
-                if let AppMode::SelectFromList(s) = &mut app.mode {
-                    s.filter.push(c);
-                    refresh_list_filter(s);
-                    // Land on the best match, not the pinned custom row —
-                    // unless nothing matches, where Enter then opens the
-                    // free input prefilled with the filter text.
-                    s.cursor = if s.custom_entry.is_some() && s.filtered_indices.len() > 1 {
-                        1
-                    } else {
-                        0
-                    };
-                    s.scroll_offset = 0;
-                }
-                return Action::None;
+        if let Some(c) = super::typed_char(&key) {
+            if let AppMode::SelectFromList(s) = &mut app.mode {
+                s.filter.push(c);
+                refresh_list_filter(s);
+                // Land on the best match, not the pinned custom row — unless
+                // nothing matches, where Enter then opens the free input
+                // prefilled with the filter text.
+                s.cursor = if s.custom_entry.is_some() && s.filtered_indices.len() > 1 {
+                    1
+                } else {
+                    0
+                };
+                s.scroll_offset = 0;
             }
-            ratatui::crossterm::event::KeyCode::Backspace => {
-                if let AppMode::SelectFromList(s) = &mut app.mode {
-                    s.filter.pop();
-                    refresh_list_filter(s);
-                    s.cursor = s.cursor.min(s.filtered_indices.len().saturating_sub(1));
-                    s.scroll_offset = 0;
-                }
-                return Action::None;
+            return Action::None;
+        }
+        if key.code == ratatui::crossterm::event::KeyCode::Backspace {
+            if let AppMode::SelectFromList(s) = &mut app.mode {
+                s.filter.pop();
+                refresh_list_filter(s);
+                s.cursor = s.cursor.min(s.filtered_indices.len().saturating_sub(1));
+                s.scroll_offset = 0;
             }
-            // Tab, Esc, Enter, arrows, page keys, and ctrl-n/p fall through to the
-            // main match below so list navigation works while filtering.
-            _ if matches!(
-                node_key,
-                Some(Key::Tab)
-                    | Some(Key::Esc)
-                    | Some(Key::Enter)
-                    | Some(Key::Up)
-                    | Some(Key::Down)
-                    | Some(Key::PageUp)
-                    | Some(Key::PageDown)
-            ) => {}
-            _ if matches!(node_key, Some(Key::Char('n') | Key::Char('p'))) && ctrl => {}
-            // All other keys are swallowed while filtering.
-            _ => return Action::None,
+            return Action::None;
         }
     }
 
+    // Keys the list owns. ctrl-n/ctrl-p are the widget's own next/prev idiom
+    // rather than the app's search-match actions, so they stay literal.
     match node_key {
         Some(Key::Char('n')) if ctrl => {
             list_move(app, 1);
-            Action::None
+            return Action::None;
         }
         Some(Key::Char('p')) if ctrl => {
             list_move(app, -1);
-            Action::None
-        }
-        Some(Key::Char('j')) | Some(Key::Down) => {
-            list_move(app, 1);
-            Action::None
-        }
-        Some(Key::Char('k')) | Some(Key::Up) => {
-            list_move(app, -1);
-            Action::None
-        }
-        Some(Key::Char('d')) if ctrl => {
-            list_move(app, PAGE_SIZE as isize);
-            Action::None
-        }
-        Some(Key::Char('u')) if ctrl => {
-            list_move(app, -(PAGE_SIZE as isize));
-            Action::None
-        }
-        Some(Key::PageDown) => {
-            list_move(app, PAGE_SIZE as isize);
-            Action::None
-        }
-        Some(Key::PageUp) => {
-            list_move(app, -(PAGE_SIZE as isize));
-            Action::None
-        }
-        Some(Key::Char('0')) => {
-            list_jump(app, false);
-            Action::None
-        }
-        Some(Key::Char('$')) => {
-            list_jump(app, true);
-            Action::None
+            return Action::None;
         }
         Some(Key::Tab) => {
             if let AppMode::SelectFromList(s) = &mut app.mode {
                 s.filtering = !s.filtering;
             }
-            Action::None
+            return Action::None;
         }
         Some(Key::Space) => {
             if let AppMode::SelectFromList(s) = &mut app.mode
@@ -188,7 +161,7 @@ pub(super) fn handle_select_from_list(
                     s.marked.insert(orig_idx);
                 }
             }
-            Action::None
+            return Action::None;
         }
         Some(Key::Enter) => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
@@ -211,10 +184,9 @@ pub(super) fn handle_select_from_list(
                 } else {
                     vec![s.items.into_iter().nth(cursor_idx).unwrap_or_default()]
                 };
-                resolve_selection(app, lua, s.on_select, names.into())
-            } else {
-                Action::None
+                return resolve_selection(app, lua, s.on_select, names.into());
             }
+            return Action::None;
         }
         Some(Key::Esc) => {
             // If filtering, just exit filter focus — keep the filter text.
@@ -228,10 +200,17 @@ pub(super) fn handle_select_from_list(
             if lua.has_suspended_thread() {
                 lua.cancel_suspended_thread();
             }
-            Action::None
+            return Action::None;
         }
-        _ => Action::None,
+        _ => {}
     }
+
+    if let Some(node) = &node
+        && let Some(action) = keymap.builtin_action(node)
+    {
+        list_navigate(app, action);
+    }
+    Action::None
 }
 
 /// After item(s) have been selected from a list, decide what to do next.
@@ -463,5 +442,110 @@ mod lua_selection_tests {
             lua_selection_value(false, names(&[])),
             ResumeValue::None
         ));
+    }
+}
+
+#[cfg(test)]
+mod list_navigation_tests {
+    use super::*;
+    use crate::keymap::{ActionRegistry, Keymaps, default_bindings, try_parse_key};
+    use ratatui::crossterm::event::KeyModifiers;
+
+    fn app_with_list(filtering: bool) -> App {
+        let glyphs: &'static crate::theme::GlyphChars =
+            Box::leak(Box::new(crate::theme::GlyphChars::default()));
+        let mut app = App::new(String::new(), String::new(), &[], glyphs);
+        app.mode = AppMode::select_from_list(
+            "pick",
+            vec!["a".into(), "b".into(), "c".into()],
+            false,
+            PendingSelection::PresetSelect,
+            false,
+        );
+        if let AppMode::SelectFromList(s) = &mut app.mode {
+            s.filtering = filtering;
+        }
+        app
+    }
+
+    fn cursor(app: &App) -> usize {
+        match &app.mode {
+            AppMode::SelectFromList(s) => s.cursor,
+            _ => panic!("list dismissed"),
+        }
+    }
+
+    fn filter(app: &App) -> String {
+        match &app.mode {
+            AppMode::SelectFromList(s) => s.filter.clone(),
+            _ => panic!("list dismissed"),
+        }
+    }
+
+    fn press(app: &mut App, keymaps: &Keymaps, key: &str) {
+        let node = try_parse_key(key).expect("parsable key");
+        let event = KeyEvent::new(
+            match node.key {
+                keymap_parser::Key::Char(c) => ratatui::crossterm::event::KeyCode::Char(c),
+                keymap_parser::Key::Down => ratatui::crossterm::event::KeyCode::Down,
+                _ => panic!("unhandled test key: {key}"),
+            },
+            if node.modifiers & keymap_parser::Modifier::Ctrl as u8 != 0 {
+                KeyModifiers::CONTROL
+            } else {
+                KeyModifiers::NONE
+            },
+        );
+        let lua = crate::lua::LuaEngine::for_test();
+        handle_select_from_list(
+            app,
+            &lua,
+            keymaps.for_view(crate::app::ActiveView::Dag),
+            event,
+        );
+    }
+
+    #[test]
+    fn the_list_moves_on_the_bound_movement_keys() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let mut app = app_with_list(false);
+
+        press(&mut app, &keymaps, "j");
+        assert_eq!(cursor(&app), 1);
+        press(&mut app, &keymaps, "down");
+        assert_eq!(cursor(&app), 2);
+        press(&mut app, &keymaps, "k");
+        assert_eq!(cursor(&app), 1);
+        press(&mut app, &keymaps, "$");
+        assert_eq!(cursor(&app), 2);
+        press(&mut app, &keymaps, "0");
+        assert_eq!(cursor(&app), 0);
+    }
+
+    /// The widget's own next/prev idiom, deliberately not the keymap's
+    /// search-match actions.
+    #[test]
+    fn ctrl_n_and_ctrl_p_step_the_list() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let mut app = app_with_list(false);
+        press(&mut app, &keymaps, "ctrl-n");
+        assert_eq!(cursor(&app), 1);
+        press(&mut app, &keymaps, "ctrl-p");
+        assert_eq!(cursor(&app), 0);
+    }
+
+    /// A movement key is filter text while filtering — text outranks the
+    /// keymap — but a chord still navigates.
+    #[test]
+    fn filtering_types_letters_and_still_navigates_on_chords() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let mut app = app_with_list(true);
+
+        press(&mut app, &keymaps, "j");
+        assert_eq!(filter(&app), "j");
+        assert_eq!(cursor(&app), 0);
+
+        press(&mut app, &keymaps, "ctrl-n");
+        assert_eq!(filter(&app), "j", "a chord must not reach the filter");
     }
 }

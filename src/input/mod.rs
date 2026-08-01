@@ -21,6 +21,16 @@ const PAGE_SIZE: usize = 15;
 /// Lines scrolled per mouse-wheel tick in overlay panes.
 const WHEEL_SCROLL_LINES: i16 = 3;
 
+/// The character a key types, if it is text rather than a command. Modes that
+/// consume text have to check this before resolving anything through the
+/// keymap: a movement bound to a letter must still type that letter here.
+fn typed_char(key: &KeyEvent) -> Option<char> {
+    match key.code {
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => Some(c),
+        _ => None,
+    }
+}
+
 /// How far an overlay should scroll for `node`, read from the keymap so the
 /// movement keys are whichever ones the user bound. Overlays have no sections
 /// and no absolute extent to move to, so only the four relative movements
@@ -172,12 +182,12 @@ pub fn handle_key(
             }
         }
         AppMode::TextInput { .. } => modal::handle_text_input(app, lua, key),
-        AppMode::SearchInput => modal::handle_search_input(app, key),
+        AppMode::SearchInput => modal::handle_search_input(app, keymap, key),
         AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. } => {
             select_key(app, registry, lua, keymap, key, &node)
         }
         AppMode::FollowUp { .. } => modal::handle_follow_up(app, key),
-        AppMode::SelectFromList(_) => list::handle_select_from_list(app, lua, key),
+        AppMode::SelectFromList(_) => list::handle_select_from_list(app, lua, keymap, key),
         AppMode::Jump(_) => modal::handle_jump(app, key),
         AppMode::CommandRunning(state) => {
             use keymap_parser::Key;
