@@ -131,7 +131,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
         AppMode::Help { scroll } => {
             let groups = match &app.pre_overlay_mode {
                 Some(AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. }) => {
-                    keymap::select_mode_help_entries()
+                    keymap::select_mode_help_entries(keymaps.for_view(app.active_view))
                 }
                 _ => keymap::help_entries(
                     keymaps.for_view(app.active_view),

@@ -155,13 +155,17 @@ pub fn help_entries(
     groups
 }
 
-pub fn select_mode_help_entries() -> Vec<(HelpGroup, Vec<HelpEntry>)> {
-    use HelpGroup::{General as G, Navigation as N};
+/// Help for target- and commit-select. Read from the same keymap the modes
+/// resolve against, and filtered by the same predicate, so the listing can't
+/// drift from what they actually accept — only top-level bindings, since a
+/// sequence needs submenu state these modes don't have.
+pub fn select_mode_help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
+    use HelpGroup::General as G;
 
-    fn h(keys: &str, desc: &str, group: HelpGroup) -> HelpEntry {
+    fn h(keys: String, desc: String, group: HelpGroup) -> HelpEntry {
         HelpEntry {
-            keys: keys.into(),
-            description: desc.into(),
+            keys,
+            description: desc,
             group,
             selection_support: SelectionKindSet::ALL,
             requires_conflict: false,
@@ -169,29 +173,42 @@ pub fn select_mode_help_entries() -> Vec<(HelpGroup, Vec<HelpEntry>)> {
         }
     }
 
-    let mut nav = vec![
-        h("j / down", "move down", N),
-        h("k / up", "move up", N),
-        h("J", "next commit", N),
-        h("K", "prev commit", N),
-        h("ctrl-d / pagedown", "page down", N),
-        h("ctrl-u / pageup", "page up", N),
-        h("@", "jump to @", N),
-        h("0", "go to top", N),
-        h("$", "go to bottom", N),
-        h("tab", "toggle fold", N),
-        h("/", "search", N),
-        h("ctrl-n", "next match", N),
-        h("ctrl-p", "prev match", N),
-    ];
-    nav.sort_unstable_by_key(|a| sort_key(&a.keys));
+    let mut by_action: Vec<(super::AppAction, Vec<String>, &str, HelpGroup)> = Vec::new();
+    for (node, trie_node) in &keymap.root {
+        let TrieNode::Action {
+            id: ActionId::Builtin(action),
+            description,
+            group,
+        } = trie_node
+        else {
+            continue;
+        };
+        if !action.is_cursor_navigation() {
+            continue;
+        }
+        match by_action.iter_mut().find(|(a, ..)| a == action) {
+            Some(entry) => entry.1.push(display_key(node)),
+            None => by_action.push((*action, vec![display_key(node)], description, *group)),
+        }
+    }
 
-    let mut general = vec![
-        h("Enter", "confirm selection", G),
-        h("Esc", "cancel", G),
-        h("?", "help", G),
-    ];
-    general.sort_unstable_by_key(|a| sort_key(&a.keys));
+    let mut grouped: Vec<(HelpGroup, Vec<HelpEntry>)> = Vec::new();
+    let mut push =
+        |group: HelpGroup, entry: HelpEntry| match grouped.iter_mut().find(|(g, _)| *g == group) {
+            Some((_, entries)) => entries.push(entry),
+            None => grouped.push((group, vec![entry])),
+        };
 
-    vec![(N, nav), (G, general)]
+    for (_, keys, description, group) in by_action {
+        push(group, h(keys.join(" / "), description.to_string(), group));
+    }
+    // Keys the modes own outright, bound nowhere in the keymap.
+    push(G, h("Enter".into(), "confirm selection".into(), G));
+    push(G, h("Esc".into(), "cancel".into(), G));
+
+    grouped.sort_unstable_by_key(|(group, _)| *group);
+    for (_, entries) in &mut grouped {
+        entries.sort_unstable_by_key(|e| sort_key(&e.keys));
+    }
+    grouped
 }

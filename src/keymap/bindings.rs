@@ -691,6 +691,29 @@ mod tests {
         );
     }
 
+    /// The select-mode help and the select-mode key handling read the same
+    /// keymap through the same predicate, so the listing tracks the keys.
+    #[test]
+    fn select_mode_help_lists_the_keys_that_work() {
+        use crate::keymap::{ActionRegistry, Keymaps, select_mode_help_entries};
+
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let listed: Vec<String> = select_mode_help_entries(keymaps.for_view(ActiveView::Dag))
+            .into_iter()
+            .flat_map(|(_, entries)| entries)
+            .map(|e| e.keys)
+            .collect();
+        let lists = |key: &str| listed.iter().any(|k| k.split(" / ").any(|k| k == key));
+
+        for key in ["H", "M", "L", "h", "l", "j", "k", "@", "0", "$", "?"] {
+            assert!(lists(key), "select-mode help should list {key}: {listed:?}");
+        }
+        assert!(lists("Enter") && lists("Esc"));
+        for key in ["v", ":", "ctrl-r"] {
+            assert!(!lists(key), "select-mode help must not list {key}");
+        }
+    }
+
     #[test]
     fn a_rebound_movement_key_relabels_its_jump_target() {
         use crate::keymap::{ActionRegistry, Keymaps};
