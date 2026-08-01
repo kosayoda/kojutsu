@@ -62,6 +62,54 @@ impl Keymap {
         }
         LookupResult::Unbound
     }
+
+    /// The shortest key sequence bound to `action`, written the way a user
+    /// types it (`"H"`, `"] c"` becomes `"]c"`), or `None` if every binding
+    /// for it goes through a key that can't appear in typed text.
+    ///
+    /// Used to label the jump overlay, which reads raw `KeyCode::Char`s — so
+    /// ctrl-chords, Tab and the arrows are unusable there however they're
+    /// bound.
+    pub fn typeable_keys(&self, action: super::AppAction) -> Option<String> {
+        fn typed(node: &Node) -> Option<char> {
+            let keymap_parser::Key::Char(c) = node.key else {
+                return None;
+            };
+            match node.modifiers {
+                0 => Some(c),
+                m if m == keymap_parser::Modifier::Shift as u8 => Some(c.to_ascii_uppercase()),
+                _ => None,
+            }
+        }
+
+        fn walk(
+            entries: &[(Node, TrieNode)],
+            action: super::AppAction,
+            prefix: &str,
+            best: &mut Option<String>,
+        ) {
+            for (node, child) in entries {
+                let Some(c) = typed(node) else { continue };
+                let seq = format!("{prefix}{c}");
+                match child {
+                    TrieNode::Action {
+                        id: ActionId::Builtin(bound),
+                        ..
+                    } if *bound == action => {
+                        if best.as_ref().is_none_or(|b| seq.len() < b.len()) {
+                            *best = Some(seq);
+                        }
+                    }
+                    TrieNode::Prefix { children, .. } => walk(children, action, &seq, best),
+                    _ => {}
+                }
+            }
+        }
+
+        let mut best = None;
+        walk(&self.root, action, "", &mut best);
+        best
+    }
 }
 
 pub struct Keymaps {

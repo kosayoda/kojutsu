@@ -114,7 +114,7 @@ pub fn handle_key(
         } => {
             let children = children.clone();
             let flags = *flags;
-            action::handle_submenu_key(app, registry, lua, &children, flags, &node)
+            action::handle_submenu_key(app, registry, lua, keymap, &children, flags, &node)
         }
         AppMode::CommandOutput(state) => {
             // When the output overflows, scroll keys scroll without

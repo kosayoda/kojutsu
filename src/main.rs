@@ -435,10 +435,12 @@ fn main() -> Result<()> {
                 terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
             }
             Action::DeferredDispatch { action, flags } => {
+                let keymap = keymaps.for_view(app.active_view);
                 let result = input::dispatch_action_after_hooks(
                     &mut app,
                     &keymaps.registry,
                     &lua_engine,
+                    keymap,
                     action,
                     flags,
                 );

@@ -1263,7 +1263,12 @@ impl App {
     /// Navigation-aware keys (`j`, `k`, `J`, `K`, `0`, `$`, `@`) label the
     /// rows those keys would navigate to.  Remaining targets get single-char
     /// labels by proximity; overflow targets get two-char labels.
-    pub fn enter_jump(&mut self) {
+    /// Label every visible row for ace-style jumping. Rows a movement key
+    /// already reaches keep that key as their label, read from `keymap` so a
+    /// rebinding relabels the target; the rest draw from a pool of free keys.
+    pub fn enter_jump(&mut self, keymap: &crate::keymap::Keymap) {
+        use crate::keymap::AppAction;
+
         const KEYS: &[char] = &[
             'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'q', 'w', 'e', 'r', 't', 'y', 'u', 'i',
             'o', 'p', 'z', 'x', 'c', 'v', 'b', 'n', 'm',
@@ -1274,20 +1279,23 @@ impl App {
         let visible = |idx: RowIdx| idx.raw() >= offset && idx.raw() < end;
         let dist = |i: usize| i.abs_diff(cursor);
 
-        let nav_candidates: &[(&str, Option<RowIdx>)] = &[
-            ("j", self.peek_down()),
-            ("k", self.peek_up()),
-            ("J", self.peek_down_section()),
-            ("K", self.peek_up_section()),
-            ("H", self.peek_screen_top()),
-            ("M", self.peek_screen_middle()),
-            ("L", self.peek_screen_bottom()),
-            ("0", self.peek_top()),
-            ("$", self.peek_bottom()),
-            ("@", self.peek_working_copy()),
-            ("]", self.peek_conflict(crate::types::NavDirection::Forward)),
+        let nav_candidates: &[(AppAction, Option<RowIdx>)] = &[
+            (AppAction::MoveDown, self.peek_down()),
+            (AppAction::MoveUp, self.peek_up()),
+            (AppAction::MoveDownSection, self.peek_down_section()),
+            (AppAction::MoveUpSection, self.peek_up_section()),
+            (AppAction::MoveToScreenTop, self.peek_screen_top()),
+            (AppAction::MoveToScreenMiddle, self.peek_screen_middle()),
+            (AppAction::MoveToScreenBottom, self.peek_screen_bottom()),
+            (AppAction::MoveToTop, self.peek_top()),
+            (AppAction::MoveToBottom, self.peek_bottom()),
+            (AppAction::JumpToWorkingCopy, self.peek_working_copy()),
             (
-                "[",
+                AppAction::NextConflict,
+                self.peek_conflict(crate::types::NavDirection::Forward),
+            ),
+            (
+                AppAction::PrevConflict,
                 self.peek_conflict(crate::types::NavDirection::Backward),
             ),
         ];
@@ -1296,17 +1304,19 @@ impl App {
         let mut nav_rows: HashSet<RowIdx> = HashSet::new();
         let mut used_chars: HashSet<char> = HashSet::new();
 
-        for &(key, target) in nav_candidates {
+        for &(action, target) in nav_candidates {
             if let Some(idx) = target
                 && visible(idx)
                 && idx != self.cursor
                 && !nav_rows.contains(&idx)
+                && let Some(key) = keymap.typeable_keys(action)
             {
-                labels.push((key.to_string(), idx));
+                // Only the first character can collide with a pool label:
+                // those are one character long, so a longer nav label like
+                // `]c` still differs from `c` at the position typed first.
+                used_chars.extend(key.chars().next());
+                labels.push((key, idx));
                 nav_rows.insert(idx);
-                for c in key.chars() {
-                    used_chars.insert(c);
-                }
             }
         }
 

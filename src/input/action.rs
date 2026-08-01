@@ -65,7 +65,7 @@ pub(super) fn handle_normal_key(
     match keymap.lookup(node) {
         LookupResult::Action(ActionId::Builtin(action)) => {
             app.status_message = None;
-            dispatch_action(app, registry, lua, action, CommandFlags::empty())
+            dispatch_action(app, registry, lua, keymap, action, CommandFlags::empty())
         }
         LookupResult::Action(ActionId::Lua(id)) => {
             app.status_message = None;
@@ -117,7 +117,7 @@ pub(super) fn handle_select_navigation(
     match keymap.lookup(node) {
         LookupResult::Action(ActionId::Builtin(action)) if action.is_cursor_navigation() => {
             app.status_message = None;
-            dispatch_action(app, registry, lua, action, CommandFlags::empty())
+            dispatch_action(app, registry, lua, keymap, action, CommandFlags::empty())
         }
         // Unlike normal mode, an unrecognised key is ignored rather than
         // reported: most of the keymap is simply out of scope mid-pick.
@@ -129,6 +129,7 @@ pub(super) fn handle_submenu_key(
     app: &mut App,
     registry: &ActionRegistry,
     lua: &crate::lua::LuaEngine,
+    keymap: &Keymap,
     children: &[(keymap_parser::Node, TrieNode)],
     flags: CommandFlags,
     node: &keymap_parser::Node,
@@ -154,7 +155,7 @@ pub(super) fn handle_submenu_key(
                 })
                 .collect();
             app.mode = AppMode::Normal;
-            dispatch_action(app, registry, lua, action, flags)
+            dispatch_action(app, registry, lua, keymap, action, flags)
         }
         LookupResult::Action(ActionId::Lua(id)) => {
             app.mode = AppMode::Normal;
@@ -200,12 +201,13 @@ fn dispatch_action(
     app: &mut App,
     registry: &ActionRegistry,
     lua: &crate::lua::LuaEngine,
+    keymap: &Keymap,
     action: AppAction,
     flags: CommandFlags,
 ) -> Action {
     if action == AppAction::RepeatLast {
         return if let Some((prev_action, prev_flags)) = app.last_repeatable {
-            dispatch_action(app, registry, lua, prev_action, prev_flags)
+            dispatch_action(app, registry, lua, keymap, prev_action, prev_flags)
         } else {
             app.set_error("no action to repeat");
             Action::None
@@ -226,7 +228,7 @@ fn dispatch_action(
         crate::lua::HookOutcome::Proceed => {}
     }
 
-    let result = dispatch_action_after_hooks(app, registry, lua, action, flags);
+    let result = dispatch_action_after_hooks(app, registry, lua, keymap, action, flags);
 
     if action.is_repeatable() {
         app.last_repeatable = Some((action, flags));
@@ -241,6 +243,7 @@ pub fn dispatch_action_after_hooks(
     app: &mut App,
     registry: &ActionRegistry,
     lua: &crate::lua::LuaEngine,
+    keymap: &Keymap,
     action: AppAction,
     flags: CommandFlags,
 ) -> Action {
@@ -771,7 +774,7 @@ pub fn dispatch_action_after_hooks(
             Action::None
         }
         AppAction::Jump => {
-            app.enter_jump();
+            app.enter_jump(keymap);
             Action::None
         }
         AppAction::EvoLogEdit

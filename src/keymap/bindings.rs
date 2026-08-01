@@ -660,4 +660,56 @@ mod tests {
             assert!(!admits(key), "{key} must not act in select modes");
         }
     }
+
+    /// The jump overlay labels a reachable row with the key that reaches it,
+    /// so the labels have to be read from the bindings rather than assumed.
+    #[test]
+    fn jump_labels_read_the_bindings() {
+        use crate::keymap::{ActionRegistry, Keymaps};
+
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let keymap = keymaps.for_view(ActiveView::Dag);
+        let label = |action| keymap.typeable_keys(action);
+
+        assert_eq!(label(AppAction::MoveDown).as_deref(), Some("j"));
+        assert_eq!(label(AppAction::MoveUpSection).as_deref(), Some("K"));
+        assert_eq!(label(AppAction::MoveToScreenTop).as_deref(), Some("H"));
+        assert_eq!(label(AppAction::MoveToScreenMiddle).as_deref(), Some("M"));
+        assert_eq!(label(AppAction::MoveToScreenBottom).as_deref(), Some("L"));
+        assert_eq!(label(AppAction::MoveToTop).as_deref(), Some("0"));
+        assert_eq!(label(AppAction::JumpToWorkingCopy).as_deref(), Some("@"));
+        // A sequence binding labels as the whole sequence.
+        assert_eq!(label(AppAction::NextConflict).as_deref(), Some("]c"));
+        // ctrl-d and pagedown are both unreadable as typed text.
+        assert_eq!(label(AppAction::PageDown), None);
+        // Conflict navigation is DAG-only, so other views offer no label.
+        assert_eq!(
+            keymaps
+                .for_view(ActiveView::Bookmarks)
+                .typeable_keys(AppAction::NextConflict),
+            None
+        );
+    }
+
+    #[test]
+    fn a_rebound_movement_key_relabels_its_jump_target() {
+        use crate::keymap::{ActionRegistry, Keymaps};
+        use HelpGroup::Navigation as N;
+
+        let specs = vec![bind(
+            "t",
+            AppAction::MoveToScreenTop,
+            "screen top",
+            N,
+            Scope::All,
+        )];
+        let keymaps = Keymaps::build(specs, ActionRegistry::new());
+        assert_eq!(
+            keymaps
+                .for_view(ActiveView::Dag)
+                .typeable_keys(AppAction::MoveToScreenTop)
+                .as_deref(),
+            Some("t")
+        );
+    }
 }
