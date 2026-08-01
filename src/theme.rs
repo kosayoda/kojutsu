@@ -1,19 +1,19 @@
 use std::path::PathBuf;
 
 use ratatui::style::Color;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_CONFIG: &str = include_str!("default-config.toml");
 
 /// A named revset preset.
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Preset {
     pub name: String,
     pub revset: String,
 }
 
 /// `[run]` config section: settings for running commands over revisions.
-#[derive(Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct RunConfig {
     /// Preset command lines offered by the run picker (e.g. "cargo check").
     #[serde(default)]
@@ -21,7 +21,7 @@ pub struct RunConfig {
 }
 
 /// `[revsets]` config section: settings for revset selection.
-#[derive(Deserialize, Default)]
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
 pub struct RevsetsConfig {
     /// Named revset presets; keys 1-5 switch between the first 5.
     #[serde(default)]
@@ -29,7 +29,7 @@ pub struct RevsetsConfig {
 }
 
 /// Top-level config file structure (`~/.config/kojutsu/config.toml`).
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Config {
     #[serde(default)]
     pub theme: Theme,
@@ -76,7 +76,7 @@ fn default_tab_width() -> u8 {
 }
 
 /// `[diff]` section of the config file.
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct DiffConfig {
     /// Max file size in MiB (per side) materialized into memory for a diff.
     /// Larger files show a placeholder instead — a memory guard, not a
@@ -152,7 +152,7 @@ impl TryFrom<char> for Glyph {
 }
 
 /// Configurable characters for commit glyphs in the DAG graph.
-#[derive(Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct GlyphChars {
     #[serde(default = "default_glyph_working_copy")]
     pub working_copy: char,
@@ -217,7 +217,7 @@ impl GlyphChars {
 }
 
 /// Which search scopes are enabled by default.
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct DefaultSearchScopes {
     #[serde(default = "yes")]
     pub change_id: bool,
@@ -296,55 +296,55 @@ impl DefaultSearchScopes {
 /// - Named: `"cyan"`, `"red"`, `"dark_gray"`, etc.
 /// - RGB table: `{ r = 50, g = 50, b = 60 }`
 /// - ANSI index: `42`
-#[derive(Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct Theme {
     /// Prompts, headers, visual range indicators, immutable glyphs.
-    #[serde(default = "default_accent", deserialize_with = "de_color")]
+    #[serde(default = "default_accent", with = "color")]
     pub accent: Color,
     /// Selected items, active toggles, keys, author info.
-    #[serde(default = "default_selection", deserialize_with = "de_color")]
+    #[serde(default = "default_selection", with = "color")]
     pub selection: Color,
     /// Borders, labels, disabled items, context lines, timestamps.
-    #[serde(default = "default_muted", deserialize_with = "de_color")]
+    #[serde(default = "default_muted", with = "color")]
     pub muted: Color,
     /// Normal text, descriptions, file paths.
-    #[serde(default = "default_text", deserialize_with = "de_color")]
+    #[serde(default = "default_text", with = "color")]
     pub text: Color,
     /// Errors, conflicts, removed/deleted lines.
-    #[serde(default = "default_error", deserialize_with = "de_color")]
+    #[serde(default = "default_error", with = "color")]
     pub error: Color,
     /// Warnings (e.g. committed without description).
-    #[serde(default = "default_warning", deserialize_with = "de_color")]
+    #[serde(default = "default_warning", with = "color")]
     pub warning: Color,
     /// Added lines, working copy, workspace names.
-    #[serde(default = "default_added", deserialize_with = "de_color")]
+    #[serde(default = "default_added", with = "color")]
     pub added: Color,
     /// Change IDs, diff headers, bookmarks.
-    #[serde(default = "default_change_id", deserialize_with = "de_color")]
+    #[serde(default = "default_change_id", with = "color")]
     pub change_id: Color,
     /// Commit IDs.
-    #[serde(default = "default_commit_id", deserialize_with = "de_color")]
+    #[serde(default = "default_commit_id", with = "color")]
     pub commit_id: Color,
     /// Background highlight for selected rows.
-    #[serde(default = "default_selection_bg", deserialize_with = "de_color")]
+    #[serde(default = "default_selection_bg", with = "color")]
     pub selection_bg: Color,
     /// Stronger background highlight (e.g. cursor row in annotate view).
-    #[serde(default = "default_selection_bg_strong", deserialize_with = "de_color")]
+    #[serde(default = "default_selection_bg_strong", with = "color")]
     pub selection_bg_strong: Color,
     /// Tag names in the tag view.
-    #[serde(default = "default_tag", deserialize_with = "de_color")]
+    #[serde(default = "default_tag", with = "color")]
     pub tag: Color,
     /// Remote names (@git, @origin).
-    #[serde(default = "default_remote", deserialize_with = "de_color")]
+    #[serde(default = "default_remote", with = "color")]
     pub remote: Color,
     /// Bookmark names.
-    #[serde(default = "default_bookmark", deserialize_with = "de_color")]
+    #[serde(default = "default_bookmark", with = "color")]
     pub bookmark: Color,
     /// Author / user names.
-    #[serde(default = "default_user", deserialize_with = "de_color")]
+    #[serde(default = "default_user", with = "color")]
     pub user: Color,
     /// Workspace names.
-    #[serde(default = "default_workspace", deserialize_with = "de_color")]
+    #[serde(default = "default_workspace", with = "color")]
     pub workspace: Color,
 }
 
@@ -456,66 +456,116 @@ pub fn state_path() -> Option<PathBuf> {
     )
 }
 
-/// Deserialize a ratatui `Color` from TOML.
-///
-/// Accepts:
-/// - String: `"cyan"`, `"dark_gray"`, `"#ff8000"`
-/// - Integer: ANSI color index `0`–`255`
-/// - Table: `{ r = 255, g = 128, b = 0 }`
-fn de_color<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Color, D::Error> {
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum ColorRepr {
-        Named(String),
-        Indexed(u8),
-        Rgb { r: u8, g: u8, b: u8 },
+/// `#[serde(with = "color")]` for [`Color`] fields. Strings go through
+/// ratatui's own `Display`/`FromStr`, so the color table lives upstream
+/// rather than being restated here; the integer and `{r, g, b}` forms are
+/// ours, since ratatui only speaks strings.
+mod color {
+    use super::{Color, Deserialize};
+
+    /// Emits `"DarkGray"`, `"#32323C"`, `"244"` — all of which parse back.
+    pub(super) fn serialize<S: serde::Serializer>(
+        color: &Color,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(color)
     }
 
-    let repr = ColorRepr::deserialize(deserializer)?;
-    match repr {
-        ColorRepr::Indexed(i) => Ok(Color::Indexed(i)),
-        ColorRepr::Rgb { r, g, b } => Ok(Color::Rgb(r, g, b)),
-        ColorRepr::Named(s) => parse_color_name(&s)
-            .ok_or_else(|| serde::de::Error::custom(format!("unknown color: {s}"))),
+    /// Accepts a string (`"cyan"`, `"dark_gray"`, `"bright-white"`,
+    /// `"#ff8000"`, `"244"`), an ANSI index `0`–`255`, or `{ r, g, b }`.
+    pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Color, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum ColorRepr {
+            Named(String),
+            Indexed(u8),
+            Rgb { r: u8, g: u8, b: u8 },
+        }
+
+        match ColorRepr::deserialize(deserializer)? {
+            ColorRepr::Indexed(i) => Ok(Color::Indexed(i)),
+            ColorRepr::Rgb { r, g, b } => Ok(Color::Rgb(r, g, b)),
+            ColorRepr::Named(s) => s
+                .parse()
+                .map_err(|_| serde::de::Error::custom(format!("unknown color: {s}"))),
+        }
     }
 }
 
-fn parse_color_name(s: &str) -> Option<Color> {
-    // Strip optional '#' prefix for hex colors.
-    if let Some(hex) = s.strip_prefix('#') {
-        return parse_hex_color(hex);
-    }
-    // Case-insensitive named color matching.
-    Some(match s.to_ascii_lowercase().replace('-', "_").as_str() {
-        "black" => Color::Black,
-        "red" => Color::Red,
-        "green" => Color::Green,
-        "yellow" => Color::Yellow,
-        "blue" => Color::Blue,
-        "magenta" => Color::Magenta,
-        "cyan" => Color::Cyan,
-        "gray" | "grey" => Color::Gray,
-        "dark_gray" | "dark_grey" | "darkgray" | "darkgrey" => Color::DarkGray,
-        "light_red" | "lightred" => Color::LightRed,
-        "light_green" | "lightgreen" => Color::LightGreen,
-        "light_yellow" | "lightyellow" => Color::LightYellow,
-        "light_blue" | "lightblue" => Color::LightBlue,
-        "light_magenta" | "lightmagenta" => Color::LightMagenta,
-        "light_cyan" | "lightcyan" => Color::LightCyan,
-        "white" => Color::White,
-        "reset" => Color::Reset,
-        _ => return None,
-    })
-}
+#[cfg(test)]
+mod color_round_trip_tests {
+    use super::Config;
+    use ratatui::style::Color;
 
-fn parse_hex_color(hex: &str) -> Option<Color> {
-    if hex.len() != 6 {
-        return None;
+    /// The serializer leans on ratatui's `Display` and the deserializer on
+    /// its `FromStr`. Nothing holds those two together, so check every
+    /// variant survives the trip rather than trusting they stay paired.
+    #[test]
+    fn every_color_variant_survives_a_round_trip() {
+        let variants = [
+            Color::Reset,
+            Color::Black,
+            Color::Red,
+            Color::Green,
+            Color::Yellow,
+            Color::Blue,
+            Color::Magenta,
+            Color::Cyan,
+            Color::Gray,
+            Color::DarkGray,
+            Color::LightRed,
+            Color::LightGreen,
+            Color::LightYellow,
+            Color::LightBlue,
+            Color::LightMagenta,
+            Color::LightCyan,
+            Color::White,
+            Color::Rgb(50, 50, 60),
+            // Zero-padding: a `{:X}` where `{:02X}` is meant emits `#0` and
+            // no longer parses. The other components are the same path.
+            Color::Rgb(0, 0, 0),
+            Color::Indexed(42),
+        ];
+        for color in variants {
+            let encoded = serde_json::to_string(&ColorField(color)).expect("serialize");
+            let ColorField(decoded) = serde_json::from_str(&encoded).expect("deserialize");
+            assert_eq!(decoded, color, "round trip via {encoded}");
+        }
     }
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-    Some(Color::Rgb(r, g, b))
+
+    /// The forms ratatui's `FromStr` does not accept, which we add.
+    #[test]
+    fn a_table_and_a_bare_integer_still_parse() {
+        let ColorField(rgb) = serde_json::from_str(r#"{"r":50,"g":50,"b":60}"#).unwrap();
+        assert_eq!(rgb, Color::Rgb(50, 50, 60));
+        let ColorField(indexed) = serde_json::from_str("244").unwrap();
+        assert_eq!(indexed, Color::Indexed(244));
+    }
+
+    #[test]
+    fn an_unknown_color_name_is_an_error() {
+        let err = serde_json::from_str::<ColorField>(r#""chartreuse""#).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown color: chartreuse"),
+            "{err}"
+        );
+    }
+
+    /// Publishing the defaults and reading the table back must be the
+    /// identity. Covers what the color cases can't: the `char` glyphs, the
+    /// scope flags, and the preset vectors.
+    #[test]
+    fn the_default_config_survives_a_round_trip() {
+        let encoded = serde_json::to_string(&Config::default()).expect("serialize");
+        let decoded: Config = serde_json::from_str(&encoded).expect("deserialize");
+        assert_eq!(decoded, Config::default());
+    }
+
+    /// A newtype so the attribute under test is the one fields really use.
+    #[derive(serde::Serialize, serde::Deserialize, Debug)]
+    struct ColorField(#[serde(with = "super::color")] Color);
 }
 
 #[cfg(test)]
