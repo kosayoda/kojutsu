@@ -69,7 +69,7 @@ pub(super) fn handle_normal_key(
         }
         LookupResult::Action(ActionId::Lua(id)) => {
             app.status_message = None;
-            run_lua_command(lua, id, app, CommandFlags::empty())
+            run_lua_command(lua, registry, id, app, CommandFlags::empty())
         }
         LookupResult::Prefix { label, children } => {
             app.status_message = None;
@@ -157,7 +157,7 @@ pub(super) fn handle_submenu_key(
         }
         LookupResult::Action(ActionId::Lua(id)) => {
             app.mode = AppMode::Normal;
-            run_lua_command(lua, id, app, flags)
+            run_lua_command(lua, registry, id, app, flags)
         }
         LookupResult::Toggle(flag) => {
             if let AppMode::Submenu { flags, .. } = &mut app.mode {
@@ -182,12 +182,38 @@ pub(super) fn handle_submenu_key(
     }
 }
 
+/// Whether the active selection is outside what `id` declares it can act on,
+/// reporting it if so. Shared by the builtin and plugin paths: a Lua command's
+/// `selection` option is filtered on in the submenu and greyed out in help, so
+/// it has to be refused on the keypress too.
+fn rejects_selection(app: &mut App, registry: &ActionRegistry, id: ActionId, label: &str) -> bool {
+    if !app.selection_active()
+        || registry
+            .selection_support(id)
+            .contains(app.selection_kinds())
+    {
+        return false;
+    }
+    // Describe what is selected, not the kind that won the precedence — a
+    // mixed selection is rejected for the part the action can't take.
+    let selected = app
+        .selection_summary()
+        .describe()
+        .unwrap_or_else(|| format!("a {} selection", app.selection_kind()));
+    app.set_error(format!("{label} does not support {selected}"));
+    true
+}
+
 fn run_lua_command(
     lua: &crate::lua::LuaEngine,
+    registry: &ActionRegistry,
     id: u16,
     app: &mut App,
     flags: CommandFlags,
 ) -> Action {
+    if rejects_selection(app, registry, ActionId::Lua(id), lua.command_name(id)) {
+        return Action::None;
+    }
     let result = lua.execute_command(id, app, flags);
     if matches!(result, Action::RunJj(_) | Action::SuspendAndRunJj(_)) {
         app.last_repeatable = None;
@@ -251,21 +277,12 @@ pub fn dispatch_action_after_hooks(
     // Merge global toggles into the command flags.
     let flags = flags | app.toggles;
 
-    if app.selection_active()
-        && !registry
-            .selection_support(ActionId::Builtin(action))
-            .contains(app.selection_kinds())
-    {
-        // Describe what is selected, not the kind that won the precedence —
-        // a mixed selection is rejected for the part the action can't take.
-        let selected = app
-            .selection_summary()
-            .describe()
-            .unwrap_or_else(|| format!("a {} selection", app.selection_kind()));
-        app.set_error(format!(
-            "{} does not support {selected}",
-            action_label(action),
-        ));
+    if rejects_selection(
+        app,
+        registry,
+        ActionId::Builtin(action),
+        action_label(action),
+    ) {
         return Action::None;
     }
 
@@ -1078,4 +1095,83 @@ pub(super) fn enter_target_select(
         toggles,
     };
     Action::None
+}
+
+#[cfg(test)]
+mod selection_gate_tests {
+    use super::*;
+    use crate::keymap::SelectionKindSet;
+    use crate::types::{ChangeId, FileRef, RepoPath, Selection};
+
+    fn test_app() -> App {
+        let glyphs: &'static crate::theme::GlyphChars =
+            Box::leak(Box::new(crate::theme::GlyphChars::default()));
+        App::new(String::new(), String::new(), &[], glyphs)
+    }
+
+    fn select_file(app: &mut App) {
+        app.selection.insert(Selection::File(FileRef {
+            change_id: ChangeId::new("qpvuntsm"),
+            path: RepoPath::new("a.rs"),
+        }));
+    }
+
+    fn select_line(app: &mut App) {
+        app.selection.insert(Selection::Line {
+            file_ref: FileRef {
+                change_id: ChangeId::new("qpvuntsm"),
+                path: RepoPath::new("b.rs"),
+            },
+            old_line: None,
+            new_line: Some(3),
+        });
+    }
+
+    /// A plugin's `selection` option is filtered on in the submenu and greyed
+    /// out in help; it has to hold on the keypress too, or the UI is lying.
+    #[test]
+    fn a_lua_command_is_refused_outside_its_declared_selection() {
+        let mut registry = ActionRegistry::new();
+        let file_only = registry.register_lua(SelectionKindSet::FILE);
+        let mut app = test_app();
+
+        select_file(&mut app);
+        assert!(!rejects_selection(&mut app, &registry, file_only, "plug"));
+
+        select_line(&mut app);
+        assert!(rejects_selection(&mut app, &registry, file_only, "plug"));
+    }
+
+    /// The message names what is selected rather than the kind that won the
+    /// precedence, which for a mixed selection is only half the story.
+    #[test]
+    fn the_refusal_describes_the_whole_selection() {
+        let mut registry = ActionRegistry::new();
+        let file_only = registry.register_lua(SelectionKindSet::FILE);
+        let mut app = test_app();
+        select_file(&mut app);
+        select_line(&mut app);
+
+        assert!(rejects_selection(&mut app, &registry, file_only, "plug"));
+        let message = app.status_message.as_ref().expect("an error").0.clone();
+        assert_eq!(message, "plug does not support 1 file + 1 line");
+    }
+
+    #[test]
+    fn a_command_declaring_all_takes_anything() {
+        let mut registry = ActionRegistry::new();
+        let anything = registry.register_lua(SelectionKindSet::ALL);
+        let mut app = test_app();
+        select_file(&mut app);
+        select_line(&mut app);
+        assert!(!rejects_selection(&mut app, &registry, anything, "plug"));
+    }
+
+    #[test]
+    fn no_selection_gates_nothing() {
+        let mut registry = ActionRegistry::new();
+        let commit_only = registry.register_lua(SelectionKindSet::COMMIT);
+        let mut app = test_app();
+        assert!(!rejects_selection(&mut app, &registry, commit_only, "plug"));
+    }
 }

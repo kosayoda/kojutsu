@@ -430,6 +430,11 @@ impl LuaEngine {
         }
     }
 
+    /// The name a command was registered under, for error messages.
+    pub fn command_name(&self, id: u16) -> &str {
+        &self.commands[id as usize].name
+    }
+
     pub fn execute_command(&self, id: u16, app: &mut App, flags: CommandFlags) -> Action {
         let cmd = &self.commands[id as usize];
         let cmd_name = cmd.name.clone();
