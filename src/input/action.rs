@@ -1110,7 +1110,13 @@ mod selection_gate_tests {
     fn test_app() -> App {
         let glyphs: &'static crate::theme::GlyphChars =
             Box::leak(Box::new(crate::theme::GlyphChars::default()));
-        App::new(String::new(), String::new(), &[], glyphs)
+        App::new(
+            String::new(),
+            String::new(),
+            &[],
+            glyphs,
+            crate::types::SearchScopes::DEFAULT,
+        )
     }
 
     fn select_file(app: &mut App) {

@@ -303,7 +303,6 @@ pub struct App {
     /// Glyph characters for DAG rendering.
     pub glyphs: &'static crate::theme::GlyphChars,
     /// Default search scopes from config.
-    pub default_search_scopes: SearchScopes,
     /// Preset command lines for `jj run`, from config.
     pub run_presets: &'static [String],
     /// Previously run `jj run` commands, most recent first (persisted).
@@ -382,6 +381,7 @@ impl App {
         repo_root: String,
         presets: &'static [crate::theme::Preset],
         glyphs: &'static crate::theme::GlyphChars,
+        default_search_scopes: SearchScopes,
     ) -> Self {
         let mut app = Self {
             active_view: ActiveView::Dag,
@@ -396,7 +396,7 @@ impl App {
             annotate: AnnotateState::new(),
             rows: Vec::new(),
             cursor: RowIdx::new(0),
-            view_states: default_view_states(),
+            view_states: default_view_states(default_search_scopes),
             scroll: 0,
             last_header_height: 2,
             last_list_height: 0,
@@ -411,7 +411,6 @@ impl App {
                 conflicted_prev: None,
             },
             glyphs,
-            default_search_scopes: SearchScopes::DEFAULT,
             run_presets: &[],
             run_history: Vec::new(),
             repo_root,

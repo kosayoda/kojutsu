@@ -307,17 +307,14 @@ pub(super) fn handle_search_input(
                         app.update_search_input(input);
                     }
                 }
-                Some(SearchFocus::Scopes) => match key.code {
-                    KeyCode::Char('0') => app.reset_search_scopes(),
-                    KeyCode::Char('*') => app.enable_all_search_scopes(),
-                    KeyCode::Char(ch) => {
+                Some(SearchFocus::Scopes) => {
+                    if let KeyCode::Char(ch) = key.code {
                         let specs = crate::types::scope_specs_for_view(app.active_view);
                         if let Some(spec) = specs.iter().find(|s| s.hint.starts_with(ch)) {
                             app.toggle_search_scope(spec.flag);
                         }
                     }
-                    _ => {}
-                },
+                }
                 None => {}
             }
             Action::None
@@ -542,7 +539,13 @@ mod jump_tests {
     fn app_in_commit_select() -> App {
         let glyphs: &'static crate::theme::GlyphChars =
             Box::leak(Box::new(crate::theme::GlyphChars::default()));
-        let mut app = App::new(String::new(), String::new(), &[], glyphs);
+        let mut app = App::new(
+            String::new(),
+            String::new(),
+            &[],
+            glyphs,
+            crate::types::SearchScopes::DEFAULT,
+        );
         app.mode = AppMode::CommitSelect {
             pending: crate::types::PendingCommitSelect::WorkspaceAdd {
                 path: String::new(),
@@ -605,7 +608,13 @@ mod jump_tests {
     fn jump_from_normal_returns_to_normal() {
         let glyphs: &'static crate::theme::GlyphChars =
             Box::leak(Box::new(crate::theme::GlyphChars::default()));
-        let mut app = App::new(String::new(), String::new(), &[], glyphs);
+        let mut app = App::new(
+            String::new(),
+            String::new(),
+            &[],
+            glyphs,
+            crate::types::SearchScopes::DEFAULT,
+        );
         open_jump(&mut app, &["a"]);
         press(&mut app, KeyCode::Char('a'));
         assert!(matches!(app.mode, AppMode::Normal));

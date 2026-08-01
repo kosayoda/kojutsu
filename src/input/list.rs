@@ -454,7 +454,13 @@ mod list_navigation_tests {
     fn app_with_list(filtering: bool) -> App {
         let glyphs: &'static crate::theme::GlyphChars =
             Box::leak(Box::new(crate::theme::GlyphChars::default()));
-        let mut app = App::new(String::new(), String::new(), &[], glyphs);
+        let mut app = App::new(
+            String::new(),
+            String::new(),
+            &[],
+            glyphs,
+            crate::types::SearchScopes::DEFAULT,
+        );
         app.mode = AppMode::select_from_list(
             "pick",
             vec!["a".into(), "b".into(), "c".into()],

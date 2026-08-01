@@ -620,18 +620,27 @@ impl ActiveView {
         self as usize
     }
 
-    const fn default_scopes(self) -> SearchScopes {
-        match self {
-            Self::Dag => SearchScopes::DEFAULT,
+    /// Which scopes a fresh search in this view starts with. Views with a
+    /// reason to differ say so; the rest follow `configured`, which is where
+    /// `default-search-scopes` from the config lands.
+    ///
+    /// Always intersected with what the view can actually search, so the
+    /// result can't include a scope with no toggle and no matcher.
+    pub fn default_scopes(self, configured: SearchScopes) -> SearchScopes {
+        let preferred = match self {
             Self::Bookmarks => SearchScopes::DEFAULT_BOOKMARK,
             Self::Tags => SearchScopes::DEFAULT_TAG,
             Self::Operations => SearchScopes::DEFAULT_OP_LOG,
-            Self::Workspaces => SearchScopes::DEFAULT,
-            Self::Evolog => SearchScopes::DEFAULT,
-            Self::CommandLog => SearchScopes::DEFAULT,
-            Self::Interdiff => SearchScopes::DEFAULT,
             Self::Annotate => SearchScopes::DEFAULT_ANNOTATE,
-        }
+            Self::Dag | Self::Workspaces | Self::Evolog | Self::CommandLog | Self::Interdiff => {
+                configured
+            }
+        };
+        let available = crate::types::available_scopes(self);
+        let scopes = preferred & available;
+        // A configuration naming nothing this view offers would otherwise
+        // leave search unable to match anything at all.
+        if scopes.is_empty() { available } else { scopes }
     }
 }
 
@@ -655,8 +664,12 @@ impl ViewState {
     }
 }
 
-pub(super) fn default_view_states() -> [ViewState; <ActiveView as strum::EnumCount>::COUNT] {
-    std::array::from_fn(|i| ViewState::new(ActiveView::from_repr(i).unwrap().default_scopes()))
+pub(super) fn default_view_states(
+    configured: SearchScopes,
+) -> [ViewState; <ActiveView as strum::EnumCount>::COUNT] {
+    std::array::from_fn(|i| {
+        ViewState::new(ActiveView::from_repr(i).unwrap().default_scopes(configured))
+    })
 }
 
 /// Discriminant for the 4 mutually exclusive bookmark states.

@@ -194,8 +194,8 @@ fn main() -> Result<()> {
         repo_path.display().to_string(),
         &config.revsets.presets,
         &config.glyphs,
+        config.default_search_scopes.to_flags(),
     );
-    app.default_search_scopes = config.default_search_scopes.to_flags();
     app.run_presets = &config.run.presets;
     app.apply_persisted_state(&persisted);
     app.revset.active_preset = active_preset;

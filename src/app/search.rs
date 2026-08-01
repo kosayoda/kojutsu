@@ -102,20 +102,6 @@ impl App {
         }
     }
 
-    pub fn reset_search_scopes(&mut self) {
-        if self.search.is_some() {
-            *self.search_scopes_mut() = self.default_search_scopes;
-            self.recompute_search_matches();
-        }
-    }
-
-    pub fn enable_all_search_scopes(&mut self) {
-        if self.search.is_some() {
-            *self.search_scopes_mut() = SearchScopes::all();
-            self.recompute_search_matches();
-        }
-    }
-
     pub fn toggle_search_focus(&mut self) {
         if let Some(search) = &mut self.search {
             search.focus = match search.focus {
