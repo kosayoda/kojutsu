@@ -58,7 +58,9 @@ impl SelectionSummary {
         self.format_summary(" selected")
     }
 
-    pub fn submenu_suffix(&self) -> Option<String> {
+    /// The same text without the trailing verb, for embedding in a phrase
+    /// ("… does not support 2 files + 5 lines").
+    pub fn describe(&self) -> Option<String> {
         self.format_summary("")
     }
 
@@ -124,12 +126,35 @@ impl SelectionContext {
         !self.explicit.is_empty()
     }
 
+    /// The kind a command should be built from. File and Line coexist, so
+    /// this is a precedence, not a description: a line selection is the more
+    /// specific of the two, and the line-level encoding carries whole files
+    /// as well. Use [`Self::kinds`] to ask what is actually selected.
     pub fn kind(&self) -> SelectionKind {
-        self.explicit
-            .iter()
-            .next()
-            .map(SelectionKind::from)
-            .unwrap_or(SelectionKind::Commit)
+        if self.summary.line_count > 0 {
+            SelectionKind::Line
+        } else if self.summary.full_file_count > 0 {
+            SelectionKind::File
+        } else {
+            SelectionKind::Commit
+        }
+    }
+
+    /// Every kind present. Gating reads this rather than [`Self::kind`] so an
+    /// action has to support all of what's selected, not just the part that
+    /// happened to win the precedence.
+    pub fn kinds(&self) -> SelectionKindSet {
+        let mut kinds = SelectionKindSet::empty();
+        if self.summary.commit_count > 0 {
+            kinds |= SelectionKindSet::COMMIT;
+        }
+        if self.summary.full_file_count > 0 {
+            kinds |= SelectionKindSet::FILE;
+        }
+        if self.summary.line_count > 0 {
+            kinds |= SelectionKindSet::LINE;
+        }
+        kinds
     }
 
     pub fn summary(&self) -> &SelectionSummary {
@@ -148,8 +173,8 @@ impl SelectionContext {
         self.summary.display_text()
     }
 
-    pub fn submenu_suffix(&self) -> Option<String> {
-        self.summary.submenu_suffix()
+    pub fn describe(&self) -> Option<String> {
+        self.summary.describe()
     }
 
     pub fn clear(&mut self) {
@@ -190,16 +215,38 @@ impl SelectionContext {
         self.iter().any(f)
     }
 
-    pub fn ensure_kind(&mut self, kind: SelectionKind) {
-        let reset = self.is_active() && self.kind() != kind;
-        if reset {
+    /// Drop whatever can't coexist with `kind`. Commit selections are whole
+    /// revisions and File/Line selections are parts of one, so those two
+    /// exclude each other; File and Line mix freely, with each file holding
+    /// one or the other (enforced where the toggles are).
+    pub fn ensure_compatible(&mut self, kind: SelectionKind) {
+        let commit_selected = self.summary.commit_count > 0;
+        let clash = match kind {
+            SelectionKind::Commit => self.is_active() && !commit_selected,
+            SelectionKind::File | SelectionKind::Line => commit_selected,
+        };
+        if clash {
             self.clear();
         }
     }
 
     pub fn insert(&mut self, selection: Selection) {
-        self.ensure_kind(SelectionKind::from(&selection));
+        self.ensure_compatible(SelectionKind::from(&selection));
         if self.explicit.insert(selection) {
+            self.recompute_summary();
+        }
+    }
+
+    /// Insert many at once. The summary is recomputed over the whole set on
+    /// every change, so inserting a large batch one at a time is quadratic —
+    /// expanding a big file into its lines does exactly that.
+    pub fn extend(&mut self, selections: impl IntoIterator<Item = Selection>) {
+        let mut changed = false;
+        for selection in selections {
+            self.ensure_compatible(SelectionKind::from(&selection));
+            changed |= self.explicit.insert(selection);
+        }
+        if changed {
             self.recompute_summary();
         }
     }
@@ -333,4 +380,88 @@ pub enum JumpTarget {
     Bookmark(super::BookmarkName),
     /// Jump to a commit by change ID or commit ID prefix.
     Prefix(String),
+}
+
+#[cfg(test)]
+mod selection_context_tests {
+    use super::*;
+    use crate::types::id::{ChangeId, RepoPath};
+
+    fn file_ref(path: &str) -> FileRef {
+        FileRef {
+            change_id: ChangeId::new("qpvuntsm"),
+            path: RepoPath::new(path),
+        }
+    }
+
+    fn line(path: &str, n: u32) -> Selection {
+        Selection::Line {
+            file_ref: file_ref(path),
+            old_line: None,
+            new_line: Some(n),
+        }
+    }
+
+    #[test]
+    fn files_and_lines_coexist() {
+        let mut ctx = SelectionContext::new();
+        ctx.insert(Selection::File(file_ref("a.rs")));
+        ctx.insert(line("b.rs", 3));
+
+        assert_eq!(ctx.len(), 2);
+        assert_eq!(ctx.summary().full_file_count, 1);
+        assert_eq!(ctx.summary().line_count, 1);
+        assert_eq!(ctx.describe().as_deref(), Some("1 file + 1 line"));
+    }
+
+    /// Commit selections are whole revisions; anything finer-grained clears
+    /// them and vice versa.
+    #[test]
+    fn commits_stay_exclusive_in_both_directions() {
+        let mut ctx = SelectionContext::new();
+        ctx.insert(Selection::Commit(ChangeId::new("qpvuntsm")));
+        ctx.insert(Selection::File(file_ref("a.rs")));
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx.kind(), SelectionKind::File);
+
+        ctx.insert(Selection::Commit(ChangeId::new("qpvuntsm")));
+        assert_eq!(ctx.len(), 1);
+        assert_eq!(ctx.kind(), SelectionKind::Commit);
+    }
+
+    /// Precedence, not description: the line encoding carries whole files, so
+    /// a mixed selection has to build its command the line way.
+    #[test]
+    fn kind_prefers_line_but_kinds_reports_both() {
+        let mut ctx = SelectionContext::new();
+        ctx.insert(Selection::File(file_ref("a.rs")));
+        assert_eq!(ctx.kind(), SelectionKind::File);
+        assert_eq!(ctx.kinds(), SelectionKindSet::FILE);
+
+        ctx.insert(line("b.rs", 3));
+        assert_eq!(ctx.kind(), SelectionKind::Line);
+        assert_eq!(ctx.kinds(), SelectionKindSet::FILE | SelectionKindSet::LINE);
+    }
+
+    /// An action taking files but not lines is rejected once a line joins the
+    /// selection — the check is over everything selected, not the winner of
+    /// the precedence.
+    #[test]
+    fn gating_requires_support_for_every_kind_present() {
+        let file_only = SelectionKindSet::COMMIT | SelectionKindSet::FILE;
+        let mut ctx = SelectionContext::new();
+        ctx.insert(Selection::File(file_ref("a.rs")));
+        assert!(file_only.contains(ctx.kinds()));
+
+        ctx.insert(line("b.rs", 3));
+        assert!(!file_only.contains(ctx.kinds()));
+        assert!(SelectionKindSet::ALL.contains(ctx.kinds()));
+    }
+
+    #[test]
+    fn an_empty_selection_has_no_kinds() {
+        let ctx = SelectionContext::new();
+        assert_eq!(ctx.kinds(), SelectionKindSet::empty());
+        assert!(!ctx.is_active());
+    }
 }

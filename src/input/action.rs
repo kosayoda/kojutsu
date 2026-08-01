@@ -74,11 +74,9 @@ pub(super) fn handle_normal_key(
         LookupResult::Prefix { label, children } => {
             app.status_message = None;
             if app.selection_active() {
-                let kind = app.selection_kind();
+                let kinds = app.selection_kinds();
                 let has_supported_action = children.iter().any(|(_, n)| match n {
-                    TrieNode::Action { id, .. } => {
-                        registry.selection_support(*id).contains(kind.as_bitset())
-                    }
+                    TrieNode::Action { id, .. } => registry.selection_support(*id).contains(kinds),
                     _ => false,
                 });
                 if !has_supported_action {
@@ -256,12 +254,17 @@ pub fn dispatch_action_after_hooks(
     if app.selection_active()
         && !registry
             .selection_support(ActionId::Builtin(action))
-            .contains(app.selection_kind().as_bitset())
+            .contains(app.selection_kinds())
     {
+        // Describe what is selected, not the kind that won the precedence —
+        // a mixed selection is rejected for the part the action can't take.
+        let selected = app
+            .selection_summary()
+            .describe()
+            .unwrap_or_else(|| format!("a {} selection", app.selection_kind()));
         app.set_error(format!(
-            "{} does not support {} selection",
+            "{} does not support {selected}",
             action_label(action),
-            app.selection_kind()
         ));
         return Action::None;
     }

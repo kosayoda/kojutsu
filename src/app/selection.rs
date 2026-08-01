@@ -24,6 +24,16 @@ impl App {
         self.selection.kind()
     }
 
+    /// Every selection kind currently present — what action gating tests
+    /// against, so a mixed selection needs an action supporting all of it.
+    pub fn selection_kinds(&self) -> crate::keymap::SelectionKindSet {
+        self.selection.kinds()
+    }
+
+    pub fn selection_summary(&self) -> &crate::types::SelectionSummary {
+        self.selection.summary()
+    }
+
     pub fn explicit_selection(&self) -> Option<&HashSet<Selection>> {
         self.selection.explicit()
     }
@@ -37,7 +47,7 @@ impl App {
         };
 
         self.clear_other_commits(&change_id);
-        self.selection.ensure_kind(SelectionKind::File);
+        self.selection.ensure_compatible(SelectionKind::File);
 
         // Clear any line-level selections for this file (File overrides Lines).
         self.selection
@@ -55,7 +65,7 @@ impl App {
             self.toggle_commit_file_selection(entry_idx);
         } else {
             let change_id = self.nodes[entry_idx].commit.unique_change_id();
-            self.selection.ensure_kind(SelectionKind::Commit);
+            self.selection.ensure_compatible(SelectionKind::Commit);
             self.selection.toggle(Selection::Commit(change_id));
         }
     }
@@ -89,7 +99,7 @@ impl App {
 
         let change_id = self.nodes[entry_idx].commit.unique_change_id();
         self.clear_other_commits(&change_id);
-        self.selection.ensure_kind(SelectionKind::File);
+        self.selection.ensure_compatible(SelectionKind::File);
 
         // Collect file paths upfront to avoid borrowing loaded file state across mutations.
         let file_paths: Vec<RepoPath> = self
@@ -120,6 +130,40 @@ impl App {
         }
     }
 
+    /// Replace a whole-file selection with one entry per selectable line,
+    /// leaving the same set of changes selected. A `Full` file already draws
+    /// its lines as selected ([`Self::is_line_selected`]), so a line toggle
+    /// inside one has to deselect that line — not discard the rest of the
+    /// file — and it needs the lines to exist individually to do that.
+    fn expand_file_selection_to_lines(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
+        let Some((change_id, path)) = self.resolve_file(entry_idx, file_idx) else {
+            return;
+        };
+        let file_ref = FileRef {
+            change_id: change_id.clone(),
+            path,
+        };
+        if !self.selection.contains(&Selection::File(file_ref.clone())) {
+            return;
+        }
+
+        let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
+            return;
+        };
+        let lines: Vec<Selection> = diff_lines
+            .iter()
+            .filter(|dl| dl.is_selectable())
+            .map(|dl| Selection::Line {
+                file_ref: file_ref.clone(),
+                old_line: dl.old_line,
+                new_line: dl.new_line,
+            })
+            .collect();
+
+        self.selection.remove(&Selection::File(file_ref));
+        self.selection.extend(lines);
+    }
+
     /// Toggle a single diff line selection (added/removed only).
     pub fn toggle_line_selection(
         &mut self,
@@ -143,13 +187,8 @@ impl App {
         let new_line = dl.new_line;
 
         self.clear_other_commits(&change_id);
-        self.selection.ensure_kind(SelectionKind::Line);
-
-        // If there's a File-level selection for this file, remove it.
-        self.selection.remove(&Selection::File(FileRef {
-            change_id: change_id.clone(),
-            path: file_path.clone(),
-        }));
+        self.selection.ensure_compatible(SelectionKind::Line);
+        self.expand_file_selection_to_lines(entry_idx, file_idx);
 
         let sel = Selection::Line {
             file_ref: FileRef {
@@ -197,13 +236,8 @@ impl App {
         }
 
         self.clear_other_commits(&change_id);
-        self.selection.ensure_kind(SelectionKind::Line);
-
-        // Remove any File-level selection for this file.
-        self.selection.remove(&Selection::File(FileRef {
-            change_id: change_id.clone(),
-            path: file_path.clone(),
-        }));
+        self.selection.ensure_compatible(SelectionKind::Line);
+        self.expand_file_selection_to_lines(entry_idx, file_idx);
 
         // If all hunk lines are already selected, deselect them. Otherwise select all.
         let all_selected = hunk_lines.iter().all(|s| self.selection.contains(s));
@@ -212,9 +246,7 @@ impl App {
                 self.selection.remove(s);
             }
         } else {
-            for s in hunk_lines {
-                self.selection.insert(s);
-            }
+            self.selection.extend(hunk_lines);
         }
     }
 

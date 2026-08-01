@@ -65,7 +65,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
     // Compute context flags before borrowing app.mode mutably.
     let has_file_context = crate::input::has_file_context(app);
     let has_conflict_context = crate::input::has_conflict_context(app);
-    let submenu_suffix = app.selection.submenu_suffix();
+    let submenu_suffix = app.selection.describe();
     let selection_active = app.selection.is_active();
     let selection_kind = app.selection.kind();
 

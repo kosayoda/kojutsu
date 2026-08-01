@@ -103,7 +103,7 @@ fn render_help_column(
             Cell::from(""),
         ]));
         let desc_width = area.width.saturating_sub(20) as usize;
-        let required = app.selection_kind().as_bitset();
+        let required = app.selection_kinds();
         let selection_active = app.selection_active();
         let on_conflict = crate::input::has_conflict_context(app);
         let on_file = crate::input::has_file_context(app);

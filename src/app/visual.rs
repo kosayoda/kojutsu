@@ -630,13 +630,13 @@ impl App {
             if let Some(Selection::Line { file_ref, .. }) = line_data.first() {
                 self.clear_other_commits(&file_ref.change_id);
             }
-            self.selection.ensure_kind(SelectionKind::Line);
-            for s in line_data {
-                if let Selection::Line { ref file_ref, .. } = s {
+            self.selection.ensure_compatible(SelectionKind::Line);
+            for s in &line_data {
+                if let Selection::Line { file_ref, .. } = s {
                     self.selection.remove(&Selection::File(file_ref.clone()));
                 }
-                self.selection.insert(s);
             }
+            self.selection.extend(line_data);
         }
     }
 
@@ -710,7 +710,7 @@ impl App {
             return;
         };
 
-        self.selection.ensure_kind(SelectionKind::Commit);
+        self.selection.ensure_compatible(SelectionKind::Commit);
         let all_selected = range.iter().all(|idx| {
             let cid = self.nodes[*idx].commit.unique_change_id();
             self.selection.contains(&Selection::Commit(cid))
@@ -849,8 +849,12 @@ impl App {
             }
         } else {
             self.clear_other_commits(&change_id);
-            self.selection.ensure_kind(SelectionKind::File);
+            self.selection.ensure_compatible(SelectionKind::File);
             for fr in file_refs {
+                // File overrides Lines within that file, same as toggling one
+                // directly; other files' line selections are left alone.
+                self.selection
+                    .retain(|s| !matches!(s, Selection::Line { file_ref, .. } if *file_ref == fr));
                 self.selection.insert(Selection::File(fr));
             }
         }
