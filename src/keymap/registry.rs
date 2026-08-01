@@ -6,9 +6,12 @@ pub enum ActionId {
     Lua(u16),
 }
 
-/// What context an action needs to be available. `File` and `Conflict`
-/// were previously two independent bools that were never both set — an
-/// enum makes the exclusivity structural.
+/// Cursor context an action needs, as a hint for greying entries out —
+/// enforcement lives in the handlers, which report which precondition failed
+/// far more precisely than this can. Keep it matching what the handler
+/// actually tests, or the UI will grey out something that works. `File` and
+/// `Conflict` were once independent bools that were never both set; the enum
+/// makes the exclusivity structural.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Requires {
     /// Available anywhere.
@@ -17,6 +20,30 @@ pub enum Requires {
     File,
     /// Needs the cursor on a conflict hunk (or conflicted file).
     Conflict,
+}
+
+/// What the cursor and selection currently make available. Single source for
+/// the grey-out shown in help and in the submenu, which drifted apart once
+/// before.
+#[derive(Clone, Copy)]
+pub struct Availability {
+    /// Every selected kind; empty when nothing is selected.
+    pub selection: SelectionKindSet,
+    pub on_file: bool,
+    pub on_conflict: bool,
+}
+
+impl Availability {
+    pub fn blocks(
+        &self,
+        selection_support: SelectionKindSet,
+        requires_file: bool,
+        requires_conflict: bool,
+    ) -> bool {
+        self.selection.blocked_by(selection_support)
+            || (requires_file && !self.on_file)
+            || (requires_conflict && !self.on_conflict)
+    }
 }
 
 /// Static metadata for an action: which selection kinds it supports and
@@ -45,8 +72,13 @@ impl AppAction {
             | ConflictPickTheirs | ConflictPickBase | ConflictUnpick | ConflictApplyPicks
             | ConflictEditFile | ConflictEditHunk => m(f, Requires::Conflict),
 
+            // Acts on the file selection, not the cursor row, so it needs no
+            // cursor context — `selection_support` already carries what it
+            // needs, and claiming Requires::File greys it out while it works.
+            FileUntrack => m(f, Requires::Nothing),
+
             // File actions — need the cursor on a file.
-            FileUntrack | FileAnnotate => m(f, Requires::File),
+            FileAnnotate => m(f, Requires::File),
             EditFileWorkingCopy | EditFileAtRevision | CheckoutAndEditFile => m(cf, Requires::File),
 
             // Commit + file selection, no context requirement.
@@ -249,5 +281,58 @@ impl ActionRegistry {
 
     pub fn find_by_name(&self, name: &str) -> Option<ActionId> {
         name.parse::<AppAction>().ok().map(ActionId::Builtin)
+    }
+}
+
+#[cfg(test)]
+mod availability_tests {
+    use super::*;
+    use crate::keymap::AppAction;
+
+    fn ctx(selection: SelectionKindSet, on_file: bool) -> Availability {
+        Availability {
+            selection,
+            on_file,
+            on_conflict: false,
+        }
+    }
+
+    fn blocks(ctx: &Availability, action: AppAction) -> bool {
+        let meta = action.meta();
+        ctx.blocks(
+            meta.selection_support,
+            meta.requires == Requires::File,
+            meta.requires == Requires::Conflict,
+        )
+    }
+
+    /// FileUntrack acts on the file selection, so it stays available with the
+    /// cursor parked anywhere — claiming Requires::File greyed it out while
+    /// it worked.
+    #[test]
+    fn file_untrack_follows_the_selection_not_the_cursor() {
+        let away_from_a_file = ctx(SelectionKindSet::FILE, false);
+        assert!(!blocks(&away_from_a_file, AppAction::FileUntrack));
+        // Annotate really does read the cursor row, so it stays gated.
+        assert!(blocks(&away_from_a_file, AppAction::FileAnnotate));
+    }
+
+    /// The submenu used to test only the kind that won the precedence, so a
+    /// mixed selection could offer an action the dispatcher would refuse.
+    #[test]
+    fn an_action_is_blocked_by_a_selection_it_cannot_take() {
+        let mixed = ctx(SelectionKindSet::FILE | SelectionKindSet::LINE, true);
+        // Absorb takes commits and files, not lines.
+        assert!(blocks(&mixed, AppAction::Absorb));
+        // Squash takes any selection.
+        assert!(!blocks(&mixed, AppAction::Squash));
+    }
+
+    #[test]
+    fn nothing_selected_blocks_on_context_alone() {
+        let empty = ctx(SelectionKindSet::empty(), true);
+        assert!(!blocks(&empty, AppAction::Absorb));
+        assert!(!blocks(&empty, AppAction::FileAnnotate));
+        assert!(!blocks(&empty, AppAction::FileUntrack));
     }
 }

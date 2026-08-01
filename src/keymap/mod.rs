@@ -8,7 +8,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub use bindings::{BindTarget, BindingSpec, Scope, default_bindings};
 pub use help::{HelpEntry, HelpGroup, help_entries, select_mode_help_entries};
-pub use registry::{ActionId, ActionRegistry};
+pub use registry::{ActionId, ActionRegistry, Availability};
 pub use trie::{Keymap, Keymaps, LookupResult, TrieNode};
 
 use crate::types::GLOBAL_TOGGLES;
@@ -24,6 +24,17 @@ bitflags::bitflags! {
 
 impl SelectionKindSet {
     pub const ALL: Self = Self::COMMIT.union(Self::FILE).union(Self::LINE);
+
+    /// Whether this selection rules out an action supporting only `support`.
+    /// `self` is what is selected — empty means nothing is, which rules
+    /// nothing out.
+    ///
+    /// The one place this rule lives. Dispatch refuses on it; the help panel
+    /// and submenu grey out on it plus the cursor-context terms
+    /// ([`Availability::blocks`]).
+    pub fn blocked_by(self, support: SelectionKindSet) -> bool {
+        !self.is_empty() && !support.contains(self)
+    }
 }
 
 pub const CONFLICT_PREFIX: &str = "conflict";
@@ -930,4 +941,24 @@ pub fn toggle_hint(action: AppAction) -> Option<&'static str> {
         .iter()
         .find(|t| t.flag == flag)
         .map(|t| t.hint)
+}
+
+#[cfg(test)]
+mod selection_kind_set_tests {
+    use super::SelectionKindSet;
+
+    #[test]
+    fn nothing_selected_rules_nothing_out() {
+        assert!(!SelectionKindSet::empty().blocked_by(SelectionKindSet::COMMIT));
+        assert!(!SelectionKindSet::empty().blocked_by(SelectionKindSet::empty()));
+    }
+
+    #[test]
+    fn every_selected_kind_has_to_be_supported() {
+        let file_and_line = SelectionKindSet::FILE | SelectionKindSet::LINE;
+        assert!(!file_and_line.blocked_by(SelectionKindSet::ALL));
+        // Supporting half of a mixed selection is not enough.
+        assert!(file_and_line.blocked_by(SelectionKindSet::FILE));
+        assert!(SelectionKindSet::FILE.blocked_by(SelectionKindSet::COMMIT));
+    }
 }

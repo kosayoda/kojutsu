@@ -63,11 +63,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
     };
 
     // Compute context flags before borrowing app.mode mutably.
-    let has_file_context = crate::input::has_file_context(app);
-    let has_conflict_context = crate::input::has_conflict_context(app);
+    let availability = crate::keymap::Availability {
+        selection: app.selection.kinds(),
+        on_file: crate::input::has_file_context(app),
+        on_conflict: crate::input::has_conflict_context(app),
+    };
     let submenu_suffix = app.selection.describe();
-    let selection_active = app.selection.is_active();
-    let selection_kind = app.selection.kind();
 
     match &mut app.mode {
         AppMode::Normal | AppMode::Jump(_) => {}
@@ -115,10 +116,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
                 *flags,
                 &keymaps.registry,
                 submenu_suffix,
-                selection_active,
-                selection_kind,
-                has_file_context,
-                has_conflict_context,
+                availability,
                 theme,
             );
         }

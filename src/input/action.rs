@@ -73,13 +73,18 @@ pub(super) fn handle_normal_key(
         }
         LookupResult::Prefix { label, children } => {
             app.status_message = None;
-            if app.selection_active() {
-                let kinds = app.selection_kinds();
-                let has_supported_action = children.iter().any(|(_, n)| match n {
-                    TrieNode::Action { id, .. } => registry.selection_support(*id).contains(kinds),
+            // Opening a submenu whose every entry the selection rules out
+            // would be a dead end. Only gate when something is selected —
+            // otherwise a submenu of nothing but sub-prefixes never opens.
+            let kinds = app.selection_kinds();
+            if !kinds.is_empty() {
+                let any_usable = children.iter().any(|(_, n)| match n {
+                    TrieNode::Action { id, .. } => {
+                        !kinds.blocked_by(registry.selection_support(*id))
+                    }
                     _ => false,
                 });
-                if !has_supported_action {
+                if !any_usable {
                     return Action::None;
                 }
             }
@@ -187,10 +192,9 @@ pub(super) fn handle_submenu_key(
 /// `selection` option is filtered on in the submenu and greyed out in help, so
 /// it has to be refused on the keypress too.
 fn rejects_selection(app: &mut App, registry: &ActionRegistry, id: ActionId, label: &str) -> bool {
-    if !app.selection_active()
-        || registry
-            .selection_support(id)
-            .contains(app.selection_kinds())
+    if !app
+        .selection_kinds()
+        .blocked_by(registry.selection_support(id))
     {
         return false;
     }

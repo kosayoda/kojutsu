@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 use crate::app::App;
 use crate::keymap::{self, ActionRegistry, CommandFlags, HelpEntry, HelpGroup, TrieNode};
 use crate::theme::Theme;
-use crate::types::{FollowUpOption, SearchFocus, SelectionKind, scope_specs_for_view};
+use crate::types::{FollowUpOption, SearchFocus, scope_specs_for_view};
 
 /// A plain block with only a top border (used by several simple overlay panels).
 fn top_border(theme: &Theme) -> Block<'static> {
@@ -103,19 +103,22 @@ fn render_help_column(
             Cell::from(""),
         ]));
         let desc_width = area.width.saturating_sub(20) as usize;
-        let required = app.selection_kinds();
-        let selection_active = app.selection_active();
-        let on_conflict = crate::input::has_conflict_context(app);
-        let on_file = crate::input::has_file_context(app);
+        let availability = crate::keymap::Availability {
+            selection: app.selection_kinds(),
+            on_file: crate::input::has_file_context(app),
+            on_conflict: crate::input::has_conflict_context(app),
+        };
         for entry in entries.iter() {
             let desc = if entry.description.len() > desc_width && desc_width > 1 {
                 format!("{}…", &entry.description[..desc_width - 1])
             } else {
                 entry.description.clone()
             };
-            let blocked = (selection_active && !entry.selection_support.contains(required))
-                || (entry.requires_conflict && !on_conflict)
-                || (entry.requires_file && !on_file);
+            let blocked = availability.blocks(
+                entry.selection_support,
+                entry.requires_file,
+                entry.requires_conflict,
+            );
             let key_style = if blocked {
                 key_style
                     .fg(theme.muted)
@@ -156,10 +159,7 @@ pub(super) fn draw_submenu(
     flags: CommandFlags,
     registry: &ActionRegistry,
     selection_suffix: Option<String>,
-    selection_active: bool,
-    selection_kind: SelectionKind,
-    has_file_context: bool,
-    has_conflict_context: bool,
+    availability: crate::keymap::Availability,
     theme: &Theme,
 ) {
     // Build toggle indicators for the title bar.
@@ -222,12 +222,11 @@ pub(super) fn draw_submenu(
             TrieNode::Action {
                 id, description, ..
             } => {
-                let blocked = (selection_active
-                    && !registry
-                        .selection_support(*id)
-                        .contains(selection_kind.as_bitset()))
-                    || (registry.requires_file(*id) && !has_file_context)
-                    || (registry.requires_conflict(*id) && !has_conflict_context);
+                let blocked = availability.blocks(
+                    registry.selection_support(*id),
+                    registry.requires_file(*id),
+                    registry.requires_conflict(*id),
+                );
                 (description.as_str(), blocked)
             }
             TrieNode::Prefix { label, .. } => (label.as_str(), false),
