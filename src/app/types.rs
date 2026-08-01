@@ -908,8 +908,6 @@ pub struct JumpState {
     pub labels: Vec<(String, RowIdx)>,
     /// Characters typed so far (for multi-char label matching).
     pub input: String,
-    /// Mode to restore on exit (e.g. TargetSelect). None → Normal.
-    pub restore_mode: Option<Box<AppMode>>,
 }
 
 pub enum AppMode {

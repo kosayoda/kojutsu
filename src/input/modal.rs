@@ -454,12 +454,10 @@ pub(super) fn handle_jump(app: &mut App, key: KeyEvent) -> Action {
         .take_jump()
         .expect("handle_jump called outside Jump mode");
 
-    let exit = |app: &mut App, restore: Option<Box<AppMode>>| {
-        app.mode = restore.map_or(AppMode::Normal, |m| *m);
-    };
-
+    // `take_jump` left Normal behind; exiting restores whatever the overlay
+    // was opened over (a target-select in progress, say).
     let KeyCode::Char(c) = key.code else {
-        exit(app, state.restore_mode);
+        app.exit_overlay();
         return Action::None;
     };
 
@@ -469,16 +467,18 @@ pub(super) fn handle_jump(app: &mut App, key: KeyEvent) -> Action {
         .retain(|(label, _)| label.starts_with(&state.input));
 
     if state.labels.is_empty() {
-        exit(app, state.restore_mode);
+        app.exit_overlay();
         return Action::None;
     }
 
     // Exact match → jump and exit.
     if let Some((_, row_idx)) = state.labels.iter().find(|(label, _)| *label == state.input) {
         app.set_cursor(*row_idx);
-        exit(app, state.restore_mode);
+        app.exit_overlay();
     } else {
-        // Input is a prefix of remaining labels — stay in jump mode.
+        // Input is a prefix of remaining labels — stay in jump mode. Assigned
+        // directly, not via `enter_overlay`: the mode being restored is the
+        // Normal that `take_jump` just put there, which would lose the real one.
         app.mode = AppMode::Jump(state);
     }
 
@@ -519,4 +519,88 @@ pub(super) fn handle_follow_up(app: &mut App, key: KeyEvent) -> Action {
     };
 
     super::action::execute_follow_up(app, option.action)
+}
+
+#[cfg(test)]
+mod jump_tests {
+    use super::*;
+    use crate::app::JumpState;
+    use crate::idx::RowIdx;
+    use crate::keymap::CommandFlags;
+    use ratatui::crossterm::event::KeyModifiers;
+
+    /// Jump is opened over a select mode often enough that returning to the
+    /// right one is the whole point; it used to carry its own restore field
+    /// rather than going through the overlay stack.
+    fn app_in_commit_select() -> App {
+        let glyphs: &'static crate::theme::GlyphChars =
+            Box::leak(Box::new(crate::theme::GlyphChars::default()));
+        let mut app = App::new(String::new(), String::new(), &[], glyphs);
+        app.mode = AppMode::CommitSelect {
+            pending: crate::types::PendingCommitSelect::WorkspaceAdd {
+                path: String::new(),
+                name: None,
+            },
+            flags: CommandFlags::empty(),
+            restore_cursor: RowIdx::new(0),
+        };
+        app
+    }
+
+    fn open_jump(app: &mut App, labels: &[&str]) {
+        app.enter_overlay(AppMode::Jump(JumpState {
+            labels: labels
+                .iter()
+                .map(|l| (l.to_string(), RowIdx::new(0)))
+                .collect(),
+            input: String::new(),
+        }));
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        handle_jump(app, KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    #[test]
+    fn picking_a_label_returns_to_the_mode_underneath() {
+        let mut app = app_in_commit_select();
+        open_jump(&mut app, &["a"]);
+        press(&mut app, KeyCode::Char('a'));
+        assert!(matches!(app.mode, AppMode::CommitSelect { .. }));
+    }
+
+    #[test]
+    fn dismissing_returns_to_the_mode_underneath() {
+        let mut app = app_in_commit_select();
+        open_jump(&mut app, &["a"]);
+        press(&mut app, KeyCode::Esc);
+        assert!(matches!(app.mode, AppMode::CommitSelect { .. }));
+
+        // An input matching no label dismisses the same way.
+        open_jump(&mut app, &["a"]);
+        press(&mut app, KeyCode::Char('z'));
+        assert!(matches!(app.mode, AppMode::CommitSelect { .. }));
+    }
+
+    /// A partial multi-character label stays in jump without consuming the
+    /// mode it has to return to.
+    #[test]
+    fn a_prefix_keeps_jump_open_and_keeps_the_restore_target() {
+        let mut app = app_in_commit_select();
+        open_jump(&mut app, &["]c"]);
+        press(&mut app, KeyCode::Char(']'));
+        assert!(matches!(app.mode, AppMode::Jump(_)));
+        press(&mut app, KeyCode::Char('c'));
+        assert!(matches!(app.mode, AppMode::CommitSelect { .. }));
+    }
+
+    #[test]
+    fn jump_from_normal_returns_to_normal() {
+        let glyphs: &'static crate::theme::GlyphChars =
+            Box::leak(Box::new(crate::theme::GlyphChars::default()));
+        let mut app = App::new(String::new(), String::new(), &[], glyphs);
+        open_jump(&mut app, &["a"]);
+        press(&mut app, KeyCode::Char('a'));
+        assert!(matches!(app.mode, AppMode::Normal));
+    }
 }
