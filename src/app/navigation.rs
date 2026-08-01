@@ -30,6 +30,14 @@ impl App {
                 .interdiff_diff_lines(*file_idx)
                 .and_then(|lines| lines.get(line_idx.raw()))
                 .is_some_and(|dl| dl.kind == DiffLineKind::Context),
+            DisplayRow::EvoLogFileDiffLine {
+                evolog_idx,
+                file_idx,
+                line_idx,
+            } => self
+                .evolog_diff_lines(*evolog_idx, *file_idx)
+                .and_then(|lines| lines.get(line_idx.raw()))
+                .is_some_and(|dl| dl.kind == DiffLineKind::Context),
             _ => false,
         }
     }
