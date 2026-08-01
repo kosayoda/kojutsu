@@ -63,6 +63,19 @@ impl Keymap {
         LookupResult::Unbound
     }
 
+    /// The builtin action a single key resolves to — prefixes, toggles and
+    /// plugin commands give `None`.
+    ///
+    /// For modes that interpret an action against their own state instead of
+    /// dispatching it: an overlay scrolls on `MoveDown` rather than moving the
+    /// DAG cursor, but it should still be whichever key the user bound.
+    pub fn builtin_action(&self, key: &Node) -> Option<super::AppAction> {
+        match self.lookup(key) {
+            LookupResult::Action(ActionId::Builtin(action)) => Some(action),
+            _ => None,
+        }
+    }
+
     /// The shortest key sequence bound to `action`, written the way a user
     /// types it (`"H"`, `"] c"` becomes `"]c"`), or `None` if every binding
     /// for it goes through a key that can't appear in typed text.

@@ -21,15 +21,17 @@ const PAGE_SIZE: usize = 15;
 /// Lines scrolled per mouse-wheel tick in overlay panes.
 const WHEEL_SCROLL_LINES: i16 = 3;
 
-/// Map scroll keys to a line delta for overlay panes (positive = down).
-fn scroll_delta(node: &keymap_parser::Node) -> Option<i16> {
-    use keymap_parser::Key;
-    let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
-    match node.key {
-        Key::Char('j') | Key::Down => Some(1),
-        Key::Char('k') | Key::Up => Some(-1),
-        Key::Char('d') if ctrl => Some(PAGE_SIZE as i16),
-        Key::Char('u') if ctrl => Some(-(PAGE_SIZE as i16)),
+/// How far an overlay should scroll for `node`, read from the keymap so the
+/// movement keys are whichever ones the user bound. Overlays have no sections
+/// and no absolute extent to move to, so only the four relative movements
+/// apply.
+fn scroll_delta(keymap: &crate::keymap::Keymap, node: &keymap_parser::Node) -> Option<i16> {
+    use crate::keymap::AppAction;
+    match keymap.builtin_action(node)? {
+        AppAction::MoveDown => Some(1),
+        AppAction::MoveUp => Some(-1),
+        AppAction::PageDown => Some(PAGE_SIZE as i16),
+        AppAction::PageUp => Some(-(PAGE_SIZE as i16)),
         _ => None,
     }
 }
@@ -120,7 +122,9 @@ pub fn handle_key(
             // When the output overflows, scroll keys scroll without
             // dismissing; when it fits, they dismiss like any other key.
             let overlay_base = app.last_list_height + crate::ui::STATUS_AREA_HEIGHT;
-            if let (Some(delta), 1..) = (scroll_delta(&node), state.max_scroll(overlay_base)) {
+            if let (Some(delta), 1..) =
+                (scroll_delta(keymap, &node), state.max_scroll(overlay_base))
+            {
                 state.scroll = state.scroll.saturating_add_signed(delta);
                 return Action::None;
             }
@@ -139,7 +143,7 @@ pub fn handle_key(
         }
         AppMode::Help { scroll } => {
             use keymap_parser::Key;
-            if let Some(delta) = scroll_delta(&node) {
+            if let Some(delta) = scroll_delta(keymap, &node) {
                 *scroll = scroll.saturating_add_signed(delta);
                 return Action::None;
             }
@@ -179,7 +183,7 @@ pub fn handle_key(
             use keymap_parser::Key;
             let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
             let shift = (node.modifiers & keymap_parser::Modifier::Shift as u8) != 0;
-            if let Some(delta) = scroll_delta(&node) {
+            if let Some(delta) = scroll_delta(keymap, &node) {
                 // scroll_from_bottom counts up toward older lines, so the
                 // delta is inverted.
                 state.scroll_from_bottom = state
@@ -328,5 +332,66 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
             }
             _ => Action::None,
         },
+    }
+}
+
+#[cfg(test)]
+mod scroll_delta_tests {
+    use super::{PAGE_SIZE, scroll_delta};
+    use crate::app::ActiveView;
+    use crate::keymap::{ActionRegistry, AppAction, Keymaps, default_bindings, try_parse_key};
+
+    fn delta(keymaps: &Keymaps, key: &str) -> Option<i16> {
+        let node = try_parse_key(key).expect("parsable key");
+        scroll_delta(keymaps.for_view(ActiveView::Dag), &node)
+    }
+
+    #[test]
+    fn overlays_scroll_on_the_default_movement_keys() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        assert_eq!(delta(&keymaps, "j"), Some(1));
+        assert_eq!(delta(&keymaps, "down"), Some(1));
+        assert_eq!(delta(&keymaps, "k"), Some(-1));
+        assert_eq!(delta(&keymaps, "up"), Some(-1));
+        assert_eq!(delta(&keymaps, "ctrl-d"), Some(PAGE_SIZE as i16));
+        assert_eq!(delta(&keymaps, "pagedown"), Some(PAGE_SIZE as i16));
+        assert_eq!(delta(&keymaps, "ctrl-u"), Some(-(PAGE_SIZE as i16)));
+        assert_eq!(delta(&keymaps, "pageup"), Some(-(PAGE_SIZE as i16)));
+    }
+
+    /// An overlay has no sections and no extent, so movements that mean
+    /// nothing there fall through to the mode's own handling.
+    #[test]
+    fn other_keys_do_not_scroll() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        for key in ["shift-j", "0", "$", "q", "esc", "x"] {
+            assert_eq!(delta(&keymaps, key), None, "{key} should not scroll");
+        }
+    }
+
+    /// The point of reading the keymap: a rebound movement key scrolls, and
+    /// the default it replaced no longer does.
+    #[test]
+    fn a_rebound_movement_key_scrolls() {
+        use crate::keymap::{ActionId, BindTarget, BindingSpec, HelpGroup, Scope};
+
+        let j = try_parse_key("j").unwrap();
+        let mut specs: Vec<BindingSpec> = default_bindings()
+            .into_iter()
+            .filter(|s| s.keys.as_slice() != [j.clone()])
+            .collect();
+        specs.push(BindingSpec {
+            keys: smallvec::smallvec![try_parse_key(",").unwrap()],
+            target: BindTarget::Action {
+                id: ActionId::Builtin(AppAction::MoveDown),
+                description: "move down".into(),
+                group: HelpGroup::Navigation,
+            },
+            scope: Scope::All,
+        });
+        let keymaps = Keymaps::build(specs, ActionRegistry::new());
+
+        assert_eq!(delta(&keymaps, ","), Some(1));
+        assert_eq!(delta(&keymaps, "j"), None);
     }
 }
