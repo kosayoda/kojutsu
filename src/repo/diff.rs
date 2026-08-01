@@ -895,7 +895,7 @@ fn merge_options() -> jj_lib::tree_merge::MergeOptions {
 
 fn default_materialize_options() -> ConflictMaterializeOptions {
     ConflictMaterializeOptions {
-        marker_style: jj_lib::conflicts::ConflictMarkerStyle::Git,
+        marker_style: crate::conflict::MARKER_STYLE,
         marker_len: None,
         merge: merge_options(),
     }

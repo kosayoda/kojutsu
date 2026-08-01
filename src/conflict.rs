@@ -5,6 +5,23 @@
 
 use crate::dag::DiffToken;
 
+use jj_lib::conflicts::ConflictMarkerStyle;
+
+/// The marker style kojutsu materializes conflicts with, and the name jj
+/// spells it by in configuration.
+///
+/// Diff line numbers — and so the line selections built from them — are
+/// computed against this materialization. Any jj command that re-materializes
+/// a conflict on its own side has to be pinned to the same style, or the two
+/// disagree about how many marker lines precede a given line and the wrong
+/// lines get applied.
+///
+/// jj-lib only converts a name into a style, never the reverse, so the two
+/// are stated separately and tied together by a test that parses the name
+/// with jj-lib's own deserializer.
+pub const MARKER_STYLE: ConflictMarkerStyle = ConflictMarkerStyle::Git;
+pub const MARKER_STYLE_CONFIG: &str = "git";
+
 /// Identifies one term of a conflict hunk. jj represents a conflict as
 /// alternating positive terms ("sides", the contents to merge) and negative
 /// terms ("bases", the common ancestors diffed away); ordinals are 0-based.
@@ -196,5 +213,23 @@ mod tests {
             text.write_to(&mut out);
             assert_eq!(out, content, "round trip failed for {content:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod marker_style_tests {
+    use super::{MARKER_STYLE, MARKER_STYLE_CONFIG};
+
+    /// Parse the config name with jj-lib's own `Deserialize` — the same impl
+    /// that reads the `--config` we emit — and check it lands on the style we
+    /// actually materialize with. Fails if the two constants drift apart, and
+    /// equally if jj-lib renames the variant out from under the name.
+    #[test]
+    fn the_config_name_parses_to_the_style_we_materialize_with() {
+        let parsed: jj_lib::conflicts::ConflictMarkerStyle =
+            serde_json::from_str(&format!("\"{MARKER_STYLE_CONFIG}\"")).unwrap_or_else(|e| {
+                panic!("jj-lib rejects {MARKER_STYLE_CONFIG:?} as a marker style: {e}")
+            });
+        assert_eq!(parsed, MARKER_STYLE);
     }
 }

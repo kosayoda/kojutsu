@@ -1,5 +1,6 @@
 use compact_str::format_compact;
 
+use crate::conflict::MARKER_STYLE_CONFIG;
 use crate::keymap::CommandFlags;
 use crate::types::{ChangeSelection, GLOBAL_TOGGLES, Str};
 
@@ -554,12 +555,15 @@ impl JJCommand {
                                 toml_string_escape(&content_path.display().to_string())
                             )),
                             // Partially picked files keep conflict markers;
-                            // jj parses them back into a conflicted state.
-                            // The style must match what kojutsu materializes.
+                            // jj parses them back into a conflicted state,
+                            // so it has to read them the way we wrote them.
                             flag("--config"),
                             arg("merge-tools.kojutsu-apply.merge-tool-edits-conflict-markers=true"),
                             flag("--config"),
-                            arg("merge-tools.kojutsu-apply.conflict-marker-style=\"git\""),
+                            arg(format!(
+                                "merge-tools.kojutsu-apply.conflict-marker-style=\"{}\"",
+                                MARKER_STYLE_CONFIG
+                            )),
                         ]);
                     }
                 }
@@ -635,11 +639,13 @@ fn push_change_selection(args: &mut Vec<TaggedArg>, selection: &ChangeSelection)
                     toml_string_escape(&json_path.display().to_string())
                 )),
                 // Selections carry line numbers computed against kojutsu's
-                // git-style conflict materialization; pin jj's tool-side
-                // materialization to match so lines align in conflicted
-                // files.
+                // materialization; pin jj's tool-side materialization to the
+                // same style so lines align in conflicted files.
                 flag("--config"),
-                arg("ui.conflict-marker-style=\"git\""),
+                arg(format!(
+                    "ui.conflict-marker-style=\"{}\"",
+                    MARKER_STYLE_CONFIG
+                )),
             ]);
         }
     }
