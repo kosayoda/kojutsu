@@ -6,7 +6,7 @@ use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap;
 use crate::types::{PendingCommand, Str};
 
-use super::{Action, PAGE_SIZE};
+use super::Action;
 
 pub(super) fn handle_text_input(
     app: &mut App,
@@ -318,93 +318,9 @@ pub(super) fn handle_search_input(app: &mut App, key: KeyEvent) -> Action {
     }
 }
 
-/// Shared navigation for TargetSelect and CommitSelect modes.
-/// Returns `Some(Action)` if the key was handled, `None` if not recognized.
-///
-/// Uses `key_event_to_node` for consistent key matching with the keymap system.
-pub(super) fn handle_select_navigation(app: &mut App, key: &KeyEvent) -> Option<Action> {
-    use keymap_parser::Key;
-
-    let node = keymap::key_event_to_node(key)?;
-    let shift = (node.modifiers & keymap_parser::Modifier::Shift as u8) != 0;
-    let ctrl = (node.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0;
-
-    match (node.key, shift, ctrl) {
-        (Key::Char('j'), true, _) => {
-            app.move_down_section();
-            Some(Action::None)
-        }
-        (Key::Char('k'), true, _) => {
-            app.move_up_section();
-            Some(Action::None)
-        }
-        (Key::Char('d'), _, true) => {
-            app.page_down(PAGE_SIZE);
-            Some(Action::None)
-        }
-        (Key::Char('u'), _, true) => {
-            app.page_up(PAGE_SIZE);
-            Some(Action::None)
-        }
-        (Key::Char('n'), _, true) => {
-            app.search_next();
-            Some(Action::None)
-        }
-        (Key::Char('p'), _, true) => {
-            app.search_prev();
-            Some(Action::None)
-        }
-        (Key::Char('j'), _, _) | (Key::Down, _, _) => {
-            app.move_down();
-            Some(Action::None)
-        }
-        (Key::Char('k'), _, _) | (Key::Up, _, _) => {
-            app.move_up();
-            Some(Action::None)
-        }
-        (Key::PageDown, _, _) => {
-            app.page_down(PAGE_SIZE);
-            Some(Action::None)
-        }
-        (Key::PageUp, _, _) => {
-            app.page_up(PAGE_SIZE);
-            Some(Action::None)
-        }
-        (Key::Char('@'), _, _) => {
-            if !app.jump_to_working_copy() {
-                app.set_error("working copy not in current revset");
-            }
-            Some(Action::None)
-        }
-        (Key::Char('0'), _, _) => {
-            app.move_to_top();
-            Some(Action::None)
-        }
-        (Key::Char('$'), _, _) => {
-            app.move_to_bottom();
-            Some(Action::None)
-        }
-        (Key::Tab, _, _) => {
-            app.toggle_fold();
-            Some(Action::None)
-        }
-        (Key::Char('\''), _, _) => {
-            app.enter_jump();
-            Some(Action::None)
-        }
-        (Key::Char('/'), _, _) => {
-            app.begin_search();
-            Some(Action::None)
-        }
-        (Key::Char('?'), _, _) => {
-            app.enter_overlay(AppMode::Help { scroll: 0 });
-            Some(Action::None)
-        }
-        _ => None,
-    }
-}
-
-pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
+/// Handle the keys target-select owns. `None` means the key isn't one of
+/// them, leaving the caller to resolve it through the keymap as navigation.
+pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Option<Action> {
     use crate::app::TargetMode;
 
     match key.code {
@@ -422,71 +338,15 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
             {
                 targets.insert(id);
             }
-            Action::None
+            Some(Action::None)
         }
-        KeyCode::Enter => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::TargetSelect {
-                source,
-                operation,
-                flags,
-                target_mode,
-                ..
-            } = mode
-            {
-                let targets: crate::types::SmallVec1<crate::types::ChangeId> = match target_mode {
-                    TargetMode::Multi { targets } if !targets.is_empty() => {
-                        match crate::types::SmallVec1::try_from_smallvec(
-                            targets.into_iter().collect(),
-                        ) {
-                            Ok(v) => v,
-                            Err(_) => return Action::None,
-                        }
-                    }
-                    _ => {
-                        let Some(target) = app.selected_change_id() else {
-                            return Action::None;
-                        };
-                        crate::types::SmallVec1::new(target)
-                    }
-                };
-                // Interdiff is handled directly (needs commit IDs from app state).
-                if matches!(operation, crate::types::TargetOperation::Interdiff) {
-                    let target = targets.split_off_first().0;
-                    // Resolve change IDs to commit IDs via the DAG index.
-                    let from_commit = app.commit_id_for_change(&source);
-                    let to_commit = app.commit_id_for_change(&target);
-                    if let (Some(from_cid), Some(to_cid)) = (from_commit, to_commit) {
-                        let from_label = crate::types::Str::from(source.as_str());
-                        let to_label = crate::types::Str::from(target.as_str());
-                        app.enter_interdiff_view(from_cid, to_cid, from_label, to_label);
-                    }
-                    return Action::None;
-                }
-
-                let label = operation.label();
-                let selection = super::action::build_change_selection(app);
-                let mut options = operation.follow_up(source, targets.clone(), flags, selection);
-                if options.len() == 1 {
-                    let opt = options.remove(0);
-                    return super::action::execute_follow_up(app, opt.action);
-                }
-                let target_str: String = targets
-                    .iter()
-                    .map(|t| t.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let prompt = format!("{label} {target_str}:");
-                app.mode = AppMode::FollowUp { prompt, options };
-            }
-            Action::None
-        }
+        KeyCode::Enter => Some(confirm_target_select(app)),
         KeyCode::Esc => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::TargetSelect { restore_cursor, .. } = mode {
                 app.set_cursor(restore_cursor);
             }
-            Action::None
+            Some(Action::None)
         }
         KeyCode::Char(_) => {
             if let (Some(node), AppMode::TargetSelect { toggles, flags, .. }) =
@@ -495,36 +355,96 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Action {
             {
                 flags.toggle(toggle.flag);
                 app.status_message = None;
-                return Action::None;
+                return Some(Action::None);
             }
-            handle_select_navigation(app, &key).unwrap_or(Action::None)
+            None
         }
-        _ => handle_select_navigation(app, &key).unwrap_or(Action::None),
+        _ => None,
     }
 }
 
-pub(super) fn handle_commit_select(app: &mut App, key: KeyEvent) -> Action {
-    match key.code {
-        KeyCode::Enter => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::CommitSelect { pending, flags, .. } = mode {
+/// Confirm the pending target(s) and start the operation they were picked for.
+fn confirm_target_select(app: &mut App) -> Action {
+    use crate::app::TargetMode;
+
+    let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+    if let AppMode::TargetSelect {
+        source,
+        operation,
+        flags,
+        target_mode,
+        ..
+    } = mode
+    {
+        let targets: crate::types::SmallVec1<crate::types::ChangeId> = match target_mode {
+            TargetMode::Multi { targets } if !targets.is_empty() => {
+                match crate::types::SmallVec1::try_from_smallvec(targets.into_iter().collect()) {
+                    Ok(v) => v,
+                    Err(_) => return Action::None,
+                }
+            }
+            _ => {
                 let Some(target) = app.selected_change_id() else {
                     return Action::None;
                 };
-                let cmd = pending.into_jj_command(target, flags);
-                Action::RunJj(cmd)
-            } else {
-                Action::None
+                crate::types::SmallVec1::new(target)
             }
+        };
+        // Interdiff is handled directly (needs commit IDs from app state).
+        if matches!(operation, crate::types::TargetOperation::Interdiff) {
+            let target = targets.split_off_first().0;
+            // Resolve change IDs to commit IDs via the DAG index.
+            let from_commit = app.commit_id_for_change(&source);
+            let to_commit = app.commit_id_for_change(&target);
+            if let (Some(from_cid), Some(to_cid)) = (from_commit, to_commit) {
+                let from_label = crate::types::Str::from(source.as_str());
+                let to_label = crate::types::Str::from(target.as_str());
+                app.enter_interdiff_view(from_cid, to_cid, from_label, to_label);
+            }
+            return Action::None;
+        }
+
+        let label = operation.label();
+        let selection = super::action::build_change_selection(app);
+        let mut options = operation.follow_up(source, targets.clone(), flags, selection);
+        if options.len() == 1 {
+            let opt = options.remove(0);
+            return super::action::execute_follow_up(app, opt.action);
+        }
+        let target_str: String = targets
+            .iter()
+            .map(|t| t.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let prompt = format!("{label} {target_str}:");
+        app.mode = AppMode::FollowUp { prompt, options };
+    }
+    Action::None
+}
+
+/// Handle the keys commit-select owns; see [`handle_target_select`].
+pub(super) fn handle_commit_select(app: &mut App, key: KeyEvent) -> Option<Action> {
+    match key.code {
+        KeyCode::Enter => {
+            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
+            let AppMode::CommitSelect { pending, flags, .. } = mode else {
+                return Some(Action::None);
+            };
+            // Enter belongs to this mode even with nothing selected — `None`
+            // here would send it back to the keymap after the mode is gone.
+            let Some(target) = app.selected_change_id() else {
+                return Some(Action::None);
+            };
+            Some(Action::RunJj(pending.into_jj_command(target, flags)))
         }
         KeyCode::Esc => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
             if let AppMode::CommitSelect { restore_cursor, .. } = mode {
                 app.set_cursor(restore_cursor);
             }
-            Action::None
+            Some(Action::None)
         }
-        _ => handle_select_navigation(app, &key).unwrap_or(Action::None),
+        _ => None,
     }
 }
 

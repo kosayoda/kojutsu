@@ -101,6 +101,30 @@ pub(super) fn handle_normal_key(
     }
 }
 
+/// Fallback for the select modes: a key they don't own resolves through the
+/// keymap like any other, but only cursor movement is admitted — anything else
+/// would mutate the repo or move the selection out from under a pending pick.
+///
+/// Sequence bindings resolve to `Prefix`, which would need the submenu state
+/// these modes don't have, so they stay unavailable here.
+pub(super) fn handle_select_navigation(
+    app: &mut App,
+    registry: &ActionRegistry,
+    lua: &crate::lua::LuaEngine,
+    keymap: &Keymap,
+    node: &keymap_parser::Node,
+) -> Action {
+    match keymap.lookup(node) {
+        LookupResult::Action(ActionId::Builtin(action)) if action.is_cursor_navigation() => {
+            app.status_message = None;
+            dispatch_action(app, registry, lua, action, CommandFlags::empty())
+        }
+        // Unlike normal mode, an unrecognised key is ignored rather than
+        // reported: most of the keymap is simply out of scope mid-pick.
+        _ => Action::None,
+    }
+}
+
 pub(super) fn handle_submenu_key(
     app: &mut App,
     registry: &ActionRegistry,
@@ -615,8 +639,10 @@ pub fn dispatch_action_after_hooks(
             );
             Action::None
         }
+        // As an overlay, so dismissing help returns to a target- or
+        // commit-select that was in progress rather than dropping it.
         AppAction::ShowHelp => {
-            app.mode = AppMode::Help { scroll: 0 };
+            app.enter_overlay(AppMode::Help { scroll: 0 });
             Action::None
         }
         // DAG-view commit mutation actions

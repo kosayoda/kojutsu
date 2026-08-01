@@ -156,8 +156,9 @@ pub fn handle_key(
                         AppMode::Normal => {
                             action::handle_normal_key(app, registry, lua, keymap, &node)
                         }
-                        AppMode::TargetSelect { .. } => modal::handle_target_select(app, key),
-                        AppMode::CommitSelect { .. } => modal::handle_commit_select(app, key),
+                        AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. } => {
+                            select_key(app, registry, lua, keymap, key, &node)
+                        }
                         _ => Action::None,
                     }
                 }
@@ -168,8 +169,9 @@ pub fn handle_key(
         }
         AppMode::TextInput { .. } => modal::handle_text_input(app, lua, key),
         AppMode::SearchInput => modal::handle_search_input(app, key),
-        AppMode::TargetSelect { .. } => modal::handle_target_select(app, key),
-        AppMode::CommitSelect { .. } => modal::handle_commit_select(app, key),
+        AppMode::TargetSelect { .. } | AppMode::CommitSelect { .. } => {
+            select_key(app, registry, lua, keymap, key, &node)
+        }
         AppMode::FollowUp { .. } => modal::handle_follow_up(app, key),
         AppMode::SelectFromList(_) => list::handle_select_from_list(app, lua, key),
         AppMode::Jump(_) => modal::handle_jump(app, key),
@@ -198,6 +200,28 @@ pub fn handle_key(
     }
 }
 
+/// Dispatch a key in target- or commit-select. The mode gets first refusal on
+/// its own keys; anything it declines resolves through the keymap, which is
+/// what keeps movement bindings (and any rebinding of them) working here.
+fn select_key(
+    app: &mut App,
+    registry: &crate::keymap::ActionRegistry,
+    lua: &crate::lua::LuaEngine,
+    keymap: &crate::keymap::Keymap,
+    key: KeyEvent,
+    node: &keymap_parser::Node,
+) -> Action {
+    let owned = if matches!(app.mode, AppMode::TargetSelect { .. }) {
+        modal::handle_target_select(app, key)
+    } else {
+        modal::handle_commit_select(app, key)
+    };
+    match owned {
+        Some(action) => action,
+        None => action::handle_select_navigation(app, registry, lua, keymap, node),
+    }
+}
+
 /// Navigate to a screen position (shared by mouse handlers).
 fn mouse_select_row(app: &mut App, mouse: &MouseEvent, list_offset: u16) {
     let screen_line = (mouse.row.saturating_sub(list_offset)) as usize;
@@ -219,11 +243,14 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
                     // Select and confirm.
                     mouse_select_row(app, &mouse, list_offset);
                     let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
-                    match &app.mode {
+                    // Enter is a key both modes own, so neither declines it
+                    // and no keymap fallback is needed here.
+                    let confirmed = match &app.mode {
                         AppMode::TargetSelect { .. } => modal::handle_target_select(app, enter),
                         AppMode::CommitSelect { .. } => modal::handle_commit_select(app, enter),
-                        _ => Action::None,
-                    }
+                        _ => None,
+                    };
+                    confirmed.unwrap_or(Action::None)
                 }
                 MouseEventKind::ScrollUp => {
                     app.move_up();

@@ -252,6 +252,179 @@ impl AppAction {
         }
     }
 
+    /// Whether the action only moves the cursor or viewport, leaving the repo
+    /// and the selection untouched. These stay available inside target- and
+    /// commit-select, where every other action would either mutate mid-pick or
+    /// collide with the mode's own keys (space toggles a target, Enter
+    /// confirms, Esc cancels).
+    pub fn is_cursor_navigation(self) -> bool {
+        match self {
+            AppAction::MoveDown
+            | AppAction::MoveUp
+            | AppAction::MoveDownSection
+            | AppAction::MoveUpSection
+            | AppAction::PageDown
+            | AppAction::PageUp
+            | AppAction::JumpToWorkingCopy
+            | AppAction::MoveToTop
+            | AppAction::MoveToBottom
+            | AppAction::MoveToScreenTop
+            | AppAction::MoveToScreenMiddle
+            | AppAction::MoveToScreenBottom
+            | AppAction::ScrollLeft
+            | AppAction::ScrollRight
+            | AppAction::ToggleFold
+            | AppAction::Jump
+            | AppAction::StartSearch
+            | AppAction::NextMatch
+            | AppAction::PrevMatch
+            | AppAction::ShowHelp => true,
+
+            AppAction::Quit
+            | AppAction::Refresh
+            | AppAction::ExpandAncestors
+            | AppAction::ExpandDescendants
+            | AppAction::Abandon
+            | AppAction::Absorb
+            | AppAction::Commit
+            | AppAction::CommitWithMessage
+            | AppAction::Describe
+            | AppAction::DescribeInEditor
+            | AppAction::Diffedit
+            | AppAction::Edit
+            | AppAction::New
+            | AppAction::NewInsertAfter
+            | AppAction::NewInsertBefore
+            | AppAction::Squash
+            | AppAction::SquashInto
+            | AppAction::SquashOnto
+            | AppAction::SquashAfter
+            | AppAction::SquashBefore
+            | AppAction::RebaseRevision
+            | AppAction::RebaseSource
+            | AppAction::RebaseBranch
+            | AppAction::Restore
+            | AppAction::RestoreFrom
+            | AppAction::RestoreInto
+            | AppAction::Split
+            | AppAction::SplitOnto
+            | AppAction::SplitAfter
+            | AppAction::SplitBefore
+            | AppAction::EditRevset
+            | AppAction::EditRevsetInEditor
+            | AppAction::ResetRevset
+            | AppAction::ToggleConflictedRevset
+            | AppAction::BookmarkCreate
+            | AppAction::BookmarkSet
+            | AppAction::BookmarkDelete
+            | AppAction::BookmarkForget
+            | AppAction::BookmarkMove
+            | AppAction::BookmarkRename
+            | AppAction::BookmarkAdvance
+            | AppAction::BookmarkTrack
+            | AppAction::BookmarkUntrack
+            | AppAction::Undo
+            | AppAction::Redo
+            | AppAction::GitFetch
+            | AppAction::GitFetchAllRemotes
+            | AppAction::GitPush
+            | AppAction::GitPushAll
+            | AppAction::GitPushChange
+            | AppAction::GitExport
+            | AppAction::GitImport
+            | AppAction::Duplicate
+            | AppAction::DuplicateOnto
+            | AppAction::Parallelize
+            | AppAction::SimplifyParents
+            | AppAction::Revert
+            | AppAction::ArrangeUp
+            | AppAction::ArrangeDown
+            | AppAction::Fix
+            | AppAction::Run
+            | AppAction::FileUntrack
+            | AppAction::ResolveOurs
+            | AppAction::ResolveTheirs
+            | AppAction::ResolveMergeTool
+            | AppAction::ConflictPickOurs
+            | AppAction::ConflictPickTheirs
+            | AppAction::ConflictPickBase
+            | AppAction::ConflictUnpick
+            | AppAction::ConflictApplyPicks
+            | AppAction::ConflictEditFile
+            | AppAction::ConflictEditHunk
+            | AppAction::ToggleIgnoreImmutable
+            | AppAction::ToggleIgnoreWorkingCopy
+            | AppAction::ToggleDebug
+            | AppAction::ToggleGitDiff
+            | AppAction::ToggleLineNumbers
+            | AppAction::ToggleDiffUnderline
+            | AppAction::WorkspaceAdd
+            | AppAction::WorkspaceForget
+            | AppAction::WorkspaceList
+            | AppAction::WorkspaceRename
+            | AppAction::ToggleSelect
+            | AppAction::EnterVisualMode
+            | AppAction::NextConflict
+            | AppAction::PrevConflict
+            | AppAction::GitPushBookmark
+            | AppAction::TagSet
+            | AppAction::TagDelete
+            | AppAction::SelectPreset
+            | AppAction::SwitchPreset1
+            | AppAction::SwitchPreset2
+            | AppAction::SwitchPreset3
+            | AppAction::SwitchPreset4
+            | AppAction::SwitchPreset5
+            | AppAction::SwitchToDagView
+            | AppAction::SwitchToBookmarkView
+            | AppAction::SwitchToTagView
+            | AppAction::BookmarkViewDelete
+            | AppAction::BookmarkViewTrack
+            | AppAction::BookmarkViewUntrack
+            | AppAction::BookmarkViewPush
+            | AppAction::BookmarkViewJumpToCommit
+            | AppAction::BookmarkViewEdit
+            | AppAction::BookmarkViewRename
+            | AppAction::BookmarkViewMove
+            | AppAction::BookmarkViewForget
+            | AppAction::BookmarkViewSet
+            | AppAction::BookmarkViewFetchDefault
+            | AppAction::BookmarkViewFetchBookmark
+            | AppAction::BookmarkViewFetchAllRemotes
+            | AppAction::BookmarkViewInterdiff
+            | AppAction::TagViewDelete
+            | AppAction::TagViewSet
+            | AppAction::TagViewJumpToCommit
+            | AppAction::TagViewEdit
+            | AppAction::SwitchToOpLogView
+            | AppAction::SwitchToWorkspaceView
+            | AppAction::SwitchToEvoLogView
+            | AppAction::SwitchToCommandLogView
+            | AppAction::WorkspaceViewForget
+            | AppAction::WorkspaceViewJumpToCommit
+            | AppAction::EvoLogRestore
+            | AppAction::EvoLogEdit
+            | AppAction::EvoLogNew
+            | AppAction::Interdiff
+            | AppAction::EvoLogInterdiff
+            | AppAction::FileAnnotate
+            | AppAction::AnnotateGoToCommit
+            | AppAction::AnnotateTimeTravel
+            | AppAction::AnnotateForward
+            | AppAction::ToggleAnnotateSeparator
+            | AppAction::EditFileWorkingCopy
+            | AppAction::EditFileAtRevision
+            | AppAction::CheckoutAndEditFile
+            | AppAction::OpLogRestore
+            | AppAction::OpLogRevert
+            | AppAction::OpLogAbandon
+            | AppAction::OpLogFilterWorkspace
+            | AppAction::CommandMode
+            | AppAction::FileList
+            | AppAction::RepeatLast => false,
+        }
+    }
+
     pub fn is_repeatable(self) -> bool {
         match self {
             AppAction::ArrangeUp

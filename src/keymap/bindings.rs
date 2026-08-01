@@ -628,4 +628,36 @@ mod tests {
     fn default_bindings_build() {
         assert!(!default_bindings().is_empty());
     }
+
+    /// Target- and commit-select resolve keys through the keymap and admit
+    /// only cursor movement. Guards the class of bug where a mode grows its
+    /// own key table and quietly omits half the movement bindings.
+    #[test]
+    fn select_modes_admit_movement_keys_only() {
+        use crate::keymap::{ActionRegistry, Keymaps, LookupResult, try_parse_key};
+
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let keymap = keymaps.for_view(ActiveView::Dag);
+        let admits = |key: &str| {
+            let node = try_parse_key(key).unwrap_or_else(|| panic!("unparsable key: {key}"));
+            match keymap.lookup(&node) {
+                LookupResult::Action(ActionId::Builtin(action)) => action.is_cursor_navigation(),
+                _ => false,
+            }
+        };
+
+        for key in [
+            "j", "k", "down", "up", "shift-j", "shift-k", "ctrl-d", "ctrl-u", "pagedown", "pageup",
+            "shift-h", "shift-m", "shift-l", "h", "l", "left", "right", "0", "$", "@", "tab", "'",
+            "/", "ctrl-n", "ctrl-p", "?",
+        ] {
+            assert!(admits(key), "{key} should move the cursor in select modes");
+        }
+
+        // Mutations, selection changes and mode switches stay out; `x` is a
+        // prefix in the DAG view, standing in for sequence bindings.
+        for key in ["space", "v", ":", "ctrl-r", "x"] {
+            assert!(!admits(key), "{key} must not act in select modes");
+        }
+    }
 }
