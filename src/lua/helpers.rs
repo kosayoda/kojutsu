@@ -107,7 +107,11 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@class JJResult").unwrap();
     writeln!(out, "---@field status JJStatus").unwrap();
     writeln!(out, "---@field ok boolean").unwrap();
-    writeln!(out, "---@field output string").unwrap();
+    writeln!(
+        out,
+        "---@field output string stdout+stderr, ANSI-colored; pass through kojutsu.strip_ansi to parse it"
+    )
+    .unwrap();
     writeln!(
         out,
         "---@field code integer? exit code (nil when cancelled or spawn failed)"
@@ -172,7 +176,11 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@class HookResultTable").unwrap();
     writeln!(out, "---@field status JJStatus").unwrap();
     writeln!(out, "---@field ok boolean").unwrap();
-    writeln!(out, "---@field output string").unwrap();
+    writeln!(
+        out,
+        "---@field output string stdout+stderr, ANSI-colored; pass through kojutsu.strip_ansi to parse it"
+    )
+    .unwrap();
     writeln!(
         out,
         "---@field code integer? exit code (nil when cancelled or spawn failed)"
@@ -196,6 +204,11 @@ pub fn generate_type_definitions() -> String {
     .unwrap();
     writeln!(out, "---@field log fun(msg: string)").unwrap();
     writeln!(out, "---@field copy fun(text: string)").unwrap();
+    writeln!(
+        out,
+        "---@field strip_ansi fun(text: string): string drop ANSI styling, e.g. before parsing a JJResult.output"
+    )
+    .unwrap();
     writeln!(
         out,
         "---@field command fun(name: string, fn: fun(ctx: KojutsuCtx), opts: CommandOpts)"

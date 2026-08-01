@@ -131,6 +131,10 @@ impl LuaEngine {
             Ok(())
         })?;
 
+        let strip_ansi_fn = self
+            .lua
+            .create_function(|_lua, text: String| Ok(crate::app::strip_ansi(&text)))?;
+
         let log_fn = self.lua.create_function(|lua, msg: String| {
             lua_state!(lua).borrow_mut().pending_logs.push(msg);
             Ok(())
@@ -204,6 +208,7 @@ impl LuaEngine {
         kojutsu.set("dispatch", dispatch_fn)?;
         kojutsu.set("log", log_fn)?;
         kojutsu.set("copy", copy_fn)?;
+        kojutsu.set("strip_ansi", strip_ansi_fn)?;
         kojutsu.set("_collect_logs", collect_logs_fn)?;
 
         let ui: mlua::Table = kojutsu.get("ui")?;

@@ -351,6 +351,69 @@ pub fn parse_ansi_lines(output: &[u8]) -> Vec<ratatui::text::Line<'static>> {
     }
 }
 
+/// Drop ANSI styling from `output`, keeping the text the overlay would show.
+/// Shares [`parse_ansi_lines`]'s parser, so a plugin parsing a jj result sees
+/// exactly the characters the user sees, and inherits the same plain-text
+/// fallback for malformed escape sequences.
+pub fn strip_ansi(output: &str) -> String {
+    let mut plain = String::with_capacity(output.len());
+    for (i, line) in parse_ansi_lines(output.as_bytes()).iter().enumerate() {
+        if i > 0 {
+            plain.push('\n');
+        }
+        for span in &line.spans {
+            plain.push_str(&span.content);
+        }
+    }
+    // The parser splits on newlines and keeps none of its own, so a trailing
+    // one has to be put back: patterns anchored on it are common.
+    if output.ends_with('\n') && !plain.ends_with('\n') {
+        plain.push('\n');
+    }
+    plain
+}
+
+#[cfg(test)]
+mod strip_ansi_tests {
+    use super::strip_ansi;
+
+    /// Real `jj duplicate` output: the change id's unique prefix is styled
+    /// separately from its tail, so the escapes land mid-identifier.
+    #[test]
+    fn strips_styling_from_inside_an_identifier() {
+        let colored = "Duplicated 502a6da5a699 as \x1b[1m\x1b[38;5;5mk\x1b[0m\
+                       \x1b[38;5;8mszsoywm\x1b[39m \x1b[1m\x1b[38;5;4m4\x1b[0m\
+                       \x1b[38;5;8m878f22c\x1b[39m first\n";
+        assert_eq!(
+            strip_ansi(colored),
+            "Duplicated 502a6da5a699 as kszsoywm 4878f22c first\n"
+        );
+    }
+
+    /// Templates use tabs to separate fields, so they have to survive.
+    #[test]
+    fn preserves_tabs_and_blank_lines() {
+        assert_eq!(
+            strip_ansi("8b88470d06ee\tfeature-c\n\nd787ee7889db\t\n"),
+            "8b88470d06ee\tfeature-c\n\nd787ee7889db\t\n"
+        );
+    }
+
+    #[test]
+    fn leaves_unstyled_text_alone() {
+        assert_eq!(strip_ansi("no escapes here"), "no escapes here");
+        assert_eq!(strip_ansi(""), "");
+    }
+
+    #[test]
+    fn a_malformed_escape_falls_back_to_the_raw_text() {
+        let mangled = "Duplicated \x1b[38;5 as abcd\n";
+        // Whatever the parser makes of it, the identifier must still be there
+        // and the call must not panic.
+        assert!(strip_ansi(mangled).contains("abcd"));
+    }
+}
+
 /// State for the command output overlay.
 pub struct CommandOutputState {
     /// The command that was run, e.g. `"$ jj abandon xvzwolmw"`.
