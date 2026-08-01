@@ -908,6 +908,12 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
             "resolve"
         }
+        AppAction::ConflictPickOurs
+        | AppAction::ConflictPickTheirs
+        | AppAction::ConflictPickBase
+        | AppAction::ConflictUnpick => "pick conflict side",
+        AppAction::ConflictApplyPicks => "apply picks",
+        AppAction::ConflictEditFile | AppAction::ConflictEditHunk => "edit conflict",
         AppAction::Interdiff | AppAction::EvoLogInterdiff => "interdiff",
         AppAction::FileAnnotate
         | AppAction::AnnotateGoToCommit
@@ -920,7 +926,11 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::SelectPreset => "preset",
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         AppAction::RepeatLast => "repeat",
-        _ => "action",
+        // Anything without a friendlier name reads as its stable id, which
+        // is always meaningful — a literal "action" is not, and left the
+        // conflict-pick group announcing itself as "action does not support
+        // 3 commits" until someone noticed.
+        other => action_id_name(other),
     }
 }
 
@@ -960,5 +970,47 @@ mod selection_kind_set_tests {
         // Supporting half of a mixed selection is not enough.
         assert!(file_and_line.blocked_by(SelectionKindSet::FILE));
         assert!(SelectionKindSet::FILE.blocked_by(SelectionKindSet::COMMIT));
+    }
+}
+
+#[cfg(test)]
+mod action_label_tests {
+    use super::{AppAction, SelectionKindSet, action_id_name, action_label};
+    use strum::IntoEnumIterator as _;
+
+    /// A refusal names the action. Anything that can be selection-blocked
+    /// reaches this message, and a placeholder there tells the user nothing.
+    #[test]
+    fn every_blockable_action_names_itself() {
+        for action in AppAction::iter() {
+            if action.meta().selection_support == SelectionKindSet::ALL {
+                continue;
+            }
+            let label = action_label(action);
+            assert!(!label.is_empty(), "{action:?} has an empty label");
+            assert_ne!(label, "action", "{action:?} falls back to a placeholder");
+        }
+    }
+
+    /// The conflict picks were the group that reached the placeholder. They
+    /// should read as something written for a person — asserted as "not the
+    /// id" rather than by quoting the labels, which would only restate them.
+    #[test]
+    fn the_conflict_actions_carry_human_labels() {
+        for action in [
+            AppAction::ConflictPickOurs,
+            AppAction::ConflictPickTheirs,
+            AppAction::ConflictPickBase,
+            AppAction::ConflictUnpick,
+            AppAction::ConflictApplyPicks,
+            AppAction::ConflictEditFile,
+            AppAction::ConflictEditHunk,
+        ] {
+            assert_ne!(
+                action_label(action),
+                action_id_name(action),
+                "{action:?} has no label of its own"
+            );
+        }
     }
 }
