@@ -944,3 +944,76 @@ impl LuaEngine {
         Ok(ctx)
     }
 }
+
+#[cfg(test)]
+mod api_surface_tests {
+    use super::LuaEngine;
+
+    /// Function names on a table, ignoring `_`-prefixed internals.
+    fn functions(engine: &LuaEngine, path: &[&str]) -> Vec<String> {
+        let mut table: mlua::Table = engine.lua.globals().get("kojutsu").expect("kojutsu global");
+        for step in path {
+            table = table
+                .get(*step)
+                .unwrap_or_else(|_| panic!("kojutsu.{step}"));
+        }
+        let mut names: Vec<String> = table
+            .pairs::<String, mlua::Value>()
+            .filter_map(|pair| {
+                let (name, value) = pair.ok()?;
+                (value.is_function() && !name.starts_with('_')).then_some(name)
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The `---@field` names declared for one generated class.
+    fn declared(class: &str) -> Vec<String> {
+        let defs = crate::lua::generate_type_definitions();
+        let start = defs
+            .find(&format!("---@class {class}\n"))
+            .unwrap_or_else(|| panic!("no class {class}"));
+        let block = &defs[start..];
+        let end = block.find("\n\n").unwrap_or(block.len());
+        let mut names: Vec<String> = block[..end]
+            .lines()
+            .filter_map(|l| l.strip_prefix("---@field "))
+            .filter_map(|l| l.split_whitespace().next())
+            .map(str::to_string)
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// The type definitions are what plugin authors code against, and they're
+    /// written by hand next to the registrations. A function present in one
+    /// and not the other is either invisible or a lie.
+    #[test]
+    fn ui_and_nav_are_declared_exactly_as_registered() {
+        let engine = LuaEngine::for_test();
+        for (path, class) in [(["ui"], "KojutsuUi"), (["nav"], "KojutsuNav")] {
+            assert_eq!(
+                functions(&engine, &path),
+                declared(class),
+                "kojutsu.{} does not match {class}",
+                path[0]
+            );
+        }
+    }
+
+    /// Only one direction at the top level: `command`, `hook`, `bind`,
+    /// `rebind`, `unbind` and `prefix` are installed while loading init.lua,
+    /// which a test engine skips, so they're declared but not present here.
+    #[test]
+    fn every_registered_top_level_function_is_declared() {
+        let engine = LuaEngine::for_test();
+        let declared = declared("Kojutsu");
+        for name in functions(&engine, &[]) {
+            assert!(
+                declared.contains(&name),
+                "kojutsu.{name} is registered but missing from the type definitions"
+            );
+        }
+    }
+}

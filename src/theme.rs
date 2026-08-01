@@ -296,7 +296,7 @@ impl DefaultSearchScopes {
 /// - Named: `"cyan"`, `"red"`, `"dark_gray"`, etc.
 /// - RGB table: `{ r = 50, g = 50, b = 60 }`
 /// - ANSI index: `42`
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug, PartialEq)]
 pub struct Theme {
     /// Prompts, headers, visual range indicators, immutable glyphs.
     #[serde(default = "default_accent", deserialize_with = "de_color")]
@@ -516,4 +516,31 @@ fn parse_hex_color(hex: &str) -> Option<Color> {
     let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
     let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
     Some(Color::Rgb(r, g, b))
+}
+
+#[cfg(test)]
+mod default_config_tests {
+    use super::{Config, DEFAULT_CONFIG};
+
+    /// `--print-default-config` hands this to users as a starting point, and
+    /// `load_config` warns and falls back on a parse error — so a broken
+    /// default would only surface as everyone's config silently not applying.
+    #[test]
+    fn the_shipped_default_config_parses() {
+        toml::from_str::<Config>(DEFAULT_CONFIG)
+            .unwrap_or_else(|e| panic!("default-config.toml does not parse: {e}"));
+    }
+
+    /// The file says "shown values are the defaults". Unknown keys are
+    /// ignored by serde, so a renamed field would leave the documented value
+    /// silently inert — this checks the claim instead of trusting it.
+    #[test]
+    fn the_documented_theme_values_are_the_real_defaults() {
+        let shipped: Config = toml::from_str(DEFAULT_CONFIG).expect("parses");
+        let defaults = Config::default();
+        assert_eq!(
+            shipped.theme, defaults.theme,
+            "default-config.toml's [theme] no longer matches Theme::default()"
+        );
+    }
 }
