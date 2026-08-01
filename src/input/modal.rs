@@ -537,15 +537,7 @@ mod jump_tests {
     /// right one is the whole point; it used to carry its own restore field
     /// rather than going through the overlay stack.
     fn app_in_commit_select() -> App {
-        let glyphs: &'static crate::theme::GlyphChars =
-            Box::leak(Box::new(crate::theme::GlyphChars::default()));
-        let mut app = App::new(
-            String::new(),
-            String::new(),
-            &[],
-            glyphs,
-            crate::types::SearchScopes::DEFAULT,
-        );
+        let mut app = App::for_test();
         app.mode = AppMode::CommitSelect {
             pending: crate::types::PendingCommitSelect::WorkspaceAdd {
                 path: String::new(),
@@ -606,15 +598,7 @@ mod jump_tests {
 
     #[test]
     fn jump_from_normal_returns_to_normal() {
-        let glyphs: &'static crate::theme::GlyphChars =
-            Box::leak(Box::new(crate::theme::GlyphChars::default()));
-        let mut app = App::new(
-            String::new(),
-            String::new(),
-            &[],
-            glyphs,
-            crate::types::SearchScopes::DEFAULT,
-        );
+        let mut app = App::for_test();
         open_jump(&mut app, &["a"]);
         press(&mut app, KeyCode::Char('a'));
         assert!(matches!(app.mode, AppMode::Normal));

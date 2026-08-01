@@ -9,6 +9,7 @@ mod visual;
 pub use types::*;
 
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 /// How much of the row list a batch of repo results invalidated.
 #[derive(Default)]
@@ -300,11 +301,9 @@ pub struct App {
     pub h_scroll: usize,
     /// Revset configuration and state.
     pub revset: RevsetConfig,
-    /// Glyph characters for DAG rendering.
-    pub glyphs: &'static crate::theme::GlyphChars,
-    /// Default search scopes from config.
-    /// Preset command lines for `jj run`, from config.
-    pub run_presets: &'static [String],
+    /// The loaded configuration. Held by handle rather than borrowed so it
+    /// can be swapped wholesale when the config is reloaded.
+    pub config: Rc<crate::theme::Config>,
     /// Previously run `jj run` commands, most recent first (persisted).
     pub run_history: Vec<String>,
     pub repo_root: String,
@@ -376,13 +375,8 @@ impl std::fmt::Debug for App {
 }
 
 impl App {
-    pub fn new(
-        revset: String,
-        repo_root: String,
-        presets: &'static [crate::theme::Preset],
-        glyphs: &'static crate::theme::GlyphChars,
-        default_search_scopes: SearchScopes,
-    ) -> Self {
+    pub fn new(revset: String, repo_root: String, config: Rc<crate::theme::Config>) -> Self {
+        let default_search_scopes = config.default_search_scopes.to_flags();
         let mut app = Self {
             active_view: ActiveView::Dag,
             nodes: IndexVec::new(),
@@ -407,11 +401,9 @@ impl App {
                 load_state: Loadable::NotRequested,
                 pending: None,
                 active_preset: None,
-                presets,
                 conflicted_prev: None,
             },
-            glyphs,
-            run_presets: &[],
+            config,
             run_history: Vec::new(),
             repo_root,
             mode: AppMode::Normal,
@@ -436,6 +428,16 @@ impl App {
         };
         app.rebuild_rows();
         app
+    }
+
+    /// An app on default config, for tests that don't exercise config at all.
+    #[cfg(test)]
+    pub fn for_test() -> Self {
+        Self::new(
+            String::new(),
+            String::new(),
+            Rc::new(crate::theme::Config::default()),
+        )
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
@@ -1463,7 +1465,7 @@ impl App {
         self.run_history = state.run_history.clone();
         self.revset.active_preset = state
             .active_preset
-            .filter(|&i| i < self.revset.presets.len());
+            .filter(|&i| i < self.config.revsets.presets.len());
         for (i, &bits) in state.view_search_scopes.iter().enumerate() {
             if let Some(scopes) = SearchScopes::from_bits(bits)
                 && !scopes.is_empty()

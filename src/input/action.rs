@@ -556,11 +556,17 @@ pub fn dispatch_action_after_hooks(
         }
         AppAction::Refresh => Action::Refresh,
         AppAction::SelectPreset => {
-            if app.revset.presets.is_empty() {
+            if app.config.revsets.presets.is_empty() {
                 app.set_error("no presets configured");
                 return Action::None;
             }
-            let items: Vec<String> = app.revset.presets.iter().map(|p| p.name.clone()).collect();
+            let items: Vec<String> = app
+                .config
+                .revsets
+                .presets
+                .iter()
+                .map(|p| p.name.clone())
+                .collect();
             app.mode = AppMode::select_from_list(
                 "switch preset",
                 items,
@@ -600,7 +606,7 @@ pub fn dispatch_action_after_hooks(
         | AppAction::SwitchPreset4
         | AppAction::SwitchPreset5 => {
             let slot = action.preset_slot().expect("switch-preset action");
-            if let Some(preset) = app.revset.presets.get(slot) {
+            if let Some(preset) = app.config.revsets.presets.get(slot) {
                 app.revset.active_preset = Some(slot);
                 Action::UpdateRevset(preset.revset.clone())
             } else {
@@ -1107,18 +1113,6 @@ mod selection_gate_tests {
     use crate::keymap::SelectionKindSet;
     use crate::types::{ChangeId, FileRef, RepoPath, Selection};
 
-    fn test_app() -> App {
-        let glyphs: &'static crate::theme::GlyphChars =
-            Box::leak(Box::new(crate::theme::GlyphChars::default()));
-        App::new(
-            String::new(),
-            String::new(),
-            &[],
-            glyphs,
-            crate::types::SearchScopes::DEFAULT,
-        )
-    }
-
     fn select_file(app: &mut App) {
         app.selection.insert(Selection::File(FileRef {
             change_id: ChangeId::new("qpvuntsm"),
@@ -1143,7 +1137,7 @@ mod selection_gate_tests {
     fn a_lua_command_is_refused_outside_its_declared_selection() {
         let mut registry = ActionRegistry::new();
         let file_only = registry.register_lua(SelectionKindSet::FILE);
-        let mut app = test_app();
+        let mut app = App::for_test();
 
         select_file(&mut app);
         assert!(!rejects_selection(&mut app, &registry, file_only, "plug"));
@@ -1158,7 +1152,7 @@ mod selection_gate_tests {
     fn the_refusal_describes_the_whole_selection() {
         let mut registry = ActionRegistry::new();
         let file_only = registry.register_lua(SelectionKindSet::FILE);
-        let mut app = test_app();
+        let mut app = App::for_test();
         select_file(&mut app);
         select_line(&mut app);
 
@@ -1171,7 +1165,7 @@ mod selection_gate_tests {
     fn a_command_declaring_all_takes_anything() {
         let mut registry = ActionRegistry::new();
         let anything = registry.register_lua(SelectionKindSet::ALL);
-        let mut app = test_app();
+        let mut app = App::for_test();
         select_file(&mut app);
         select_line(&mut app);
         assert!(!rejects_selection(&mut app, &registry, anything, "plug"));
@@ -1181,7 +1175,7 @@ mod selection_gate_tests {
     fn no_selection_gates_nothing() {
         let mut registry = ActionRegistry::new();
         let commit_only = registry.register_lua(SelectionKindSet::COMMIT);
-        let mut app = test_app();
+        let mut app = App::for_test();
         assert!(!rejects_selection(&mut app, &registry, commit_only, "plug"));
     }
 }

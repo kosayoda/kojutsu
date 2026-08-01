@@ -18,7 +18,11 @@ use crate::theme::Config;
 pub const STATUS_AREA_HEIGHT: u16 = 2;
 
 /// Render the full UI into the frame.
-pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config) {
+pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
+    // Cloning the handle (not the config) releases `app` for the `&mut`
+    // borrows the render path needs.
+    let config: std::rc::Rc<Config> = app.config.clone();
+    let config = &*config;
     let theme = &config.theme;
     // Use a single-line header if both repo and revset fit on one line.
     let single_line_len = "repository: ".len()
@@ -134,7 +138,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps, config: &Config
                 _ => keymap::help_entries(
                     keymaps.for_view(app.active_view),
                     &keymaps.registry,
-                    app.revset.presets,
+                    &app.config.revsets.presets,
                 ),
             };
             let (left, right) = overlay::balance_help_groups(&groups);

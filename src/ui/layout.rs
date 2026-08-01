@@ -52,7 +52,7 @@ pub(super) fn draw_header(
                 if let Some(preset) = app
                     .revset
                     .active_preset
-                    .and_then(|i| app.revset.presets.get(i))
+                    .and_then(|i| app.config.revsets.presets.get(i))
                 {
                     format!("revset ({}): ", preset.name)
                 } else {
@@ -73,7 +73,7 @@ pub(super) fn draw_header(
                     if let Some(preset) = app
                         .revset
                         .active_preset
-                        .and_then(|i| app.revset.presets.get(i))
+                        .and_then(|i| app.config.revsets.presets.get(i))
                     {
                         format!("revset ({}): ", preset.name)
                     } else {

@@ -664,15 +664,15 @@ fn enter_run_input(app: &mut App, flags: CommandFlags) -> Action {
     }
     // Without presets or history there is nothing to pick from — go
     // straight to the free-text input.
-    if app.run_presets.is_empty() && app.run_history.is_empty() {
+    if app.config.run.presets.is_empty() && app.run_history.is_empty() {
         app.mode = crate::input::modal::run_command_input(ids, flags, "");
         return Action::None;
     }
-    let mut items: Vec<String> = app.run_presets.to_vec();
+    let mut items: Vec<String> = app.config.run.presets.to_vec();
     items.extend(
         app.run_history
             .iter()
-            .filter(|c| !app.run_presets.contains(c))
+            .filter(|c| !app.config.run.presets.contains(c))
             .cloned(),
     );
     app.mode = AppMode::select_from_list_with_custom(

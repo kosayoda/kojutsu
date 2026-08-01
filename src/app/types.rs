@@ -97,10 +97,9 @@ pub struct RevsetConfig {
     pub load_state: Loadable<()>,
     /// Revset currently being requested, if any.
     pub pending: Option<Str>,
-    /// Active preset index (into `presets`), or `None` for jj default / manual revset.
+    /// Active preset index (into `App::config`'s `revsets.presets`), or
+    /// `None` for jj default / manual revset.
     pub active_preset: Option<usize>,
-    /// Named revset presets from config.
-    pub presets: &'static [crate::theme::Preset],
     /// The revset in effect before the `conflicted()` toggle was turned on,
     /// so toggling off returns there instead of jj's default. `Some` also
     /// *is* the "toggle currently on" state, replacing string-equality

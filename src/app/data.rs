@@ -150,7 +150,7 @@ impl App {
             self.commit_index
                 .insert(entry.commit.graph_id.clone(), EntryIdx::new(base + i));
         }
-        let graph_lines = stream.renderer.render(&entries, self.glyphs);
+        let graph_lines = stream.renderer.render(&entries, &self.config.glyphs);
         self.nodes.reserve(entries.len());
         for (entry, graph) in entries.into_iter().zip(graph_lines) {
             let idx = EntryIdx::new(self.nodes.len());
@@ -926,19 +926,7 @@ impl App {
 mod repo_result_tests {
     use super::super::{App, Loadable};
     use crate::repo_service::{RepoError, RepoErrorKind, RepoResult};
-    use crate::types::{CommitId, RepoPath, SearchScopes};
-
-    fn test_app() -> App {
-        let glyphs: &'static crate::theme::GlyphChars =
-            Box::leak(Box::new(crate::theme::GlyphChars::default()));
-        App::new(
-            String::new(),
-            String::new(),
-            &[],
-            glyphs,
-            SearchScopes::DEFAULT,
-        )
-    }
+    use crate::types::{CommitId, RepoPath};
 
     fn failure() -> RepoError {
         RepoError::new(RepoErrorKind::Operation, "boom")
@@ -949,7 +937,7 @@ mod repo_result_tests {
     /// transient error would otherwise wedge the entry forever.
     #[test]
     fn a_failed_evolog_detail_load_is_retryable() {
-        let mut app = test_app();
+        let mut app = App::for_test();
         let commit_id = CommitId::new("abc123");
         app.evolog
             .files
@@ -968,7 +956,7 @@ mod repo_result_tests {
 
     #[test]
     fn a_failed_evolog_file_diff_is_retryable() {
-        let mut app = test_app();
+        let mut app = App::for_test();
         let commit_id = CommitId::new("abc123");
         let path = RepoPath::new("a.rs");
         let key = (commit_id.clone(), path.clone());

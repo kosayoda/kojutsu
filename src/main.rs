@@ -160,8 +160,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let config: &'static kojutsu::theme::Config =
-        Box::leak(Box::new(kojutsu::theme::load_config()));
+    let config = std::rc::Rc::new(kojutsu::theme::load_config());
     let mut registry = keymap::ActionRegistry::new();
     let default_specs = keymap::default_bindings();
     let mut lua_engine = kojutsu::lua::LuaEngine::new(&repo_path, &mut registry, &default_specs);
@@ -192,11 +191,8 @@ fn main() -> Result<()> {
     let mut app = App::new(
         requested_revset.clone().unwrap_or_default(),
         repo_path.display().to_string(),
-        &config.revsets.presets,
-        &config.glyphs,
-        config.default_search_scopes.to_flags(),
+        config.clone(),
     );
-    app.run_presets = &config.run.presets;
     app.apply_persisted_state(&persisted);
     app.revset.active_preset = active_preset;
     app.request_revset_load(requested_revset);
@@ -228,7 +224,7 @@ fn main() -> Result<()> {
     let mut events: Vec<AppEvent> = Vec::new();
     loop {
         if dirty {
-            terminal.draw(|frame| ui::draw(frame, &mut app, &keymaps, config))?;
+            terminal.draw(|frame| ui::draw(frame, &mut app, &keymaps))?;
             dirty = false;
         }
 

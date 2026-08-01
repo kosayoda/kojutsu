@@ -351,10 +351,15 @@ pub(super) fn resolve_selection(
         }
         PendingSelection::PresetSelect => {
             let name = names.into_iter().next().unwrap_or_default();
-            let idx = app.revset.presets.iter().position(|p| p.name == name);
+            let idx = app
+                .config
+                .revsets
+                .presets
+                .iter()
+                .position(|p| p.name == name);
             if let Some(i) = idx {
                 app.revset.active_preset = Some(i);
-                Action::UpdateRevset(app.revset.presets[i].revset.clone())
+                Action::UpdateRevset(app.config.revsets.presets[i].revset.clone())
             } else {
                 Action::None
             }
@@ -452,15 +457,7 @@ mod list_navigation_tests {
     use ratatui::crossterm::event::KeyModifiers;
 
     fn app_with_list(filtering: bool) -> App {
-        let glyphs: &'static crate::theme::GlyphChars =
-            Box::leak(Box::new(crate::theme::GlyphChars::default()));
-        let mut app = App::new(
-            String::new(),
-            String::new(),
-            &[],
-            glyphs,
-            crate::types::SearchScopes::DEFAULT,
-        );
+        let mut app = App::for_test();
         app.mode = AppMode::select_from_list(
             "pick",
             vec!["a".into(), "b".into(), "c".into()],
