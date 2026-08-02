@@ -351,6 +351,64 @@ pub struct App {
     conflict_ui: HashMap<(CommitId, RepoPath), HashMap<ConflictHunkIdx, HunkUiState>>,
 }
 
+#[cfg(test)]
+mod reload_tests {
+    use super::{App, Rc, SearchScopes};
+    use crate::theme::{Config, DefaultSearchScopes, Preset, RevsetsConfig};
+
+    fn with_presets(count: usize) -> Rc<Config> {
+        Rc::new(Config {
+            revsets: RevsetsConfig {
+                presets: (0..count)
+                    .map(|i| Preset {
+                        name: i.to_string(),
+                        revset: String::new(),
+                    })
+                    .collect(),
+            },
+            ..Config::default()
+        })
+    }
+
+    /// Scopes are seeded from config once and toggled by the user after.
+    /// Reloading to change a color must not undo those toggles.
+    #[test]
+    fn a_reload_keeps_the_scopes_the_user_toggled() {
+        let mut app = App::for_test();
+        *app.search_scopes_mut() = SearchScopes::AUTHOR;
+
+        app.apply_reloaded_config(Rc::new(Config {
+            default_search_scopes: DefaultSearchScopes {
+                path: true,
+                ..DefaultSearchScopes::default()
+            },
+            ..Config::default()
+        }));
+
+        assert_eq!(app.search_scopes(), SearchScopes::AUTHOR);
+    }
+
+    #[test]
+    fn a_reload_drops_an_active_preset_the_new_config_no_longer_has() {
+        let mut app = App::new(String::new(), String::new(), with_presets(3));
+        app.revset.active_preset = Some(2);
+
+        app.apply_reloaded_config(with_presets(1));
+
+        assert_eq!(app.revset.active_preset, None);
+    }
+
+    #[test]
+    fn a_reload_keeps_an_active_preset_that_still_exists() {
+        let mut app = App::new(String::new(), String::new(), with_presets(3));
+        app.revset.active_preset = Some(2);
+
+        app.apply_reloaded_config(with_presets(3));
+
+        assert_eq!(app.revset.active_preset, Some(2));
+    }
+}
+
 /// User-facing interaction state for one conflict hunk. Defaults are the
 /// untouched state (no pick, base shown, section trimmed); only deviating
 /// hunks get a stored entry.
@@ -1473,6 +1531,25 @@ impl App {
                 self.view_states[i].search_scopes = scopes;
             }
         }
+    }
+
+    /// Point the app at a freshly loaded config, recomputing what derives
+    /// from it.
+    ///
+    /// Search scopes are deliberately not re-seeded: they start from
+    /// `default_search_scopes` but the user toggles them at runtime. The
+    /// active preset is re-clamped, since the new list may be shorter.
+    ///
+    /// Does not carry `diff.max_file_size_mib`, which lives in the repo
+    /// service — send
+    /// [`RepoRequest::set_diff_size_limit`](crate::repo_service::RepoRequest::set_diff_size_limit)
+    /// alongside this.
+    pub fn apply_reloaded_config(&mut self, config: Rc<crate::theme::Config>) {
+        self.config = config;
+        self.revset.active_preset = self
+            .revset
+            .active_preset
+            .filter(|&i| i < self.config.revsets.presets.len());
     }
 
     /// Get the text to pre-fill the revset input with.

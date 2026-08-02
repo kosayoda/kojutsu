@@ -85,6 +85,10 @@ enum RepoRequestKind {
     FileList {
         commit_id: CommitId,
     },
+    /// Replace the diff size limit, after the config was reloaded.
+    SetDiffSizeLimit {
+        bytes: usize,
+    },
 }
 
 impl RepoRequestKind {
@@ -103,6 +107,7 @@ impl RepoRequestKind {
             Self::InterdiffFileDiff { .. } => "interdiff_file_diff",
             Self::Annotate { .. } => "annotate",
             Self::FileList { .. } => "file_list",
+            Self::SetDiffSizeLimit { .. } => "set_diff_size_limit",
         }
     }
 }
@@ -376,6 +381,16 @@ impl RepoRequest {
             kind: RepoRequestKind::FileList { commit_id },
         }
     }
+
+    /// Apply a diff size limit read from a reloaded config. Queued behind
+    /// whatever is in flight, so a diff already being computed keeps the
+    /// limit it started under.
+    pub fn set_diff_size_limit(bytes: usize) -> Self {
+        Self {
+            epoch: 0,
+            kind: RepoRequestKind::SetDiffSizeLimit { bytes },
+        }
+    }
 }
 
 impl RepoService {
@@ -582,6 +597,9 @@ impl RepoServiceState {
             }
             RepoRequestKind::FileList { commit_id } => {
                 self.handle_file_list(commit_id);
+            }
+            RepoRequestKind::SetDiffSizeLimit { bytes } => {
+                self.diff_size_limit = bytes;
             }
         }
     }
