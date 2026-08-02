@@ -493,9 +493,12 @@ impl App {
     }
 
     /// Jump to a commit by change/commit ID prefix. Returns whether it was found.
+    ///
+    /// Matched against the whole IDs, so a prefix of any length works — not
+    /// just one short enough to fit the displayed form.
     pub fn jump_to_change_id(&mut self, prefix: &str) -> bool {
         for (idx, node) in self.nodes.iter_enumerated() {
-            if (node.commit.change_id.display().starts_with(prefix)
+            if (node.commit.change_id.full().starts_with(prefix)
                 || node.commit.graph_id.as_str().starts_with(prefix))
                 && let Some(row) = self.row_of_commit(idx)
             {
@@ -566,5 +569,53 @@ impl App {
     /// Set cursor to a specific row, clamping to valid bounds.
     pub fn set_cursor(&mut self, row: RowIdx) {
         self.cursor = RowIdx::new(row.raw().min(self.rows.len().saturating_sub(1)));
+    }
+}
+
+#[cfg(test)]
+mod jump_tests {
+    use super::super::{App, DagNode};
+    use crate::dag::CommitInfo;
+    use crate::graph::GraphLines;
+    use crate::types::SmallVec;
+
+    const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
+    const COMMIT_ID: &str = "7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654";
+
+    fn app_with_one_commit() -> App {
+        let mut app = App::for_test();
+        app.nodes.push(DagNode::new(
+            CommitInfo::for_test(CHANGE_ID, COMMIT_ID),
+            GraphLines::default(),
+            SmallVec::new(),
+        ));
+        app.rebuild_rows();
+        app
+    }
+
+    #[test]
+    fn a_prefix_of_any_length_finds_the_commit() {
+        let mut app = app_with_one_commit();
+
+        // Shorter than the displayed form, exactly it, and longer than it —
+        // the last only works because we match the whole ID.
+        for prefix in ["uu", "uunnomkx", "uunnomkxrqvlyp", CHANGE_ID] {
+            assert!(app.jump_to_change_id(prefix), "did not find {prefix:?}");
+        }
+    }
+
+    #[test]
+    fn a_commit_id_prefix_of_any_length_also_finds_it() {
+        let mut app = app_with_one_commit();
+
+        for prefix in ["7b", "7bbaa2cb", "7bbaa2cb1f0e", COMMIT_ID] {
+            assert!(app.jump_to_change_id(prefix), "did not find {prefix:?}");
+        }
+    }
+
+    #[test]
+    fn an_unrelated_prefix_finds_nothing() {
+        let mut app = app_with_one_commit();
+        assert!(!app.jump_to_change_id("zzzz"));
     }
 }

@@ -6,6 +6,11 @@ use crate::types::{DisplayRow, SearchFocus, SearchScopes, SearchState};
 
 /// Match the description and change_id fields shared by bookmark, tag, and
 /// workspace entries.
+///
+/// IDs are matched against their whole text rather than the few characters on
+/// screen, so a pasted or copied ID finds its commit. Every match against the
+/// displayed form is still a match against the full one, which is a prefix of
+/// it — this only widens what is findable.
 fn ref_entry_matches(
     description: Option<&str>,
     change_id: Option<&crate::dag::ShortId>,
@@ -14,7 +19,7 @@ fn ref_entry_matches(
 ) -> bool {
     (scopes.contains(SearchScopes::DESCRIPTION) && description.is_some_and(contains))
         || (scopes.contains(SearchScopes::CHANGE_ID)
-            && change_id.is_some_and(|c| contains(c.display())))
+            && change_id.is_some_and(|c| contains(c.full())))
 }
 
 impl App {
@@ -201,12 +206,12 @@ impl App {
             DisplayRow::CommitNode { entry_idx } => {
                 let commit = &self.nodes[*entry_idx].commit;
                 (scopes.contains(SearchScopes::CHANGE_ID)
-                    && (contains(commit.change_id.display())
+                    && (contains(commit.change_id.full())
                         || commit.change_id_suffix().is_some_and(|n| {
-                            contains(&format!("{}/{n}", commit.change_id.display()))
+                            contains(&format!("{}/{n}", commit.change_id.full()))
                         })))
                     || (scopes.contains(SearchScopes::COMMIT_ID)
-                        && contains(commit.commit_id.display()))
+                        && contains(commit.commit_id.full()))
                     || (scopes.contains(SearchScopes::DESCRIPTION)
                         && commit.description.as_deref().is_some_and(contains))
                     || (scopes.contains(SearchScopes::AUTHOR)
@@ -300,7 +305,7 @@ impl App {
                 let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) else {
                     return false;
                 };
-                (scopes.contains(SearchScopes::CHANGE_ID) && contains(entry.change_id.display()))
+                (scopes.contains(SearchScopes::CHANGE_ID) && contains(entry.change_id.full()))
                     || (scopes.contains(SearchScopes::DESCRIPTION)
                         && entry.description.as_deref().is_some_and(contains))
                     || (scopes.contains(SearchScopes::AUTHOR) && contains(entry.author.as_str()))
@@ -380,7 +385,7 @@ impl App {
                     .loaded()
                     .and_then(|l| l.get(line_idx.raw()));
                 if let Some(line) = line {
-                    (scopes.contains(SearchScopes::CHANGE_ID) && contains(line.change_id.display()))
+                    (scopes.contains(SearchScopes::CHANGE_ID) && contains(line.change_id.full()))
                         || (scopes.contains(SearchScopes::AUTHOR) && contains(&line.author))
                         || (scopes.contains(SearchScopes::LINE) && contains(&line.content))
                 } else {
@@ -395,7 +400,7 @@ impl App {
                     .and_then(|l| l.get(line_idx.raw()))
                     .and_then(|line| self.annotate.commit_info.get(&line.commit_id));
                 info.is_some_and(|info| {
-                    (scopes.contains(SearchScopes::CHANGE_ID) && contains(info.change_id.display()))
+                    (scopes.contains(SearchScopes::CHANGE_ID) && contains(info.change_id.full()))
                         || (scopes.contains(SearchScopes::DESCRIPTION)
                             && info.description_lines.iter().any(|l| contains(l)))
                         || (scopes.contains(SearchScopes::AUTHOR)
@@ -403,5 +408,50 @@ impl App {
                 })
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod id_match_tests {
+    use super::*;
+    use crate::dag::ShortId;
+
+    const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
+
+    fn matches(query: &str) -> bool {
+        let id = ShortId::new(CHANGE_ID);
+        let contains = |haystack: &str| haystack.contains(query);
+        ref_entry_matches(None, Some(&id), SearchScopes::CHANGE_ID, &contains)
+    }
+
+    #[test]
+    fn a_query_longer_than_the_displayed_id_still_matches() {
+        // The displayed form is 8 chars; a copied ID is 32.
+        assert!(matches("uunnomkx"));
+        assert!(matches("uunnomkxrqvlyp"));
+        assert!(matches(CHANGE_ID));
+    }
+
+    #[test]
+    fn a_short_query_matches_as_it_always_did() {
+        assert!(matches("uu"));
+        assert!(matches("nnom"));
+    }
+
+    #[test]
+    fn an_unrelated_query_does_not_match() {
+        assert!(!matches("zzzz"));
+    }
+
+    #[test]
+    fn the_change_id_scope_still_gates_the_match() {
+        let id = ShortId::new(CHANGE_ID);
+        let contains = |haystack: &str| haystack.contains("uu");
+        assert!(!ref_entry_matches(
+            None,
+            Some(&id),
+            SearchScopes::DESCRIPTION,
+            &contains
+        ));
     }
 }
