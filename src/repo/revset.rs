@@ -4,13 +4,12 @@ use color_eyre::Result;
 use color_eyre::eyre::Context;
 use futures::TryStreamExt as _;
 use jj_lib::backend::CommitId as BackendCommitId;
-use jj_lib::fileset::FilesetAliasesMap;
 use jj_lib::graph::{GraphEdgeType, TopoGroupedGraph};
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::RefName;
 use jj_lib::repo::Repo;
 use jj_lib::repo_path::RepoPathUiConverter;
-use jj_lib::revset::{RevsetDiagnostics, RevsetExtensions, RevsetParseContext, SymbolResolver};
+use jj_lib::revset::{RevsetDiagnostics, RevsetParseContext, SymbolResolver};
 use pollster::FutureExt as _;
 
 use super::JjRepo;
@@ -29,13 +28,7 @@ impl JjRepo {
     /// Resolve a revset to a single commit's hex ID.
     pub fn resolve_single_commit(&self, revset_str: &str) -> Result<String> {
         let repo = self.repo.as_ref();
-        let extensions = RevsetExtensions::default();
-        let fileset_aliases_map = FilesetAliasesMap::new();
-        let path_converter = RepoPathUiConverter::Fs {
-            cwd: self.workspace_root.clone(),
-            base: self.workspace_root.clone(),
-        };
-        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
+        let context = self.revset_parse_context();
         let mut diagnostics = RevsetDiagnostics::new();
         let parsed = jj_lib::revset::parse(&mut diagnostics, revset_str, &context)
             .wrap_err_with(|| format!("failed to parse revset: {revset_str}"))?;
@@ -101,13 +94,7 @@ impl JjRepo {
         let repo = self.repo.as_ref();
 
         // Shared context pieces
-        let extensions = RevsetExtensions::default();
-        let fileset_aliases_map = FilesetAliasesMap::new();
-        let path_converter = RepoPathUiConverter::Fs {
-            cwd: self.workspace_root.clone(),
-            base: self.workspace_root.clone(),
-        };
-        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
+        let context = self.revset_parse_context();
 
         // Parse -> Resolve -> Evaluate the user's revset
         let mut diagnostics = RevsetDiagnostics::new();

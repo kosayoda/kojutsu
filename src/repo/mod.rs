@@ -7,13 +7,14 @@ mod revset;
 mod workspace_view;
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use color_eyre::Result;
 use color_eyre::eyre::Context;
 use jj_lib::config::{ConfigGetResultExt as _, StackedConfig};
+use jj_lib::dsl_util::{AliasDeclarationParser, AliasesMap};
 use jj_lib::fileset::FilesetAliasesMap;
-use jj_lib::id_prefix::IdPrefixContext;
+use jj_lib::id_prefix::{IdPrefixContext, IdPrefixIndex};
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::WorkspaceNameBuf;
 use jj_lib::repo::{ReadonlyRepo, Repo as _, StoreFactories};
@@ -60,6 +61,9 @@ pub struct JjRepo {
     pub(super) repo: Arc<ReadonlyRepo>,
     pub(super) settings: UserSettings,
     pub(super) aliases_map: RevsetAliasesMap,
+    pub(super) fileset_aliases_map: FilesetAliasesMap,
+    pub(super) extensions: Arc<RevsetExtensions>,
+    pub(super) path_converter: RepoPathUiConverter,
     pub(super) workspace_name: WorkspaceNameBuf,
     pub(super) workspace_root: PathBuf,
     /// The synthetic remote `remote_bookmarks()` ignores unless asked for it
@@ -67,6 +71,11 @@ pub struct JjRepo {
     /// differently with and without it, so `trunk()` depends on getting this
     /// right.
     pub(super) default_ignored_remote: Option<&'static jj_lib::ref_name::RemoteName>,
+    /// Disambiguation set for shortest unique ID prefixes. Built on first use
+    /// and kept for the life of this repo view, matching jj's rule that an
+    /// `IdPrefixContext` belongs to one view; building it evaluates a revset,
+    /// which is far too much work to repeat per lookup.
+    pub(super) id_prefix: OnceLock<IdPrefixContext>,
     /// Max bytes of file content (per side) materialized for a diff —
     /// a memory guard; larger files get a placeholder.
     pub(super) diff_size_limit: usize,
@@ -120,7 +129,8 @@ impl JjRepo {
         let config = config::load(path)?;
         let settings = UserSettings::from_config(config)
             .wrap_err("failed to create jj settings from config")?;
-        let aliases_map = Self::load_revset_aliases(&settings)?;
+        let aliases_map = load_aliases(&settings, "revset-aliases");
+        let fileset_aliases_map = load_aliases(&settings, "fileset-aliases");
         let workspace = Workspace::load(
             &settings,
             path,
@@ -138,14 +148,22 @@ impl JjRepo {
             .wrap_err("failed to load repo at HEAD")?;
 
         let default_ignored_remote = default_ignored_remote(repo.store());
+        let path_converter = RepoPathUiConverter::Fs {
+            cwd: workspace_root.clone(),
+            base: workspace_root.clone(),
+        };
 
         Ok(Self {
             repo,
             settings,
             aliases_map,
+            fileset_aliases_map,
+            extensions: Arc::new(RevsetExtensions::default()),
+            path_converter,
             workspace_name,
             workspace_root,
             default_ignored_remote,
+            id_prefix: OnceLock::new(),
             diff_size_limit: DEFAULT_DIFF_SIZE_LIMIT,
         })
     }
@@ -221,40 +239,10 @@ impl JjRepo {
         usize::try_from(jobs).ok().filter(|&n| n > 0)
     }
 
-    /// Build the revset aliases map from all config layers.
-    ///
-    /// Iterates config layers in precedence order. Higher-precedence layers
-    /// (User, Repo) override lower ones (Default), matching jj-cli behavior.
-    fn load_revset_aliases(settings: &UserSettings) -> Result<RevsetAliasesMap> {
-        let mut aliases_map = RevsetAliasesMap::new();
-
-        for layer in settings.config().layers() {
-            let table = match layer.look_up_table("revset-aliases") {
-                Ok(Some(table)) => table,
-                Ok(None) => continue,
-                Err(_) => continue, // not a table, skip
-            };
-            for (decl, item) in table.iter() {
-                if let Some(defn) = item.as_str() {
-                    // Silently ignore malformed declarations; they'll error
-                    // when the alias is actually used in a revset.
-                    let _ = aliases_map.insert(decl, defn, None);
-                }
-            }
-        }
-
-        Ok(aliases_map)
-    }
-
     /// Build a [`RevsetParseContext`] with loaded aliases and proper user email.
-    pub(super) fn revset_parse_context<'a>(
-        &'a self,
-        extensions: &'a RevsetExtensions,
-        fileset_aliases_map: &'a FilesetAliasesMap,
-        path_converter: &'a RepoPathUiConverter,
-    ) -> RevsetParseContext<'a> {
+    pub(super) fn revset_parse_context(&self) -> RevsetParseContext<'_> {
         let workspace_ctx = RevsetWorkspaceContext {
-            path_converter,
+            path_converter: &self.path_converter,
             workspace_name: &self.workspace_name,
         };
         RevsetParseContext {
@@ -263,28 +251,74 @@ impl JjRepo {
             user_email: self.settings.user_email(),
             date_pattern_context: DatePatternContext::from(chrono::Local::now()),
             default_ignored_remote: self.default_ignored_remote,
-            fileset_aliases_map,
-            extensions,
+            fileset_aliases_map: &self.fileset_aliases_map,
+            extensions: &self.extensions,
             workspace: Some(workspace_ctx),
         }
+    }
+
+    /// The disambiguation set for shortest unique ID prefixes, built once per
+    /// repo view. Use [`Self::id_prefix_index`] unless you need the context
+    /// itself to outlive the index.
+    pub(super) fn id_prefix_context(&self) -> Result<&IdPrefixContext> {
+        if let Some(ctx) = self.id_prefix.get() {
+            return Ok(ctx);
+        }
+        let ctx = self.build_id_prefix_context()?;
+        // A racing thread may have won; either context is equivalent.
+        Ok(self.id_prefix.get_or_init(|| ctx))
+    }
+
+    /// The populated index used to shorten and resolve ID prefixes. The
+    /// underlying revset is evaluated lazily, once, on first use.
+    pub(super) fn id_prefix_index(&self) -> Result<IdPrefixIndex<'_>> {
+        self.id_prefix_context()?
+            .populate(self.repo.as_ref())
+            .wrap_err("failed to populate ID prefix index")
     }
 
     /// Build an `IdPrefixContext` over the same disambiguation set jj uses, so
     /// that a prefix shown here still resolves when handed back to the `jj`
     /// CLI as a revision argument.
-    pub(super) fn build_id_prefix_context(
-        &self,
-        context: &RevsetParseContext<'_>,
-    ) -> Result<IdPrefixContext> {
-        let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
+    fn build_id_prefix_context(&self) -> Result<IdPrefixContext> {
+        let ctx = IdPrefixContext::new(Arc::clone(&self.extensions));
         let Some(revset_str) = short_prefixes_revset(self.settings.config())? else {
             return Ok(ctx);
         };
+        tracing::debug!("building ID prefix disambiguation set from `{revset_str}`");
         let mut diag = RevsetDiagnostics::new();
-        let expression = jj_lib::revset::parse(&mut diag, &revset_str, context)
-            .wrap_err_with(|| format!("invalid ID prefix disambiguation revset `{revset_str}`"))?;
+        let expression =
+            jj_lib::revset::parse(&mut diag, &revset_str, &self.revset_parse_context())
+                .wrap_err_with(|| {
+                    format!("invalid ID prefix disambiguation revset `{revset_str}`")
+                })?;
         Ok(ctx.disambiguate_within(expression))
     }
+}
+
+/// Build an aliases map from `table_name` across all config layers.
+///
+/// Layers come in precedence order, so higher-precedence ones (User, Repo)
+/// overwrite lower ones (Default), matching jj-cli.
+fn load_aliases<P, V>(settings: &UserSettings, table_name: &'static str) -> AliasesMap<P, V>
+where
+    P: AliasDeclarationParser + Default,
+    V: for<'a> From<&'a str>,
+{
+    let mut aliases_map = AliasesMap::new();
+    for layer in settings.config().layers() {
+        let Ok(Some(table)) = layer.look_up_table(table_name) else {
+            continue; // absent, or not a table
+        };
+        for (decl, item) in table.iter() {
+            if let Some(defn) = item.as_str() {
+                // Silently ignore malformed declarations; they'll error when
+                // the alias is actually used.
+                let _ = aliases_map.insert(decl, defn, None);
+            }
+        }
+    }
+    aliases_map
 }
 
 /// The revset jj disambiguates change/commit ID prefixes within:

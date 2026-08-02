@@ -4,11 +4,8 @@ use color_eyre::Result;
 use color_eyre::eyre::Context;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::commit::Commit;
-use jj_lib::fileset::FilesetAliasesMap;
 use jj_lib::object_id::ObjectId;
 use jj_lib::repo::Repo;
-use jj_lib::repo_path::RepoPathUiConverter;
-use jj_lib::revset::RevsetExtensions;
 use pollster::FutureExt as _;
 
 use super::JjRepo;
@@ -62,17 +59,7 @@ impl JjRepo {
         let annotation = annotator.to_annotation();
 
         // Build ID prefix context for short change IDs.
-        let extensions = RevsetExtensions::default();
-        let fileset_aliases_map = FilesetAliasesMap::new();
-        let path_converter = RepoPathUiConverter::Fs {
-            cwd: self.workspace_root.clone(),
-            base: self.workspace_root.clone(),
-        };
-        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
-        let id_prefix_context = self.build_id_prefix_context(&context)?;
-        let prefix_index = id_prefix_context
-            .populate(repo)
-            .wrap_err("failed to populate ID prefix index for annotate")?;
+        let prefix_index = self.id_prefix_index()?;
 
         // Cache commit metadata per unique backend CommitId.
         struct CachedMeta {

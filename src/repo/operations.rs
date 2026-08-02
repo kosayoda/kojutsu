@@ -6,11 +6,8 @@ use color_eyre::Result;
 use color_eyre::eyre::Context;
 use futures::TryStreamExt as _;
 use jj_lib::backend::CommitId as BackendCommitId;
-use jj_lib::fileset::FilesetAliasesMap;
 use jj_lib::object_id::ObjectId;
 use jj_lib::repo::Repo;
-use jj_lib::repo_path::RepoPathUiConverter;
-use jj_lib::revset::RevsetExtensions;
 use pollster::FutureExt as _;
 
 use super::{DISPLAY_ID_LEN, JjRepo, parse_first_line_description};
@@ -139,17 +136,7 @@ impl JjRepo {
             .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit id hex"))?;
 
         // Build ID prefix context for disambiguation.
-        let extensions = RevsetExtensions::default();
-        let fileset_aliases_map = FilesetAliasesMap::new();
-        let path_converter = RepoPathUiConverter::Fs {
-            cwd: self.workspace_root.clone(),
-            base: self.workspace_root.clone(),
-        };
-        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
-        let id_prefix_context = self.build_id_prefix_context(&context)?;
-        let prefix_index = id_prefix_context
-            .populate(repo)
-            .wrap_err("failed to populate ID prefix index for evolog")?;
+        let prefix_index = self.id_prefix_index()?;
 
         struct RawEntry {
             full_id: String,
@@ -304,17 +291,7 @@ impl JjRepo {
         let store = self.repo.store();
 
         // Build prefix index for shortest unique ID computation.
-        let extensions = RevsetExtensions::default();
-        let fileset_aliases_map = FilesetAliasesMap::new();
-        let path_converter = RepoPathUiConverter::Fs {
-            cwd: self.workspace_root.clone(),
-            base: self.workspace_root.clone(),
-        };
-        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
-        let id_prefix_context = self.build_id_prefix_context(&context)?;
-        let prefix_index = id_prefix_context
-            .populate(self.repo.as_ref())
-            .wrap_err("failed to populate ID prefix index")?;
+        let prefix_index = self.id_prefix_index()?;
 
         // --- Changed commits ---
         // Walk all commits reachable from new heads but not old (added),

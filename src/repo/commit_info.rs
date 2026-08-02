@@ -8,15 +8,11 @@ use crate::dag::{
 };
 use crate::types::{BookmarkName, CommitId as UiCommitId, TagName};
 use color_eyre::Result;
-use color_eyre::eyre::Context;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::commit::Commit;
-use jj_lib::fileset::FilesetAliasesMap;
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::RefName;
 use jj_lib::repo::{ReadonlyRepo, Repo};
-use jj_lib::repo_path::RepoPathUiConverter;
-use jj_lib::revset::RevsetExtensions;
 
 /// Pre-built lookup tables passed to `extract_commit_info` for each commit.
 pub(super) struct CommitContext<'a> {
@@ -166,18 +162,7 @@ impl JjRepo {
         cancel: &crate::repo_service::CancellationToken,
     ) -> Result<Vec<(UiCommitId, PrefixLengthUpdate)>> {
         let repo = self.repo.as_ref();
-        let extensions = RevsetExtensions::default();
-        let fileset_aliases_map = FilesetAliasesMap::new();
-        let path_converter = RepoPathUiConverter::Fs {
-            cwd: self.workspace_root.clone(),
-            base: self.workspace_root.clone(),
-        };
-        let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
-
-        let id_prefix_context = self.build_id_prefix_context(&context)?;
-        let id_prefix_index = id_prefix_context
-            .populate(repo)
-            .wrap_err("failed to populate ID prefix index")?;
+        let id_prefix_index = self.id_prefix_index()?;
 
         let mut results = Vec::new();
         for (i, id) in commit_ids.iter().enumerate() {
