@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::{JjRepo, parse_first_line_description};
-use crate::dag::DISPLAY_ID_LEN;
 use crate::dag::{
     AuthorInfo, BookmarkInfo, CommitInfo, DivergenceInfo, PrefixLengthUpdate, RemoteBookmarkInfo,
     ShortId,
@@ -162,12 +161,15 @@ impl JjRepo {
                 continue;
             };
 
-            let change_prefix_len = id_prefix_index
-                .shortest_change_prefix_len(repo, commit.change_id())
-                .unwrap_or(DISPLAY_ID_LEN);
-            let commit_prefix_len = id_prefix_index
-                .shortest_commit_prefix_len(repo, &commit_id)
-                .unwrap_or(DISPLAY_ID_LEN);
+            // Skip rather than report a made-up length: the ID keeps its
+            // placeholder width, which is honest about not knowing.
+            let (Ok(change_prefix_len), Ok(commit_prefix_len)) = (
+                id_prefix_index.shortest_change_prefix_len(repo, commit.change_id()),
+                id_prefix_index.shortest_commit_prefix_len(repo, &commit_id),
+            ) else {
+                tracing::warn!("prefix computation failed for {id}");
+                continue;
+            };
 
             results.push((
                 id.clone(),

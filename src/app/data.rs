@@ -971,4 +971,37 @@ mod repo_result_tests {
             Some(Loadable::Failed(_))
         ));
     }
+
+    /// The background pass keys its updates by whole commit ID. A workspace
+    /// entry holding anything shorter matches nothing and keeps its
+    /// placeholder width forever.
+    #[test]
+    fn a_workspace_entry_is_shortened_by_its_whole_commit_id() {
+        use crate::app::WorkspaceViewEntry;
+        use crate::dag::{PrefixLengthUpdate, ShortId};
+        use crate::types::WorkspaceName;
+
+        let commit_id = CommitId::new("7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654");
+        let mut app = App::for_test();
+        app.views.workspace_entries.push(WorkspaceViewEntry {
+            name: WorkspaceName::new("default"),
+            commit_id: Some(commit_id.clone()),
+            change_id: Some(ShortId::new("uunnomkxrqvlypszwlwkvvqnstvzoxrs")),
+            description: None,
+            is_current: true,
+        });
+
+        app.handle_repo_result(RepoResult::BookmarkDetailPrefixLengths {
+            updates: vec![(
+                commit_id,
+                PrefixLengthUpdate {
+                    change_prefix_len: 2,
+                    commit_prefix_len: 2,
+                },
+            )],
+        });
+
+        let entry = &app.views.workspace_entries[0];
+        assert_eq!(entry.change_id.as_ref().unwrap().prefix(), "uu");
+    }
 }

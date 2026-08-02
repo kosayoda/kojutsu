@@ -6,7 +6,6 @@ use jj_lib::repo::Repo;
 use pollster::FutureExt as _;
 
 use super::JjRepo;
-use crate::dag::DISPLAY_ID_LEN;
 use crate::dag::ShortId;
 use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, TagName, WorkspaceName};
 
@@ -27,12 +26,11 @@ impl JjRepo {
                     raw.lines().next().map(String::from)
                 }
             });
-            let commit_hex = commit_id.hex();
             entries.push(crate::app::WorkspaceViewEntry {
                 name: WorkspaceName::new(ws_name.as_str()),
-                commit_id: Some(UiCommitId::new(
-                    commit_hex.get(..DISPLAY_ID_LEN).unwrap_or(&commit_hex),
-                )),
+                // Whole hex: nothing renders this, but the background prefix
+                // pass looks commits up by it.
+                commit_id: Some(UiCommitId::new(commit_id.hex())),
                 change_id,
                 description,
                 is_current,
@@ -131,9 +129,10 @@ impl JjRepo {
                     let resolved = self.commit_detail_info(commit_id);
                     let (change_id, short_commit_id, description) = match resolved {
                         Some(info) => (info.change_id, info.short_commit_id, info.description),
-                        // Commit isn't in the repo (e.g. a remote-only tag
-                        // target); we only know its commit ID.
-                        None => (ShortId::new(&hex), ShortId::new(&hex), None),
+                        // Commit isn't in the repo, so its change ID is
+                        // genuinely unknown — leave it empty rather than
+                        // showing the commit ID in the change ID's place.
+                        None => (ShortId::new(""), ShortId::new(&hex), None),
                     };
                     TagRemoteTarget {
                         remote: RemoteName::new(remote),

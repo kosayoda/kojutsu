@@ -11,7 +11,6 @@ use jj_lib::repo::Repo;
 use pollster::FutureExt as _;
 
 use super::{JjRepo, parse_first_line_description};
-use crate::dag::DISPLAY_ID_LEN;
 use crate::dag::{Edge, EdgeKind, ShortId};
 use crate::types::{CommitId as UiCommitId, OperationId, Str, WorkspaceName};
 
@@ -416,31 +415,26 @@ impl JjRepo {
             .inspect_err(|e| tracing::warn!("failed to load commit for op diff: {e}"))
             .ok();
 
-        let change_prefix_len = commit
-            .as_ref()
-            .and_then(|c| {
-                prefix_index
-                    .shortest_change_prefix_len(repo, c.change_id())
-                    .inspect_err(|e| tracing::warn!("change prefix computation failed: {e}"))
-                    .ok()
-            })
-            .unwrap_or(DISPLAY_ID_LEN);
         let change_id = commit
             .as_ref()
             .map(|c| {
                 let mut id = ShortId::new(c.change_id().reverse_hex());
-                id.set_prefix_len(change_prefix_len);
+                // Leave the placeholder width on failure rather than assert a
+                // prefix length we did not compute.
+                match prefix_index.shortest_change_prefix_len(repo, c.change_id()) {
+                    Ok(len) => id.set_prefix_len(len),
+                    Err(e) => tracing::warn!("change prefix computation failed: {e}"),
+                }
                 id
             })
             // No commit behind this entry; render nothing rather than a stub ID.
             .unwrap_or_else(|| ShortId::new(""));
 
-        let commit_prefix_len = prefix_index
-            .shortest_commit_prefix_len(repo, commit_id)
-            .inspect_err(|e| tracing::warn!("commit prefix computation failed: {e}"))
-            .unwrap_or(DISPLAY_ID_LEN);
         let mut short_commit = ShortId::new(commit_id.hex());
-        short_commit.set_prefix_len(commit_prefix_len);
+        match prefix_index.shortest_commit_prefix_len(repo, commit_id) {
+            Ok(len) => short_commit.set_prefix_len(len),
+            Err(e) => tracing::warn!("commit prefix computation failed: {e}"),
+        }
 
         let desc = commit.map(|c| {
             let is_empty = c

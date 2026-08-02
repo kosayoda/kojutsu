@@ -137,9 +137,9 @@ impl JjRepo {
             }
         }
 
-        // ID prefix disambiguation is deferred to a background thread
-        // (see compute_prefix_lengths) to avoid evaluating a second revset
-        // during the initial load. We use DISPLAY_ID_LEN as a placeholder.
+        // ID prefix lengths are computed in a background thread (see
+        // compute_prefix_lengths) so the initial load doesn't wait on a second
+        // revset evaluation. Until they arrive, IDs carry their placeholder width.
 
         // Pre-build sets of local bookmarks that (a) have any tracked remote,
         // and (b) differ from their tracked remote counterpart.

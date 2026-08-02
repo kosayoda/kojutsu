@@ -71,13 +71,16 @@ pub(crate) fn render_tag_remote_target(
 
     spans.push(Span::styled(": ", Style::default().fg(theme.muted)));
 
-    push_short_id(
-        &mut spans,
-        &target.summary.change_id,
-        theme.change_id,
-        theme,
-    );
-    spans.push(Span::raw(" "));
+    // A remote-only target's commit may not be in the repo, leaving no change ID.
+    if !target.summary.change_id.display().is_empty() {
+        push_short_id(
+            &mut spans,
+            &target.summary.change_id,
+            theme.change_id,
+            theme,
+        );
+        spans.push(Span::raw(" "));
+    }
     push_short_id(
         &mut spans,
         &target.summary.short_commit_id,

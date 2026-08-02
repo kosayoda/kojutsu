@@ -814,6 +814,9 @@ pub struct EvoLogEntry {
 
 pub struct WorkspaceViewEntry {
     pub name: WorkspaceName,
+    /// Whole commit ID hex. Never rendered — it is the key the background
+    /// prefix-length pass is looked up by, so truncating it silently stops
+    /// this view's IDs from ever being shortened.
     pub commit_id: Option<CommitId>,
     pub change_id: Option<crate::dag::ShortId>,
     pub description: Option<String>,
