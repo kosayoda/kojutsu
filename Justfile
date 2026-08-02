@@ -16,12 +16,13 @@ release *args:
 test *args:
     cargo nextest run -- {{args}}
 
-# Assert our shortest unique ID prefixes match what `jj log` prints. They must:
-# prefixes too long are noise, prefixes too short are rejected by `jj` as
-# ambiguous when we pass them back as revision arguments.
+# Assert our shortest unique ID prefixes match what `jj log` prints
 check-prefixes revset='':
     #!/usr/bin/env bash
     set -euo pipefail
+    # They have to match exactly: prefixes longer than jj's are noise, and
+    # prefixes shorter than jj's are rejected as ambiguous when we hand them
+    # back to the CLI as revision arguments.
     args=()
     if [ -n '{{revset}}' ]; then args=(-r '{{revset}}'); fi
     tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT

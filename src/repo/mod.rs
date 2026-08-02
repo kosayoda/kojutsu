@@ -1,5 +1,6 @@
 mod annotate;
 mod commit_info;
+mod config;
 mod diff;
 mod operations;
 mod revset;
@@ -10,13 +11,12 @@ use std::sync::Arc;
 
 use color_eyre::Result;
 use color_eyre::eyre::Context;
-use jj_lib::config::{ConfigGetResultExt as _, ConfigLayer, ConfigSource, StackedConfig};
+use jj_lib::config::{ConfigGetResultExt as _, StackedConfig};
 use jj_lib::fileset::FilesetAliasesMap;
 use jj_lib::id_prefix::IdPrefixContext;
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::WorkspaceNameBuf;
-use jj_lib::repo::ReadonlyRepo;
-use jj_lib::repo::StoreFactories;
+use jj_lib::repo::{ReadonlyRepo, Repo as _, StoreFactories};
 use jj_lib::repo_path::RepoPathUiConverter;
 use jj_lib::revset::{
     RevsetAliasesMap, RevsetDiagnostics, RevsetExtensions, RevsetParseContext,
@@ -33,9 +33,6 @@ use crate::types::{BookmarkName, RemoteName};
 
 /// Number of hex characters to show for change/commit IDs.
 pub(super) const DISPLAY_ID_LEN: usize = 8;
-
-/// Vendored jj-cli default revset configuration.
-const DEFAULT_REVSETS_TOML: &str = include_str!("../../vendored/revsets.toml");
 
 /// Error from `snapshot` or `update_stale` shell-outs.
 pub enum SnapshotError {
@@ -65,6 +62,11 @@ pub struct JjRepo {
     pub(super) aliases_map: RevsetAliasesMap,
     pub(super) workspace_name: WorkspaceNameBuf,
     pub(super) workspace_root: PathBuf,
+    /// The synthetic remote `remote_bookmarks()` ignores unless asked for it
+    /// by name — `git` in a git-backed repo, nothing otherwise. Revsets parse
+    /// differently with and without it, so `trunk()` depends on getting this
+    /// right.
+    pub(super) default_ignored_remote: Option<&'static jj_lib::ref_name::RemoteName>,
     /// Max bytes of file content (per side) materialized for a diff —
     /// a memory guard; larger files get a placeholder.
     pub(super) diff_size_limit: usize,
@@ -115,7 +117,7 @@ impl JjRepo {
 
     /// Open the jj workspace rooted at `path`.
     pub fn open(path: &Path) -> Result<Self> {
-        let config = Self::load_config(path)?;
+        let config = config::load(path)?;
         let settings = UserSettings::from_config(config)
             .wrap_err("failed to create jj settings from config")?;
         let aliases_map = Self::load_revset_aliases(&settings)?;
@@ -135,12 +137,15 @@ impl JjRepo {
             .block_on()
             .wrap_err("failed to load repo at HEAD")?;
 
+        let default_ignored_remote = default_ignored_remote(repo.store());
+
         Ok(Self {
             repo,
             settings,
             aliases_map,
             workspace_name,
             workspace_root,
+            default_ignored_remote,
             diff_size_limit: DEFAULT_DIFF_SIZE_LIMIT,
         })
     }
@@ -167,7 +172,7 @@ impl JjRepo {
         self.repo
             .view()
             .all_remote_bookmarks()
-            .filter(|(symbol, _)| symbol.remote.as_str() != "git")
+            .filter(|(symbol, _)| Some(symbol.remote) != self.default_ignored_remote)
     }
 
     /// All remote bookmarks (tracked and untracked) with structured data.
@@ -211,40 +216,9 @@ impl JjRepo {
 
     /// Read the `run.jobs` config for a workspace, if set to a usable value.
     pub fn read_run_jobs(workspace_path: &Path) -> Option<usize> {
-        let config = Self::load_config(workspace_path).ok()?;
+        let config = config::load(workspace_path).ok()?;
         let jobs = config.get::<i64>("run.jobs").ok()?;
         usize::try_from(jobs).ok().filter(|&n| n > 0)
-    }
-
-    /// Build config stack: jj-lib defaults + vendored CLI defaults + user + repo.
-    fn load_config(workspace_path: &Path) -> Result<StackedConfig> {
-        let mut config = StackedConfig::with_defaults();
-
-        // Add vendored jj-cli defaults (revset aliases, default log revset, etc.)
-        // as a Default layer so user/repo config can override them.
-        let cli_defaults = ConfigLayer::parse(ConfigSource::Default, DEFAULT_REVSETS_TOML)
-            .wrap_err("failed to parse vendored revsets.toml")?;
-        config.add_layer(cli_defaults);
-
-        // Try loading user config (~/.config/jj/config.toml or platform equivalent)
-        if let Some(config_dir) = dirs::config_dir() {
-            let user_config = config_dir.join("jj").join("config.toml");
-            if user_config.exists()
-                && let Err(e) = config.load_file(ConfigSource::User, &user_config)
-            {
-                tracing::warn!("failed to load user config {}: {e}", user_config.display());
-            }
-        }
-
-        // Try loading repo config (.jj/repo/config.toml)
-        let repo_config = workspace_path.join(".jj").join("repo").join("config.toml");
-        if repo_config.exists()
-            && let Err(e) = config.load_file(ConfigSource::Repo, &repo_config)
-        {
-            tracing::warn!("failed to load repo config {}: {e}", repo_config.display());
-        }
-
-        Ok(config)
     }
 
     /// Build the revset aliases map from all config layers.
@@ -288,7 +262,7 @@ impl JjRepo {
             local_variables: Default::default(),
             user_email: self.settings.user_email(),
             date_pattern_context: DatePatternContext::from(chrono::Local::now()),
-            default_ignored_remote: None,
+            default_ignored_remote: self.default_ignored_remote,
             fileset_aliases_map,
             extensions,
             workspace: Some(workspace_ctx),
@@ -339,6 +313,18 @@ fn short_prefixes_revset(config: &StackedConfig) -> Result<Option<String>> {
     Ok((!revset.is_empty()).then_some(revset))
 }
 
+/// The remote that `remote_bookmarks()` skips by default. Git-backed repos
+/// expose a synthetic `git` remote mirroring the colocated git repo's refs,
+/// which jj hides unless it is named explicitly. Mirrors jj-cli's
+/// `default_ignored_remote_name`.
+fn default_ignored_remote(
+    store: &jj_lib::store::Store,
+) -> Option<&'static jj_lib::ref_name::RemoteName> {
+    jj_lib::git::get_git_backend(store)
+        .is_ok()
+        .then_some(jj_lib::git::REMOTE_NAME_FOR_LOCAL_GIT_REPO)
+}
+
 /// Parse a commit description, returning `None` for empty/placeholder descriptions.
 pub(super) fn parse_first_line_description(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
@@ -353,6 +339,8 @@ use pollster::FutureExt as _;
 
 #[cfg(test)]
 mod tests {
+    use jj_lib::config::{ConfigLayer, ConfigSource};
+
     use super::*;
 
     fn config(toml: &str) -> StackedConfig {
@@ -401,7 +389,7 @@ mod tests {
     fn the_vendored_jj_defaults_supply_the_fallback() {
         // The fallback above is only load-bearing while the vendored jj-cli
         // config keeps defining `revsets.log`.
-        let config = config(DEFAULT_REVSETS_TOML);
+        let config = config(config::DEFAULT_REVSETS_TOML);
         assert!(short_prefixes_revset(&config).unwrap().is_some());
     }
 }
