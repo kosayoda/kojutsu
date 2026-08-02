@@ -133,6 +133,62 @@ mod tests {
         assert!(runtime.init_error().is_some_and(|e| e.contains("boom")));
     }
 
+    /// Run the first registered command and report what it left the config
+    /// table as.
+    fn run_command(runtime: &LuaRuntime) -> Option<Result<crate::theme::Config, String>> {
+        let mut app = crate::app::App::for_test();
+        runtime
+            .engine
+            .execute_command(0, &mut app, crate::keymap::CommandFlags::empty());
+        runtime.engine.take_config_change(&runtime.config)
+    }
+
+    #[test]
+    fn a_command_writing_to_the_config_table_is_picked_up() {
+        let dir = config_dir_with(
+            r#"kojutsu.command("dark", function() kojutsu.config.theme.accent = "red" end, {})"#,
+        );
+        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        assert_eq!(runtime.init_error(), None);
+        // Loading is not a plugin write; there is nothing to adopt yet.
+        assert!(runtime.engine.take_config_change(&runtime.config).is_none());
+
+        let change = run_command(&runtime).expect("a change").expect("valid");
+        assert_eq!(change.theme.accent, ratatui::style::Color::Red);
+    }
+
+    /// The table is re-read by polling, so the same write must not be
+    /// reported twice — the second look has nothing new to say.
+    #[test]
+    fn the_same_write_is_only_reported_once() {
+        let dir = config_dir_with(
+            r#"kojutsu.command("dark", function() kojutsu.config.theme.accent = "red" end, {})"#,
+        );
+        let mut runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let change = run_command(&runtime).expect("a change").expect("valid");
+        runtime.config = std::rc::Rc::new(change);
+        assert!(runtime.engine.take_config_change(&runtime.config).is_none());
+    }
+
+    #[test]
+    fn a_command_that_leaves_the_config_alone_reports_nothing() {
+        let dir = config_dir_with(r#"kojutsu.command("noop", function() end, {})"#);
+        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        assert!(run_command(&runtime).is_none());
+    }
+
+    #[test]
+    fn a_command_writing_an_unknown_key_reports_the_error() {
+        let dir = config_dir_with(
+            r#"kojutsu.command("oops", function() kojutsu.config.theme.acccent = "red" end, {})"#,
+        );
+        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let err = run_command(&runtime)
+            .expect("a change")
+            .expect_err("invalid");
+        assert!(err.contains("unknown field `acccent`"), "{err}");
+    }
+
     /// No init.lua at all is the common case, not an error.
     #[test]
     fn an_empty_config_directory_loads_clean() {

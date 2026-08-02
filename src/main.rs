@@ -469,6 +469,7 @@ fn main() -> Result<()> {
             Action::None => {}
         }
         runtime.engine.flush_logs(&mut app);
+        sync_plugin_config(&mut app, &mut runtime, &repo_requests);
         flush_repo_requests(&mut app, &repo_requests);
     }
 
@@ -558,6 +559,35 @@ fn suspend_and_run(
     result.success
 }
 
+/// Point everything that holds config-derived state at `config`. The repo
+/// service keeps its own copy of the diff limit, so it is told separately.
+fn install_config(
+    app: &mut App,
+    repo_requests: &RepoRequestHandle,
+    config: std::rc::Rc<kojutsu::theme::Config>,
+) {
+    repo_requests.send(kojutsu::repo_service::RepoRequest::set_diff_size_limit(
+        config.diff.max_file_size_bytes(),
+    ));
+    app.apply_reloaded_config(config);
+}
+
+/// Adopt whatever a plugin just did to `kojutsu.config`.
+fn sync_plugin_config(
+    app: &mut App,
+    runtime: &mut kojutsu::lua::LuaRuntime,
+    repo_requests: &RepoRequestHandle,
+) {
+    match runtime.engine.take_config_change(&runtime.config) {
+        None => {}
+        Some(Ok(config)) => {
+            runtime.config = std::rc::Rc::new(config);
+            install_config(app, repo_requests, runtime.config.clone());
+        }
+        Some(Err(e)) => app.set_error(e),
+    }
+}
+
 /// Rebuild the runtime from `init.lua` and swap it in.
 ///
 /// All-or-nothing: the new runtime is built first and only installed if its
@@ -593,11 +623,7 @@ fn reload_config(
     }
 
     *runtime = reloaded;
-    let config = runtime.config.clone();
-    repo_requests.send(kojutsu::repo_service::RepoRequest::set_diff_size_limit(
-        config.diff.max_file_size_bytes(),
-    ));
-    app.apply_reloaded_config(config);
+    install_config(app, repo_requests, runtime.config.clone());
     app.push_command_log(
         kojutsu::app::CommandLogKind::Background,
         "reloaded init.lua",

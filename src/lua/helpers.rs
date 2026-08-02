@@ -154,11 +154,7 @@ pub fn generate_type_definitions() -> String {
     writeln!(out).unwrap();
 
     writeln!(out, "---@class KojutsuDiff").unwrap();
-    writeln!(
-        out,
-        "---@field max_file_size_mib integer per side; applied at startup only"
-    )
-    .unwrap();
+    writeln!(out, "---@field max_file_size_mib integer per side").unwrap();
     writeln!(out).unwrap();
 
     writeln!(out, "---@class KojutsuConfig").unwrap();
@@ -287,8 +283,8 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field selection KojutsuSelection").unwrap();
     writeln!(
         out,
-        "---@field config KojutsuConfig read at startup; assigning a section replaces it, \
-         and omitted keys fall back to their defaults"
+        "---@field config KojutsuConfig assigning a section replaces it, and omitted keys \
+         fall back to their defaults; writes from a command or hook take effect when it returns"
     )
     .unwrap();
     writeln!(out, "---@field ui KojutsuUi").unwrap();

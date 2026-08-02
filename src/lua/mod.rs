@@ -4,7 +4,7 @@ pub(crate) mod helpers;
 mod init_script;
 mod runtime;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
 use compact_str::CompactString;
@@ -245,6 +245,11 @@ pub struct LuaEngine {
     extra_bindings: Vec<BindingSpec>,
     suspended_thread: RefCell<Option<(mlua::RegistryKey, SuspendedKind)>>,
     current_header: RefCell<String>,
+    /// Set whenever user Lua runs. Writes to `kojutsu.config` can't be
+    /// observed directly — Lua only notifies on absent keys, and every config
+    /// key is present — so the table is re-read by polling. This keeps that
+    /// off the keystroke path and on the far rarer "a plugin just ran" path.
+    lua_ran: Cell<bool>,
     pub init_error: Option<String>,
     repo_path: PathBuf,
 }
@@ -287,6 +292,7 @@ impl LuaEngine {
             extra_bindings: Vec::new(),
             suspended_thread: RefCell::new(None),
             current_header: RefCell::new(String::new()),
+            lua_ran: Cell::new(false),
             init_error: None,
             repo_path: repo_path.to_path_buf(),
         };
@@ -321,6 +327,7 @@ impl LuaEngine {
             Some(t) => t,
             None => return HookOutcome::Proceed,
         };
+        self.lua_ran.set(true);
         let ctx = match self.build_ctx_table(app) {
             Ok(t) => t,
             Err(e) => {
@@ -395,6 +402,7 @@ impl LuaEngine {
             Some(t) => t,
             None => return HookOutcome::Proceed,
         };
+        self.lua_ran.set(true);
         let ctx = match self.build_ctx_table(app) {
             Ok(t) => t,
             Err(e) => {
@@ -505,6 +513,7 @@ impl LuaEngine {
             Some(pair) => pair,
             None => return ResumeResult::Action(Action::None),
         };
+        self.lua_ran.set(true);
         let thread: mlua::Thread = match self.lua.registry_value(&thread_key) {
             Ok(t) => t,
             Err(e) => {
@@ -793,6 +802,7 @@ impl LuaEngine {
     }
 
     fn prepare_execution(&self) {
+        self.lua_ran.set(true);
         let cell = lua_state!(self.lua);
         let mut state = cell.borrow_mut();
         state.pending_actions.clear();
@@ -812,6 +822,23 @@ impl LuaEngine {
             phase,
             messages,
         });
+    }
+
+    /// What `kojutsu.config` holds now, if user Lua has run since the last
+    /// call and left it different from `current`. `Some(Err)` means the table
+    /// it left cannot be read at all.
+    pub fn take_config_change(
+        &self,
+        current: &crate::theme::Config,
+    ) -> Option<Result<crate::theme::Config, String>> {
+        if !self.lua_ran.replace(false) {
+            return None;
+        }
+        match config::read(&self.lua) {
+            Ok(next) if next != *current => Some(Ok(next)),
+            Ok(_) => None,
+            Err(e) => Some(Err(e)),
+        }
     }
 
     pub fn flush_logs(&self, app: &mut App) {

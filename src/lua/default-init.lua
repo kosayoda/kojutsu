@@ -60,7 +60,7 @@ kojutsu.config.tab_width = 4
 
 -- Max file size in MiB (per side) loaded into memory when computing a diff.
 -- Larger files show a placeholder instead — a memory guard for repos with
--- huge text files. Applied at startup only.
+-- huge text files.
 kojutsu.config.diff = { max_file_size_mib = 64 }
 
 -- Named revset presets; keys 1-5 switch between the first five.

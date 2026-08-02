@@ -240,15 +240,18 @@ impl LuaEngine {
 
         // Read the config back even when the script failed partway: the
         // assignments that did run are as good as any that ran on success.
-        let config_result = super::config::read_back(&self.lua, config);
+        let config_result = super::config::read(&self.lua);
 
         if let Err(e) = exec_result {
             self.init_error = Some(format!("{e}"));
             return;
         }
-        if let Err(e) = config_result {
-            self.init_error = Some(e);
-            return;
+        match config_result {
+            Ok(resolved) => *config = resolved,
+            Err(e) => {
+                self.init_error = Some(e);
+                return;
+            }
         }
 
         let registrations = std::mem::take(&mut *reg_commands.borrow_mut());

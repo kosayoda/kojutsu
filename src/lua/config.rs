@@ -14,28 +14,21 @@ pub(super) fn publish(lua: &Lua, config: &Config) -> mlua::Result<()> {
     kojutsu.set("config", table)
 }
 
-/// Read `kojutsu.config` back over `config`.
+/// Read `kojutsu.config` back into a `Config`.
 ///
 /// Unknown keys are rejected — `Config` is `deny_unknown_fields`, so a typo
 /// names itself and lists the valid keys instead of silently doing nothing.
-/// `config` is left untouched on error, keeping the pre-Lua values.
-pub(super) fn read_back(lua: &Lua, config: &mut Config) -> Result<(), String> {
+pub(super) fn read(lua: &Lua) -> Result<Config, String> {
     let read = || -> mlua::Result<Config> {
         let kojutsu: mlua::Table = lua.globals().get("kojutsu")?;
         lua.from_value(kojutsu.get("config")?)
     };
-    match read() {
-        Ok(resolved) => {
-            *config = resolved;
-            Ok(())
-        }
-        Err(e) => Err(format!("kojutsu.config: {e}")),
-    }
+    read().map_err(|e| format!("kojutsu.config: {e}"))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{publish, read_back};
+    use super::{publish, read};
     use crate::theme::Config;
     use ratatui::style::Color;
 
@@ -47,9 +40,7 @@ mod tests {
             .unwrap();
         publish(&lua, &base).expect("publish");
         lua.load(source).exec().expect("run config script");
-        let mut config = base;
-        read_back(&lua, &mut config)?;
-        Ok(config)
+        read(&lua)
     }
 
     #[test]
