@@ -175,7 +175,8 @@ fn main() -> Result<()> {
         for w in &result.warnings {
             eprintln!("warning: {w}");
         }
-        debug_print_prefixes(&jj, &result.entries)?;
+        let mut result = result;
+        debug_print_prefixes(&jj, &mut result.entries)?;
         return Ok(());
     }
 
@@ -795,18 +796,24 @@ fn edit_content_in_editor(
 /// same code path the DAG view does. Output is directly comparable against
 /// `jj log -T 'change_id.shortest().prefix()'`; any divergence means IDs shown
 /// in the TUI won't round-trip as `jj` revision arguments.
-fn debug_print_prefixes(jj: &JjRepo, entries: &[kojutsu::dag::DagEntry]) -> Result<()> {
-    // jj can report a prefix length one past the full ID; clamp like `unique_prefix`.
-    fn prefix(display: &str, len: usize) -> &str {
-        &display[..len.min(display.len())]
-    }
-
+fn debug_print_prefixes(jj: &JjRepo, entries: &mut [kojutsu::dag::DagEntry]) -> Result<()> {
     let commit_ids: Vec<_> = entries.iter().map(|e| e.commit.graph_id.clone()).collect();
-    for (_, update) in jj.compute_prefix_lengths(&commit_ids, &CancellationToken::new())? {
+    let updates: std::collections::HashMap<_, _> = jj
+        .compute_prefix_lengths(&commit_ids, &CancellationToken::new())?
+        .into_iter()
+        .collect();
+
+    for entry in entries {
+        let commit = &mut entry.commit;
+        let Some(update) = updates.get(&commit.graph_id) else {
+            continue;
+        };
+        commit.change_id.set_prefix_len(update.change_prefix_len);
+        commit.commit_id.set_prefix_len(update.commit_prefix_len);
         println!(
             "{}|{}",
-            prefix(&update.change_display, update.change_prefix_len),
-            prefix(&update.commit_display, update.commit_prefix_len),
+            commit.change_id.prefix(),
+            commit.commit_id.prefix()
         );
     }
     Ok(())
@@ -852,7 +859,7 @@ fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
             .unwrap_or_default();
         println!(
             "{}{} ({}){}{} {}",
-            c.change_id.display,
+            c.change_id.display(),
             suffix,
             &c.graph_id.as_str()[..8],
             flags_str,

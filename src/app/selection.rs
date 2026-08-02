@@ -77,18 +77,32 @@ impl App {
     }
 
     /// Get the change IDs of explicitly selected commits, or fall back to cursor.
+    ///
+    /// Selections are keyed by whole change IDs so they survive prefix-length
+    /// updates, but what goes to `jj` is the shortest unique prefix — the same
+    /// form the cursor path uses, and the same form shown on screen.
     pub fn selected_change_ids(&self) -> SmallVec<ChangeId> {
         if self.selection_kind() == SelectionKind::Commit && self.selection_active() {
             self.selection
                 .iter()
                 .filter_map(|s| match s {
-                    Selection::Commit(id) => Some(id.clone()),
+                    Selection::Commit(id) => Some(self.shorten_change_id(id)),
                     _ => None,
                 })
                 .collect()
         } else {
             self.selected_change_id().into_iter().collect()
         }
+    }
+
+    /// Narrow a stored change ID to the prefix `jj` needs. Falls back to the
+    /// stored ID if its commit has since left the DAG — still resolvable, just
+    /// longer than necessary.
+    fn shorten_change_id(&self, change_id: &ChangeId) -> ChangeId {
+        self.nodes
+            .iter()
+            .find(|n| n.commit.unique_change_id() == *change_id)
+            .map_or_else(|| change_id.clone(), |n| n.commit.unique_prefix())
     }
 
     /// Toggle all files in an unfolded commit (select all / deselect all).
@@ -370,5 +384,57 @@ impl App {
                 self.clear_selection();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod change_id_key_tests {
+    use super::super::{App, DagNode};
+    use crate::dag::CommitInfo;
+    use crate::graph::GraphLines;
+    use crate::idx::EntryIdx;
+    use crate::types::SmallVec;
+
+    const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
+    const COMMIT_ID: &str = "7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654";
+
+    fn app_with_one_commit() -> App {
+        let mut app = App::for_test();
+        app.nodes.push(DagNode::new(
+            CommitInfo::for_test(CHANGE_ID, COMMIT_ID),
+            GraphLines::default(),
+            SmallVec::new(),
+        ));
+        app
+    }
+
+    #[test]
+    fn a_selection_survives_the_background_prefix_update() {
+        // Prefix lengths land asynchronously. If the selection key were derived
+        // from the displayed prefix, a commit selected beforehand would silently
+        // stop matching itself once a >8-char prefix arrived.
+        let mut app = app_with_one_commit();
+        let idx = EntryIdx::new(0);
+
+        app.toggle_commit_selection(idx);
+        assert!(app.is_commit_selected(idx));
+
+        app.nodes[idx].commit.change_id.set_prefix_len(12);
+        assert!(app.is_commit_selected(idx));
+    }
+
+    #[test]
+    fn a_selected_commit_reaches_jj_as_its_short_prefix() {
+        // Selections are keyed by the whole change ID; commands must still get
+        // the same short prefix the cursor path and the UI use.
+        let mut app = app_with_one_commit();
+        let idx = EntryIdx::new(0);
+        app.nodes[idx].commit.change_id.set_prefix_len(2);
+
+        app.toggle_commit_selection(idx);
+
+        let ids = app.selected_change_ids();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0].as_str(), "uu");
     }
 }

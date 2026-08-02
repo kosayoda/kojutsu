@@ -914,7 +914,7 @@ pub(super) fn jump_to_commit_in_dag(
     } else {
         // Use change ID if available, otherwise fall back to commit ID.
         let id_for_revset = change_id
-            .map(|c| c.display.clone())
+            .map(|c| c.display().to_string())
             .unwrap_or_else(|| cid.as_str().into());
         offer_widen_revset(app, &id_for_revset);
     }

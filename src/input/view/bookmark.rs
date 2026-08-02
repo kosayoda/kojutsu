@@ -78,11 +78,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             // On a conflict target row: resolve by setting the bookmark there.
             if let Some((entry, target)) = app.selected_conflict_target() {
                 let name = entry.name.clone();
-                let prefix = &target.summary.change_id.display[..target
-                    .summary
-                    .change_id
-                    .prefix_len
-                    .min(target.summary.change_id.display.len())];
+                let prefix = target.summary.change_id.prefix();
                 let change_id = match target.change_id_suffix {
                     Some(suffix) => ChangeId::new(format!("{prefix}/{suffix}")),
                     None => ChangeId::new(prefix),
@@ -119,7 +115,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
-            let Some(change_id) = entry.change_id.as_ref().map(|s| ChangeId::new(&s.display))
+            let Some(change_id) = entry.change_id.as_ref().map(|s| ChangeId::new(s.prefix()))
             else {
                 app.set_error("bookmark has no associated commit");
                 return Action::None;

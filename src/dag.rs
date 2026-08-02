@@ -4,26 +4,69 @@ use compact_str::format_compact;
 use jiff::Timestamp;
 
 use crate::types::{
-    BookmarkName, ChangeId, CommitId, RemoteName, RepoPath, TagName, WorkspaceName,
+    BookmarkName, ChangeId, CommitId, RemoteName, RepoPath, Str, TagName, WorkspaceName,
 };
 
-/// A short display ID with a unique prefix highlighted.
+/// Number of characters of an ID always shown, even when fewer would be unique.
+pub const DISPLAY_ID_LEN: usize = 8;
+
+/// A whole change or commit ID, plus the length of its shortest unique prefix.
 ///
-/// Shows at least 8 chars, extended if needed for uniqueness. For example,
-/// if the shortest unique prefix is 4 chars: `display = "xvzwolmw"` (8 chars),
-/// `prefix_len = 4`. If the prefix is 10 chars: `display = "xvzwolmwrq"` (10 chars),
-/// `prefix_len = 10`. The UI renders the prefix bright and the rest dimmed.
+/// The ID is kept intact and every view of it is derived. [`Self::display`]
+/// shows the prefix padded to at least [`DISPLAY_ID_LEN`], which the UI renders
+/// bright up to `prefix_len` and dim beyond; [`Self::prefix`] is the shortest
+/// form `jj` can still resolve; [`Self::full`] is the whole thing.
+///
+/// `prefix_len` starts at `DISPLAY_ID_LEN` as a placeholder — computing the
+/// real value means evaluating a revset, so it lands later from a background
+/// pass. Holding the full ID keeps that update to a single integer, and keeps
+/// anything keyed by an ID keyed to the same string before and after it.
 #[derive(Clone, Debug)]
 pub struct ShortId {
-    /// Display string (at least 8 chars, longer if needed for uniqueness).
-    pub display: String,
-    /// Number of characters in `display` that form the unique prefix.
-    pub prefix_len: usize,
+    full: Str,
+    prefix_len: usize,
 }
 
 impl ShortId {
+    /// A whole ID whose shortest unique prefix is not yet known.
+    pub fn new(full: impl Into<Str>) -> Self {
+        Self {
+            full: full.into(),
+            prefix_len: DISPLAY_ID_LEN,
+        }
+    }
+
+    /// The whole ID. Use this as a key — it never changes.
+    pub fn full(&self) -> &str {
+        &self.full
+    }
+
+    /// The shortest prefix that still resolves to this commit, which is what
+    /// `jj` should be handed as a revision argument.
+    pub fn prefix(&self) -> &str {
+        &self.full[..self.prefix_len.min(self.full.len())]
+    }
+
+    /// What the UI shows: the unique prefix, padded out to [`DISPLAY_ID_LEN`]
+    /// so IDs line up in a column.
+    pub fn display(&self) -> &str {
+        let len = self.prefix_len.max(DISPLAY_ID_LEN).min(self.full.len());
+        &self.full[..len]
+    }
+
+    /// [`Self::display`] split into its unique prefix and the padding after
+    /// it, for rendering the two halves differently.
+    pub fn split(&self) -> (&str, &str) {
+        self.display()
+            .split_at(self.prefix_len.min(self.full.len()))
+    }
+
+    pub fn set_prefix_len(&mut self, prefix_len: usize) {
+        self.prefix_len = prefix_len;
+    }
+
     pub fn change_id(&self) -> ChangeId {
-        ChangeId::new(&self.display)
+        ChangeId::new(self.full())
     }
 }
 
@@ -63,6 +106,36 @@ pub struct CommitInfo {
     pub tags: Vec<TagName>,
 }
 
+#[cfg(test)]
+impl CommitInfo {
+    /// A commit carrying only the identity fields, for tests that care about
+    /// how IDs are keyed and shortened.
+    pub fn for_test(change_id: &str, commit_id: &str) -> Self {
+        Self {
+            graph_id: CommitId::new(commit_id),
+            change_id: ShortId::new(change_id),
+            commit_id: ShortId::new(commit_id),
+            description: None,
+            full_description: None,
+            author: AuthorInfo {
+                name: String::new(),
+                email: String::new(),
+                timestamp: Timestamp::UNIX_EPOCH,
+                tz_offset_seconds: 0,
+            },
+            workspaces: Vec::new(),
+            is_empty: false,
+            is_merge: false,
+            has_conflict: false,
+            is_immutable: false,
+            divergence: None,
+            bookmarks: Vec::new(),
+            remote_bookmarks: Vec::new(),
+            tags: Vec::new(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default)]
 pub struct LineStats {
     pub added: u32,
@@ -76,24 +149,22 @@ pub struct CommitDetails {
     pub is_empty: bool,
 }
 
-/// Shortest unique prefix lengths for a commit's change and commit IDs.
+/// Shortest unique prefix lengths for a commit's change and commit IDs,
+/// computed in the background and applied to IDs that already hold their
+/// full text.
+#[derive(Clone, Copy)]
 pub struct PrefixLengthUpdate {
-    pub change_display: String,
     pub change_prefix_len: usize,
-    pub commit_display: String,
     pub commit_prefix_len: usize,
 }
 
 impl PrefixLengthUpdate {
     /// Apply this update to a `CommitSummary`.
     pub fn apply(&self, summary: &mut CommitSummary) {
-        summary.change_id.display.clone_from(&self.change_display);
-        summary.change_id.prefix_len = self.change_prefix_len;
+        summary.change_id.set_prefix_len(self.change_prefix_len);
         summary
             .short_commit_id
-            .display
-            .clone_from(&self.commit_display);
-        summary.short_commit_id.prefix_len = self.commit_prefix_len;
+            .set_prefix_len(self.commit_prefix_len);
     }
 }
 
@@ -267,19 +338,21 @@ impl CommitInfo {
         self.divergence.as_ref().and_then(|d| d.suffix)
     }
 
-    /// A ChangeId that's unique even among divergent commits (includes suffix).
-    /// Uses the full display string as the base.
+    /// Stable identity for this commit, unique even among divergent ones.
+    ///
+    /// Built from the whole change ID rather than the displayed prefix, so
+    /// that anything keyed by it — selections, fold state, cursor restore —
+    /// keeps matching when the background pass revises `prefix_len`.
     pub fn unique_change_id(&self) -> ChangeId {
         match self.change_id_suffix() {
-            Some(suffix) => ChangeId::new(format_compact!("{}/{suffix}", self.change_id.display)),
+            Some(suffix) => ChangeId::new(format_compact!("{}/{suffix}", self.change_id.full())),
             None => self.change_id.change_id(),
         }
     }
 
     /// Short unique prefix with suffix if divergent. Used for jj CLI arguments.
     pub fn unique_prefix(&self) -> ChangeId {
-        let prefix =
-            &self.change_id.display[..self.change_id.prefix_len.min(self.change_id.display.len())];
+        let prefix = self.change_id.prefix();
         match self.change_id_suffix() {
             Some(suffix) => ChangeId::new(format_compact!("{prefix}/{suffix}")),
             None => ChangeId::new(prefix),
@@ -492,5 +565,74 @@ impl DiffLineKind {
     /// which also excludes conflict-region lines.
     fn is_selectable(self) -> bool {
         matches!(self, Self::Added | Self::Removed)
+    }
+}
+
+#[cfg(test)]
+mod short_id_tests {
+    use super::*;
+
+    /// 32-char reverse-hex change ID, the real shape.
+    const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
+
+    #[test]
+    fn a_short_prefix_is_still_displayed_at_the_default_width() {
+        let mut id = ShortId::new(CHANGE_ID);
+        id.set_prefix_len(2);
+
+        assert_eq!(id.prefix(), "uu");
+        assert_eq!(id.display(), "uunnomkx");
+        assert_eq!(id.split(), ("uu", "nnomkx"));
+    }
+
+    #[test]
+    fn a_long_prefix_widens_the_display_to_fit() {
+        let mut id = ShortId::new(CHANGE_ID);
+        id.set_prefix_len(10);
+
+        assert_eq!(id.prefix(), "uunnomkxrq");
+        assert_eq!(id.display(), "uunnomkxrq");
+        assert_eq!(id.split(), ("uunnomkxrq", ""));
+    }
+
+    #[test]
+    fn the_full_id_never_changes_as_the_prefix_length_does() {
+        // Selections, fold state and cursor restore are keyed by the full ID,
+        // so the background prefix pass must not move that key.
+        let mut id = ShortId::new(CHANGE_ID);
+        let before = id.full().to_string();
+        for len in [1, 8, 12, 40] {
+            id.set_prefix_len(len);
+            assert_eq!(id.full(), before);
+        }
+    }
+
+    #[test]
+    fn an_over_long_prefix_length_does_not_panic() {
+        // jj returns `len + 1` when one ID is an exact prefix of another.
+        let mut id = ShortId::new("abcd");
+        id.set_prefix_len(5);
+
+        assert_eq!(id.prefix(), "abcd");
+        assert_eq!(id.display(), "abcd");
+        assert_eq!(id.split(), ("abcd", ""));
+    }
+
+    #[test]
+    fn an_id_shorter_than_the_display_width_is_shown_whole() {
+        let id = ShortId::new("abc");
+
+        assert_eq!(id.display(), "abc");
+        assert_eq!(id.split(), ("abc", ""));
+    }
+
+    #[test]
+    fn an_empty_id_renders_as_nothing() {
+        // Op-log rows can reference an entry with no commit behind it.
+        let id = ShortId::new("");
+
+        assert_eq!(id.prefix(), "");
+        assert_eq!(id.display(), "");
+        assert_eq!(id.split(), ("", ""));
     }
 }

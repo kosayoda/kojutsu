@@ -66,9 +66,9 @@ pub(crate) fn render_commit_item(
         theme.change_id
     };
     let change_id_text = if let Some(suffix) = c.change_id_suffix() {
-        format!("{}/{}", c.change_id.display, suffix)
+        format!("{}/{}", c.change_id.display(), suffix)
     } else {
-        c.change_id.display.clone()
+        c.change_id.display().to_string()
     };
     if let Some(search) = search {
         if search.scopes.contains(SearchScopes::CHANGE_ID)
@@ -132,7 +132,7 @@ pub(crate) fn render_commit_item(
     if let Some(search) = search {
         if search.scopes.contains(SearchScopes::COMMIT_ID)
             && contains_query(
-                c.commit_id.display.as_str(),
+                c.commit_id.display(),
                 search.query_lower,
                 search.case_sensitive,
             )

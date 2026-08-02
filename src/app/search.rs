@@ -14,7 +14,7 @@ fn ref_entry_matches(
 ) -> bool {
     (scopes.contains(SearchScopes::DESCRIPTION) && description.is_some_and(contains))
         || (scopes.contains(SearchScopes::CHANGE_ID)
-            && change_id.is_some_and(|c| contains(&c.display)))
+            && change_id.is_some_and(|c| contains(c.display())))
 }
 
 impl App {
@@ -201,12 +201,12 @@ impl App {
             DisplayRow::CommitNode { entry_idx } => {
                 let commit = &self.nodes[*entry_idx].commit;
                 (scopes.contains(SearchScopes::CHANGE_ID)
-                    && (contains(commit.change_id.display.as_str())
+                    && (contains(commit.change_id.display())
                         || commit.change_id_suffix().is_some_and(|n| {
-                            contains(&format!("{}/{n}", commit.change_id.display))
+                            contains(&format!("{}/{n}", commit.change_id.display()))
                         })))
                     || (scopes.contains(SearchScopes::COMMIT_ID)
-                        && contains(commit.commit_id.display.as_str()))
+                        && contains(commit.commit_id.display()))
                     || (scopes.contains(SearchScopes::DESCRIPTION)
                         && commit.description.as_deref().is_some_and(contains))
                     || (scopes.contains(SearchScopes::AUTHOR)
@@ -300,7 +300,7 @@ impl App {
                 let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) else {
                     return false;
                 };
-                (scopes.contains(SearchScopes::CHANGE_ID) && contains(&entry.change_id.display))
+                (scopes.contains(SearchScopes::CHANGE_ID) && contains(entry.change_id.display()))
                     || (scopes.contains(SearchScopes::DESCRIPTION)
                         && entry.description.as_deref().is_some_and(contains))
                     || (scopes.contains(SearchScopes::AUTHOR) && contains(entry.author.as_str()))
@@ -380,7 +380,7 @@ impl App {
                     .loaded()
                     .and_then(|l| l.get(line_idx.raw()));
                 if let Some(line) = line {
-                    (scopes.contains(SearchScopes::CHANGE_ID) && contains(&line.change_id.display))
+                    (scopes.contains(SearchScopes::CHANGE_ID) && contains(line.change_id.display()))
                         || (scopes.contains(SearchScopes::AUTHOR) && contains(&line.author))
                         || (scopes.contains(SearchScopes::LINE) && contains(&line.content))
                 } else {
@@ -395,7 +395,7 @@ impl App {
                     .and_then(|l| l.get(line_idx.raw()))
                     .and_then(|line| self.annotate.commit_info.get(&line.commit_id));
                 info.is_some_and(|info| {
-                    (scopes.contains(SearchScopes::CHANGE_ID) && contains(&info.change_id.display))
+                    (scopes.contains(SearchScopes::CHANGE_ID) && contains(info.change_id.display()))
                         || (scopes.contains(SearchScopes::DESCRIPTION)
                             && info.description_lines.iter().any(|l| contains(l)))
                         || (scopes.contains(SearchScopes::AUTHOR)

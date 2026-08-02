@@ -123,7 +123,7 @@ pub(crate) fn render_op_detail_line(
                 ),
             };
             let mut spans = vec![indicator];
-            if !c.change_id.display.is_empty() {
+            if !c.change_id.display().is_empty() {
                 push_short_id(&mut spans, &c.change_id, change_color, theme);
                 spans.push(Span::raw(" "));
             }

@@ -32,9 +32,6 @@ pub use operations::millis_to_relative_time;
 
 use crate::types::{BookmarkName, RemoteName};
 
-/// Number of hex characters to show for change/commit IDs.
-pub(super) const DISPLAY_ID_LEN: usize = 8;
-
 /// Error from `snapshot` or `update_stale` shell-outs.
 pub enum SnapshotError {
     /// The working copy is stale (needs `jj workspace update-stale`).

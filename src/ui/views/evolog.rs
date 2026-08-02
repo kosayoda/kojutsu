@@ -29,7 +29,7 @@ pub(crate) fn render_evolog_item(
     if let Some(search) = search {
         if search.scopes.contains(SearchScopes::CHANGE_ID)
             && contains_query(
-                &entry.change_id.display,
+                entry.change_id.display(),
                 search.query_lower,
                 search.case_sensitive,
             )

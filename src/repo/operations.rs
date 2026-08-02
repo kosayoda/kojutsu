@@ -10,7 +10,8 @@ use jj_lib::object_id::ObjectId;
 use jj_lib::repo::Repo;
 use pollster::FutureExt as _;
 
-use super::{DISPLAY_ID_LEN, JjRepo, parse_first_line_description};
+use super::{JjRepo, parse_first_line_description};
+use crate::dag::DISPLAY_ID_LEN;
 use crate::dag::{Edge, EdgeKind, ShortId};
 use crate::types::{CommitId as UiCommitId, OperationId, Str, WorkspaceName};
 
@@ -335,15 +336,11 @@ impl JjRepo {
 
         // Helper: build a ShortId for a commit ID using the prefix index.
         let short_commit_id = |id: &BackendCommitId| -> ShortId {
-            let prefix_len = prefix_index
-                .shortest_commit_prefix_len(self.repo.as_ref(), id)
-                .unwrap_or(DISPLAY_ID_LEN);
-            let hex = id.hex();
-            let display_len = prefix_len.max(DISPLAY_ID_LEN);
-            ShortId {
-                display: hex.get(..display_len).unwrap_or(&hex).to_string(),
-                prefix_len,
+            let mut short = ShortId::new(id.hex());
+            if let Ok(len) = prefix_index.shortest_commit_prefix_len(self.repo.as_ref(), id) {
+                short.set_prefix_len(len);
             }
+            short
         };
 
         // --- Changed working copies ---
@@ -431,31 +428,19 @@ impl JjRepo {
         let change_id = commit
             .as_ref()
             .map(|c| {
-                let h = c.change_id().reverse_hex();
-                let display_len = change_prefix_len.max(DISPLAY_ID_LEN);
-                ShortId {
-                    display: h.get(..display_len).unwrap_or(&h).to_string(),
-                    prefix_len: change_prefix_len,
-                }
+                let mut id = ShortId::new(c.change_id().reverse_hex());
+                id.set_prefix_len(change_prefix_len);
+                id
             })
-            .unwrap_or_else(|| ShortId {
-                display: String::new(),
-                prefix_len: 0,
-            });
+            // No commit behind this entry; render nothing rather than a stub ID.
+            .unwrap_or_else(|| ShortId::new(""));
 
         let commit_prefix_len = prefix_index
             .shortest_commit_prefix_len(repo, commit_id)
             .inspect_err(|e| tracing::warn!("commit prefix computation failed: {e}"))
             .unwrap_or(DISPLAY_ID_LEN);
-        let commit_hex = commit_id.hex();
-        let commit_display_len = commit_prefix_len.max(DISPLAY_ID_LEN);
-        let short_commit = ShortId {
-            display: commit_hex
-                .get(..commit_display_len)
-                .unwrap_or(&commit_hex)
-                .to_string(),
-            prefix_len: commit_prefix_len,
-        };
+        let mut short_commit = ShortId::new(commit_id.hex());
+        short_commit.set_prefix_len(commit_prefix_len);
 
         let desc = commit.map(|c| {
             let is_empty = c

@@ -86,8 +86,7 @@ pub(super) fn push_short_id(
     color: Color,
     theme: &Theme,
 ) {
-    let prefix = &id.display[..id.prefix_len.min(id.display.len())];
-    let suffix = &id.display[id.prefix_len.min(id.display.len())..];
+    let (prefix, suffix) = id.split();
 
     spans.push(Span::styled(
         prefix.to_string(),
@@ -113,8 +112,7 @@ pub(super) fn push_highlighted_short_id(
 ) {
     use super::search::push_span_with_highlight;
 
-    let prefix = &id.display[..id.prefix_len.min(id.display.len())];
-    let suffix = &id.display[id.prefix_len.min(id.display.len())..];
+    let (prefix, suffix) = id.split();
     let extra = extra_suffix.unwrap_or_default();
     let text = format!("{prefix}{suffix}{extra}");
 

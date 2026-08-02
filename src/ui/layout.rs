@@ -149,8 +149,8 @@ pub(super) fn draw_header(
                 }
                 if let Some(info) = app.annotate.commit_info.get(hist_cid) {
                     let id = &info.change_id;
-                    let p = id.display[..id.prefix_len.min(id.display.len())].to_string();
-                    let s = id.display[id.prefix_len.min(id.display.len())..].to_string();
+                    let (p, s) = id.split();
+                    let (p, s) = (p.to_string(), s.to_string());
                     crumbs.push(Span::styled(
                         p,
                         Style::default()
@@ -178,8 +178,8 @@ pub(super) fn draw_header(
                 && let Some(info) = app.annotate.commit_info.get(cid)
             {
                 let id = &info.change_id;
-                let p = id.display[..id.prefix_len.min(id.display.len())].to_string();
-                let s = id.display[id.prefix_len.min(id.display.len())..].to_string();
+                let (p, s) = id.split();
+                let (p, s) = (p.to_string(), s.to_string());
                 crumbs.push(Span::styled(
                     p,
                     Style::default()

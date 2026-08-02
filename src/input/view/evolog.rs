@@ -40,13 +40,13 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             }
             let from_id = CommitId::new(entry.commit_id.as_str());
-            let from_label = Str::from(entry.change_id.display.as_str());
+            let from_label = Str::from(entry.change_id.display());
             let Some(current) = app.evolog.entries.iter().find(|e| e.is_current) else {
                 app.set_error("no current version found");
                 return Action::None;
             };
             let to_id = CommitId::new(current.commit_id.as_str());
-            let to_label = Str::from(current.change_id.display.as_str());
+            let to_label = Str::from(current.change_id.display());
             app.enter_interdiff_view(from_id, to_id, from_label, to_label);
             Action::None
         }

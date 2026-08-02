@@ -15,6 +15,7 @@ const REST_SENTINEL: char = '\x03';
 ///
 /// Each field contains the graph prefix (glyphs + padding) already formatted
 /// by the renderer to the correct column width.
+#[derive(Default)]
 pub struct GraphLines {
     /// Graph prefix for the node line (contains the glyph character).
     pub node: String,

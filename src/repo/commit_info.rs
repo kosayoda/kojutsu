@@ -1,7 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use super::{DISPLAY_ID_LEN, JjRepo, parse_first_line_description};
+use super::{JjRepo, parse_first_line_description};
+use crate::dag::DISPLAY_ID_LEN;
 use crate::dag::{
     AuthorInfo, BookmarkInfo, CommitInfo, DivergenceInfo, PrefixLengthUpdate, RemoteBookmarkInfo,
     ShortId,
@@ -40,25 +41,10 @@ impl JjRepo {
     ) -> Result<CommitInfo> {
         let repo = self.repo.as_ref();
 
-        // Change ID: use fixed DISPLAY_ID_LEN; accurate prefix computed in background.
-        let change_id_full = commit.change_id().reverse_hex();
-        let change_id = ShortId {
-            display: change_id_full
-                .get(..DISPLAY_ID_LEN)
-                .unwrap_or(&change_id_full)
-                .to_string(),
-            prefix_len: DISPLAY_ID_LEN,
-        };
-
-        // Commit ID: use fixed DISPLAY_ID_LEN; accurate prefix computed in background.
-        let commit_id_full = commit.id().hex();
-        let commit_id = ShortId {
-            display: commit_id_full
-                .get(..DISPLAY_ID_LEN)
-                .unwrap_or(&commit_id_full)
-                .to_string(),
-            prefix_len: DISPLAY_ID_LEN,
-        };
+        // Prefix lengths are computed by a background pass; until it lands
+        // these display the default width.
+        let change_id = ShortId::new(commit.change_id().reverse_hex());
+        let commit_id = ShortId::new(commit.id().hex());
 
         // Description
         let raw_desc = commit.description().trim();
@@ -179,29 +165,14 @@ impl JjRepo {
             let change_prefix_len = id_prefix_index
                 .shortest_change_prefix_len(repo, commit.change_id())
                 .unwrap_or(DISPLAY_ID_LEN);
-            let change_id_full = commit.change_id().reverse_hex();
-            let change_display_len = change_prefix_len.max(DISPLAY_ID_LEN);
-            let change_display = change_id_full
-                .get(..change_display_len)
-                .unwrap_or(&change_id_full)
-                .to_string();
-
             let commit_prefix_len = id_prefix_index
                 .shortest_commit_prefix_len(repo, &commit_id)
                 .unwrap_or(DISPLAY_ID_LEN);
-            let commit_id_full = commit_id.hex();
-            let commit_display_len = commit_prefix_len.max(DISPLAY_ID_LEN);
-            let commit_display = commit_id_full
-                .get(..commit_display_len)
-                .unwrap_or(&commit_id_full)
-                .to_string();
 
             results.push((
                 id.clone(),
                 PrefixLengthUpdate {
-                    change_display,
                     change_prefix_len,
-                    commit_display,
                     commit_prefix_len,
                 },
             ));
@@ -260,18 +231,11 @@ impl JjRepo {
         repo: &dyn jj_lib::repo::Repo,
         commit: &Commit,
     ) -> ShortId {
-        let change_prefix_len = prefix_index
-            .shortest_change_prefix_len(repo, commit.change_id())
-            .unwrap_or(DISPLAY_ID_LEN);
-        let change_id_hex = commit.change_id().reverse_hex();
-        let change_display_len = change_prefix_len.max(DISPLAY_ID_LEN);
-        ShortId {
-            display: change_id_hex
-                .get(..change_display_len)
-                .unwrap_or(&change_id_hex)
-                .to_string(),
-            prefix_len: change_prefix_len,
+        let mut id = ShortId::new(commit.change_id().reverse_hex());
+        if let Ok(len) = prefix_index.shortest_change_prefix_len(repo, commit.change_id()) {
+            id.set_prefix_len(len);
         }
+        id
     }
 
     /// Build a `ShortId` for a backend commit ID using the prefix index.
@@ -280,15 +244,11 @@ impl JjRepo {
         repo: &dyn jj_lib::repo::Repo,
         commit_id: &BackendCommitId,
     ) -> ShortId {
-        let prefix_len = prefix_index
-            .shortest_commit_prefix_len(repo, commit_id)
-            .unwrap_or(DISPLAY_ID_LEN);
-        let hex = commit_id.hex();
-        let display_len = prefix_len.max(DISPLAY_ID_LEN);
-        ShortId {
-            display: hex.get(..display_len).unwrap_or(&hex).to_string(),
-            prefix_len,
+        let mut id = ShortId::new(commit_id.hex());
+        if let Ok(len) = prefix_index.shortest_commit_prefix_len(repo, commit_id) {
+            id.set_prefix_len(len);
         }
+        id
     }
 
     /// Shared commit metadata extraction for bookmark detail rows.
@@ -315,23 +275,8 @@ impl JjRepo {
             None
         };
 
-        let change_id_full = commit.change_id().reverse_hex();
-        let change_id = ShortId {
-            display: change_id_full
-                .get(..DISPLAY_ID_LEN)
-                .unwrap_or(&change_id_full)
-                .to_string(),
-            prefix_len: DISPLAY_ID_LEN,
-        };
-
-        let commit_id_hex = commit_id.hex();
-        let short_commit_id = ShortId {
-            display: commit_id_hex
-                .get(..DISPLAY_ID_LEN)
-                .unwrap_or(&commit_id_hex)
-                .to_string(),
-            prefix_len: DISPLAY_ID_LEN,
-        };
+        let change_id = ShortId::new(commit.change_id().reverse_hex());
+        let short_commit_id = ShortId::new(commit_id.hex());
 
         let description = parse_first_line_description(commit.description());
 

@@ -495,7 +495,7 @@ impl App {
     /// Jump to a commit by change/commit ID prefix. Returns whether it was found.
     pub fn jump_to_change_id(&mut self, prefix: &str) -> bool {
         for (idx, node) in self.nodes.iter_enumerated() {
-            if (node.commit.change_id.display.starts_with(prefix)
+            if (node.commit.change_id.display().starts_with(prefix)
                 || node.commit.graph_id.as_str().starts_with(prefix))
                 && let Some(row) = self.row_of_commit(idx)
             {

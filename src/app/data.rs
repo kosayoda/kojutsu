@@ -492,10 +492,9 @@ impl App {
             RepoResult::PrefixLengths { updates } => {
                 for (commit_id, update) in updates {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                        self.nodes[idx].commit.change_id.display = update.change_display;
-                        self.nodes[idx].commit.change_id.prefix_len = update.change_prefix_len;
-                        self.nodes[idx].commit.commit_id.display = update.commit_display;
-                        self.nodes[idx].commit.commit_id.prefix_len = update.commit_prefix_len;
+                        let commit = &mut self.nodes[idx].commit;
+                        commit.change_id.set_prefix_len(update.change_prefix_len);
+                        commit.commit_id.set_prefix_len(update.commit_prefix_len);
                     }
                 }
                 // Refresh bookmark entries so ShortId prefix_len is up to date.
@@ -531,8 +530,7 @@ impl App {
                     if let (Some(cid), Some(change_id)) = (&ws.commit_id, &mut ws.change_id)
                         && let Some(u) = update_map.get(cid)
                     {
-                        change_id.display.clone_from(&u.change_display);
-                        change_id.prefix_len = u.change_prefix_len;
+                        change_id.set_prefix_len(u.change_prefix_len);
                     }
                 }
                 self.rebuild_tag_entries();
