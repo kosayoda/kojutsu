@@ -18,6 +18,11 @@ use crate::keymap::{ActionRegistry, AppAction, BindingSpec, CommandFlags};
 pub use helpers::generate_type_definitions;
 pub use runtime::LuaRuntime;
 
+/// A starter `init.lua`, printed by `--print-default-config`. Every value in
+/// it is a built-in default, which
+/// [`the_shipped_sample_is_exactly_the_defaults`](config::tests) checks.
+pub const DEFAULT_INIT: &str = include_str!("default-init.lua");
+
 struct LuaCommand {
     name: CompactString,
     source: String,
@@ -1009,6 +1014,71 @@ mod api_surface_tests {
                 path[0]
             );
         }
+    }
+
+    /// Every object reachable in a serialized `Config`, as a JSON pointer.
+    fn object_paths(value: &serde_json::Value, path: String, out: &mut Vec<String>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                out.push(path.clone());
+                for (key, child) in map {
+                    object_paths(child, format!("{path}/{key}"), out);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for (i, child) in items.iter().enumerate() {
+                    object_paths(child, format!("{path}/{i}"), out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The config classes are written by hand, but their fields belong to
+    /// `Config`. A field added there and not here is invisible to a plugin
+    /// author's LSP; one removed there and left here is a lie.
+    #[test]
+    fn the_config_classes_match_the_config_struct() {
+        let mut config = crate::theme::Config::default();
+        // Presets default to empty, so seed one to reach KojutsuPreset.
+        config.revsets.presets.push(crate::theme::Preset {
+            name: String::new(),
+            revset: String::new(),
+        });
+        let value = serde_json::to_value(&config).expect("serialize");
+
+        let classes = [
+            ("", "KojutsuConfig"),
+            ("/theme", "KojutsuTheme"),
+            ("/glyphs", "KojutsuGlyphs"),
+            ("/default_search_scopes", "KojutsuSearchScopes"),
+            ("/revsets", "KojutsuRevsets"),
+            ("/revsets/presets/0", "KojutsuPreset"),
+            ("/run", "KojutsuRun"),
+            ("/diff", "KojutsuDiff"),
+        ];
+
+        for (pointer, class) in classes {
+            let object = value
+                .pointer(pointer)
+                .and_then(|v| v.as_object())
+                .unwrap_or_else(|| panic!("no table at {pointer:?}"));
+            let mut fields: Vec<String> = object.keys().cloned().collect();
+            fields.sort();
+            assert_eq!(
+                fields,
+                declared(class),
+                "{class} does not match {pointer:?}"
+            );
+        }
+
+        // A new nested section has to get a class rather than be skipped.
+        let mut found = Vec::new();
+        object_paths(&value, String::new(), &mut found);
+        found.sort();
+        let mut mapped: Vec<String> = classes.iter().map(|(p, _)| p.to_string()).collect();
+        mapped.sort();
+        assert_eq!(found, mapped, "a table in Config has no declared class");
     }
 
     /// Only one direction at the top level: `command`, `hook`, `bind`,

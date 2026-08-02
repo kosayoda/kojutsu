@@ -48,7 +48,7 @@ struct Cli {
     #[arg(long)]
     debug_graph: bool,
 
-    /// Print the default config file to stdout and exit.
+    /// Print a starter init.lua to stdout and exit.
     #[arg(long)]
     print_default_config: bool,
 
@@ -97,7 +97,7 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     if cli.print_default_config {
-        print!("{}", kojutsu::theme::DEFAULT_CONFIG);
+        print!("{}", kojutsu::lua::DEFAULT_INIT);
         return Ok(());
     }
 

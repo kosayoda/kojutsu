@@ -80,6 +80,98 @@ pub fn generate_type_definitions() -> String {
     }
     writeln!(out).unwrap();
 
+    writeln!(
+        out,
+        "---@alias KojutsuColor string|integer|{{ r: integer, g: integer, b: integer }} \
+         a name (\"cyan\", \"dark_gray\", \"bright-white\"), a hex string, an ANSI index, or an RGB table"
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(out, "---@class KojutsuTheme").unwrap();
+    for field in [
+        "accent",
+        "selection",
+        "muted",
+        "text",
+        "error",
+        "warning",
+        "added",
+        "change_id",
+        "commit_id",
+        "selection_bg",
+        "selection_bg_strong",
+        "tag",
+        "remote",
+        "bookmark",
+        "user",
+        "workspace",
+    ] {
+        writeln!(out, "---@field {field} KojutsuColor").unwrap();
+    }
+    writeln!(out).unwrap();
+
+    writeln!(out, "---@class KojutsuGlyphs").unwrap();
+    for field in ["working_copy", "conflict", "immutable", "merge", "normal"] {
+        writeln!(out, "---@field {field} string a single character").unwrap();
+    }
+    writeln!(out).unwrap();
+
+    writeln!(out, "---@class KojutsuSearchScopes").unwrap();
+    for field in [
+        "change_id",
+        "commit_id",
+        "description",
+        "bookmark",
+        "author",
+        "path",
+        "line",
+        "tag",
+    ] {
+        writeln!(out, "---@field {field} boolean").unwrap();
+    }
+    writeln!(out).unwrap();
+
+    writeln!(out, "---@class KojutsuPreset").unwrap();
+    writeln!(out, "---@field name string").unwrap();
+    writeln!(out, "---@field revset string").unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(out, "---@class KojutsuRevsets").unwrap();
+    writeln!(
+        out,
+        "---@field presets KojutsuPreset[] keys 1-5 switch between the first five"
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(out, "---@class KojutsuRun").unwrap();
+    writeln!(
+        out,
+        "---@field presets string[] command lines offered by the `jj run` picker"
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(out, "---@class KojutsuDiff").unwrap();
+    writeln!(
+        out,
+        "---@field max_file_size_mib integer per side; applied at startup only"
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(out, "---@class KojutsuConfig").unwrap();
+    writeln!(out, "---@field theme KojutsuTheme").unwrap();
+    writeln!(out, "---@field revsets KojutsuRevsets").unwrap();
+    writeln!(out, "---@field run KojutsuRun").unwrap();
+    writeln!(out, "---@field date_format string strftime syntax").unwrap();
+    writeln!(out, "---@field glyphs KojutsuGlyphs").unwrap();
+    writeln!(out, "---@field default_search_scopes KojutsuSearchScopes").unwrap();
+    writeln!(out, "---@field tab_width integer").unwrap();
+    writeln!(out, "---@field diff KojutsuDiff").unwrap();
+    writeln!(out).unwrap();
+
     writeln!(out, "---@class KojutsuCtx").unwrap();
     writeln!(out, "---@field change_id string?").unwrap();
     writeln!(out, "---@field commit_id string?").unwrap();
@@ -193,6 +285,12 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field scope KojutsuScope").unwrap();
     writeln!(out, "---@field phase KojutsuPhase").unwrap();
     writeln!(out, "---@field selection KojutsuSelection").unwrap();
+    writeln!(
+        out,
+        "---@field config KojutsuConfig read at startup; assigning a section replaces it, \
+         and omitted keys fall back to their defaults"
+    )
+    .unwrap();
     writeln!(out, "---@field ui KojutsuUi").unwrap();
     writeln!(out, "---@field nav KojutsuNav").unwrap();
     writeln!(out, "---@field jj fun(args: string[]): JJResult").unwrap();

@@ -3,8 +3,6 @@ use std::path::PathBuf;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_CONFIG: &str = include_str!("default-config.toml");
-
 /// A named revset preset.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -574,31 +572,4 @@ mod color_round_trip_tests {
     /// A newtype so the attribute under test is the one fields really use.
     #[derive(serde::Serialize, serde::Deserialize, Debug)]
     struct ColorField(#[serde(with = "super::color")] Color);
-}
-
-#[cfg(test)]
-mod default_config_tests {
-    use super::{Config, DEFAULT_CONFIG};
-
-    /// `--print-default-config` hands this to users as a starting point, and
-    /// `load_config` warns and falls back on a parse error — so a broken
-    /// default would only surface as everyone's config silently not applying.
-    #[test]
-    fn the_shipped_default_config_parses() {
-        toml::from_str::<Config>(DEFAULT_CONFIG)
-            .unwrap_or_else(|e| panic!("default-config.toml does not parse: {e}"));
-    }
-
-    /// The file says "shown values are the defaults". Unknown keys are
-    /// ignored by serde, so a renamed field would leave the documented value
-    /// silently inert — this checks the claim instead of trusting it.
-    #[test]
-    fn the_documented_theme_values_are_the_real_defaults() {
-        let shipped: Config = toml::from_str(DEFAULT_CONFIG).expect("parses");
-        let defaults = Config::default();
-        assert_eq!(
-            shipped.theme, defaults.theme,
-            "default-config.toml's [theme] no longer matches Theme::default()"
-        );
-    }
 }

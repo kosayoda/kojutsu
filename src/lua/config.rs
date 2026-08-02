@@ -125,4 +125,15 @@ mod tests {
         .expect_err("typo must be rejected");
         assert!(err.contains("unknown field `acccent`"), "{err}");
     }
+
+    /// `--print-default-config` hands this file to users as a starting point,
+    /// and it claims every value in it is the default. Run it through the
+    /// real pipeline and check the claim — a renamed key, a stale value, or a
+    /// syntax error all show up here rather than in someone's config.
+    #[test]
+    fn the_shipped_sample_is_exactly_the_defaults() {
+        let resolved = resolve(Config::default(), crate::lua::DEFAULT_INIT)
+            .expect("the shipped init.lua must load");
+        assert_eq!(resolved, Config::default());
+    }
 }
