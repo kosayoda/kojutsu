@@ -9,7 +9,9 @@ use kojutsu::app::{App, AppMode, DeferredWork};
 use kojutsu::input::{self, Action};
 use kojutsu::jj_command::{JJCommand, JJCommandResult};
 use kojutsu::repo::JjRepo;
-use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind};
+use kojutsu::repo_service::{
+    CancellationToken, RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind,
+};
 use kojutsu::terminal::spawn_terminal_events;
 use kojutsu::types::JumpTarget;
 use kojutsu::ui;
@@ -47,6 +49,12 @@ struct Cli {
     /// Print raw DAG edges and exit (for debugging graph rendering)
     #[arg(long)]
     debug_graph: bool,
+
+    /// Print shortest unique change/commit ID prefixes and exit. Comparable
+    /// against `jj log -T 'change_id.shortest().prefix()'` — see `just
+    /// check-prefixes`.
+    #[arg(long)]
+    debug_prefixes: bool,
 
     /// Print a starter init.lua to stdout and exit.
     #[arg(long)]
@@ -156,6 +164,18 @@ fn main() -> Result<()> {
             eprintln!("warning: {w}");
         }
         debug_print_graph(&result.entries);
+        return Ok(());
+    }
+
+    if cli.debug_prefixes {
+        let _ = JjRepo::snapshot(&repo_path);
+        let jj = JjRepo::open(&repo_path)?;
+        let revset = cli.revisions.unwrap_or_else(|| jj.default_revset());
+        let result = jj.evaluate_revset(&revset)?;
+        for w in &result.warnings {
+            eprintln!("warning: {w}");
+        }
+        debug_print_prefixes(&jj, &result.entries)?;
         return Ok(());
     }
 
@@ -769,6 +789,27 @@ fn edit_content_in_editor(
         Ok(_) => EditOutcome::Cancelled,
         Err(e) => EditOutcome::Failed(format!("run editor: {e}")),
     }
+}
+
+/// Print `<change prefix>|<commit prefix>` per commit, one line each, using the
+/// same code path the DAG view does. Output is directly comparable against
+/// `jj log -T 'change_id.shortest().prefix()'`; any divergence means IDs shown
+/// in the TUI won't round-trip as `jj` revision arguments.
+fn debug_print_prefixes(jj: &JjRepo, entries: &[kojutsu::dag::DagEntry]) -> Result<()> {
+    // jj can report a prefix length one past the full ID; clamp like `unique_prefix`.
+    fn prefix(display: &str, len: usize) -> &str {
+        &display[..len.min(display.len())]
+    }
+
+    let commit_ids: Vec<_> = entries.iter().map(|e| e.commit.graph_id.clone()).collect();
+    for (_, update) in jj.compute_prefix_lengths(&commit_ids, &CancellationToken::new())? {
+        println!(
+            "{}|{}",
+            prefix(&update.change_display, update.change_prefix_len),
+            prefix(&update.commit_display, update.commit_prefix_len),
+        );
+    }
+    Ok(())
 }
 
 fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {

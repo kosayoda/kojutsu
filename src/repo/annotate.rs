@@ -69,7 +69,7 @@ impl JjRepo {
             base: self.workspace_root.clone(),
         };
         let context = self.revset_parse_context(&extensions, &fileset_aliases_map, &path_converter);
-        let id_prefix_context = self.build_id_prefix_context(&context);
+        let id_prefix_context = self.build_id_prefix_context(&context)?;
         let prefix_index = id_prefix_context
             .populate(repo)
             .wrap_err("failed to populate ID prefix index for annotate")?;

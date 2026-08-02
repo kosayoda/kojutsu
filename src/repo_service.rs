@@ -452,12 +452,12 @@ impl RepoResponseHandle {
 
 /// A token that background threads check to bail out early when their
 /// work is no longer needed (e.g. a new revset was requested).
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CancellationToken(Arc<std::sync::atomic::AtomicBool>);
 
 impl CancellationToken {
-    fn new() -> Self {
-        Self(Arc::new(std::sync::atomic::AtomicBool::new(false)))
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Signal all holders of this token to stop.

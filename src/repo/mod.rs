@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use color_eyre::Result;
 use color_eyre::eyre::Context;
-use jj_lib::config::{ConfigLayer, ConfigSource, StackedConfig};
+use jj_lib::config::{ConfigGetResultExt as _, ConfigLayer, ConfigSource, StackedConfig};
 use jj_lib::fileset::FilesetAliasesMap;
 use jj_lib::id_prefix::IdPrefixContext;
 use jj_lib::object_id::ObjectId;
@@ -295,25 +295,48 @@ impl JjRepo {
         }
     }
 
-    /// Build an `IdPrefixContext` using the `revsets.short-prefixes` config.
+    /// Build an `IdPrefixContext` over the same disambiguation set jj uses, so
+    /// that a prefix shown here still resolves when handed back to the `jj`
+    /// CLI as a revision argument.
     pub(super) fn build_id_prefix_context(
         &self,
         context: &RevsetParseContext<'_>,
-    ) -> IdPrefixContext {
+    ) -> Result<IdPrefixContext> {
         let ctx = IdPrefixContext::new(Arc::new(RevsetExtensions::default()));
-        let short_prefixes_str = self
-            .settings
-            .config()
-            .get::<String>("revsets.short-prefixes")
-            .ok();
-        if let Some(revset_str) = short_prefixes_str {
-            let mut diag = RevsetDiagnostics::new();
-            if let Ok(expression) = jj_lib::revset::parse(&mut diag, &revset_str, context) {
-                return ctx.disambiguate_within(expression);
-            }
-        }
-        ctx
+        let Some(revset_str) = short_prefixes_revset(self.settings.config())? else {
+            return Ok(ctx);
+        };
+        let mut diag = RevsetDiagnostics::new();
+        let expression = jj_lib::revset::parse(&mut diag, &revset_str, context)
+            .wrap_err_with(|| format!("invalid ID prefix disambiguation revset `{revset_str}`"))?;
+        Ok(ctx.disambiguate_within(expression))
     }
+}
+
+/// The revset jj disambiguates change/commit ID prefixes within:
+/// `revsets.short-prefixes`, falling back to `revsets.log` when it is unset.
+/// An empty string means "no disambiguation" — prefixes are then made unique
+/// against the whole index, hidden commits included.
+///
+/// Mirrors jj-cli's `load_short_prefixes_expression`. Getting this wrong in
+/// either direction is user-visible: a wider set than jj's shows needlessly
+/// long IDs, a narrower one shows IDs that `jj` rejects as ambiguous.
+fn short_prefixes_revset(config: &StackedConfig) -> Result<Option<String>> {
+    let revset = match config
+        .get::<String>("revsets.short-prefixes")
+        .optional()
+        .wrap_err("invalid `revsets.short-prefixes`")?
+    {
+        Some(revset) => revset,
+        // Absent only if the vendored jj defaults failed to load; degrading to
+        // whole-index prefixes is correct, just verbose.
+        None => config
+            .get::<String>("revsets.log")
+            .optional()
+            .wrap_err("invalid `revsets.log`")?
+            .unwrap_or_default(),
+    };
+    Ok((!revset.is_empty()).then_some(revset))
 }
 
 /// Parse a commit description, returning `None` for empty/placeholder descriptions.
@@ -327,3 +350,58 @@ pub(super) fn parse_first_line_description(raw: &str) -> Option<String> {
 }
 
 use pollster::FutureExt as _;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(toml: &str) -> StackedConfig {
+        let mut config = StackedConfig::empty();
+        config.add_layer(ConfigLayer::parse(ConfigSource::User, toml).unwrap());
+        config
+    }
+
+    #[test]
+    fn short_prefixes_falls_back_to_the_log_revset() {
+        // jj ships no default for `revsets.short-prefixes`, so this fallback is
+        // the one that actually fires. Skipping it makes every ID a character
+        // or two longer than what `jj log` prints for the same revset.
+        let config = config("[revsets]\nlog = 'trunk()'\n");
+        assert_eq!(
+            short_prefixes_revset(&config).unwrap().as_deref(),
+            Some("trunk()")
+        );
+    }
+
+    #[test]
+    fn an_explicit_short_prefixes_revset_wins() {
+        let config = config("[revsets]\nlog = 'trunk()'\nshort-prefixes = 'mine()'\n");
+        assert_eq!(
+            short_prefixes_revset(&config).unwrap().as_deref(),
+            Some("mine()")
+        );
+    }
+
+    #[test]
+    fn an_empty_revset_opts_out_of_disambiguation() {
+        let empty_short_prefixes = config("[revsets]\nlog = 'trunk()'\nshort-prefixes = ''\n");
+        assert_eq!(short_prefixes_revset(&empty_short_prefixes).unwrap(), None);
+
+        let empty_log = config("[revsets]\nlog = ''\n");
+        assert_eq!(short_prefixes_revset(&empty_log).unwrap(), None);
+    }
+
+    #[test]
+    fn a_mistyped_revset_is_an_error_rather_than_a_silent_fallback() {
+        let config = config("[revsets]\nshort-prefixes = 42\n");
+        assert!(short_prefixes_revset(&config).is_err());
+    }
+
+    #[test]
+    fn the_vendored_jj_defaults_supply_the_fallback() {
+        // The fallback above is only load-bearing while the vendored jj-cli
+        // config keeps defining `revsets.log`.
+        let config = config(DEFAULT_REVSETS_TOML);
+        assert!(short_prefixes_revset(&config).unwrap().is_some());
+    }
+}
