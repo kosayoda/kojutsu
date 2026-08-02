@@ -52,6 +52,7 @@ impl LuaEngine {
         &mut self,
         registry: &mut ActionRegistry,
         default_specs: &[BindingSpec],
+        config: &mut crate::theme::Config,
     ) {
         let Some(config_dir) = crate::theme::kojutsu_config_dir() else {
             return;
@@ -226,19 +227,29 @@ impl LuaEngine {
             kojutsu.set("rebind", rebind_fn)?;
             kojutsu.set("unbind", unbind_fn)?;
             kojutsu.set("prefix", prefix_fn)?;
+            super::config::publish(&self.lua, config)?;
             Ok(())
         })() {
             self.init_error = Some(format!("{e}"));
             return;
         }
 
-        if let Err(e) = self
+        let exec_result = self
             .lua
             .load(&source)
             .set_name(init_path.display().to_string())
-            .exec()
-        {
+            .exec();
+
+        // Read the config back even when the script failed partway: the
+        // assignments that did run are as good as any that ran on success.
+        let config_result = super::config::read_back(&self.lua, config);
+
+        if let Err(e) = exec_result {
             self.init_error = Some(format!("{e}"));
+            return;
+        }
+        if let Err(e) = config_result {
+            self.init_error = Some(e);
             return;
         }
 

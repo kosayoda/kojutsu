@@ -7,6 +7,7 @@ pub const DEFAULT_CONFIG: &str = include_str!("default-config.toml");
 
 /// A named revset preset.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Preset {
     pub name: String,
     pub revset: String,
@@ -14,6 +15,7 @@ pub struct Preset {
 
 /// `[run]` config section: settings for running commands over revisions.
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct RunConfig {
     /// Preset command lines offered by the run picker (e.g. "cargo check").
     #[serde(default)]
@@ -22,6 +24,7 @@ pub struct RunConfig {
 
 /// `[revsets]` config section: settings for revset selection.
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct RevsetsConfig {
     /// Named revset presets; keys 1-5 switch between the first 5.
     #[serde(default)]
@@ -30,6 +33,7 @@ pub struct RevsetsConfig {
 
 /// Top-level config file structure (`~/.config/kojutsu/config.toml`).
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
     pub theme: Theme,
@@ -77,6 +81,7 @@ fn default_tab_width() -> u8 {
 
 /// `[diff]` section of the config file.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct DiffConfig {
     /// Max file size in MiB (per side) materialized into memory for a diff.
     /// Larger files show a placeholder instead — a memory guard, not a
@@ -153,6 +158,7 @@ impl TryFrom<char> for Glyph {
 
 /// Configurable characters for commit glyphs in the DAG graph.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct GlyphChars {
     #[serde(default = "default_glyph_working_copy")]
     pub working_copy: char,
@@ -218,6 +224,7 @@ impl GlyphChars {
 
 /// Which search scopes are enabled by default.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct DefaultSearchScopes {
     #[serde(default = "yes")]
     pub change_id: bool,
@@ -297,6 +304,7 @@ impl DefaultSearchScopes {
 /// - RGB table: `{ r = 50, g = 50, b = 60 }`
 /// - ANSI index: `42`
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
 pub struct Theme {
     /// Prompts, headers, visual range indicators, immutable glyphs.
     #[serde(default = "default_accent", with = "color")]

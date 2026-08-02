@@ -1,4 +1,5 @@
 mod api;
+mod config;
 pub(crate) mod helpers;
 mod init_script;
 mod runtime;
@@ -246,14 +247,18 @@ pub struct LuaEngine {
 impl LuaEngine {
     /// Construct via [`LuaRuntime::load`] — the engine, the action registry
     /// and the keymaps are only correct when built together.
+    ///
+    /// `config` arrives holding the values read from disk and leaves holding
+    /// whatever `init.lua` made of them.
     pub(crate) fn new(
         repo_path: &Path,
         registry: &mut ActionRegistry,
         default_specs: &[BindingSpec],
+        config: &mut crate::theme::Config,
     ) -> Self {
         let mut engine = Self::without_config(repo_path);
         if engine.init_error.is_none() {
-            engine.load_init_script(registry, default_specs);
+            engine.load_init_script(registry, default_specs, config);
         }
         engine
     }
