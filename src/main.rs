@@ -197,6 +197,22 @@ fn main() -> Result<()> {
         app.enter_annotate_view(commit_id, path);
     }
 
+    if let Some(path) = kojutsu::theme::superseded_toml_config() {
+        let msg = format!(
+            "{} is no longer read - its settings now live in init.lua \
+             (see --print-default-config)",
+            path.display()
+        );
+        app.push_command_log(
+            kojutsu::app::CommandLogKind::Warning,
+            msg.clone(),
+            None,
+            Vec::new(),
+            false,
+        );
+        app.set_error(msg);
+    }
+
     if let Some(err) = runtime.init_error() {
         app.push_command_log(
             kojutsu::app::CommandLogKind::Warning,

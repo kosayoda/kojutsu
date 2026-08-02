@@ -26,8 +26,7 @@ impl LuaRuntime {
     /// Infallible: a broken `init.lua` yields a runtime carrying whatever
     /// registered before the error, reported via [`Self::init_error`].
     pub fn load_from(config_dir: &Path, repo_path: &Path) -> Self {
-        // config.toml is the starting point; init.lua overrides it.
-        let mut config = crate::theme::load_config(config_dir);
+        let mut config = crate::theme::Config::default();
         let mut registry = ActionRegistry::new();
         let default_specs = default_bindings();
         let mut engine = LuaEngine::new(

@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
@@ -29,7 +29,7 @@ pub struct RevsetsConfig {
     pub presets: Vec<Preset>,
 }
 
-/// Top-level config file structure (`~/.config/kojutsu/config.toml`).
+/// The settings `init.lua` exposes as `kojutsu.config`.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -426,25 +426,15 @@ fn default_workspace() -> Color {
     Color::Green
 }
 
-/// Load `config.toml` from `config_dir`. Returns defaults on any error
-/// (printing a warning to stderr on a parse failure).
-pub fn load_config(config_dir: &Path) -> Config {
-    let path = config_dir.join("config.toml");
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(_) => return Config::default(),
-    };
-    match toml::from_str(&contents) {
-        Ok(config) => config,
-        Err(e) => {
-            eprintln!("warning: failed to parse {}: {e}", path.display());
-            Config::default()
-        }
-    }
-}
-
 pub fn kojutsu_config_dir() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("kojutsu"))
+}
+
+/// The path of a leftover `config.toml`, which is no longer read. Reported at
+/// startup so its settings go missing loudly rather than quietly.
+pub fn superseded_toml_config() -> Option<PathBuf> {
+    let path = kojutsu_config_dir()?.join("config.toml");
+    path.is_file().then_some(path)
 }
 
 /// Path for user-wide persistent state (`~/.local/state/kojutsu/state.json`).
