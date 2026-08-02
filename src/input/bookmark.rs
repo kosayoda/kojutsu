@@ -3,7 +3,7 @@ use crate::dag::BookmarkRef;
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::CommandFlags;
 use crate::types::{
-    BookmarkName, ChangeId, FollowUpAction, FollowUpOption, PendingCommand, PendingSelection,
+    BookmarkName, FollowUpAction, FollowUpOption, PendingCommand, PendingSelection, RevisionArg,
     SmallVec, TagName,
 };
 
@@ -48,7 +48,11 @@ impl PendingSelectionKind {
         }
     }
 
-    pub(super) fn to_pending(self, change_id: ChangeId, flags: CommandFlags) -> PendingSelection {
+    pub(super) fn to_pending(
+        self,
+        change_id: RevisionArg,
+        flags: CommandFlags,
+    ) -> PendingSelection {
         match self {
             Self::Delete => PendingSelection::BookmarkDelete { change_id, flags },
             Self::Forget => PendingSelection::BookmarkForget { change_id, flags },

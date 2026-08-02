@@ -157,7 +157,7 @@ pub(super) fn handle_text_input(
 /// The free-input entry for the run picker; also the single source of the
 /// `run:` prompt and its submit handler.
 pub(in crate::input) fn run_custom_entry(
-    change_ids: crate::types::SmallVec<crate::types::ChangeId>,
+    change_ids: crate::types::SmallVec<crate::types::RevisionArg>,
     flags: keymap::CommandFlags,
 ) -> crate::app::CustomEntry {
     crate::app::CustomEntry {
@@ -168,7 +168,7 @@ pub(in crate::input) fn run_custom_entry(
 
 /// The `run:` command prompt (initial entry and parse-error re-prompt).
 pub(in crate::input) fn run_command_input(
-    change_ids: crate::types::SmallVec<crate::types::ChangeId>,
+    change_ids: crate::types::SmallVec<crate::types::RevisionArg>,
     flags: keymap::CommandFlags,
     prefill: impl Into<String>,
 ) -> AppMode {
@@ -178,7 +178,7 @@ pub(in crate::input) fn run_command_input(
 
 /// The `--jobs` prompt shown when running over several revisions.
 fn run_jobs_input(
-    change_ids: crate::types::SmallVec<crate::types::ChangeId>,
+    change_ids: crate::types::SmallVec<crate::types::RevisionArg>,
     argv: Vec<Str>,
     flags: keymap::CommandFlags,
     prefill: impl Into<String>,
@@ -196,7 +196,7 @@ fn run_jobs_input(
 
 pub(in crate::input) fn submit_run_command(
     app: &mut App,
-    change_ids: crate::types::SmallVec<crate::types::ChangeId>,
+    change_ids: crate::types::SmallVec<crate::types::RevisionArg>,
     flags: keymap::CommandFlags,
     text: String,
 ) -> Action {
@@ -231,7 +231,7 @@ pub(in crate::input) fn submit_run_command(
 /// a non-numeric value.
 fn submit_run_jobs(
     app: &mut App,
-    change_ids: crate::types::SmallVec<crate::types::ChangeId>,
+    change_ids: crate::types::SmallVec<crate::types::RevisionArg>,
     argv: Vec<Str>,
     flags: keymap::CommandFlags,
     text: String,
@@ -380,7 +380,7 @@ fn confirm_target_select(app: &mut App) -> Action {
         ..
     } = mode
     {
-        let targets: crate::types::SmallVec1<crate::types::ChangeId> = match target_mode {
+        let targets: crate::types::SmallVec1<crate::types::RevisionArg> = match target_mode {
             TargetMode::Multi { targets } if !targets.is_empty() => {
                 match crate::types::SmallVec1::try_from_smallvec(targets.into_iter().collect()) {
                     Ok(v) => v,

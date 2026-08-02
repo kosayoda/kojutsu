@@ -3,7 +3,7 @@ use smallvec::smallvec;
 use crate::app::{App, AppMode};
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
-use crate::types::{ChangeId, PendingCommand};
+use crate::types::{PendingCommand, RevisionArg};
 
 use crate::input::Action;
 use crate::input::action::jump_to_commit_in_dag;
@@ -53,7 +53,10 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             let Some(entry) = app.selected_tag_entry() else {
                 return Action::None;
             };
-            let Some(change_id) = entry.change_id.as_ref().map(|s| ChangeId::new(s.prefix()))
+            let Some(change_id) = entry
+                .change_id
+                .as_ref()
+                .map(|s| RevisionArg::new(s.prefix()))
             else {
                 app.set_error("tag has no associated commit");
                 return Action::None;

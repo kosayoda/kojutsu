@@ -40,6 +40,17 @@ macro_rules! define_str_newtype {
 }
 
 define_str_newtype!(pub ChangeId);
+define_str_newtype!(
+    /// A revision to hand `jj` on the command line.
+    ///
+    /// Usually the shortest unique change ID prefix, but jj accepts any
+    /// revision here and kojutsu uses several forms: a `<change ID>/<offset>`
+    /// when the change is divergent or hidden, and a commit ID prefix where a
+    /// change ID would be ambiguous or meaningless (evolog rows, for
+    /// instance). Distinct from [`ChangeId`], which identifies a change and is
+    /// what internal state is keyed by.
+    pub RevisionArg
+);
 define_str_newtype!(pub CommitId);
 define_str_newtype!(pub BookmarkName);
 define_str_newtype!(pub TagName);

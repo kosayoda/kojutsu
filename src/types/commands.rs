@@ -1,4 +1,4 @@
-use super::id::{BookmarkName, ChangeId, CommitId, SmallVec, Str, TagName, WorkspaceName};
+use super::id::{BookmarkName, CommitId, RevisionArg, SmallVec, Str, TagName, WorkspaceName};
 use super::operations::{ChangeSelection, RebaseSource, SplitKind, SquashKind, SquashTarget};
 use crate::keymap::CommandFlags;
 
@@ -6,22 +6,22 @@ use crate::keymap::CommandFlags;
 pub enum PendingSelection {
     /// Delete a bookmark on the selected commit.
     BookmarkDelete {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         flags: CommandFlags,
     },
     /// Forget a bookmark on the selected commit.
     BookmarkForget {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         flags: CommandFlags,
     },
     /// Move a bookmark to a target commit (enters TargetSelect after selection).
     BookmarkMove {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         flags: CommandFlags,
     },
     /// Rename a bookmark (enters TextInput after selection).
     BookmarkRename {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         flags: CommandFlags,
     },
     /// Forget a workspace (text is the workspace name from the list).
@@ -72,7 +72,7 @@ pub enum PendingSelection {
     /// Pick a `jj run` command from presets and history; the list's custom
     /// entry opens a free-text input instead.
     RunCommand {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
         flags: CommandFlags,
     },
     /// Resume a Lua thread suspended on `kojutsu.ui.choose`. `multi` mirrors
@@ -102,7 +102,7 @@ impl PendingCommitSelect {
 /// What to do when a TextInput is submitted.
 pub enum PendingCommand {
     Describe {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
         flags: CommandFlags,
     },
     SquashWithMessage {
@@ -113,12 +113,12 @@ pub enum PendingCommand {
     Revset,
     /// Create a bookmark with the given name.
     BookmarkCreate {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         flags: CommandFlags,
     },
     /// Set (create or update) a bookmark.
     BookmarkSet {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         flags: CommandFlags,
     },
     /// Set bookmark to a change ID (name already known, text is change ID).
@@ -138,7 +138,7 @@ pub enum PendingCommand {
     },
     /// Set (create or update) a tag.
     TagSet {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         flags: CommandFlags,
     },
     /// Set tag to a change ID (name already known, text is change ID).
@@ -161,12 +161,12 @@ pub enum PendingCommand {
     },
     /// Run step 1: collecting the command to run over revisions. Text = command line.
     RunCommand {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
         flags: CommandFlags,
     },
     /// Run step 2: command collected, collecting `--jobs`. Text = job count (empty = jj default).
     RunJobs {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
         argv: Vec<Str>,
         flags: CommandFlags,
     },
@@ -182,7 +182,7 @@ pub enum TargetOperation {
     Rebase {
         source_mode: RebaseSource,
         /// All source commit IDs (supports multi-commit rebase).
-        sources: SmallVec<ChangeId>,
+        sources: SmallVec<RevisionArg>,
     },
     RestoreFrom,
     RestoreInto,
@@ -190,10 +190,10 @@ pub enum TargetOperation {
         bookmark_name: BookmarkName,
     },
     DuplicateOnto {
-        sources: SmallVec<ChangeId>,
+        sources: SmallVec<RevisionArg>,
     },
     Revert {
-        sources: SmallVec<ChangeId>,
+        sources: SmallVec<RevisionArg>,
     },
     Interdiff,
 }
@@ -235,7 +235,7 @@ impl TargetOperation {
 /// A partially-constructed command that needs a message from the user.
 pub enum ReadyCommand {
     Squash {
-        source: ChangeId,
+        source: RevisionArg,
         target: Option<SquashTarget>,
         selection: ChangeSelection,
     },

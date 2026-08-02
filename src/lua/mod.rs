@@ -234,7 +234,7 @@ enum PendingAction {
     SetRevset(String),
     Interactive(Vec<String>),
     SwitchView(crate::app::ActiveView),
-    JumpTo(crate::types::ChangeId),
+    JumpTo(crate::types::RevisionArg),
     Dispatch(AppAction),
 }
 

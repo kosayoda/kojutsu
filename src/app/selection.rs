@@ -4,7 +4,8 @@ use super::App;
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::types::{
-    ChangeId, FileRef, FileSelectionState, RepoPath, Selection, SelectionKind, SmallVec,
+    ChangeId, FileRef, FileSelectionState, RepoPath, RevisionArg, Selection, SelectionKind,
+    SmallVec,
 };
 
 impl App {
@@ -81,7 +82,7 @@ impl App {
     /// Selections are keyed by whole change IDs so they survive prefix-length
     /// updates, but what goes to `jj` is the shortest unique prefix — the same
     /// form the cursor path uses, and the same form shown on screen.
-    pub fn selected_change_ids(&self) -> SmallVec<ChangeId> {
+    pub fn selected_change_ids(&self) -> SmallVec<RevisionArg> {
         if self.selection_kind() == SelectionKind::Commit && self.selection_active() {
             self.selection
                 .iter()
@@ -98,11 +99,14 @@ impl App {
     /// Narrow a stored change ID to the prefix `jj` needs. Falls back to the
     /// stored ID if its commit has since left the DAG — still resolvable, just
     /// longer than necessary.
-    fn shorten_change_id(&self, change_id: &ChangeId) -> ChangeId {
+    fn shorten_change_id(&self, change_id: &ChangeId) -> RevisionArg {
         self.nodes
             .iter()
             .find(|n| n.commit.unique_change_id() == *change_id)
-            .map_or_else(|| change_id.clone(), |n| n.commit.unique_prefix())
+            .map_or_else(
+                || RevisionArg::new(change_id.as_str()),
+                |n| n.commit.unique_prefix(),
+            )
     }
 
     /// Toggle all files in an unfolded commit (select all / deselect all).

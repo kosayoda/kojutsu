@@ -79,7 +79,7 @@ pub enum Action {
     /// (picks applied, unpicked hunks as markers) in $EDITOR; apply via
     /// `jj resolve` if changed. Whole-file counterpart to `EditConflictHunk`.
     EditConflictFile {
-        change_id: crate::types::ChangeId,
+        change_id: crate::types::RevisionArg,
         path: crate::types::RepoPath,
         content: String,
         flags: crate::keymap::CommandFlags,

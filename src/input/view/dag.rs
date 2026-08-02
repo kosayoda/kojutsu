@@ -4,9 +4,9 @@ use crate::app::{App, AppMode};
 use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{
-    ArrangeDirection, BookmarkName, ChangeId, FollowUpAction, FollowUpOption, MessageMode,
-    PendingCommand, PendingSelection, RebaseKind, RebaseSource, RebaseTarget, SelectionKind,
-    SmallVec, SplitKind, SquashKind, Str, TargetOperation,
+    ArrangeDirection, BookmarkName, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
+    PendingSelection, RebaseKind, RebaseSource, RebaseTarget, RevisionArg, SelectionKind, SmallVec,
+    SplitKind, SquashKind, Str, TargetOperation,
 };
 
 use crate::input::Action;
@@ -85,7 +85,7 @@ pub(in crate::input) fn dispatch(
                 app.set_error("no conflict on this file");
                 return Action::None;
             }
-            let change_id = app.change_id(entry_idx);
+            let change_id = app.revision(entry_idx);
             let path = Str::from(file.path.as_str());
             let tool = match action {
                 AppAction::ResolveOurs => crate::jj_command::ResolveTool::Ours,
@@ -222,7 +222,7 @@ pub(in crate::input) fn dispatch(
                 return Action::None;
             };
             Action::EditConflictFile {
-                change_id: app.change_id(entry_idx),
+                change_id: app.revision(entry_idx),
                 path,
                 content,
                 flags,
@@ -639,7 +639,7 @@ pub(in crate::input) fn dispatch(
     }
 }
 
-fn make_multi_command(app: &App, build: impl FnOnce(SmallVec<ChangeId>) -> JJCommand) -> Action {
+fn make_multi_command(app: &App, build: impl FnOnce(SmallVec<RevisionArg>) -> JJCommand) -> Action {
     let ids = app.selected_change_ids();
     if ids.is_empty() {
         return Action::None;
@@ -647,7 +647,7 @@ fn make_multi_command(app: &App, build: impl FnOnce(SmallVec<ChangeId>) -> JJCom
     run_cmd(build(ids))
 }
 
-fn make_command(app: &App, build: impl FnOnce(ChangeId) -> JJCommand) -> Action {
+fn make_command(app: &App, build: impl FnOnce(RevisionArg) -> JJCommand) -> Action {
     if app.selection_kind() == SelectionKind::Commit && app.selection_active() {
         return Action::None;
     }
@@ -798,7 +798,7 @@ pub(in crate::input) fn maybe_offer_apply(
             key: 'a',
             label: "apply resolution",
             action: FollowUpAction::ResolveConflict {
-                change_id: app.change_id(entry_idx),
+                change_id: app.revision(entry_idx),
                 path,
                 content: resolution.content,
                 flags,
@@ -815,7 +815,7 @@ pub(in crate::input) fn maybe_offer_apply(
 /// markers stays conflicted — jj parses them back.
 pub fn staged_resolution(
     app: &mut App,
-    change_id: ChangeId,
+    change_id: RevisionArg,
     path: &crate::types::RepoPath,
     content: &str,
     flags: CommandFlags,
@@ -849,7 +849,7 @@ fn apply_conflict_resolution(
     content: String,
     flags: CommandFlags,
 ) -> Action {
-    let change_id = app.change_id(entry_idx);
+    let change_id = app.revision(entry_idx);
     match staged_resolution(app, change_id, &path, &content, flags) {
         Some(cmd) => Action::RunJj(cmd),
         None => Action::None,

@@ -1,7 +1,7 @@
 use crate::app::App;
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
-use crate::types::{ChangeId, CommitId, Str};
+use crate::types::{CommitId, RevisionArg, Str};
 
 use crate::input::Action;
 use crate::input::action::build_change_selection;
@@ -12,7 +12,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             let Some(entry) = app.selected_evolog_entry() else {
                 return Action::None;
             };
-            let change_id = ChangeId::new(entry.commit_id.as_str());
+            let change_id = RevisionArg::new(entry.commit_id.as_str());
             Action::RunJj(JJCommand {
                 kind: JJCommandKind::Edit { change_id },
                 flags,
@@ -22,7 +22,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             let Some(entry) = app.selected_evolog_entry() else {
                 return Action::None;
             };
-            let change_id = ChangeId::new(entry.commit_id.as_str());
+            let change_id = RevisionArg::new(entry.commit_id.as_str());
             Action::RunJj(JJCommand {
                 kind: JJCommandKind::New {
                     change_ids: smallvec::smallvec![change_id],
@@ -58,13 +58,13 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 app.set_error("already on current version");
                 return Action::None;
             }
-            let from = ChangeId::new(entry.commit_id.as_str());
+            let from = RevisionArg::new(entry.commit_id.as_str());
             let into = app
                 .evolog
                 .entries
                 .iter()
                 .find(|e| e.is_current)
-                .map(|e| ChangeId::new(e.commit_id.as_str()));
+                .map(|e| RevisionArg::new(e.commit_id.as_str()));
             Action::RunJj(JJCommand {
                 kind: JJCommandKind::Restore {
                     from: Some(from),

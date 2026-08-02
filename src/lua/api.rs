@@ -81,7 +81,7 @@ impl LuaEngine {
             lua_state!(lua)
                 .borrow_mut()
                 .pending_actions
-                .push(PendingAction::JumpTo(crate::types::ChangeId::new(
+                .push(PendingAction::JumpTo(crate::types::RevisionArg::new(
                     change_id,
                 )));
             Ok(())

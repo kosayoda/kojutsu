@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 use crate::app::{App, AppMode, TargetMode};
 use crate::idx::EntryIdx;
 use crate::theme::Config;
-use crate::types::ChangeId;
+use crate::types::RevisionArg;
 use crate::types::{ConflictHunkRef, DisplayRow, SearchScopes};
 
 pub(super) fn expand_tabs(s: &str, tab_spaces: &str) -> String {
@@ -68,7 +68,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         vis_end += 1;
     }
 
-    let (target_select_source, target_marks): (Option<&str>, Option<&HashSet<ChangeId>>) =
+    let (target_select_source, target_marks): (Option<&str>, Option<&HashSet<RevisionArg>>) =
         match &app.mode {
             AppMode::TargetSelect {
                 source,

@@ -2,8 +2,8 @@ use strum::IntoEnumIterator;
 
 use crate::keymap::CommandFlags;
 use crate::types::{
-    BookmarkName, ChangeId, ChangeSelection, CommitId, MessageMode, PendingCommand,
-    PendingCommitSelect, ReadyCommand, RebaseKind, RebaseSource, RebaseTarget, RepoPath, SmallVec,
+    BookmarkName, ChangeSelection, CommitId, MessageMode, PendingCommand, PendingCommitSelect,
+    ReadyCommand, RebaseKind, RebaseSource, RebaseTarget, RepoPath, RevisionArg, SmallVec,
     SmallVec1, SplitTarget, SquashTarget, Str, TagName, TargetOperation, WorkspaceName,
 };
 
@@ -28,7 +28,7 @@ pub enum FollowUpAction {
     /// carried (not a temp file) so declining the prompt leaves nothing to
     /// clean up; the file is written only when this executes.
     ResolveConflict {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         path: RepoPath,
         content: String,
         flags: CommandFlags,
@@ -69,7 +69,7 @@ impl JJCommand {
 }
 
 impl PendingCommitSelect {
-    pub fn into_jj_command(self, target: ChangeId, flags: CommandFlags) -> JJCommand {
+    pub fn into_jj_command(self, target: RevisionArg, flags: CommandFlags) -> JJCommand {
         match self {
             PendingCommitSelect::WorkspaceAdd { path, name } => JJCommand {
                 kind: JJCommandKind::WorkspaceAdd {
@@ -119,7 +119,7 @@ impl PendingCommand {
             PendingCommand::BookmarkSetByName { name, flags } => Some(JJCommand {
                 kind: JJCommandKind::BookmarkSet {
                     name,
-                    change_id: ChangeId::new(text),
+                    change_id: RevisionArg::new(text),
                 },
                 flags,
             }),
@@ -140,7 +140,7 @@ impl PendingCommand {
             PendingCommand::TagSetByName { name, flags } => Some(JJCommand {
                 kind: JJCommandKind::TagSet {
                     name,
-                    change_id: ChangeId::new(text),
+                    change_id: RevisionArg::new(text),
                 },
                 flags,
             }),
@@ -177,8 +177,8 @@ impl PendingCommand {
 impl TargetOperation {
     pub fn follow_up(
         self,
-        source: ChangeId,
-        targets: SmallVec1<ChangeId>,
+        source: RevisionArg,
+        targets: SmallVec1<RevisionArg>,
         flags: CommandFlags,
         selection: ChangeSelection,
     ) -> Vec<FollowUpOption> {
@@ -316,7 +316,7 @@ fn auto_follow_up(label: &'static str, cmd: JJCommand) -> Vec<FollowUpOption> {
 }
 
 fn squash_follow_up(
-    source: ChangeId,
+    source: RevisionArg,
     target: Option<SquashTarget>,
     selection: ChangeSelection,
     flags: CommandFlags,
@@ -368,8 +368,8 @@ fn squash_follow_up(
 }
 
 fn rebase_follow_up(
-    sources: SmallVec<ChangeId>,
-    targets: SmallVec<ChangeId>,
+    sources: SmallVec<RevisionArg>,
+    targets: SmallVec<RevisionArg>,
     source_mode: RebaseSource,
     flags: CommandFlags,
 ) -> Vec<FollowUpOption> {

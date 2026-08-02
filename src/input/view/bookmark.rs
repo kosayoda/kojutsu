@@ -3,7 +3,7 @@ use smallvec::smallvec;
 use crate::app::{App, AppMode};
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
-use crate::types::{ChangeId, PendingCommand, PendingSelection, RemoteName, TargetOperation};
+use crate::types::{PendingCommand, PendingSelection, RemoteName, RevisionArg, TargetOperation};
 
 use crate::input::Action;
 use crate::input::action::{enter_target_select, jump_to_commit_in_dag};
@@ -80,8 +80,8 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 let name = entry.name.clone();
                 let prefix = target.summary.change_id.prefix();
                 let change_id = match target.change_id_suffix {
-                    Some(suffix) => ChangeId::new(format!("{prefix}/{suffix}")),
-                    None => ChangeId::new(prefix),
+                    Some(suffix) => RevisionArg::new(format!("{prefix}/{suffix}")),
+                    None => RevisionArg::new(prefix),
                 };
                 return Action::RunJj(JJCommand {
                     kind: JJCommandKind::BookmarkSet { name, change_id },
@@ -115,7 +115,10 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             let Some(entry) = app.selected_bookmark_entry() else {
                 return Action::None;
             };
-            let Some(change_id) = entry.change_id.as_ref().map(|s| ChangeId::new(s.prefix()))
+            let Some(change_id) = entry
+                .change_id
+                .as_ref()
+                .map(|s| RevisionArg::new(s.prefix()))
             else {
                 app.set_error("bookmark has no associated commit");
                 return Action::None;

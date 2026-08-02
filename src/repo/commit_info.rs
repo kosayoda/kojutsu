@@ -269,13 +269,15 @@ impl JjRepo {
         let is_divergent = resolved
             .as_ref()
             .is_some_and(|targets| targets.is_divergent());
-        let change_id_suffix = if is_divergent {
-            resolved
-                .as_ref()
-                .and_then(|targets| targets.find_offset(commit.id()))
-        } else {
-            None
-        };
+        // A hidden commit needs the offset just as much as a divergent one:
+        // its bare change ID resolves to whichever commit superseded it.
+        let change_id_suffix = (is_divergent || is_hidden)
+            .then(|| {
+                resolved
+                    .as_ref()
+                    .and_then(|targets| targets.find_offset(commit.id()))
+            })
+            .flatten();
 
         let change_id = ShortId::new(commit.change_id().reverse_hex());
         let short_commit_id = ShortId::new(commit_id.hex());

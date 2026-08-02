@@ -449,7 +449,7 @@ fn main() -> Result<()> {
             } => {
                 let cmd = JJCommand {
                     kind: kojutsu::jj_command::JJCommandKind::New {
-                        change_ids: smallvec::smallvec![kojutsu::types::ChangeId::new(
+                        change_ids: smallvec::smallvec![kojutsu::types::RevisionArg::new(
                             commit_id.as_str()
                         )],
                         insert: None,

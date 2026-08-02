@@ -4,7 +4,8 @@ use compact_str::format_compact;
 use jiff::Timestamp;
 
 use crate::types::{
-    BookmarkName, ChangeId, CommitId, RemoteName, RepoPath, Str, TagName, WorkspaceName,
+    BookmarkName, ChangeId, CommitId, RemoteName, RepoPath, RevisionArg, Str, TagName,
+    WorkspaceName,
 };
 
 /// Number of characters of an ID always shown, even when fewer would be unique.
@@ -350,12 +351,14 @@ impl CommitInfo {
         }
     }
 
-    /// Short unique prefix with suffix if divergent. Used for jj CLI arguments.
-    pub fn unique_prefix(&self) -> ChangeId {
+    /// The revision to hand `jj` for this commit: the shortest unique change
+    /// ID prefix, plus the `/<offset>` jj needs when the change is divergent
+    /// or the commit is hidden and a bare change ID would resolve elsewhere.
+    pub fn unique_prefix(&self) -> RevisionArg {
         let prefix = self.change_id.prefix();
         match self.change_id_suffix() {
-            Some(suffix) => ChangeId::new(format_compact!("{prefix}/{suffix}")),
-            None => ChangeId::new(prefix),
+            Some(suffix) => RevisionArg::new(format_compact!("{prefix}/{suffix}")),
+            None => RevisionArg::new(prefix),
         }
     }
 }
@@ -634,5 +637,57 @@ mod short_id_tests {
         assert_eq!(id.prefix(), "");
         assert_eq!(id.display(), "");
         assert_eq!(id.split(), ("", ""));
+    }
+}
+
+#[cfg(test)]
+mod revision_tests {
+    use super::*;
+
+    const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
+    const COMMIT_ID: &str = "7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654";
+
+    fn commit(divergence: Option<DivergenceInfo>) -> CommitInfo {
+        let mut c = CommitInfo::for_test(CHANGE_ID, COMMIT_ID);
+        c.change_id.set_prefix_len(2);
+        c.divergence = divergence;
+        c
+    }
+
+    #[test]
+    fn an_ordinary_commit_is_referred_to_by_its_change_prefix() {
+        assert_eq!(commit(None).unique_prefix().as_str(), "uu");
+    }
+
+    #[test]
+    fn a_divergent_or_hidden_commit_carries_its_change_offset() {
+        // A bare change ID is ambiguous when divergent, and resolves to the
+        // superseding commit when hidden. jj disambiguates both the same way.
+        for (is_divergent, is_hidden) in [(true, false), (false, true)] {
+            let c = commit(Some(DivergenceInfo {
+                is_divergent,
+                is_hidden,
+                suffix: Some(1),
+            }));
+            assert_eq!(c.unique_prefix().as_str(), "uu/1");
+        }
+    }
+
+    #[test]
+    fn identity_is_the_whole_change_id_not_the_revision() {
+        // The revision shortens as prefixes are computed; the key must not.
+        let c = commit(None);
+        assert_eq!(c.unique_change_id().as_str(), CHANGE_ID);
+        assert_ne!(c.unique_change_id().as_str(), c.unique_prefix().as_str());
+    }
+
+    #[test]
+    fn a_divergent_identity_keeps_the_offset_too() {
+        let c = commit(Some(DivergenceInfo {
+            is_divergent: true,
+            is_hidden: false,
+            suffix: Some(2),
+        }));
+        assert_eq!(c.unique_change_id().as_str(), format!("{CHANGE_ID}/2"));
     }
 }

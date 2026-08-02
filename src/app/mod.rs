@@ -79,8 +79,8 @@ use crate::types::SmallVec;
 use crate::keymap::CommandFlags;
 use crate::repo_service::{RepoError, RepoRequest};
 use crate::types::{
-    ChangeId, CommitId, ConflictHunkRef, DisplayRow, JumpTarget, RepoPath, SearchScopes,
-    SearchState, SelectionContext,
+    ChangeId, CommitId, ConflictHunkRef, DisplayRow, JumpTarget, RepoPath, RevisionArg,
+    SearchScopes, SearchState, SelectionContext,
 };
 
 #[derive(Clone, Debug)]
@@ -1158,8 +1158,8 @@ impl App {
         self.rows.get(self.cursor.raw())?.entry_idx()
     }
 
-    /// Get the change ID (unique prefix) of the commit the cursor is on.
-    pub fn selected_change_id(&self) -> Option<ChangeId> {
+    /// The revision to hand `jj` for the commit the cursor is on.
+    pub fn selected_change_id(&self) -> Option<RevisionArg> {
         let entry_idx = self.selected_entry_idx()?;
         Some(self.nodes[entry_idx].commit.unique_prefix())
     }
@@ -1216,18 +1216,24 @@ impl App {
         &self.nodes[entry_idx].commit.graph_id
     }
 
+    /// Stable identity of a commit, for keying internal state.
     pub(crate) fn change_id(&self, entry_idx: EntryIdx) -> ChangeId {
         self.nodes[entry_idx].commit.unique_change_id()
     }
 
-    /// Resolve a change ID (prefix or full) to its commit (graph) ID via the DAG nodes.
-    pub fn commit_id_for_change(&self, change_id: &ChangeId) -> Option<CommitId> {
+    /// The revision to hand `jj` for a commit.
+    pub(crate) fn revision(&self, entry_idx: EntryIdx) -> RevisionArg {
+        self.nodes[entry_idx].commit.unique_prefix()
+    }
+
+    /// Resolve a revision (short prefix or whole change ID) to its commit
+    /// (graph) ID via the DAG nodes.
+    pub fn commit_id_for_change(&self, revision: &RevisionArg) -> Option<CommitId> {
         self.nodes
             .iter()
             .find(|n| {
-                let prefix = n.commit.unique_prefix();
-                let full = n.commit.unique_change_id();
-                prefix == *change_id || full == *change_id
+                n.commit.unique_prefix() == *revision
+                    || n.commit.unique_change_id().as_str() == revision.as_str()
             })
             .map(|n| n.commit.graph_id.clone())
     }

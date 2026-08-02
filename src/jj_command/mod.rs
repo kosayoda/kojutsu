@@ -12,8 +12,9 @@ use std::sync::{Arc, atomic::AtomicI32, atomic::Ordering};
 use crate::dag::BookmarkRef;
 use crate::keymap::CommandFlags;
 use crate::types::{
-    BookmarkName, ChangeId, ChangeSelection, JumpTarget, MessageMode, OperationId, RebaseSource,
-    RebaseTarget, RemoteName, SmallVec, SplitTarget, SquashTarget, Str, TagName, WorkspaceName,
+    BookmarkName, ChangeSelection, JumpTarget, MessageMode, OperationId, RebaseSource,
+    RebaseTarget, RemoteName, RevisionArg, SmallVec, SplitTarget, SquashTarget, Str, TagName,
+    WorkspaceName,
 };
 
 #[derive(Clone)]
@@ -64,55 +65,55 @@ pub struct JJCommand {
 #[derive(Debug, Clone)]
 pub enum JJCommandKind {
     Abandon {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
     },
     Describe {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
         message: String,
     },
     DescribeInEditor {
-        change_id: ChangeId,
+        change_id: RevisionArg,
     },
     Diffedit {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         selection: ChangeSelection,
     },
     Edit {
-        change_id: ChangeId,
+        change_id: RevisionArg,
     },
     New {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
         insert: Option<InsertPosition>,
     },
     Squash {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         target: Option<SquashTarget>,
         message: MessageMode,
         selection: ChangeSelection,
     },
     Rebase {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
         source_mode: RebaseSource,
         dest: RebaseTarget,
     },
     Restore {
-        from: Option<ChangeId>,
-        into: Option<ChangeId>,
-        changes_in: Option<ChangeId>,
+        from: Option<RevisionArg>,
+        into: Option<RevisionArg>,
+        changes_in: Option<RevisionArg>,
         selection: ChangeSelection,
     },
     Split {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         target: Option<SplitTarget>,
         selection: ChangeSelection,
     },
     BookmarkCreate {
         name: BookmarkName,
-        change_id: ChangeId,
+        change_id: RevisionArg,
     },
     BookmarkSet {
         name: BookmarkName,
-        change_id: ChangeId,
+        change_id: RevisionArg,
     },
     BookmarkDelete {
         names: SmallVec<BookmarkName>,
@@ -122,14 +123,14 @@ pub enum JJCommandKind {
     },
     BookmarkMove {
         name: BookmarkName,
-        target: ChangeId,
+        target: RevisionArg,
     },
     BookmarkRename {
         old_name: BookmarkName,
         new_name: BookmarkName,
     },
     BookmarkAdvance {
-        change_id: Option<ChangeId>,
+        change_id: Option<RevisionArg>,
     },
     BookmarkTrack {
         bookmarks: SmallVec<BookmarkRef>,
@@ -148,7 +149,7 @@ pub enum JJCommandKind {
         remote: Option<RemoteName>,
     },
     GitPushChange {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         remote: Option<RemoteName>,
     },
     GitPushBookmark {
@@ -162,7 +163,7 @@ pub enum JJCommandKind {
     GitExport,
     GitImport,
     Absorb {
-        from: Option<ChangeId>,
+        from: Option<RevisionArg>,
         selection: ChangeSelection,
     },
     Commit {
@@ -170,23 +171,23 @@ pub enum JJCommandKind {
         selection: ChangeSelection,
     },
     Duplicate {
-        change_ids: SmallVec<ChangeId>,
-        onto: Option<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
+        onto: Option<RevisionArg>,
     },
     Parallelize {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
     },
     SimplifyParents {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
     },
     Revert {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
         dest: RebaseTarget,
     },
     WorkspaceAdd {
         path: String,
         name: Option<WorkspaceName>,
-        revision: ChangeId,
+        revision: RevisionArg,
     },
     WorkspaceForget {
         names: SmallVec<WorkspaceName>,
@@ -197,7 +198,7 @@ pub enum JJCommandKind {
     },
     TagSet {
         name: TagName,
-        change_id: ChangeId,
+        change_id: RevisionArg,
     },
     TagDelete {
         names: SmallVec<TagName>,
@@ -212,11 +213,11 @@ pub enum JJCommandKind {
         op_id: OperationId,
     },
     Fix {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
         selection: ChangeSelection,
     },
     Run {
-        change_ids: SmallVec<ChangeId>,
+        change_ids: SmallVec<RevisionArg>,
         /// The command to run in each private working copy (already
         /// shlex-split; jj executes it without a shell).
         argv: Vec<Str>,
@@ -227,7 +228,7 @@ pub enum JJCommandKind {
         paths: SmallVec<Str>,
     },
     Resolve {
-        change_id: ChangeId,
+        change_id: RevisionArg,
         path: Str,
         tool: ResolveTool,
     },
@@ -376,12 +377,12 @@ impl JJCommand {
 #[cfg(test)]
 mod is_interactive_tests {
     use super::*;
-    use crate::types::{ChangeId, ChangeSelection, MessageMode};
+    use crate::types::{ChangeSelection, MessageMode, RevisionArg};
 
     fn squash(message: MessageMode, selection: ChangeSelection, flags: CommandFlags) -> JJCommand {
         JJCommand {
             kind: JJCommandKind::Squash {
-                change_id: ChangeId::new("qpvuntsm"),
+                change_id: RevisionArg::new("qpvuntsm"),
                 target: None,
                 message,
                 selection,

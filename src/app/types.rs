@@ -10,8 +10,8 @@ use compact_str::CompactString;
 
 use crate::keymap::{CommandFlags, TrieNode};
 use crate::types::{
-    BookmarkName, ChangeId, CommitId, FollowUpOption, OperationId, PendingCommand,
-    PendingCommitSelect, PendingSelection, RemoteName, RepoPath, SearchScopes, Str, TagName,
+    BookmarkName, CommitId, FollowUpOption, OperationId, PendingCommand, PendingCommitSelect,
+    PendingSelection, RemoteName, RepoPath, RevisionArg, SearchScopes, Str, TagName,
     TargetOperation, VisualRange, WorkspaceName,
 };
 
@@ -328,7 +328,7 @@ pub struct CommandLogEntry {
 #[derive(Debug, Clone)]
 pub enum TargetMode {
     Single,
-    Multi { targets: HashSet<ChangeId> },
+    Multi { targets: HashSet<RevisionArg> },
 }
 
 pub struct SubmenuToggle {
@@ -952,7 +952,7 @@ pub enum AppMode {
     /// Navigating to select a target commit for a two-commit operation.
     TargetSelect {
         prompt: &'static str,
-        source: ChangeId,
+        source: RevisionArg,
         restore_cursor: RowIdx,
         operation: TargetOperation,
         flags: CommandFlags,

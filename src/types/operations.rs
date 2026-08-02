@@ -1,16 +1,16 @@
 use std::path::PathBuf;
 
-use super::id::{ChangeId, SmallVec, Str};
+use super::id::{RevisionArg, SmallVec, Str};
 
 #[derive(Debug, Clone)]
 pub struct SquashTarget {
-    pub target: ChangeId,
+    pub target: RevisionArg,
     pub kind: SquashKind,
 }
 
 #[derive(Debug, Clone)]
 pub struct SplitTarget {
-    pub target: ChangeId,
+    pub target: RevisionArg,
     pub kind: SplitKind,
 }
 
@@ -108,7 +108,7 @@ impl RebaseKind {
 
 #[derive(Debug, Clone)]
 pub struct RebaseTarget {
-    pub targets: SmallVec<ChangeId>,
+    pub targets: SmallVec<RevisionArg>,
     pub kind: RebaseKind,
 }
 
