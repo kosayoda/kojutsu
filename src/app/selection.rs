@@ -77,36 +77,42 @@ impl App {
         self.selection.contains(&Selection::Commit(change_id))
     }
 
-    /// Get the change IDs of explicitly selected commits, or fall back to cursor.
+    /// Explicitly selected commits as revisions for `jj`, in DAG order, or the
+    /// commit under the cursor when nothing is selected.
     ///
     /// Selections are keyed by whole change IDs so they survive prefix-length
     /// updates, but what goes to `jj` is the shortest unique prefix — the same
     /// form the cursor path uses, and the same form shown on screen.
     pub fn selected_change_ids(&self) -> SmallVec<RevisionArg> {
-        if self.selection_kind() == SelectionKind::Commit && self.selection_active() {
-            self.selection
-                .iter()
-                .filter_map(|s| match s {
-                    Selection::Commit(id) => Some(self.shorten_change_id(id)),
-                    _ => None,
-                })
-                .collect()
-        } else {
-            self.selected_change_id().into_iter().collect()
+        if self.selection_kind() != SelectionKind::Commit || !self.selection_active() {
+            return self.selected_change_id().into_iter().collect();
         }
-    }
 
-    /// Narrow a stored change ID to the prefix `jj` needs. Falls back to the
-    /// stored ID if its commit has since left the DAG — still resolvable, just
-    /// longer than necessary.
-    fn shorten_change_id(&self, change_id: &ChangeId) -> RevisionArg {
-        self.nodes
+        let mut pending: HashSet<ChangeId> = self
+            .selection
             .iter()
-            .find(|n| n.commit.unique_change_id() == *change_id)
-            .map_or_else(
-                || RevisionArg::new(change_id.as_str()),
-                |n| n.commit.unique_prefix(),
-            )
+            .filter_map(|s| match s {
+                Selection::Commit(id) => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+
+        // Resolved by one walk of the DAG rather than a search per selection,
+        // so each node's identity is built once and the revisions come out in
+        // DAG order — the selection itself is a hash set, whose order would
+        // otherwise vary between identical invocations.
+        let mut revisions: SmallVec<RevisionArg> = self
+            .nodes
+            .iter()
+            .filter(|n| pending.remove(&n.commit.unique_change_id()))
+            .map(|n| n.commit.unique_prefix())
+            .collect();
+
+        // A selection can outrun the DAG stream, since stale ones are only
+        // pruned once a load completes. The commit exists either way, and its
+        // whole change ID still resolves.
+        revisions.extend(pending.into_iter().map(|id| RevisionArg::new(id.as_str())));
+        revisions
     }
 
     /// Toggle all files in an unfolded commit (select all / deselect all).
@@ -440,5 +446,101 @@ mod change_id_key_tests {
         let ids = app.selected_change_ids();
         assert_eq!(ids.len(), 1);
         assert_eq!(ids[0].as_str(), "uu");
+    }
+}
+
+#[cfg(test)]
+mod selected_revision_tests {
+    use super::super::{App, DagNode};
+    use crate::dag::CommitInfo;
+    use crate::graph::GraphLines;
+    use crate::idx::EntryIdx;
+    use crate::types::{ChangeId, Selection, SmallVec};
+
+    /// Distinct 32-char change IDs whose first two characters differ, so a
+    /// short prefix identifies each one.
+    fn change_id(tag: char) -> String {
+        format!("{tag}{tag}nnomkxrqvlypszwlwkvvqnstvzoxrs")
+    }
+
+    fn commit_id(tag: char) -> String {
+        format!("{tag}{tag}baa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654")
+    }
+
+    /// A DAG holding `tags` in that order, each with a 2-char unique prefix.
+    fn app_with(tags: &[char]) -> App {
+        let mut app = App::for_test();
+        for &tag in tags {
+            let mut commit = CommitInfo::for_test(&change_id(tag), &commit_id(tag));
+            commit.change_id.set_prefix_len(2);
+            app.nodes
+                .push(DagNode::new(commit, GraphLines::default(), SmallVec::new()));
+        }
+        app.rebuild_rows();
+        app
+    }
+
+    fn revisions(app: &App) -> Vec<String> {
+        app.selected_change_ids()
+            .iter()
+            .map(|r| r.as_str().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn selected_commits_come_out_in_dag_order() {
+        // The selection is a hash set, so without resolving against the DAG the
+        // order handed to `jj` — and shown in the command preview — would vary
+        // between identical invocations. Enough commits that hash order is not
+        // going to coincide with DAG order by chance.
+        let tags = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+        let mut app = app_with(&tags);
+        // Selected back to front, skipping two.
+        for i in [7, 5, 4, 2, 1, 0] {
+            app.toggle_commit_selection(EntryIdx::new(i));
+        }
+
+        assert_eq!(revisions(&app), ["aa", "bb", "cc", "ee", "ff", "hh"]);
+    }
+
+    #[test]
+    fn the_order_does_not_depend_on_how_the_selection_was_built() {
+        let order_a = {
+            let mut app = app_with(&['a', 'b', 'c']);
+            for i in [0, 1, 2] {
+                app.toggle_commit_selection(EntryIdx::new(i));
+            }
+            revisions(&app)
+        };
+        let order_b = {
+            let mut app = app_with(&['a', 'b', 'c']);
+            for i in [2, 1, 0] {
+                app.toggle_commit_selection(EntryIdx::new(i));
+            }
+            revisions(&app)
+        };
+
+        assert_eq!(order_a, order_b);
+    }
+
+    #[test]
+    fn a_selection_the_dag_has_not_loaded_yet_still_resolves() {
+        // Stale selections are pruned only once a load completes, so one can
+        // outrun the stream. Its whole change ID is still a valid revision.
+        let mut app = app_with(&['a']);
+        app.toggle_commit_selection(EntryIdx::new(0));
+        app.selection
+            .insert(Selection::Commit(ChangeId::new(change_id('z'))));
+
+        let revs = revisions(&app);
+        assert_eq!(revs.len(), 2);
+        assert_eq!(revs[0], "aa");
+        assert_eq!(revs[1], change_id('z'));
+    }
+
+    #[test]
+    fn with_nothing_selected_the_cursor_commit_is_used() {
+        let app = app_with(&['a', 'b']);
+        assert_eq!(revisions(&app), ["aa"]);
     }
 }
