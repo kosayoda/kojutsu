@@ -27,8 +27,9 @@ pub(super) struct CommitDetailInfo {
     pub change_id: ShortId,
     pub short_commit_id: ShortId,
     pub description: Option<String>,
-    pub change_id_suffix: Option<usize>,
-    pub is_hidden: bool,
+    /// `None` when the commit is neither divergent nor hidden, matching
+    /// `CommitInfo::divergence`.
+    pub divergence: Option<DivergenceInfo>,
 }
 
 impl JjRepo {
@@ -284,12 +285,17 @@ impl JjRepo {
 
         let description = parse_first_line_description(commit.description());
 
+        let divergence = (is_divergent || is_hidden).then_some(DivergenceInfo {
+            is_divergent,
+            is_hidden,
+            suffix: change_id_suffix,
+        });
+
         Some(CommitDetailInfo {
             change_id,
             short_commit_id,
             description,
-            change_id_suffix,
-            is_hidden,
+            divergence,
         })
     }
 }

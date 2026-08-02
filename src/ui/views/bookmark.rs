@@ -113,7 +113,7 @@ pub(crate) fn render_bookmark_conflict_target(
         &mut spans,
         &target.summary.change_id,
         theme.change_id,
-        target.change_id_suffix,
+        target.summary.change_id_suffix(),
         theme,
     );
     spans.push(Span::raw(" "));
@@ -124,7 +124,7 @@ pub(crate) fn render_bookmark_conflict_target(
         theme,
     );
 
-    if target.is_hidden {
+    if target.summary.is_hidden() {
         spans.push(Span::styled(" (hidden)", Style::default().fg(theme.muted)));
     }
 
@@ -185,7 +185,7 @@ pub(crate) fn render_bookmark_remote_target(
         &mut spans,
         &target.summary.change_id,
         theme.change_id,
-        target.change_id_suffix,
+        target.summary.change_id_suffix(),
         theme,
     );
     spans.push(Span::raw(" "));

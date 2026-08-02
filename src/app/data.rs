@@ -786,6 +786,7 @@ impl App {
                         commit_id: Some(node.commit.graph_id.clone()),
                         change_id: Some(node.commit.change_id.clone()),
                         short_commit_id: Some(node.commit.commit_id.clone()),
+                        revision: Some(node.commit.unique_prefix()),
                         description: node.commit.description.clone(),
                         kind,
                     });
@@ -807,6 +808,7 @@ impl App {
                         commit_id: Some(node.commit.graph_id.clone()),
                         change_id: Some(node.commit.change_id.clone()),
                         short_commit_id: Some(node.commit.commit_id.clone()),
+                        revision: Some(node.commit.unique_prefix()),
                         description: node.commit.description.clone(),
                         kind,
                     });
@@ -831,6 +833,7 @@ impl App {
                     commit_id: rb.commit_id.clone(),
                     change_id: None,
                     short_commit_id: None,
+                    revision: None,
                     description: None,
                     kind,
                 });
@@ -867,6 +870,7 @@ impl App {
                         commit_id: Some(node.commit.graph_id.clone()),
                         change_id: Some(node.commit.change_id.clone()),
                         short_commit_id: Some(node.commit.commit_id.clone()),
+                        revision: Some(node.commit.unique_prefix()),
                         description: node.commit.description.clone(),
                         is_deleted,
                     });
@@ -879,22 +883,24 @@ impl App {
             if seen.insert(tag.clone()) {
                 let details = self.views.tag_details.get(tag);
                 // Use local target info from tag_details if available.
-                let (commit_id, change_id, short_commit_id, description) =
+                let (commit_id, change_id, short_commit_id, revision, description) =
                     if let Some(lt) = details.and_then(|d| d.local_target.as_ref()) {
                         (
                             Some(lt.summary.commit_id.clone()),
                             Some(lt.summary.change_id.clone()),
                             Some(lt.summary.short_commit_id.clone()),
+                            Some(lt.summary.revision()),
                             lt.summary.description.clone(),
                         )
                     } else {
-                        (None, None, None, None)
+                        (None, None, None, None, None)
                     };
                 entries.push(TagViewEntry {
                     name: tag.clone(),
                     commit_id,
                     change_id,
                     short_commit_id,
+                    revision,
                     description,
                     is_deleted: false,
                 });
@@ -909,6 +915,7 @@ impl App {
                     commit_id: None,
                     change_id: None,
                     short_commit_id: None,
+                    revision: None,
                     description: None,
                     is_deleted: true,
                 });
@@ -1003,5 +1010,62 @@ mod repo_result_tests {
 
         let entry = &app.views.workspace_entries[0];
         assert_eq!(entry.change_id.as_ref().unwrap().prefix(), "uu");
+    }
+}
+
+#[cfg(test)]
+mod view_entry_revision_tests {
+    use super::super::App;
+    use crate::dag::{CommitSummary, DivergenceInfo, ShortId, TagDetails, TagLocalTarget};
+    use crate::types::{CommitId, TagName};
+
+    const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
+    const COMMIT_ID: &str = "7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654";
+
+    fn app_with_tag_on(divergence: Option<DivergenceInfo>) -> App {
+        let mut change_id = ShortId::new(CHANGE_ID);
+        change_id.set_prefix_len(2);
+
+        let mut app = App::for_test();
+        let tag = TagName::new("v1.0");
+        app.views.all_tags.push(tag.clone());
+        app.views.tag_details.insert(
+            tag,
+            TagDetails {
+                is_deleted: false,
+                local_target: Some(TagLocalTarget {
+                    summary: CommitSummary {
+                        commit_id: CommitId::new(COMMIT_ID),
+                        change_id,
+                        short_commit_id: ShortId::new(COMMIT_ID),
+                        description: None,
+                        divergence,
+                    },
+                }),
+                remote_targets: Vec::new(),
+            },
+        );
+        app.rebuild_tag_entries();
+        app
+    }
+
+    #[test]
+    fn a_tag_row_carries_the_revision_for_its_commit() {
+        let app = app_with_tag_on(None);
+        let entry = &app.views.tag_entries[0];
+        assert_eq!(entry.revision.as_ref().unwrap().as_str(), "uu");
+    }
+
+    #[test]
+    fn a_tag_on_a_hidden_commit_keeps_its_offset() {
+        // Without the offset this row would act on whatever superseded the
+        // tagged commit, silently and with no error.
+        let app = app_with_tag_on(Some(DivergenceInfo {
+            is_divergent: false,
+            is_hidden: true,
+            suffix: Some(1),
+        }));
+        let entry = &app.views.tag_entries[0];
+        assert_eq!(entry.revision.as_ref().unwrap().as_str(), "uu/1");
     }
 }

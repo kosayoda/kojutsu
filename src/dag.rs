@@ -179,6 +179,20 @@ pub struct DivergenceInfo {
     pub suffix: Option<usize>,
 }
 
+/// The revision to hand `jj` for a commit: the shortest unique change ID
+/// prefix, plus the `/<offset>` jj needs when the change is divergent or the
+/// commit is hidden and a bare change ID would resolve elsewhere.
+///
+/// Shared so that every view produces the same reference for a commit — a
+/// bookmark row and a DAG row naming the same commit must run the same thing.
+fn revision_of(change_id: &ShortId, divergence: Option<&DivergenceInfo>) -> RevisionArg {
+    let prefix = change_id.prefix();
+    match divergence.and_then(|d| d.suffix) {
+        Some(suffix) => RevisionArg::new(format_compact!("{prefix}/{suffix}")),
+        None => RevisionArg::new(prefix),
+    }
+}
+
 /// A local bookmark with its tracking status.
 #[derive(Debug)]
 pub struct BookmarkInfo {
@@ -241,6 +255,25 @@ pub struct CommitSummary {
     pub short_commit_id: ShortId,
     /// First line of description.
     pub description: Option<String>,
+    /// Divergence/hidden state. `None` for normal commits.
+    pub divergence: Option<DivergenceInfo>,
+}
+
+impl CommitSummary {
+    /// The revision to hand `jj` for this commit.
+    pub fn revision(&self) -> RevisionArg {
+        revision_of(&self.change_id, self.divergence.as_ref())
+    }
+
+    /// Whether this commit has been superseded.
+    pub fn is_hidden(&self) -> bool {
+        self.divergence.as_ref().is_some_and(|d| d.is_hidden)
+    }
+
+    /// Divergence suffix, for rendering the `/<n>` alongside the ID.
+    pub fn change_id_suffix(&self) -> Option<usize> {
+        self.divergence.as_ref().and_then(|d| d.suffix)
+    }
 }
 
 /// Whether something was added or removed (used for op diffs, conflict targets, etc.).
@@ -255,10 +288,6 @@ pub struct BookmarkConflictTarget {
     pub kind: DiffKind,
     /// Commit metadata.
     pub summary: CommitSummary,
-    /// Whether the commit is hidden (superseded).
-    pub is_hidden: bool,
-    /// Divergence suffix (e.g., `Some(2)` → `/2`).
-    pub change_id_suffix: Option<usize>,
 }
 
 /// Remote tracking info for a bookmark at a specific remote.
@@ -273,8 +302,6 @@ pub struct BookmarkRemoteTarget {
     pub behind_count: Option<usize>,
     /// Commits the local is ahead of the remote (None = unknown/conflicted).
     pub ahead_count: Option<usize>,
-    /// Divergence suffix (e.g., `Some(2)` → `/2`).
-    pub change_id_suffix: Option<usize>,
 }
 
 /// Expanded detail data for a bookmark (conflict targets + remote tracking).
@@ -355,11 +382,7 @@ impl CommitInfo {
     /// ID prefix, plus the `/<offset>` jj needs when the change is divergent
     /// or the commit is hidden and a bare change ID would resolve elsewhere.
     pub fn unique_prefix(&self) -> RevisionArg {
-        let prefix = self.change_id.prefix();
-        match self.change_id_suffix() {
-            Some(suffix) => RevisionArg::new(format_compact!("{prefix}/{suffix}")),
-            None => RevisionArg::new(prefix),
-        }
+        revision_of(&self.change_id, self.divergence.as_ref())
     }
 }
 
@@ -679,6 +702,61 @@ mod revision_tests {
         let c = commit(None);
         assert_eq!(c.unique_change_id().as_str(), CHANGE_ID);
         assert_ne!(c.unique_change_id().as_str(), c.unique_prefix().as_str());
+    }
+
+    fn summary(divergence: Option<DivergenceInfo>) -> CommitSummary {
+        let mut change_id = ShortId::new(CHANGE_ID);
+        change_id.set_prefix_len(2);
+        CommitSummary {
+            commit_id: CommitId::new(COMMIT_ID),
+            change_id,
+            short_commit_id: ShortId::new(COMMIT_ID),
+            description: None,
+            divergence,
+        }
+    }
+
+    #[test]
+    fn a_summary_names_a_commit_the_same_way_a_dag_row_does() {
+        // A bookmark row and a DAG row pointing at one commit have to run the
+        // same thing, so both derive their revision the same way.
+        for divergence in [
+            None,
+            Some(DivergenceInfo {
+                is_divergent: true,
+                is_hidden: false,
+                suffix: Some(1),
+            }),
+            Some(DivergenceInfo {
+                is_divergent: false,
+                is_hidden: true,
+                suffix: Some(3),
+            }),
+        ] {
+            let expected = commit(divergence.clone()).unique_prefix();
+            assert_eq!(summary(divergence).revision(), expected);
+        }
+    }
+
+    #[test]
+    fn a_summary_without_divergence_needs_no_offset() {
+        assert_eq!(summary(None).revision().as_str(), "uu");
+        assert!(!summary(None).is_hidden());
+        assert_eq!(summary(None).change_id_suffix(), None);
+    }
+
+    #[test]
+    fn a_hidden_summary_reports_itself_hidden_and_carries_the_offset() {
+        // A hidden bookmark target's bare change ID resolves to whatever
+        // superseded it, so the offset has to survive to the command.
+        let s = summary(Some(DivergenceInfo {
+            is_divergent: false,
+            is_hidden: true,
+            suffix: Some(2),
+        }));
+        assert_eq!(s.revision().as_str(), "uu/2");
+        assert!(s.is_hidden());
+        assert_eq!(s.change_id_suffix(), Some(2));
     }
 
     #[test]

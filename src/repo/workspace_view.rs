@@ -80,6 +80,7 @@ impl JjRepo {
                         change_id: info.change_id,
                         short_commit_id: info.short_commit_id,
                         description: info.description,
+                        divergence: info.divergence,
                     },
                 })
             });
@@ -97,6 +98,7 @@ impl JjRepo {
                                     change_id: info.change_id,
                                     short_commit_id: info.short_commit_id,
                                     description: info.description,
+                                    divergence: info.divergence,
                                 },
                             })
                         })
@@ -127,12 +129,17 @@ impl JjRepo {
                 .map(|(remote, commit_id)| {
                     let hex = commit_id.hex();
                     let resolved = self.commit_detail_info(commit_id);
-                    let (change_id, short_commit_id, description) = match resolved {
-                        Some(info) => (info.change_id, info.short_commit_id, info.description),
+                    let (change_id, short_commit_id, description, divergence) = match resolved {
+                        Some(info) => (
+                            info.change_id,
+                            info.short_commit_id,
+                            info.description,
+                            info.divergence,
+                        ),
                         // Commit isn't in the repo, so its change ID is
                         // genuinely unknown — leave it empty rather than
                         // showing the commit ID in the change ID's place.
-                        None => (ShortId::new(""), ShortId::new(&hex), None),
+                        None => (ShortId::new(""), ShortId::new(&hex), None, None),
                     };
                     TagRemoteTarget {
                         remote: RemoteName::new(remote),
@@ -141,6 +148,7 @@ impl JjRepo {
                             change_id,
                             short_commit_id,
                             description,
+                            divergence,
                         },
                     }
                 })
@@ -262,9 +270,8 @@ impl JjRepo {
                 change_id: info.change_id,
                 short_commit_id: info.short_commit_id,
                 description: info.description,
+                divergence: info.divergence,
             },
-            is_hidden: info.is_hidden,
-            change_id_suffix: info.change_id_suffix,
         })
     }
 
@@ -285,11 +292,11 @@ impl JjRepo {
                 change_id: info.change_id,
                 short_commit_id: info.short_commit_id,
                 description: info.description,
+                divergence: info.divergence,
             },
             is_tracked,
             behind_count,
             ahead_count,
-            change_id_suffix: info.change_id_suffix,
         })
     }
 
