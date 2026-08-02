@@ -159,7 +159,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let runtime = kojutsu::lua::LuaRuntime::load(&repo_path);
+    let mut runtime = kojutsu::lua::LuaRuntime::load(&repo_path);
     let config = runtime.config.clone();
     let (event_tx, event_rx) = mpsc::channel();
     let (repo_requests, repo_responses) =
@@ -324,6 +324,9 @@ fn main() -> Result<()> {
             }
             Action::Refresh => {
                 refresh_app(&mut app, RevsetLoadKind::Snapshot);
+            }
+            Action::ReloadConfig => {
+                reload_config(&mut app, &mut runtime, &repo_path, &repo_requests);
             }
             Action::UpdateRevset(revset_str) => {
                 update_revset(&mut app, revset_str);
@@ -553,6 +556,56 @@ fn suspend_and_run(
         );
     }
     result.success
+}
+
+/// Rebuild the runtime from `init.lua` and swap it in.
+///
+/// All-or-nothing: the new runtime is built first and only installed if its
+/// script ran clean, so a broken edit leaves the running one untouched. The
+/// rebuild is wholesale rather than a re-run over the live engine, because
+/// registering a command or binding appends — a second pass would double
+/// every one of them — and a fresh Lua also drops `package.loaded`, so
+/// `require`d modules are re-read instead of served from cache.
+fn reload_config(
+    app: &mut App,
+    runtime: &mut kojutsu::lua::LuaRuntime,
+    repo_path: &std::path::Path,
+    repo_requests: &RepoRequestHandle,
+) {
+    // A parked thread belongs to the engine that created it, and the reload
+    // drops that engine along with the prompt it is waiting on.
+    if runtime.engine.has_suspended_thread() {
+        app.set_error("reload: a plugin prompt is still open");
+        return;
+    }
+
+    let reloaded = kojutsu::lua::LuaRuntime::load(repo_path);
+    if let Some(err) = reloaded.init_error() {
+        app.push_command_log(
+            kojutsu::app::CommandLogKind::Warning,
+            "reload failed - keeping the running config",
+            None,
+            err.as_bytes().to_vec(),
+            false,
+        );
+        app.set_error(format!("reload: {err}"));
+        return;
+    }
+
+    *runtime = reloaded;
+    let config = runtime.config.clone();
+    repo_requests.send(kojutsu::repo_service::RepoRequest::set_diff_size_limit(
+        config.diff.max_file_size_bytes(),
+    ));
+    app.apply_reloaded_config(config);
+    app.push_command_log(
+        kojutsu::app::CommandLogKind::Background,
+        "reloaded init.lua",
+        None,
+        Vec::new(),
+        true,
+    );
+    app.set_status("reloaded init.lua");
 }
 
 fn update_revset(app: &mut App, revset_str: String) {

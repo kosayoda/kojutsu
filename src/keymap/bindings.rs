@@ -256,6 +256,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
             G,
             all(),
         ),
+        bind2(";", "c", ReloadConfig, "reload init.lua", G, all()),
         bind2(";", "d", ResetRevset, "default revset", G, all()),
         bind2(";", "p", SelectPreset, "switch preset", G, all()),
         bind2(";", "l", ToggleLineNumbers, "toggle line numbers", G, all()),

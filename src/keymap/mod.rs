@@ -93,6 +93,7 @@ pub enum AppAction {
     ScrollRight,
     ToggleFold,
     Refresh,
+    ReloadConfig,
     ExpandAncestors,
     ExpandDescendants,
     Abandon,
@@ -293,6 +294,7 @@ impl AppAction {
 
             AppAction::Quit
             | AppAction::Refresh
+            | AppAction::ReloadConfig
             | AppAction::ExpandAncestors
             | AppAction::ExpandDescendants
             | AppAction::Abandon
@@ -477,6 +479,7 @@ impl AppAction {
             | AppAction::ScrollRight
             | AppAction::ToggleFold
             | AppAction::Refresh
+            | AppAction::ReloadConfig
             | AppAction::ExpandAncestors
             | AppAction::ExpandDescendants
             | AppAction::Commit
@@ -712,6 +715,7 @@ impl AppAction {
             | AppAction::ScrollRight
             | AppAction::ToggleFold
             | AppAction::Refresh
+            | AppAction::ReloadConfig
             | AppAction::ExpandAncestors
             | AppAction::ExpandDescendants
             | AppAction::ShowHelp

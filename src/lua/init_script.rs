@@ -53,10 +53,8 @@ impl LuaEngine {
         registry: &mut ActionRegistry,
         default_specs: &[BindingSpec],
         config: &mut crate::theme::Config,
+        config_dir: &std::path::Path,
     ) {
-        let Some(config_dir) = crate::theme::kojutsu_config_dir() else {
-            return;
-        };
         let init_path = config_dir.join("init.lua");
         if !init_path.exists() {
             return;

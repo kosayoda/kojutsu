@@ -555,6 +555,7 @@ pub fn dispatch_action_after_hooks(
             Action::None
         }
         AppAction::Refresh => Action::Refresh,
+        AppAction::ReloadConfig => Action::ReloadConfig,
         AppAction::SelectPreset => {
             if app.config.revsets.presets.is_empty() {
                 app.set_error("no presets configured");

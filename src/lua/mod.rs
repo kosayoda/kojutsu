@@ -260,10 +260,11 @@ impl LuaEngine {
         registry: &mut ActionRegistry,
         default_specs: &[BindingSpec],
         config: &mut crate::theme::Config,
+        config_dir: &Path,
     ) -> Self {
         let mut engine = Self::without_config(repo_path);
         if engine.init_error.is_none() {
-            engine.load_init_script(registry, default_specs, config);
+            engine.load_init_script(registry, default_specs, config, config_dir);
         }
         engine
     }

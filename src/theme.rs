@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
@@ -426,12 +426,10 @@ fn default_workspace() -> Color {
     Color::Green
 }
 
-/// Load config from `~/.config/kojutsu/config.toml` (or XDG equivalent).
-/// Returns defaults on any error (prints warnings to stderr on parse failures).
-pub fn load_config() -> Config {
-    let Some(path) = config_path() else {
-        return Config::default();
-    };
+/// Load `config.toml` from `config_dir`. Returns defaults on any error
+/// (printing a warning to stderr on a parse failure).
+pub fn load_config(config_dir: &Path) -> Config {
+    let path = config_dir.join("config.toml");
     let contents = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(_) => return Config::default(),
@@ -447,10 +445,6 @@ pub fn load_config() -> Config {
 
 pub fn kojutsu_config_dir() -> Option<PathBuf> {
     Some(dirs::config_dir()?.join("kojutsu"))
-}
-
-fn config_path() -> Option<PathBuf> {
-    Some(kojutsu_config_dir()?.join("config.toml"))
 }
 
 /// Path for user-wide persistent state (`~/.local/state/kojutsu/state.json`).

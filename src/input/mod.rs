@@ -61,6 +61,8 @@ pub enum Action {
     SuspendAndRunJj(crate::jj_command::JJCommand),
     /// Snapshot the working copy and reload the DAG.
     Refresh,
+    /// Re-read `init.lua` and swap in the runtime it produces.
+    ReloadConfig,
     /// Evaluate a new revset and refresh the view.
     UpdateRevset(String),
     /// Suspend TUI and open $EDITOR to edit the revset.

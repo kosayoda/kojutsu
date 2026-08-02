@@ -154,6 +154,7 @@ impl AppAction {
             | ScrollRight
             | ToggleFold
             | Refresh
+            | ReloadConfig
             | ExpandDescendants
             | EditRevset
             | EditRevsetInEditor
