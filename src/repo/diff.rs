@@ -12,7 +12,7 @@ use jj_lib::conflicts::{
     try_materialize_file_conflict_value,
 };
 use jj_lib::diff_presentation::DiffTokenType;
-use jj_lib::diff_presentation::unified::{self, DiffLineType, git_diff_part};
+use jj_lib::diff_presentation::unified::{self, DiffLineType};
 use jj_lib::matchers::EverythingMatcher;
 use jj_lib::merge::{Diff, Merge, MergedTreeValue};
 use jj_lib::merged_tree::MergedTree;
@@ -57,17 +57,17 @@ impl DiffSideContent {
 
 /// Materialize one side of a file diff. Regular files are read through a
 /// size cap (`limit` bytes — a memory guard, not a latency cap; diff work
-/// runs on background workers) so oversized blobs are never fully loaded
-/// (jj's `git_diff_part` reads whole files before its binary check and has
-/// no cap). Conflicted files materialize hunk by hunk so the conflict
-/// regions' line ranges are tracked exactly; other tree values (symlinks,
-/// submodules) still go through `git_diff_part`.
+/// runs on background workers) so oversized blobs are never fully loaded.
+/// Conflicted files materialize hunk by hunk so the conflict regions' line
+/// ranges are tracked exactly. Values that have no content of their own
+/// (symlinks, submodules, non-file conflicts) stand in for it with the
+/// same one-line descriptions jj's own diffs use, so a change to one is
+/// visible rather than rendering as an empty diff.
 fn materialize_diff_side(
     store: &Arc<Store>,
     path: &JjRepoPath,
     value: MergedTreeValue,
     labels: &ConflictLabels,
-    materialize_options: &ConflictMaterializeOptions,
     limit: usize,
 ) -> Result<DiffSideContent> {
     let materialized = materialize_tree_value(store, path, value, labels).block_on()?;
@@ -100,16 +100,21 @@ fn materialize_diff_side(
         MaterializedTreeValue::FileConflict(conflict) => {
             Ok(materialize_conflict_with_regions(&conflict.contents))
         }
-        other => {
-            let part = git_diff_part(path, other, materialize_options)
-                .block_on()
-                .map_err(|e| color_eyre::eyre::eyre!("diff error: {e}"))?;
-            Ok(if part.content.is_binary {
-                DiffSideContent::Binary
-            } else {
-                DiffSideContent::text(part.content.contents)
-            })
+        MaterializedTreeValue::Absent => Ok(DiffSideContent::text("")),
+        MaterializedTreeValue::Symlink { target, .. } => Ok(DiffSideContent::text(target)),
+        MaterializedTreeValue::GitSubmodule(id) => Ok(DiffSideContent::text(format!(
+            "Git submodule checked out at {id}"
+        ))),
+        MaterializedTreeValue::OtherConflict { id, labels } => {
+            Ok(DiffSideContent::text(id.describe(&labels)))
         }
+        MaterializedTreeValue::AccessDenied(err) => {
+            Ok(DiffSideContent::text(format!("Access denied: {err}")))
+        }
+        MaterializedTreeValue::Tree(id) => Err(color_eyre::eyre::eyre!(
+            "unexpected tree {id:?} in diff at {}",
+            path.as_internal_file_string()
+        )),
     }
 }
 
@@ -203,7 +208,6 @@ impl JjRepo {
         let mut changes = Vec::new();
         let mut stats = LineStats::default();
         let labels = ConflictLabels::unlabeled();
-        let materialize_options = default_materialize_options();
 
         // Build copy records for rename/copy detection.
         let mut copy_records = jj_lib::copies::CopyRecords::default();
@@ -302,7 +306,6 @@ impl JjRepo {
                 &before_repo_path,
                 values.before,
                 &labels,
-                &materialize_options,
                 self.diff_size_limit,
             )?;
             let after = materialize_diff_side(
@@ -310,7 +313,6 @@ impl JjRepo {
                 &after_repo_path,
                 values.after,
                 &labels,
-                &materialize_options,
                 self.diff_size_limit,
             )?;
             let (
@@ -456,7 +458,6 @@ impl JjRepo {
         let to_tree = to_commit.tree();
         let copy_records = jj_lib::copies::CopyRecords::default();
         let labels = ConflictLabels::unlabeled();
-        let materialize_options = default_materialize_options();
 
         let mut changes = Vec::new();
         let mut diff_stream =
@@ -499,7 +500,6 @@ impl JjRepo {
                 path,
                 values.before,
                 &labels,
-                &materialize_options,
                 self.diff_size_limit,
             )?;
             let after = materialize_diff_side(
@@ -507,7 +507,6 @@ impl JjRepo {
                 path,
                 values.after,
                 &labels,
-                &materialize_options,
                 self.diff_size_limit,
             )?;
             if let (
@@ -572,7 +571,6 @@ impl JjRepo {
             .and_then(|p| RepoPathBuf::from_internal_string(p.as_str()).ok())
             .unwrap_or_else(|| repo_path.clone());
         let labels = ConflictLabels::unlabeled();
-        let materialize_options = default_materialize_options();
 
         let before_value = before_tree.path_value(&before_repo_path).block_on()?;
         let after_value = after_tree.path_value(&repo_path).block_on()?;
@@ -582,7 +580,6 @@ impl JjRepo {
             &before_repo_path,
             before_value,
             &labels,
-            &materialize_options,
             self.diff_size_limit,
         )?;
         let after = materialize_diff_side(
@@ -590,7 +587,6 @@ impl JjRepo {
             &repo_path,
             after_value,
             &labels,
-            &materialize_options,
             self.diff_size_limit,
         )?;
 
@@ -670,7 +666,6 @@ impl JjRepo {
 
         let copy_records = jj_lib::copies::CopyRecords::default();
         let labels = ConflictLabels::unlabeled();
-        let materialize_options = default_materialize_options();
 
         let mut changes = Vec::new();
         let mut diff_stream =
@@ -712,7 +707,6 @@ impl JjRepo {
                 path,
                 values.before,
                 &labels,
-                &materialize_options,
                 self.diff_size_limit,
             )?;
             let after = materialize_diff_side(
@@ -720,7 +714,6 @@ impl JjRepo {
                 path,
                 values.after,
                 &labels,
-                &materialize_options,
                 self.diff_size_limit,
             )?;
             if let (
