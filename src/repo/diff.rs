@@ -5,7 +5,7 @@ use color_eyre::Result;
 use color_eyre::eyre::Context;
 use futures::AsyncReadExt as _;
 use futures::StreamExt as _;
-use jj_lib::backend::CommitId as BackendCommitId;
+use jj_lib::backend::{CommitId as BackendCommitId, TreeValue};
 use jj_lib::conflict_labels::ConflictLabels;
 use jj_lib::conflicts::{
     ConflictMaterializeOptions, MaterializedTreeValue, materialize_tree_value,
@@ -163,6 +163,22 @@ fn materialize_conflict_with_regions(contents: &Merge<bstr::BString>) -> DiffSid
     }
 }
 
+/// Whether a tree value is a Git submodule pointer on any of its terms.
+/// Submodules carry no file content, so their diffs are descriptions
+/// rather than bytes (see `materialize_diff_side`) and can't be edited.
+fn is_submodule(value: &MergedTreeValue) -> bool {
+    value
+        .iter()
+        .flatten()
+        .any(|v| matches!(v, TreeValue::GitSubmodule(_)))
+}
+
+/// Whether either side of a change is a Git submodule pointer — a submodule
+/// being added or removed is as unpatchable as one being bumped.
+fn is_submodule_change(values: &Diff<MergedTreeValue>) -> bool {
+    is_submodule(&values.before) || is_submodule(&values.after)
+}
+
 /// A single-line placeholder shown instead of a real diff (binary or
 /// oversized files).
 fn placeholder_diff(text: impl Into<String>) -> DiffResult {
@@ -243,6 +259,7 @@ impl JjRepo {
                         status: FileStatus::Error,
                         has_conflict: false,
                         baseline_conflicted: false,
+                        is_submodule: false,
                         stats: LineStats::default(),
                     });
                     continue;
@@ -288,6 +305,7 @@ impl JjRepo {
                 status,
                 has_conflict,
                 baseline_conflicted,
+                is_submodule: is_submodule_change(&values),
                 stats: LineStats::default(),
             });
 
@@ -338,7 +356,7 @@ impl JjRepo {
         // Add any conflicted files not already found by the diff pass.
         if commit.has_conflict() {
             let existing: HashSet<RepoPath> = changes.iter().map(|c| c.path.clone()).collect();
-            for (path, _) in commit_tree.conflicts() {
+            for (path, value) in commit_tree.conflicts() {
                 let repo_path = RepoPath::new(path.as_internal_file_string());
                 if !existing.contains(&repo_path) {
                     changes.push(FileChange {
@@ -347,6 +365,7 @@ impl JjRepo {
                         status: FileStatus::Modified,
                         has_conflict: true,
                         baseline_conflicted: true,
+                        is_submodule: value.as_ref().is_ok_and(is_submodule),
                         stats: LineStats::default(),
                     });
                 }
@@ -476,6 +495,7 @@ impl JjRepo {
                         status: FileStatus::Error,
                         has_conflict: false,
                         baseline_conflicted: false,
+                        is_submodule: false,
                         stats: LineStats::default(),
                     });
                     continue;
@@ -492,6 +512,7 @@ impl JjRepo {
             };
             let has_conflict = !values.after.is_resolved();
             let baseline_conflicted = !values.before.is_resolved();
+            let is_submodule = is_submodule_change(&values);
 
             // Compute line stats by materializing + diffing.
             let mut file_stats = LineStats::default();
@@ -527,6 +548,7 @@ impl JjRepo {
                 status,
                 has_conflict,
                 baseline_conflicted,
+                is_submodule,
                 stats: file_stats,
             });
         }
@@ -684,6 +706,7 @@ impl JjRepo {
                         status: FileStatus::Error,
                         has_conflict: false,
                         baseline_conflicted: false,
+                        is_submodule: false,
                         stats: LineStats::default(),
                     });
                     continue;
@@ -700,6 +723,7 @@ impl JjRepo {
             };
             let has_conflict = !values.after.is_resolved();
             let baseline_conflicted = !values.before.is_resolved();
+            let is_submodule = is_submodule_change(&values);
 
             let mut file_stats = LineStats::default();
             let before = materialize_diff_side(
@@ -734,6 +758,7 @@ impl JjRepo {
                 status,
                 has_conflict,
                 baseline_conflicted,
+                is_submodule,
                 stats: file_stats,
             });
         }

@@ -17,6 +17,61 @@ impl App {
         Some((change_id, files[file_idx.raw()].path.clone()))
     }
 
+    /// The blocker naming a commit's files, or `None` when every change in
+    /// it can be narrowed by a line selection.
+    fn line_selection_blocker(&self, change_id: &ChangeId) -> Option<String> {
+        let files = self
+            .nodes
+            .iter()
+            .find(|node| node.commit.unique_change_id() == *change_id)
+            .and_then(|node| node.files.loaded())?;
+        line_selection_blocker(files)
+    }
+
+    /// Enter line-selection mode for a commit, scoping the selection to it.
+    /// Returns `false` — having changed nothing — when the commit holds a
+    /// change no line selection can narrow, because a line-mode command
+    /// would carry that change along whole while the UI implied otherwise.
+    /// Whole-file selection takes a different route (a jj fileset rather
+    /// than a diff editor) and handles those paths correctly, so that's
+    /// what the message points at.
+    pub(super) fn begin_line_selection(&mut self, change_id: &ChangeId) -> bool {
+        if let Some(blocker) = self.line_selection_blocker(change_id) {
+            self.set_error(format!(
+                "{blocker}, so it comes along whichever lines you pick - select whole files instead"
+            ));
+            return false;
+        }
+        self.clear_other_commits(change_id);
+        self.selection.ensure_compatible(SelectionKind::Line);
+        true
+    }
+
+    /// Drop a commit's line selections once its freshly loaded file list
+    /// turns out to hold a change no line selection can narrow.
+    ///
+    /// [`Self::begin_line_selection`] can only judge the files known at the
+    /// time. A commit rewritten under an existing selection — squashing a
+    /// submodule bump into it, say — keeps its change ID, so the selection
+    /// survives the refresh and would otherwise go on to run in line mode
+    /// against a commit that no longer supports it.
+    pub(super) fn drop_blocked_line_selection(&mut self, entry_idx: EntryIdx) {
+        if self.selection_kind() != SelectionKind::Line {
+            return;
+        }
+        let change_id = self.nodes[entry_idx].commit.unique_change_id();
+        if !self.selection.any(|s| *s.change_id() == change_id) {
+            return;
+        }
+        let Some(blocker) = self.line_selection_blocker(&change_id) else {
+            return;
+        };
+        self.clear_selection();
+        self.set_error(format!(
+            "{blocker}, which a line selection can't exclude - dropped it, select whole files instead"
+        ));
+    }
+
     pub fn selection_active(&self) -> bool {
         self.selection.is_active()
     }
@@ -210,8 +265,9 @@ impl App {
         let old_line = dl.old_line;
         let new_line = dl.new_line;
 
-        self.clear_other_commits(&change_id);
-        self.selection.ensure_compatible(SelectionKind::Line);
+        if !self.begin_line_selection(&change_id) {
+            return;
+        }
         self.expand_file_selection_to_lines(entry_idx, file_idx);
 
         let sel = Selection::Line {
@@ -259,8 +315,9 @@ impl App {
             }
         }
 
-        self.clear_other_commits(&change_id);
-        self.selection.ensure_compatible(SelectionKind::Line);
+        if !self.begin_line_selection(&change_id) {
+            return;
+        }
         self.expand_file_selection_to_lines(entry_idx, file_idx);
 
         // If all hunk lines are already selected, deselect them. Otherwise select all.
@@ -395,6 +452,23 @@ impl App {
             }
         }
     }
+}
+
+/// Names the first change in `files` that no line selection can narrow, and
+/// how many others share the problem — or `None` when they all can be.
+/// Phrased as the subject of a sentence the caller completes, so the reason
+/// stays tied to [`FileChange::line_selection_blocker`] rather than being
+/// restated at each call site.
+fn line_selection_blocker(files: &[crate::dag::FileChange]) -> Option<String> {
+    let mut blocked = files
+        .iter()
+        .filter_map(|f| Some((&f.path, f.line_selection_blocker()?)));
+    let (path, reason) = blocked.next()?;
+    let more = match blocked.count() {
+        0 => String::new(),
+        n => format!(" (+{n} more)"),
+    };
+    Some(format!("{}{more} is {reason}", path.as_str()))
 }
 
 #[cfg(test)]
@@ -542,5 +616,172 @@ mod selected_revision_tests {
     fn with_nothing_selected_the_cursor_commit_is_used() {
         let app = app_with(&['a', 'b']);
         assert_eq!(revisions(&app), ["aa"]);
+    }
+}
+
+#[cfg(test)]
+mod submodule_line_selection_tests {
+    use super::super::{App, DagNode, Loadable};
+    use crate::dag::{
+        CommitInfo, DiffLine, DiffLineKind, DiffResult, FileChange, FileStatus, LineStats,
+    };
+    use crate::graph::GraphLines;
+    use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
+    use crate::types::{FileSelectionState, RepoPath, SelectionKind, SmallVec};
+
+    const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
+    const COMMIT_ID: &str = "7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654";
+
+    fn file(path: &str, is_submodule: bool) -> FileChange {
+        FileChange {
+            path: RepoPath::new(path),
+            old_path: None,
+            status: FileStatus::Modified,
+            has_conflict: false,
+            baseline_conflicted: false,
+            is_submodule,
+            stats: LineStats::default(),
+        }
+    }
+
+    /// One added and one removed line, the shape both a real file diff and a
+    /// submodule's before/after description take.
+    fn two_line_diff() -> DiffResult {
+        let line = |kind, old_line, new_line| DiffLine {
+            kind,
+            content: "x".into(),
+            tokens: vec![],
+            old_line,
+            new_line,
+            conflict_region: false,
+        };
+        let lines = vec![
+            line(DiffLineKind::Header, None, None),
+            line(DiffLineKind::Removed, Some(1), None),
+            line(DiffLineKind::Added, None, Some(1)),
+        ];
+        DiffResult {
+            git: lines.clone(),
+            color_words: lines,
+        }
+    }
+
+    /// A single commit whose files are `paths`, each with a two-line diff.
+    fn app_with_files(paths: &[(&str, bool)]) -> App {
+        let mut app = App::for_test();
+        app.nodes.push(DagNode::new(
+            CommitInfo::for_test(CHANGE_ID, COMMIT_ID),
+            GraphLines::default(),
+            SmallVec::new(),
+        ));
+        let idx = EntryIdx::new(0);
+        app.nodes[idx].files = Loadable::Loaded(
+            paths
+                .iter()
+                .map(|(path, is_submodule)| file(path, *is_submodule))
+                .collect(),
+        );
+        for i in 0..paths.len() {
+            app.nodes[idx].set_diff(FileIdx::new(i), two_line_diff());
+        }
+        app
+    }
+
+    /// The removed line of the first file's diff.
+    const REMOVED: DiffLineIdx = DiffLineIdx::new(1);
+
+    #[test]
+    fn a_submodules_lines_cannot_be_line_selected() {
+        let mut app = app_with_files(&[("sub", true)]);
+
+        app.toggle_line_selection(EntryIdx::new(0), FileIdx::new(0), REMOVED);
+
+        assert!(!app.selection_active());
+        assert!(app.status_message.is_some());
+    }
+
+    /// The real trap: the submodule isn't the file being selected. jj carries
+    /// it along whole regardless, so offering line selection anywhere in this
+    /// commit would misreport what the command is about to do.
+    #[test]
+    fn a_submodule_blocks_line_selection_of_its_neighbours() {
+        let mut app = app_with_files(&[("readme", false), ("sub", true)]);
+
+        app.toggle_line_selection(EntryIdx::new(0), FileIdx::new(0), REMOVED);
+
+        assert!(!app.selection_active());
+    }
+
+    #[test]
+    fn a_hunk_toggle_is_blocked_the_same_way() {
+        let mut app = app_with_files(&[("readme", false), ("sub", true)]);
+
+        app.toggle_hunk_selection(EntryIdx::new(0), FileIdx::new(0), DiffLineIdx::new(0));
+
+        assert!(!app.selection_active());
+    }
+
+    /// Whole-file selection reaches jj as a fileset rather than a diff editor,
+    /// which handles submodules correctly — so it stays available.
+    #[test]
+    fn whole_file_selection_still_works_on_a_submodule() {
+        let mut app = app_with_files(&[("sub", true)]);
+        let (entry, f) = (EntryIdx::new(0), FileIdx::new(0));
+
+        app.toggle_file_selection(entry, f);
+
+        assert_eq!(app.selection_kind(), SelectionKind::File);
+        assert!(matches!(
+            app.file_selection_state(entry, f),
+            FileSelectionState::Full
+        ));
+    }
+
+    /// Nothing about the guard should touch a commit without submodules.
+    #[test]
+    fn line_selection_is_untouched_without_a_submodule() {
+        let mut app = app_with_files(&[("readme", false)]);
+
+        app.toggle_line_selection(EntryIdx::new(0), FileIdx::new(0), REMOVED);
+
+        assert_eq!(app.selection_kind(), SelectionKind::Line);
+    }
+
+    /// A commit rewritten under a live line selection keeps its change ID, so
+    /// the selection survives the refresh. If the rewrite brought in a
+    /// submodule, the selection is now unhonourable and has to go — checked
+    /// when the new file list lands, the first moment that's knowable.
+    #[test]
+    fn a_rewrite_that_adds_a_submodule_drops_the_line_selection() {
+        let mut app = app_with_files(&[("readme", false)]);
+        let entry = EntryIdx::new(0);
+        app.toggle_line_selection(entry, FileIdx::new(0), REMOVED);
+        assert_eq!(app.selection_kind(), SelectionKind::Line);
+
+        app.nodes[entry].files = Loadable::Loaded(vec![file("readme", false), file("sub", true)]);
+        app.drop_blocked_line_selection(entry);
+
+        assert!(!app.selection_active());
+    }
+
+    /// The same reload without a submodule must leave the selection alone.
+    #[test]
+    fn a_reload_keeps_a_line_selection_it_can_still_honour() {
+        let mut app = app_with_files(&[("readme", false)]);
+        let entry = EntryIdx::new(0);
+        app.toggle_line_selection(entry, FileIdx::new(0), REMOVED);
+
+        app.drop_blocked_line_selection(entry);
+
+        assert_eq!(app.selection_kind(), SelectionKind::Line);
+    }
+
+    /// Both blocked paths are reported, so the message doesn't imply the one
+    /// it names is the only thing in the way.
+    #[test]
+    fn the_message_counts_every_blocked_path() {
+        let files = [file("a", true), file("readme", false), file("b", true)];
+        let blocker = super::line_selection_blocker(&files).unwrap();
+        assert_eq!(blocker, "a (+1 more) is a Git submodule");
     }
 }

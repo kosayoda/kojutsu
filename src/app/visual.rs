@@ -627,10 +627,9 @@ impl App {
                 self.selection.remove(s);
             }
         } else {
-            if let Some(Selection::Line { file_ref, .. }) = line_data.first() {
-                self.clear_other_commits(&file_ref.change_id);
+            if !self.begin_line_selection(&vr.change_id) {
+                return;
             }
-            self.selection.ensure_compatible(SelectionKind::Line);
             for s in &line_data {
                 if let Selection::Line { file_ref, .. } = s {
                     self.selection.remove(&Selection::File(file_ref.clone()));

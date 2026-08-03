@@ -437,6 +437,10 @@ impl App {
                     // Store loaded files and stats.
                     self.nodes[idx].files = Loadable::Loaded(details.files);
                     self.nodes[idx].stats = Loadable::Loaded(details.stats);
+                    // The file list is the first point this commit's changes
+                    // are known, so it's also where a line selection made
+                    // before a rewrite gets re-checked against them.
+                    self.drop_blocked_line_selection(idx);
                     deferred.rebuild.add_entry(idx);
                     deferred.scroll = true;
                 }

@@ -436,6 +436,9 @@ pub struct FileChange {
     /// was conflicted, so the diff is shown against materialized conflict
     /// markers rather than plain file content.
     pub baseline_conflicted: bool,
+    /// Either side of the change is a Git submodule pointer rather than
+    /// file content. See [`Self::line_selection_blocker`].
+    pub is_submodule: bool,
     /// Per-file line stats (added/removed counts).
     pub stats: LineStats,
 }
@@ -445,6 +448,19 @@ impl FileChange {
     /// resolves it (jj diff labels these "Resolved conflict in …").
     pub fn is_conflict_resolution(&self) -> bool {
         self.baseline_conflicted && !self.has_conflict
+    }
+
+    /// What stops a line-level selection from applying to this path, if
+    /// anything — worded to drop into a sentence after the path.
+    ///
+    /// Line selection works by re-invoking kojutsu as jj's diff editor and
+    /// rewriting the files jj laid out in its "after" directory. A submodule
+    /// is not laid out as a file there — jj creates an empty directory and
+    /// drops submodule entries again when it snapshots the result — so the
+    /// pointer is carried through whole no matter what the editor writes.
+    /// Nothing can narrow it, which makes any per-line answer a lie.
+    pub fn line_selection_blocker(&self) -> Option<&'static str> {
+        self.is_submodule.then_some("a Git submodule")
     }
 }
 
