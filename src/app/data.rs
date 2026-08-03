@@ -713,6 +713,10 @@ impl App {
                     .as_ref()
                     .is_none_or(|t| t.commit_id != commit_id || t.path != path) => {}
                 Ok(annotate_result) => {
+                    self.annotate.cache.insert(
+                        crate::app::types::AnnotateTarget { commit_id, path },
+                        annotate_result.clone(),
+                    );
                     self.annotate.lines = Loadable::Loaded(annotate_result.lines);
                     self.annotate.commit_info = annotate_result.commit_info;
                     if self.active_view == super::ActiveView::Annotate {

@@ -244,9 +244,54 @@ impl InterdiffState {
 }
 
 /// The commit + path being annotated.
+#[derive(Clone, PartialEq, Eq)]
 pub struct AnnotateTarget {
     pub commit_id: CommitId,
     pub path: RepoPath,
+}
+
+/// Annotations already computed, most recently used first.
+///
+/// An annotation is a pure function of its target: a commit's ancestry is
+/// immutable, so once computed for a given commit and path the result stays
+/// valid for as long as that commit exists — including across refreshes.
+/// Recomputing costs most of a second on a large repo, and time travel walks
+/// back and forth over the same targets.
+#[derive(Default)]
+pub struct AnnotateCache {
+    entries: Vec<(AnnotateTarget, crate::dag::AnnotateResult)>,
+}
+
+/// Total lines to keep. A budget rather than an entry count, because one
+/// annotation of a large file costs more than several of small ones.
+const MAX_CACHED_ANNOTATE_LINES: usize = 50_000;
+
+impl AnnotateCache {
+    pub fn get(&mut self, target: &AnnotateTarget) -> Option<&crate::dag::AnnotateResult> {
+        let pos = self.entries.iter().position(|(t, _)| t == target)?;
+        // Most recent last-used moves to the front so eviction drops the
+        // targets being navigated away from.
+        let entry = self.entries.remove(pos);
+        self.entries.insert(0, entry);
+        Some(&self.entries[0].1)
+    }
+
+    pub fn insert(&mut self, target: AnnotateTarget, result: crate::dag::AnnotateResult) {
+        self.entries.retain(|(t, _)| *t != target);
+        self.entries.insert(0, (target, result));
+
+        let mut lines = 0;
+        let mut newest = true;
+        self.entries.retain(|(_, r)| {
+            lines += r.lines.len();
+            // The entry just inserted is kept whatever its size — a file too
+            // large for the whole budget is the most expensive one to
+            // recompute, so it is the last thing to drop.
+            let keep = newest || lines <= MAX_CACHED_ANNOTATE_LINES;
+            newest = false;
+            keep
+        });
+    }
 }
 
 /// State for the annotate (blame) view.
@@ -265,6 +310,8 @@ pub struct AnnotateState {
     pub history: Vec<(CommitId, usize)>,
     /// Show separator lines between groups of lines from different commits.
     pub show_commit_separators: bool,
+    /// Previously computed annotations, so revisiting a target is free.
+    pub cache: AnnotateCache,
 }
 
 impl Default for AnnotateState {
@@ -283,6 +330,7 @@ impl AnnotateState {
             target_line: None,
             history: Vec::new(),
             show_commit_separators: false,
+            cache: AnnotateCache::default(),
         }
     }
 
@@ -291,17 +339,21 @@ impl AnnotateState {
     pub fn clear_keep_history(&mut self) {
         let history = std::mem::take(&mut self.history);
         let commit_info = std::mem::take(&mut self.commit_info);
-        let show_commit_separators = self.show_commit_separators;
-        *self = Self::new();
+        self.clear();
         self.history = history;
         self.commit_info = commit_info;
-        self.show_commit_separators = show_commit_separators;
     }
 
+    /// Reset what belongs to one annotation. The cache and the separator
+    /// preference outlive any single one, so they are left alone — hence
+    /// clearing field by field rather than replacing `self` wholesale.
     pub fn clear(&mut self) {
-        let show_commit_separators = self.show_commit_separators;
-        *self = Self::new();
-        self.show_commit_separators = show_commit_separators;
+        self.target = None;
+        self.lines = Loadable::NotRequested;
+        self.commit_info.clear();
+        self.unfolded_lines.clear();
+        self.target_line = None;
+        self.history.clear();
     }
 }
 
@@ -1069,5 +1121,92 @@ impl AppMode {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod annotate_cache_tests {
+    use super::*;
+    use crate::dag::AnnotateResult;
+
+    fn target(commit: &str, path: &str) -> AnnotateTarget {
+        AnnotateTarget {
+            commit_id: CommitId::new(commit),
+            path: RepoPath::new(path),
+        }
+    }
+
+    fn result(lines: usize) -> AnnotateResult {
+        AnnotateResult {
+            lines: vec![
+                crate::dag::AnnotateLineData {
+                    commit_id: CommitId::new("abc"),
+                    change_id: crate::dag::ShortId::new("uunnomkx"),
+                    author: String::new(),
+                    relative_time: crate::types::Str::new(""),
+                    line_number: 1,
+                    content: String::new(),
+                    syntax_tokens: Vec::new(),
+                    outside_domain: false,
+                };
+                lines
+            ],
+            commit_info: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_stored_annotation_comes_back() {
+        let mut cache = AnnotateCache::default();
+        cache.insert(target("aaa", "a.rs"), result(3));
+
+        assert_eq!(cache.get(&target("aaa", "a.rs")).unwrap().lines.len(), 3);
+    }
+
+    #[test]
+    fn the_target_is_both_the_commit_and_the_path() {
+        // Same file at another commit, and another file at the same commit,
+        // are different annotations.
+        let mut cache = AnnotateCache::default();
+        cache.insert(target("aaa", "a.rs"), result(3));
+
+        assert!(cache.get(&target("bbb", "a.rs")).is_none());
+        assert!(cache.get(&target("aaa", "b.rs")).is_none());
+    }
+
+    #[test]
+    fn re_inserting_a_target_replaces_it_rather_than_duplicating() {
+        let mut cache = AnnotateCache::default();
+        cache.insert(target("aaa", "a.rs"), result(3));
+        cache.insert(target("aaa", "a.rs"), result(9));
+
+        assert_eq!(cache.get(&target("aaa", "a.rs")).unwrap().lines.len(), 9);
+        assert_eq!(cache.entries.len(), 1);
+    }
+
+    #[test]
+    fn the_line_budget_evicts_the_least_recently_used() {
+        let mut cache = AnnotateCache::default();
+        let big = MAX_CACHED_ANNOTATE_LINES / 2;
+        cache.insert(target("aaa", "a.rs"), result(big));
+        cache.insert(target("bbb", "b.rs"), result(big));
+
+        // Touching `aaa` makes `bbb` the least recently used.
+        assert!(cache.get(&target("aaa", "a.rs")).is_some());
+        cache.insert(target("ccc", "c.rs"), result(big));
+
+        assert!(cache.get(&target("ccc", "c.rs")).is_some());
+        assert!(cache.get(&target("aaa", "a.rs")).is_some());
+        assert!(cache.get(&target("bbb", "b.rs")).is_none());
+    }
+
+    #[test]
+    fn one_annotation_over_budget_is_still_kept() {
+        // Otherwise a file larger than the whole budget could never be cached,
+        // and it is exactly the slowest case to recompute.
+        let mut cache = AnnotateCache::default();
+        cache.insert(target("aaa", "a.rs"), result(MAX_CACHED_ANNOTATE_LINES * 2));
+
+        assert!(cache.get(&target("aaa", "a.rs")).is_some());
     }
 }

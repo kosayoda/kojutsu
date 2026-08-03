@@ -725,16 +725,34 @@ impl App {
 
     pub fn enter_annotate_view(&mut self, commit_id: CommitId, path: crate::types::RepoPath) {
         self.annotate.clear();
-        self.annotate.target = Some(crate::app::types::AnnotateTarget {
+        self.request_annotation(commit_id, path);
+        self.switch_view(ActiveView::Annotate);
+    }
+
+    /// Point the annotate view at a target, serving it from the cache when it
+    /// has been computed before and requesting it otherwise.
+    fn request_annotation(&mut self, commit_id: CommitId, path: crate::types::RepoPath) {
+        let target = crate::app::types::AnnotateTarget {
             commit_id: commit_id.clone(),
             path: path.clone(),
-        });
+        };
+        if let Some(cached) = self.annotate.cache.get(&target) {
+            self.annotate.lines = Loadable::Loaded(cached.lines.clone());
+            self.annotate.commit_info.extend(
+                cached
+                    .commit_info
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone())),
+            );
+            self.annotate.target = Some(target);
+            return;
+        }
+        self.annotate.target = Some(target);
         self.annotate.lines = Loadable::Loading;
         self.pending_repo_requests
             .push(crate::repo_service::RepoRequest::load_file_annotate(
                 commit_id, path,
             ));
-        self.switch_view(ActiveView::Annotate);
     }
 
     /// Navigate to a different commit within the annotate view (time travel).
@@ -744,16 +762,8 @@ impl App {
             return;
         };
         self.annotate.clear_keep_history();
-        self.annotate.target = Some(crate::app::types::AnnotateTarget {
-            commit_id: commit_id.clone(),
-            path: path.clone(),
-        });
-        self.annotate.lines = Loadable::Loading;
         self.annotate.target_line = Some(target_line);
-        self.pending_repo_requests
-            .push(crate::repo_service::RepoRequest::load_file_annotate(
-                commit_id, path,
-            ));
+        self.request_annotation(commit_id, path);
         self.rebuild_rows();
     }
 
@@ -1586,5 +1596,79 @@ impl App {
             file_idx,
             hunk_idx,
         })
+    }
+}
+
+#[cfg(test)]
+mod annotate_request_tests {
+    use super::*;
+    use crate::app::types::AnnotateTarget;
+    use crate::dag::AnnotateResult;
+    use crate::types::RepoPath;
+
+    fn target() -> AnnotateTarget {
+        AnnotateTarget {
+            commit_id: CommitId::new("7bbaa2cb"),
+            path: RepoPath::new("a.rs"),
+        }
+    }
+
+    fn result() -> AnnotateResult {
+        AnnotateResult {
+            lines: vec![crate::dag::AnnotateLineData {
+                commit_id: CommitId::new("7bbaa2cb"),
+                change_id: crate::dag::ShortId::new("uunnomkx"),
+                author: String::new(),
+                relative_time: crate::types::Str::new(""),
+                line_number: 1,
+                content: "fn main() {}".to_string(),
+                syntax_tokens: Vec::new(),
+                outside_domain: false,
+            }],
+            commit_info: std::collections::HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn a_first_visit_asks_the_repo() {
+        let mut app = App::for_test();
+        let t = target();
+        app.enter_annotate_view(t.commit_id.clone(), t.path.clone());
+
+        assert!(matches!(app.annotate.lines, Loadable::Loading));
+        assert_eq!(app.take_repo_requests().len(), 1);
+    }
+
+    #[test]
+    fn a_revisit_is_served_without_asking_the_repo() {
+        // Recomputing costs most of a second on a large repo, and time travel
+        // walks back and forth over the same targets.
+        let mut app = App::for_test();
+        let t = target();
+        app.annotate.cache.insert(t.clone(), result());
+
+        app.enter_annotate_view(t.commit_id.clone(), t.path.clone());
+
+        assert!(app.take_repo_requests().is_empty());
+        let lines = app.annotate.lines.loaded().expect("served from cache");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].content, "fn main() {}");
+    }
+
+    #[test]
+    fn time_travel_back_to_a_visited_commit_is_free() {
+        let mut app = App::for_test();
+        let t = target();
+        app.annotate.cache.insert(t.clone(), result());
+        app.enter_annotate_view(t.commit_id.clone(), t.path.clone());
+        let _ = app.take_repo_requests();
+
+        // Hop away (uncached, so it asks) and back (cached, so it does not).
+        app.annotate_navigate(CommitId::new("deadbeef"), 1);
+        assert_eq!(app.take_repo_requests().len(), 1);
+
+        app.annotate_navigate(t.commit_id.clone(), 1);
+        assert!(app.take_repo_requests().is_empty());
+        assert!(app.annotate.lines.loaded().is_some());
     }
 }

@@ -56,6 +56,11 @@ struct Cli {
     #[arg(long)]
     debug_prefixes: bool,
 
+    /// Annotate a file and print a one-line-per-line summary, then exit.
+    /// Use with the `blame` subcommand's arguments.
+    #[arg(long)]
+    debug_annotate: bool,
+
     /// Print a starter init.lua to stdout and exit.
     #[arg(long)]
     print_default_config: bool,
@@ -150,6 +155,21 @@ fn main() -> Result<()> {
         let jj = JjRepo::open(&repo_path)?;
         let commit_hex = jj.resolve_single_commit(revision)?;
         let internal_path = jj.parse_file_path(file)?;
+        if cli.debug_annotate {
+            let result = jj.file_annotate(
+                &kojutsu::types::CommitId::new(commit_hex.as_str()),
+                &kojutsu::types::RepoPath::new(internal_path.as_str()),
+            )?;
+            for line in &result.lines {
+                println!(
+                    "{} {} {}",
+                    line.change_id.prefix(),
+                    line.line_number,
+                    line.content
+                );
+            }
+            return Ok(());
+        }
         Some((commit_hex, internal_path))
     } else {
         None

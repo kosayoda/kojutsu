@@ -532,6 +532,7 @@ impl DiffResult {
 }
 
 /// Per-commit metadata for the annotate detail expansion.
+#[derive(Clone)]
 pub struct AnnotateCommitInfo {
     pub commit_id: ShortId,
     pub change_id: ShortId,
@@ -553,12 +554,14 @@ impl AnnotateCommitInfo {
 }
 
 /// Result from file annotation: lines + per-commit metadata.
+#[derive(Clone)]
 pub struct AnnotateResult {
     pub lines: Vec<AnnotateLineData>,
     pub commit_info: HashMap<CommitId, AnnotateCommitInfo>,
 }
 
 /// A syntax-highlighted token within a line.
+#[derive(Clone)]
 pub struct SyntaxToken {
     pub text: String,
     /// ANSI color index (0-15 for terminal palette colors).
@@ -566,6 +569,7 @@ pub struct SyntaxToken {
 }
 
 /// A single line from file annotation (blame).
+#[derive(Clone)]
 pub struct AnnotateLineData {
     /// Full hex commit ID (for jump-to-commit).
     pub commit_id: CommitId,
