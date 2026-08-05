@@ -323,7 +323,9 @@ pub fn generate_type_definitions() -> String {
         out,
         "---@field exec fun(argv: string[], opts: JjOpts?): JJResult run a program in the \
          workspace root, named by argv[1]. Spawned directly, so there is no shell to do \
-         quoting, globbing or redirection for you"
+         quoting, globbing or redirection for you, and no shell to reinterpret an argument \
+         either. Never take argv[1] from the repository being viewed: opening a clone should \
+         not run what the clone asks for"
     )
     .unwrap();
     writeln!(out, "---@field jj_interactive fun(args: string[])").unwrap();

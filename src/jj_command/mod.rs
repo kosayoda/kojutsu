@@ -337,9 +337,16 @@ impl JJCommand {
     }
 
     /// The child process to run, configured but not yet spawned. Callers set
-    /// their own stdio and then hand it to one of the runners.
+    /// their own stdio and then spawn it.
+    ///
+    /// Every process kojutsu starts is built here, and recorded here, so the
+    /// debug log is a complete account of them. That matters for the ones the
+    /// UI never mentions: a plugin's `quiet` call deliberately leaves no
+    /// running overlay and no command-log row, and "invisible on screen" should
+    /// not also mean "no way to find out what ran".
     fn command(&self, repo_path: &std::path::Path) -> std::process::Command {
         let (program, args) = self.spawn_parts(repo_path);
+        tracing::info!(command = self.display().as_str(), "spawning");
         let mut command = std::process::Command::new(program.as_str());
         command.args(args.iter().map(|a| a.as_str()));
         command.current_dir(repo_path);

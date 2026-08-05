@@ -132,9 +132,10 @@ impl JJCommand {
     ) -> JJCommandResult {
         use std::os::unix::process::CommandExt as _;
 
+        // The spawn itself is recorded by `command` below, along with every
+        // other process kojutsu starts; this pairs the outcome with it.
         let start = std::time::Instant::now();
         let cmd_str = self.display();
-        tracing::info!(command = cmd_str.as_str(), "running jj command");
         let display_parts = self.display_parts();
 
         let mut child = match self
