@@ -14,16 +14,19 @@ impl LuaEngine {
         // untouched. Two callers: contexts that cannot yield (top-level
         // init.lua code), and `quiet` calls: see `kojutsu.jj` below.
         let jj_sync_fn = self.lua.create_function(move |lua, args: mlua::Table| {
-            let cmd_args: Vec<String> = (1..=args.raw_len())
-                .map(|i| args.raw_get(i))
-                .collect::<mlua::Result<_>>()?;
             let result = JJCommand {
                 kind: JJCommandKind::Raw {
-                    args: cmd_args.into_iter().map(Into::into).collect(),
+                    args: super::string_list(&args)?,
                 },
                 flags: CommandFlags::empty(),
             }
             .run(&repo_path);
+            super::jj_result_table(lua, &result)
+        })?;
+
+        let repo_path = self.repo_path.clone();
+        let exec_sync_fn = self.lua.create_function(move |lua, argv: mlua::Table| {
+            let result = super::exec_command(&argv)?.run(&repo_path);
             super::jj_result_table(lua, &result)
         })?;
 
@@ -171,6 +174,15 @@ impl LuaEngine {
                 end
                 return coroutine.yield({type = "jj", args = args})
             end
+            -- Same two paths, but the program is whatever argv[1] names. No
+            -- shell is involved, so the arguments arrive exactly as written.
+            function kojutsu.exec(argv, opts)
+                argv = argv or {}
+                if (opts and opts.quiet) or not coroutine.isyieldable() then
+                    return kojutsu._exec_sync(argv)
+                end
+                return coroutine.yield({type = "exec", args = argv})
+            end
             function kojutsu.ui.input(prompt, default)
                 return coroutine.yield({type = "input", prompt = prompt or "", default = default or ""})
             end
@@ -207,6 +219,7 @@ impl LuaEngine {
 
         let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
         kojutsu.set("_jj_sync", jj_sync_fn)?;
+        kojutsu.set("_exec_sync", exec_sync_fn)?;
         kojutsu.set("jj_interactive", jj_interactive_fn)?;
         kojutsu.set("dispatch", dispatch_fn)?;
         kojutsu.set("log", log_fn)?;

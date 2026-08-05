@@ -1,22 +1,16 @@
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 use super::capture::joined;
 use super::{Captured, CommandPart, JJCommand, JJCommandResult, KillHandle, Stream};
 
 impl JJCommand {
     pub fn run_interactive(&self, repo_path: &Path) -> JJCommandResult {
-        let args = self.args();
         let display = self.display();
         let display_parts = self.display_parts();
 
         let (result, was_interrupted) = with_sigint_suppressed(|| {
-            Command::new("jj")
-                .arg("-R")
-                .arg(repo_path)
-                .arg("--color=always")
-                .args(&args)
-                .current_dir(repo_path)
+            self.command(repo_path)
                 .stdin(std::process::Stdio::inherit())
                 .stdout(std::process::Stdio::inherit())
                 .stderr(std::process::Stdio::piped())
@@ -52,17 +46,12 @@ impl JJCommand {
     }
 
     pub fn run_suspend_captured(&self, repo_path: &Path) -> JJCommandResult {
-        let args = self.args();
         let display = self.display();
         let display_parts = self.display_parts();
 
         let (result, was_interrupted) = with_sigint_suppressed(|| {
-            let mut child = Command::new("jj")
-                .arg("-R")
-                .arg(repo_path)
-                .arg("--color=always")
-                .args(&args)
-                .current_dir(repo_path)
+            let mut child = self
+                .command(repo_path)
                 .stdin(std::process::Stdio::inherit())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped())
@@ -113,18 +102,10 @@ impl JJCommand {
     }
 
     pub fn run(&self, repo_path: &Path) -> JJCommandResult {
-        let args = self.args();
         let display = self.display();
         let display_parts = self.display_parts();
 
-        let result = Command::new("jj")
-            .arg("-R")
-            .arg(repo_path)
-            .arg("--color=always")
-            .args(&args)
-            .current_dir(repo_path)
-            .env("JJ_EDITOR", ":")
-            .output();
+        let result = self.command(repo_path).env("JJ_EDITOR", ":").output();
 
         match result {
             Ok(Output {
@@ -152,17 +133,12 @@ impl JJCommand {
         use std::os::unix::process::CommandExt as _;
 
         let start = std::time::Instant::now();
-        let args = self.args();
         let cmd_str = self.display();
         tracing::info!(command = cmd_str.as_str(), "running jj command");
         let display_parts = self.display_parts();
 
-        let mut child = match Command::new("jj")
-            .arg("-R")
-            .arg(repo_path)
-            .arg("--color=always")
-            .args(&args)
-            .current_dir(repo_path)
+        let mut child = match self
+            .command(repo_path)
             .env("JJ_EDITOR", ":")
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())

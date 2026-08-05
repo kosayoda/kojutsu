@@ -43,6 +43,12 @@ pub enum FollowUpAction {
 
 impl JJCommand {
     pub fn retry_options(&self, output: &[u8]) -> Vec<FollowUpOption> {
+        // Every option here retries with a jj flag, which a foreign program
+        // would reject. It is matched on output text, so without this a `git`
+        // command that happened to say "immutable" would be offered one.
+        if matches!(self.kind, super::JJCommandKind::Exec { .. }) {
+            return Vec::new();
+        }
         let mut options = Vec::new();
         let text = String::from_utf8_lossy(output);
 

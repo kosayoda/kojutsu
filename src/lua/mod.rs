@@ -81,6 +81,30 @@ pub enum ResumeValue {
     JjResult(Box<crate::jj_command::JJCommandResult>),
 }
 
+/// A Lua array of strings, as an argument vector.
+fn string_list(table: &mlua::Table) -> mlua::Result<Vec<crate::types::Str>> {
+    (1..=table.raw_len())
+        .map(|i| table.raw_get::<String>(i).map(Into::into))
+        .collect()
+}
+
+/// Build the command `kojutsu.exec` asked for. The first element is the program
+/// and the rest are handed to it verbatim: there is no shell, so quoting,
+/// globbing and redirection are the caller's business, not ours.
+fn exec_command(argv: &mlua::Table) -> mlua::Result<JJCommand> {
+    let mut argv = string_list(argv)?.into_iter();
+    let program = argv
+        .next()
+        .ok_or_else(|| mlua::Error::external("kojutsu.exec: needs a program to run"))?;
+    Ok(JJCommand {
+        kind: JJCommandKind::Exec {
+            program,
+            args: argv.collect(),
+        },
+        flags: CommandFlags::empty(),
+    })
+}
+
 /// How a finished command is described to Lua:
 /// `{status = "ok"|"failed"|"cancelled", ok, output, code?}`.
 fn outcome_table(
@@ -699,29 +723,42 @@ impl LuaEngine {
                     Action::None,
                 )
             }
-            "jj" => {
-                let args: Vec<String> = table
-                    .get::<mlua::Table>("args")
-                    .map(|t| helpers::table_to_string_vec(&t))
-                    .unwrap_or_default();
-                if args.is_empty() {
-                    app.set_error("plugin: jj requires at least one argument");
+            // Both run through the normal pipeline (running overlay, live
+            // output, Esc/^C cancellation); completion resumes this thread with
+            // the result table.
+            "jj" | "exec" => {
+                let Ok(args) = table.get::<mlua::Table>("args") else {
+                    app.set_error("plugin: a command request carries no arguments");
                     return Action::None;
-                }
-                let flags = match &kind {
-                    SuspendedKind::Command(flags) => *flags,
-                    SuspendedKind::PreHooks { flags, .. } => *flags,
-                    SuspendedKind::PostHooks { .. } => CommandFlags::empty(),
                 };
-                let cmd = JJCommand {
-                    kind: JJCommandKind::Raw {
-                        args: args.into_iter().map(Into::into).collect(),
-                    },
-                    flags,
+                let cmd = if request_type == "exec" {
+                    match exec_command(&args) {
+                        Ok(cmd) => cmd,
+                        Err(e) => {
+                            app.set_error(format!("plugin: {e}"));
+                            return Action::None;
+                        }
+                    }
+                } else {
+                    let Ok(args) = string_list(&args) else {
+                        app.set_error("plugin: jj arguments must be strings");
+                        return Action::None;
+                    };
+                    if args.is_empty() {
+                        app.set_error("plugin: jj requires at least one argument");
+                        return Action::None;
+                    }
+                    // Only a jj command line can carry jj's global flags.
+                    let flags = match &kind {
+                        SuspendedKind::Command(flags) => *flags,
+                        SuspendedKind::PreHooks { flags, .. } => *flags,
+                        SuspendedKind::PostHooks { .. } => CommandFlags::empty(),
+                    };
+                    JJCommand {
+                        kind: JJCommandKind::Raw { args },
+                        flags,
+                    }
                 };
-                // The command runs through the normal pipeline (running
-                // overlay, live output, Esc/^C cancellation); its completion
-                // resumes this thread with the result table.
                 (None, Action::RunJjForLua(cmd))
             }
             other => {
@@ -1250,17 +1287,20 @@ mod api_surface_tests {
         assert_eq!(table.get::<String>("stderr").unwrap(), "Warning: no name\n");
     }
 
-    /// Run a `kojutsu.jj` call inside a coroutine, as a command or hook does.
+    /// Run a command call inside a coroutine, as a command or hook does.
     /// Reports whether it parked waiting for the main loop, and what it
     /// returned if it did not.
-    fn jj_call(call: &str) -> (bool, Option<String>) {
+    fn command_call(call: &str) -> (bool, Option<String>) {
         let engine = LuaEngine::for_test();
-        // Stands in for the real inline call, which would spawn jj.
+        // Stand in for the real inline calls, which would spawn a process.
         engine
             .lua
-            .load("kojutsu._jj_sync = function() return 'inline' end")
+            .load(
+                "kojutsu._jj_sync = function() return 'inline' end\
+                 \nkojutsu._exec_sync = function() return 'inline' end",
+            )
             .exec()
-            .expect("stub _jj_sync");
+            .expect("stub the inline calls");
         let thread: mlua::Thread = engine
             .lua
             .load(format!(
@@ -1283,15 +1323,29 @@ mod api_surface_tests {
     /// otherwise win.
     #[test]
     fn quiet_runs_inline_where_a_plain_call_would_yield() {
-        assert_eq!(jj_call("kojutsu.jj({'log'})"), (true, None));
+        assert_eq!(command_call("kojutsu.jj({'log'})"), (true, None));
         assert_eq!(
-            jj_call("kojutsu.jj({'log'}, {quiet = true})"),
+            command_call("kojutsu.jj({'log'}, {quiet = true})"),
             (false, Some("inline".into()))
         );
         // An explicit `quiet = false` is still the loud path, not truthiness.
         assert_eq!(
-            jj_call("kojutsu.jj({'log'}, {quiet = false})"),
+            command_call("kojutsu.jj({'log'}, {quiet = false})"),
             (true, None)
+        );
+    }
+
+    /// `exec` offers the same two paths, so a plugin does not have to know
+    /// which of the two it is calling to reason about what the UI will do.
+    #[test]
+    fn exec_takes_the_same_two_paths_as_jj() {
+        assert_eq!(
+            command_call("kojutsu.exec({'git', 'status'})"),
+            (true, None)
+        );
+        assert_eq!(
+            command_call("kojutsu.exec({'git', 'status'}, {quiet = true})"),
+            (false, Some("inline".into()))
         );
     }
 

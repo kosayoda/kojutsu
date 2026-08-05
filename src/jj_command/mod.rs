@@ -237,6 +237,14 @@ pub enum JJCommandKind {
     Raw {
         args: Vec<Str>,
     },
+    /// Not jj at all: a program a plugin asked for, spawned in the workspace
+    /// root. It runs through the same pipeline so it is cancellable and shows
+    /// up in the command log like everything else, but none of jj's global
+    /// flags apply to it.
+    Exec {
+        program: Str,
+        args: Vec<Str>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -312,6 +320,40 @@ impl JJCommand {
         }
     }
 
+    /// The program this spawns, and the arguments to spawn it with. jj gets the
+    /// globals every kojutsu invocation carries; an `Exec` gets nothing added,
+    /// since `-R` and `--color` mean nothing to it.
+    fn spawn_parts(&self, repo_path: &std::path::Path) -> (Str, Vec<Str>) {
+        if let JJCommandKind::Exec { program, args } = &self.kind {
+            return (program.clone(), args.clone());
+        }
+        let mut args: Vec<Str> = vec![
+            "-R".into(),
+            repo_path.display().to_string().into(),
+            "--color=always".into(),
+        ];
+        args.extend(self.args());
+        ("jj".into(), args)
+    }
+
+    /// The child process to run, configured but not yet spawned. Callers set
+    /// their own stdio and then hand it to one of the runners.
+    fn command(&self, repo_path: &std::path::Path) -> std::process::Command {
+        let (program, args) = self.spawn_parts(repo_path);
+        let mut command = std::process::Command::new(program.as_str());
+        command.args(args.iter().map(|a| a.as_str()));
+        command.current_dir(repo_path);
+        command
+    }
+
+    /// The binary shown in the command log. Foreign programs name themselves.
+    fn binary(&self) -> &str {
+        match &self.kind {
+            JJCommandKind::Exec { program, .. } => program.as_str(),
+            _ => "jj",
+        }
+    }
+
     pub fn display(&self) -> String {
         self.display_parts()
             .iter()
@@ -327,20 +369,23 @@ impl JJCommand {
                 kind: CommandPartKind::Prompt,
             },
             CommandPart {
-                text: "jj".into(),
+                text: self.binary().to_string(),
                 kind: CommandPartKind::Binary,
             },
         ];
         parts.extend(self.tagged_args().into_iter().map(|(text, kind)| {
-            let text = if matches!(kind, CommandPartKind::String | CommandPartKind::Fileset)
-                && text.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c))
-            {
-                shlex::try_quote(&text)
-                    .map(|q| q.into_owned())
-                    .unwrap_or_else(|_| text.to_string())
-            } else {
-                text.to_string()
-            };
+            // Quote whatever a shell would need quoted, whichever kind it is:
+            // the log line is there to be read and pasted, and an argument that
+            // arrived as one word has to leave as one word. jj's own flags and
+            // subcommands never need it; a program's arguments can.
+            let text =
+                if text.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c)) {
+                    shlex::try_quote(&text)
+                        .map(|q| q.into_owned())
+                        .unwrap_or_else(|_| text.to_string())
+                } else {
+                    text.to_string()
+                };
             CommandPart { text, kind }
         }));
         parts
@@ -373,6 +418,86 @@ impl JJCommand {
             JJCommandKind::Raw { .. } => true,
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod exec_tests {
+    use super::*;
+
+    fn exec(argv: &[&str]) -> JJCommand {
+        let (program, args) = argv.split_first().expect("a program");
+        JJCommand {
+            kind: JJCommandKind::Exec {
+                program: (*program).into(),
+                args: args.iter().map(|a| (*a).into()).collect(),
+            },
+            flags: CommandFlags::empty(),
+        }
+    }
+
+    /// jj's globals are jj's. Handing `-R` and `--color=always` to a foreign
+    /// program would at best confuse it and at worst mean something else.
+    #[test]
+    fn an_exec_gets_none_of_jjs_global_flags() {
+        let repo = std::path::Path::new("/repo");
+        let (program, args) = exec(&["git", "status", "--porcelain"]).spawn_parts(repo);
+        assert_eq!(program, "git");
+        assert_eq!(args, ["status", "--porcelain"]);
+
+        // For contrast, a jj command line carries them.
+        let raw = JJCommand {
+            kind: JJCommandKind::Raw {
+                args: vec!["log".into()],
+            },
+            flags: CommandFlags::empty(),
+        };
+        let (program, args) = raw.spawn_parts(repo);
+        assert_eq!(program, "jj");
+        assert_eq!(args, ["-R", "/repo", "--color=always", "log"]);
+    }
+
+    /// The command log is a record of what ran, so it has to name the program
+    /// that ran rather than claiming everything was jj.
+    #[test]
+    fn an_exec_names_itself_in_the_log() {
+        assert_eq!(
+            exec(&["git", "submodule", "status"]).display(),
+            "$ git submodule status"
+        );
+        // An argument that would need quoting to be pasted back gets it.
+        assert_eq!(
+            exec(&["git", "log", "--format=a b"]).display(),
+            "$ git log '--format=a b'"
+        );
+    }
+
+    /// Every retry offered is a jj flag, so there is nothing to offer here even
+    /// when the output happens to contain a word one of them keys off.
+    #[test]
+    fn an_exec_is_never_offered_a_jj_retry_flag() {
+        let cmd = exec(&["git", "push"]);
+        assert!(
+            cmd.retry_options(b"refusing to rewrite immutable commit")
+                .is_empty()
+        );
+
+        let raw = JJCommand {
+            kind: JJCommandKind::Raw {
+                args: vec!["describe".into()],
+            },
+            flags: CommandFlags::empty(),
+        };
+        assert!(!raw.retry_options(b"immutable").is_empty());
+    }
+
+    /// Nothing foreign should be assumed to want the terminal, and nothing
+    /// about it tells the DAG where to move the cursor.
+    #[test]
+    fn an_exec_neither_takes_the_terminal_nor_moves_the_cursor() {
+        let cmd = exec(&["git", "status"]);
+        assert!(!cmd.is_interactive());
+        assert!(cmd.jump_target().is_none());
     }
 }
 

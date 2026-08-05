@@ -571,6 +571,21 @@ impl JJCommand {
                 args
             }
             JJCommandKind::Raw { args } => return lex_raw_args(args),
+            // Not a jj command line, so there is no grammar to lex: the
+            // program names itself in the log and the rest are plain values.
+            JJCommandKind::Exec { args, .. } => {
+                return args
+                    .iter()
+                    .map(|arg| {
+                        let kind = if arg.starts_with('-') {
+                            CommandPartKind::Flag
+                        } else {
+                            CommandPartKind::String
+                        };
+                        (arg.clone(), kind)
+                    })
+                    .collect();
+            }
         };
 
         push_global_flags(&mut args, flags);
