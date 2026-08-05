@@ -352,7 +352,7 @@ impl JJCommand {
     /// Two reasons, handled differently on purpose. A `--interactive` diff
     /// editor is read back off the built args: several kinds pick that flag up
     /// from `CommandFlags::INTERACTIVE` or from a line-level selection, and
-    /// restating those rules here is how the two copies drift — a kind that
+    /// restating those rules here is how the two copies drift: a kind that
     /// gained the flag without gaining a case would launch a diff editor
     /// against a closed stdin. Opening `$EDITOR` can't be read off the args,
     /// since it's the *absence* of `-m` or a tool default, so those stay
@@ -423,7 +423,7 @@ mod is_interactive_tests {
         assert!(by_selection.is_interactive());
     }
 
-    /// Opening $EDITOR isn't visible in the args — it's the absence of -m.
+    /// Opening $EDITOR isn't visible in the args: it's the absence of -m.
     #[test]
     fn an_editor_message_still_needs_the_terminal() {
         let cmd = squash(

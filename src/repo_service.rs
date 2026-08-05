@@ -27,9 +27,9 @@ pub struct RepoResponseHandle {
 /// Whether a revset load should snapshot the working copy first.
 #[derive(Clone, Copy, Debug)]
 pub enum RevsetLoadKind {
-    /// Snapshot first — use after actions that may have changed the filesystem.
+    /// Snapshot first: use after actions that may have changed the filesystem.
     Snapshot,
-    /// Skip the snapshot — use for pure revset/UI changes.
+    /// Skip the snapshot: use for pure revset/UI changes.
     NoSnapshot,
 }
 
@@ -535,7 +535,7 @@ impl RepoServiceState {
         match kind {
             RepoRequestKind::Revset { revset, load_kind } => {
                 // A newer revset load has been requested since this one was
-                // queued — skip the snapshot and evaluation entirely.
+                // queued: skip the snapshot and evaluation entirely.
                 if epoch != self.current_epoch.load(Ordering::SeqCst) {
                     tracing::debug!(epoch, "skipping superseded revset load");
                     return;
@@ -620,7 +620,7 @@ impl RepoServiceState {
             match JjRepo::update_stale(&self.repo_path) {
                 Ok(()) => {
                     let _ = self.result_tx.send(RepoResult::WorkspaceUpdatedStale {
-                        message: "workspace was stale — updated".to_string(),
+                        message: "workspace was stale: updated".to_string(),
                     });
                     let _ = JjRepo::snapshot(&self.repo_path);
                 }
@@ -1023,7 +1023,7 @@ fn stream_revset(
     match stream_result {
         Ok(_) => {}
         Err(err) if first => {
-            // Nothing was sent — report as a failed revset load.
+            // Nothing was sent: report as a failed revset load.
             send_if_current(RepoResult::Revset {
                 revset,
                 result: Err(RepoError::new(RepoErrorKind::Revset, format!("{err:#}"))),
@@ -1031,7 +1031,7 @@ fn stream_revset(
             return;
         }
         Err(err) => {
-            // Entries were already delivered — finalize the stream so the
+            // Entries were already delivered: finalize the stream so the
             // app leaves streaming mode, and surface the error separately.
             send_if_current(RepoResult::RevsetChunk {
                 entries: Vec::new(),
@@ -1042,7 +1042,7 @@ fn stream_revset(
             });
         }
     }
-    // Superseded or cancelled mid-stream — skip the background passes.
+    // Superseded or cancelled mid-stream: skip the background passes.
     if first || cancel.is_cancelled() || epoch != current_epoch.load(Ordering::SeqCst) {
         return;
     }
@@ -1061,7 +1061,7 @@ fn stream_revset(
         let cancel = cancel.clone();
         spawn_background(tx.clone(), move || {
             for id in &empty_ids {
-                // is_empty involves tree diffs (I/O) — check every iteration.
+                // is_empty involves tree diffs (I/O), so check every iteration.
                 if cancel.is_cancelled() {
                     return;
                 }

@@ -16,7 +16,7 @@ use std::rc::Rc;
 pub enum RebuildScope {
     #[default]
     None,
-    /// Only these DAG entries' rows changed — rebuilt in place via
+    /// Only these DAG entries' rows changed: rebuilt in place via
     /// [`App::rebuild_entry_rows`].
     Entries(Vec<crate::idx::EntryIdx>),
     /// Rebuild the whole row list.
@@ -223,7 +223,7 @@ impl DagNode {
     }
 
     /// Preserve cached conflict hunks from another node (used during DAG
-    /// refresh; valid because the commit ID — and thus content — matched).
+    /// refresh; valid because the commit ID, and thus the content, matched).
     pub fn restore_conflict_hunks(
         &mut self,
         hunks: Vec<Loadable<Vec<crate::conflict::ConflictHunkKind>>>,
@@ -344,7 +344,7 @@ pub struct App {
     pub last_repeatable: Option<(crate::keymap::AppAction, CommandFlags)>,
     pub pending_toggles: Vec<SubmenuToggle>,
     /// Per-hunk conflict UI state (picks, base-fold, gap-expansion),
-    /// authoritative and persisted across reloads. Keyed by commit ID —
+    /// authoritative and persisted across reloads. Keyed by commit ID:
     /// identical ID means identical content and thus identical hunk
     /// indices; a rewritten commit gets a new ID, dropping its state.
     /// Loaded `ConflictHunkKind`s stay pure repo data.
@@ -826,7 +826,7 @@ impl App {
         self.jump_after_refresh = Some(JumpTarget::Prefix(change_str));
         self.revset.load_state = Loadable::Loading;
         self.revset.pending = Some(new_revset.clone().into());
-        // Pure revset change — no filesystem interaction, no snapshot needed.
+        // Pure revset change: no filesystem interaction, no snapshot needed.
         self.pending_repo_requests
             .push(RepoRequest::load_revset_no_snapshot(Some(new_revset)));
     }
@@ -1020,8 +1020,8 @@ impl App {
     }
 
     /// Pick a conflict term for a hunk (or unpick it, if already picked).
-    /// Pure UI state — nothing is written until the picks are applied.
-    /// Absent (deleted) terms cannot be picked here — content assembly
+    /// Pure UI state: nothing is written until the picks are applied.
+    /// Absent (deleted) terms cannot be picked here: content assembly
     /// could only produce an empty file, not a deletion; callers route
     /// those to `jj resolve` builtins instead. Returns the hunk's
     /// selection after the toggle (`None` = now unpicked).
@@ -1063,7 +1063,7 @@ impl App {
             match pick {
                 Some(ConflictPick::Term(kind)) => {
                     if !terms.iter().any(|t| t.kind == kind && !t.absent) {
-                        // Absent or unknown term — caller routes elsewhere.
+                        // Absent or unknown term: caller routes elsewhere.
                         return None;
                     }
                     // Re-picking the current term unpicks it.
@@ -1108,7 +1108,7 @@ impl App {
     }
 
     /// Assemble the file under the picks for a conflicted file. Returns the
-    /// path and the assembled [`Resolution`](crate::conflict::Resolution) —
+    /// path and the assembled [`Resolution`](crate::conflict::Resolution),
     /// or `None` if hunks aren't loaded or nothing has been picked yet.
     pub fn conflict_resolution(
         &self,
@@ -1279,7 +1279,7 @@ impl App {
 
     /// The file changes the DAG actually emits rows for under a commit:
     /// its loaded files when the commit is unfolded, else `None`. The single
-    /// source for "are file rows shown" — used both when building rows and
+    /// source for "are file rows shown": used both when building rows and
     /// when navigation decides whether a commit node is a conflict's
     /// deepest-visible representation.
     pub fn shown_files(&self, entry_idx: EntryIdx) -> Option<&Vec<FileChange>> {
@@ -1557,7 +1557,7 @@ impl App {
     /// active preset is re-clamped, since the new list may be shorter.
     ///
     /// Does not carry `diff.max_file_size_mib`, which lives in the repo
-    /// service — send
+    /// service; send
     /// [`RepoRequest::set_diff_size_limit`](crate::repo_service::RepoRequest::set_diff_size_limit)
     /// alongside this.
     pub fn apply_reloaded_config(&mut self, config: Rc<crate::theme::Config>) {
@@ -1581,7 +1581,7 @@ impl App {
 
     /// Resolve a stable conflict-hunk address back to row indices. `None`
     /// when the commit is no longer present (e.g. rewritten while the
-    /// address crossed a suspend point) — same commit ID means identical
+    /// address crossed a suspend point): same commit ID means identical
     /// content, so a surviving `hunk_idx` is still valid.
     pub fn resolve_conflict_hunk(
         &self,

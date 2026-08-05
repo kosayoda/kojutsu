@@ -3,7 +3,7 @@
 --
 -- Every value below is the built-in default, so this file is a no-op as
 -- shipped: delete what you don't want to change. Assigning a section
--- replaces it, and any key you leave out falls back to its default — so
+-- replaces it, and any key you leave out falls back to its default, so
 -- `kojutsu.config.theme = { accent = "red" }` changes only the accent.
 --
 -- Commands, hooks and keybindings live in this file too. Run
@@ -59,7 +59,7 @@ kojutsu.config.date_format = "%Y-%m-%d %H:%M:%S"
 kojutsu.config.tab_width = 4
 
 -- Max file size in MiB (per side) loaded into memory when computing a diff.
--- Larger files show a placeholder instead — a memory guard for repos with
+-- Larger files show a placeholder instead: a memory guard for repos with
 -- huge text files.
 kojutsu.config.diff = { max_file_size_mib = 64 }
 

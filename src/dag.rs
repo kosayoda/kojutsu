@@ -18,7 +18,7 @@ pub const DISPLAY_ID_LEN: usize = 8;
 /// bright up to `prefix_len` and dim beyond; [`Self::prefix`] is the shortest
 /// form `jj` can still resolve; [`Self::full`] is the whole thing.
 ///
-/// `prefix_len` starts at `DISPLAY_ID_LEN` as a placeholder — computing the
+/// `prefix_len` starts at `DISPLAY_ID_LEN` as a placeholder: computing the
 /// real value means evaluating a revset, so it lands later from a background
 /// pass. Holding the full ID keeps that update to a single integer, and keeps
 /// anything keyed by an ID keyed to the same string before and after it.
@@ -37,7 +37,7 @@ impl ShortId {
         }
     }
 
-    /// The whole ID. Use this as a key — it never changes.
+    /// The whole ID. Use this as a key: it never changes.
     pub fn full(&self) -> &str {
         &self.full
     }
@@ -183,7 +183,7 @@ pub struct DivergenceInfo {
 /// prefix, plus the `/<offset>` jj needs when the change is divergent or the
 /// commit is hidden and a bare change ID would resolve elsewhere.
 ///
-/// Shared so that every view produces the same reference for a commit — a
+/// Shared so that every view produces the same reference for a commit: a
 /// bookmark row and a DAG row naming the same commit must run the same thing.
 fn revision_of(change_id: &ShortId, divergence: Option<&DivergenceInfo>) -> RevisionArg {
     let prefix = change_id.prefix();
@@ -369,7 +369,7 @@ impl CommitInfo {
     /// Stable identity for this commit, unique even among divergent ones.
     ///
     /// Built from the whole change ID rather than the displayed prefix, so
-    /// that anything keyed by it — selections, fold state, cursor restore —
+    /// that anything keyed by it (selections, fold state, cursor restore)
     /// keeps matching when the background pass revises `prefix_len`.
     pub fn unique_change_id(&self) -> ChangeId {
         match self.change_id_suffix() {
@@ -451,12 +451,12 @@ impl FileChange {
     }
 
     /// What stops a line-level selection from applying to this path, if
-    /// anything — worded to drop into a sentence after the path.
+    /// anything: worded to drop into a sentence after the path.
     ///
     /// Line selection works by re-invoking kojutsu as jj's diff editor and
     /// rewriting the files jj laid out in its "after" directory. A submodule
-    /// is not laid out as a file there — jj creates an empty directory and
-    /// drops submodule entries again when it snapshots the result — so the
+    /// is not laid out as a file there: jj creates an empty directory and
+    /// drops submodule entries again when it snapshots the result, so the
     /// pointer is carried through whole no matter what the editor writes.
     /// Nothing can narrow it, which makes any per-line answer a lie.
     pub fn line_selection_blocker(&self) -> Option<&'static str> {
@@ -510,7 +510,7 @@ pub struct DiffLine {
 
 impl DiffLine {
     /// Whether this line can be individually selected. Added/removed
-    /// lines only, and never inside a conflict region — moving partial
+    /// lines only, and never inside a conflict region: moving partial
     /// conflict encodings between commits produces malformed conflicts.
     pub fn is_selectable(&self) -> bool {
         self.kind.is_selectable() && !self.conflict_region

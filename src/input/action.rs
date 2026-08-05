@@ -74,7 +74,7 @@ pub(super) fn handle_normal_key(
         LookupResult::Prefix { label, children } => {
             app.status_message = None;
             // Opening a submenu whose every entry the selection rules out
-            // would be a dead end. Only gate when something is selected —
+            // would be a dead end. Only gate when something is selected:
             // otherwise a submenu of nothing but sub-prefixes never opens.
             let kinds = app.selection_kinds();
             if !kinds.is_empty() {
@@ -105,7 +105,7 @@ pub(super) fn handle_normal_key(
 }
 
 /// Fallback for the select modes: a key they don't own resolves through the
-/// keymap like any other, but only cursor movement is admitted — anything else
+/// keymap like any other, but only cursor movement is admitted: anything else
 /// would mutate the repo or move the selection out from under a pending pick.
 ///
 /// Sequence bindings resolve to `Prefix`, which would need the submenu state
@@ -198,7 +198,7 @@ fn rejects_selection(app: &mut App, registry: &ActionRegistry, id: ActionId, lab
     {
         return false;
     }
-    // Describe what is selected, not the kind that won the precedence — a
+    // Describe what is selected, not the kind that won the precedence: a
     // mixed selection is rejected for the part the action can't take.
     let selected = app
         .selection_summary()
@@ -455,7 +455,7 @@ pub fn dispatch_action_after_hooks(
                     let dl = &diff_lines[line_idx.raw()];
                     if dl.conflict_region {
                         app.set_error(
-                            "conflict region — resolve the conflict or select the whole file",
+                            "conflict region: resolve the conflict or select the whole file",
                         );
                         return Action::None;
                     }
@@ -611,7 +611,7 @@ pub fn dispatch_action_after_hooks(
                 app.revset.active_preset = Some(slot);
                 Action::UpdateRevset(preset.revset.clone())
             } else {
-                // No preset at this slot — use jj's default revset.
+                // No preset at this slot: use jj's default revset.
                 app.revset.active_preset = None;
                 app.revset.conflicted_prev = None;
                 app.request_revset_load_no_snapshot(None);

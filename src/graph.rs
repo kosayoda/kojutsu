@@ -108,7 +108,7 @@ impl Default for DagGraphRenderer {
 
 /// Render graph lines for a list of entries with edges and a glyph per entry.
 ///
-/// Generic over the entry type — callers provide ID, edges, and glyph for each.
+/// Generic over the entry type: callers provide ID, edges, and glyph for each.
 pub fn render_generic(entries: &[(&str, &[Edge], char)]) -> Vec<GraphLines> {
     let mut renderer = DagGraphRenderer::new();
     entries

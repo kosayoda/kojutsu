@@ -6,7 +6,7 @@ pub enum ActionId {
     Lua(u16),
 }
 
-/// Cursor context an action needs, as a hint for greying entries out —
+/// Cursor context an action needs, as a hint for greying entries out:
 /// enforcement lives in the handlers, which report which precondition failed
 /// far more precisely than this can. Keep it matching what the handler
 /// actually tests, or the UI will grey out something that works. `File` and
@@ -67,17 +67,17 @@ impl AppAction {
             requires,
         };
         match self {
-            // Conflict hunk actions — need the cursor on a conflict.
+            // Conflict hunk actions: need the cursor on a conflict.
             ResolveOurs | ResolveTheirs | ResolveMergeTool | ConflictPickOurs
             | ConflictPickTheirs | ConflictPickBase | ConflictUnpick | ConflictApplyPicks
             | ConflictEditFile | ConflictEditHunk => m(f, Requires::Conflict),
 
             // Acts on the file selection, not the cursor row, so it needs no
-            // cursor context — `selection_support` already carries what it
+            // cursor context: `selection_support` already carries what it
             // needs, and claiming Requires::File greys it out while it works.
             FileUntrack => m(f, Requires::Nothing),
 
-            // File actions — need the cursor on a file.
+            // File actions: need the cursor on a file.
             FileAnnotate => m(f, Requires::File),
             EditFileWorkingCopy | EditFileAtRevision | CheckoutAndEditFile => m(cf, Requires::File),
 
@@ -135,7 +135,7 @@ impl AppAction {
             | AnnotateForward
             | ToggleAnnotateSeparator => m(c, Requires::Nothing),
 
-            // Navigation, toggles, view switches, and view-local actions —
+            // Navigation, toggles, view switches, and view-local actions:
             // no selection semantics, available anywhere.
             Quit
             | MoveDown
@@ -308,7 +308,7 @@ mod availability_tests {
     }
 
     /// FileUntrack acts on the file selection, so it stays available with the
-    /// cursor parked anywhere — claiming Requires::File greyed it out while
+    /// cursor parked anywhere: claiming Requires::File greyed it out while
     /// it worked.
     #[test]
     fn file_untrack_follows_the_selection_not_the_cursor() {

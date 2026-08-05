@@ -16,7 +16,7 @@ pub(super) fn publish(lua: &Lua, config: &Config) -> mlua::Result<()> {
 
 /// Read `kojutsu.config` back into a `Config`.
 ///
-/// Unknown keys are rejected — `Config` is `deny_unknown_fields`, so a typo
+/// Unknown keys are rejected: `Config` is `deny_unknown_fields`, so a typo
 /// names itself and lists the valid keys instead of silently doing nothing.
 pub(super) fn read(lua: &Lua) -> Result<Config, String> {
     let read = || -> mlua::Result<Config> {
@@ -105,7 +105,7 @@ mod tests {
         assert!(err.contains("`accent`"), "{err}");
     }
 
-    /// A typo inside a wholesale replacement is caught the same way — this is
+    /// A typo inside a wholesale replacement is caught the same way: this is
     /// what a `__newindex` guard on the published table would have missed.
     #[test]
     fn a_misspelled_key_in_a_replaced_section_is_also_rejected() {
@@ -119,7 +119,7 @@ mod tests {
 
     /// `--print-default-config` hands this file to users as a starting point,
     /// and it claims every value in it is the default. Run it through the
-    /// real pipeline and check the claim — a renamed key, a stale value, or a
+    /// real pipeline and check the claim: a renamed key, a stale value, or a
     /// syntax error all show up here rather than in someone's config.
     #[test]
     fn the_shipped_sample_is_exactly_the_defaults() {

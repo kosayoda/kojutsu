@@ -10,7 +10,7 @@ use crate::types::{DisplayRow, SearchFocus, SearchScopes, SearchState};
 /// IDs are matched against their whole text rather than the few characters on
 /// screen, so a pasted or copied ID finds its commit. Every match against the
 /// displayed form is still a match against the full one, which is a prefix of
-/// it — this only widens what is findable.
+/// it: this only widens what is findable.
 fn ref_entry_matches(
     description: Option<&str>,
     change_id: Option<&crate::dag::ShortId>,

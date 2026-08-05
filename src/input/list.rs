@@ -69,7 +69,7 @@ fn list_jump(app: &mut App, to_end: bool) {
 
 /// Apply a movement action to the list's own cursor. The list has its own
 /// notion of where it is, so it interprets the action rather than dispatching
-/// it — but which key means which movement still comes from the keymap.
+/// it, but which key means which movement still comes from the keymap.
 fn list_navigate(app: &mut App, action: crate::keymap::AppAction) {
     use crate::keymap::AppAction;
     match action {
@@ -97,7 +97,7 @@ pub(super) fn handle_select_from_list(
         .is_some_and(|n| (n.modifiers & keymap_parser::Modifier::Ctrl as u8) != 0);
     let node_key = node.as_ref().map(|n| n.key.clone());
 
-    // While filtering, a printable key is filter text — that is the one thing
+    // While filtering, a printable key is filter text: that is the one thing
     // that has to outrank the keymap, since a movement key bound to a letter
     // must still type it here. Everything else falls through, so navigation
     // keeps working and follows whatever the user bound.
@@ -107,7 +107,7 @@ pub(super) fn handle_select_from_list(
             if let AppMode::SelectFromList(s) = &mut app.mode {
                 s.filter.push(c);
                 refresh_list_filter(s);
-                // Land on the best match, not the pinned custom row — unless
+                // Land on the best match, not the pinned custom row, unless
                 // nothing matches, where Enter then opens the free input
                 // prefilled with the filter text.
                 s.cursor = if s.custom_entry.is_some() && s.filtered_indices.len() > 1 {
@@ -189,7 +189,7 @@ pub(super) fn handle_select_from_list(
             return Action::None;
         }
         Some(Key::Esc) => {
-            // If filtering, just exit filter focus — keep the filter text.
+            // If filtering, just exit filter focus: keep the filter text.
             if let AppMode::SelectFromList(s) = &mut app.mode
                 && s.filtering
             {
@@ -376,7 +376,7 @@ pub(super) fn resolve_selection(
         }
         PendingSelection::CommandCompletion { input } => {
             let selected = names.into_iter().next().unwrap_or_default();
-            // The item format is "value  description" — extract just the value.
+            // The item format is "value  description": extract just the value.
             let value = selected.split_whitespace().next().unwrap_or(&selected);
             let new_text = crate::jj_command::replace_current_token(&input, value, true);
             app.mode = AppMode::text_input(":", new_text, crate::types::PendingCommand::RawCommand);
@@ -537,8 +537,8 @@ mod list_navigation_tests {
         assert_eq!(cursor(&app), 0);
     }
 
-    /// A movement key is filter text while filtering — text outranks the
-    /// keymap — but a chord still navigates.
+    /// A movement key is filter text while filtering: text outranks the
+    /// keymap, but a chord still navigates.
     #[test]
     fn filtering_types_letters_and_still_navigates_on_chords() {
         let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());

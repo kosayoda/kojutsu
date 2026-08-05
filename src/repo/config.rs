@@ -3,7 +3,7 @@
 //! Kojutsu shows IDs and evaluates revsets that the user then hands straight
 //! back to the `jj` CLI, so the two must resolve `revsets.log`, `trunk()` and
 //! friends identically. That only holds if we read the same files, in the same
-//! order, that jj does — this module mirrors jj-cli's `ConfigEnv`.
+//! order, that jj does: this module mirrors jj-cli's `ConfigEnv`.
 
 use std::path::{Path, PathBuf};
 
@@ -24,7 +24,7 @@ const CONFIG_ID_LEN: usize = 20;
 /// `workspace_path`: jj-lib defaults, vendored jj-cli defaults, user files,
 /// the repo and workspace files, then environment overrides.
 ///
-/// Individual layers are best-effort — a repo with an unreadable user config
+/// Individual layers are best-effort: a repo with an unreadable user config
 /// should still open, just with jj's defaults.
 pub(super) fn load(workspace_path: &Path) -> Result<StackedConfig> {
     let mut config = StackedConfig::with_defaults();
@@ -40,7 +40,7 @@ pub(super) fn load(workspace_path: &Path) -> Result<StackedConfig> {
     }
 
     // The repo path is read from `.jj/repo`, which is a pointer file rather
-    // than a directory in secondary workspaces — let jj-lib resolve it.
+    // than a directory in secondary workspaces: let jj-lib resolve it.
     match DefaultWorkspaceLoaderFactory.create(workspace_path) {
         Ok(loader) => {
             if let Some(path) = repo_config_path(loader.repo_path()) {
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn a_malformed_id_file_does_not_resolve_to_a_stray_directory() {
         let dir = tempfile::tempdir().unwrap();
-        // Short, and `zz` is not hex — either would name the wrong directory.
+        // Short, and `zz` is not hex: either would name the wrong directory.
         for id in ["0123", "0123456789abcdef01zz"] {
             std::fs::write(dir.path().join("config-id"), id).unwrap();
             assert_eq!(repo_config_path(dir.path()), None, "accepted id {id:?}");

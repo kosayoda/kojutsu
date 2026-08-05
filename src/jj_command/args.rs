@@ -579,8 +579,8 @@ impl JJCommand {
 }
 
 /// Raw commands are user-typed, so argument kinds cannot be known at
-/// construction. Lex them from jj's factual grammar — subcommand word(s),
-/// `-`-prefixed flags, and verbatim passthrough after a bare `--` — without
+/// construction. Lex them from jj's factual grammar: subcommand word(s),
+/// `-`-prefixed flags, and verbatim passthrough after a bare `--`, without
 /// guessing which values are revisions.
 fn lex_raw_args(args: &[Str]) -> Vec<TaggedArg> {
     const COMPOUND_SUBCOMMANDS: &[&str] = &["git", "bookmark", "workspace", "tag", "op", "file"];

@@ -63,7 +63,7 @@ impl Keymap {
         LookupResult::Unbound
     }
 
-    /// The builtin action a single key resolves to — prefixes, toggles and
+    /// The builtin action a single key resolves to: prefixes, toggles and
     /// plugin commands give `None`.
     ///
     /// For modes that interpret an action against their own state instead of
@@ -80,7 +80,7 @@ impl Keymap {
     /// types it (`"H"`, `"] c"` becomes `"]c"`), or `None` if every binding
     /// for it goes through a key that can't appear in typed text.
     ///
-    /// Used to label the jump overlay, which reads raw `KeyCode::Char`s — so
+    /// Used to label the jump overlay, which reads raw `KeyCode::Char`s, so
     /// ctrl-chords, Tab and the arrows are unusable there however they're
     /// bound.
     pub fn typeable_keys(&self, action: super::AppAction) -> Option<String> {
@@ -262,7 +262,7 @@ fn insert_binding(nodes: &mut Vec<(Node, MutableTrieNode)>, keys: &[Node], targe
         if let Some(children) = prefix_node {
             insert_binding(children, rest, target);
         } else {
-            // Auto-create the prefix (with empty label — will be overridden
+            // Auto-create the prefix (with empty label, which will be overridden
             // if an explicit Prefix spec exists).
             let mut children = Vec::new();
             insert_binding(&mut children, rest, target);

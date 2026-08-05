@@ -197,7 +197,7 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field ok boolean").unwrap();
     writeln!(
         out,
-        "---@field output string both pipes interleaved as they arrived, ANSI-colored — for \
+        "---@field output string both pipes interleaved as they arrived, ANSI-colored: for \
          showing, not for parsing"
     )
     .unwrap();
@@ -290,7 +290,7 @@ pub fn generate_type_definitions() -> String {
     writeln!(
         out,
         "---@field output string both pipes interleaved, ANSI-colored; pass through \
-         kojutsu.strip_ansi to parse it. Unlike JJResult there is no split — the pipes were \
+         kojutsu.strip_ansi to parse it. Unlike JJResult there is no split: the pipes were \
          already merged before a hook sees them"
     )
     .unwrap();

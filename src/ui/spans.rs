@@ -124,7 +124,7 @@ pub(super) fn push_highlighted_short_id(
         hay_lower.as_str()
     };
     let Some(start) = hay.find(needle) else {
-        // No match — render normally.
+        // No match: render normally.
         push_short_id(spans, id, color, theme);
         if !extra.is_empty() {
             spans.push(Span::styled(extra, Style::default().fg(color)));

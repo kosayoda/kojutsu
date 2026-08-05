@@ -598,7 +598,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     ]);
     specs.extend(file_prefix_bindings(evo));
 
-    // Command log (shared bindings only — no extra specs needed)
+    // Command log (shared bindings only, no extra specs needed)
 
     // Interdiff view
     let id = || views(&[ActiveView::Interdiff]);

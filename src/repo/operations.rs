@@ -271,7 +271,7 @@ impl JjRepo {
             .block_on()
             .wrap_err("failed to read operation")?;
         let Some(parent_id) = op_data.parents.first() else {
-            // Root operation — nothing to diff.
+            // Root operation: nothing to diff.
             return Ok(Vec::new());
         };
         let parent_data = op_store

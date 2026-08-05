@@ -44,7 +44,7 @@ impl App {
             .push(RepoRequest::load_revset(revset));
     }
 
-    /// Reload the current revset. `Snapshot` re-scans the working copy first —
+    /// Reload the current revset. `Snapshot` re-scans the working copy first:
     /// needed only when the user may have edited files since jj last looked.
     pub fn refresh(&mut self, load_kind: crate::repo_service::RevsetLoadKind) {
         let revset = match &self.revset.load_state {
@@ -140,7 +140,7 @@ impl App {
     /// stream state when `done`.
     pub(super) fn append_entries(&mut self, entries: Vec<DagEntry>, done: bool) {
         // A chunk without an active stream is stale (e.g. the stream was
-        // finalized by an error) — ignore it.
+        // finalized by an error), so ignore it.
         let Some(mut stream) = self.stream.take() else {
             return;
         };
@@ -419,7 +419,7 @@ impl App {
                                 ));
                             }
                             // Conflicted files show hunks instead of the
-                            // diff — re-request those too (a rewritten
+                            // diff: re-request those too (a rewritten
                             // commit gets a fresh node with no hunk cache).
                             if file.has_conflict
                                 && self.nodes[idx].conflict_hunks_should_request(file_idx)

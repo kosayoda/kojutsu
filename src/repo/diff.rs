@@ -56,7 +56,7 @@ impl DiffSideContent {
 }
 
 /// Materialize one side of a file diff. Regular files are read through a
-/// size cap (`limit` bytes — a memory guard, not a latency cap; diff work
+/// size cap (`limit` bytes, a memory guard rather than a latency cap; diff work
 /// runs on background workers) so oversized blobs are never fully loaded.
 /// Conflicted files materialize hunk by hunk so the conflict regions' line
 /// ranges are tracked exactly. Values that have no content of their own
@@ -173,7 +173,7 @@ fn is_submodule(value: &MergedTreeValue) -> bool {
         .any(|v| matches!(v, TreeValue::GitSubmodule(_)))
 }
 
-/// Whether either side of a change is a Git submodule pointer — a submodule
+/// Whether either side of a change is a Git submodule pointer: a submodule
 /// being added or removed is as unpatchable as one being bumped.
 fn is_submodule_change(values: &Diff<MergedTreeValue>) -> bool {
     is_submodule(&values.before) || is_submodule(&values.after)
@@ -198,7 +198,7 @@ fn placeholder_diff(text: impl Into<String>) -> DiffResult {
 
 fn too_large_placeholder(limit: usize) -> DiffResult {
     placeholder_diff(format!(
-        "(file larger than {} MiB — diff skipped)",
+        "(file larger than {} MiB: diff skipped)",
         limit / (1024 * 1024)
     ))
 }
@@ -815,7 +815,7 @@ impl JjRepo {
 
 /// Tag each term of a conflicted merge hunk with its kind. A `Merge`
 /// interleaves positive and negative terms, starting positive: side 1,
-/// base 1, side 2, base 2, ... — this is the only place that may depend
+/// base 1, side 2, base 2, and so on. This is the only place that may depend
 /// on that ordering. `absent` flags file absence per term, in the same
 /// interleaved order.
 fn conflict_terms<T: AsRef<[u8]>>(hunk: &Merge<T>, absent: &[bool]) -> Vec<ConflictTerm> {
@@ -920,8 +920,8 @@ fn default_materialize_options() -> ConflictMaterializeOptions {
 }
 
 /// Materialize a conflict hunk's terms as git-style markers (the same
-/// text jj would produce). The `Merge` is rebuilt by term kind — sides as
-/// adds, bases as removes, each ordered by ordinal — rather than trusting
+/// text jj would produce). The `Merge` is rebuilt by term kind: sides as
+/// adds, bases as removes, each ordered by ordinal, rather than trusting
 /// the Vec's position, so markers are correct regardless of storage order.
 pub fn hunk_markers(terms: &[crate::conflict::ConflictTerm]) -> String {
     let term_bytes = |t: &crate::conflict::ConflictTerm| bstr::BString::from(t.text.to_content());

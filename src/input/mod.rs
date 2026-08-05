@@ -86,7 +86,7 @@ pub enum Action {
     },
     /// Suspend TUI, edit one conflict hunk's resolution in $EDITOR; store
     /// it as the hunk's pick (pure UI state until picks are applied).
-    /// Addressed by stable IDs — row indices must not cross a suspend.
+    /// Addressed by stable IDs: row indices must not cross a suspend.
     EditConflictHunk {
         commit_id: crate::types::CommitId,
         path: crate::types::RepoPath,

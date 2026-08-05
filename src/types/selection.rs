@@ -238,7 +238,7 @@ impl SelectionContext {
     }
 
     /// Insert many at once. The summary is recomputed over the whole set on
-    /// every change, so inserting a large batch one at a time is quadratic —
+    /// every change, so inserting a large batch one at a time is quadratic:
     /// expanding a big file into its lines does exactly that.
     pub fn extend(&mut self, selections: impl IntoIterator<Item = Selection>) {
         let mut changed = false;
@@ -444,7 +444,7 @@ mod selection_context_tests {
     }
 
     /// An action taking files but not lines is rejected once a line joins the
-    /// selection — the check is over everything selected, not the winner of
+    /// selection: the check is over everything selected, not the winner of
     /// the precedence.
     #[test]
     fn gating_requires_support_for_every_kind_present() {

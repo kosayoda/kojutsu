@@ -29,7 +29,7 @@ impl App {
     }
 
     /// Enter line-selection mode for a commit, scoping the selection to it.
-    /// Returns `false` — having changed nothing — when the commit holds a
+    /// Returns `false` (having changed nothing) when the commit holds a
     /// change no line selection can narrow, because a line-mode command
     /// would carry that change along whole while the UI implied otherwise.
     /// Whole-file selection takes a different route (a jj fileset rather
@@ -51,8 +51,8 @@ impl App {
     /// turns out to hold a change no line selection can narrow.
     ///
     /// [`Self::begin_line_selection`] can only judge the files known at the
-    /// time. A commit rewritten under an existing selection — squashing a
-    /// submodule bump into it, say — keeps its change ID, so the selection
+    /// time. A commit rewritten under an existing selection: squashing a
+    /// submodule bump into it, say: keeps its change ID, so the selection
     /// survives the refresh and would otherwise go on to run in line mode
     /// against a commit that no longer supports it.
     pub(super) fn drop_blocked_line_selection(&mut self, entry_idx: EntryIdx) {
@@ -80,7 +80,7 @@ impl App {
         self.selection.kind()
     }
 
-    /// Every selection kind currently present — what action gating tests
+    /// Every selection kind currently present: what action gating tests
     /// against, so a mixed selection needs an action supporting all of it.
     pub fn selection_kinds(&self) -> crate::keymap::SelectionKindSet {
         self.selection.kinds()
@@ -136,7 +136,7 @@ impl App {
     /// commit under the cursor when nothing is selected.
     ///
     /// Selections are keyed by whole change IDs so they survive prefix-length
-    /// updates, but what goes to `jj` is the shortest unique prefix — the same
+    /// updates, but what goes to `jj` is the shortest unique prefix: the same
     /// form the cursor path uses, and the same form shown on screen.
     pub fn selected_change_ids(&self) -> SmallVec<RevisionArg> {
         if self.selection_kind() != SelectionKind::Commit || !self.selection_active() {
@@ -154,7 +154,7 @@ impl App {
 
         // Resolved by one walk of the DAG rather than a search per selection,
         // so each node's identity is built once and the revisions come out in
-        // DAG order — the selection itself is a hash set, whose order would
+        // DAG order: the selection itself is a hash set, whose order would
         // otherwise vary between identical invocations.
         let mut revisions: SmallVec<RevisionArg> = self
             .nodes
@@ -212,8 +212,8 @@ impl App {
     /// Replace a whole-file selection with one entry per selectable line,
     /// leaving the same set of changes selected. A `Full` file already draws
     /// its lines as selected ([`Self::is_line_selected`]), so a line toggle
-    /// inside one has to deselect that line — not discard the rest of the
-    /// file — and it needs the lines to exist individually to do that.
+    /// inside one has to deselect that line, not discard the rest of the
+    /// file, and it needs the lines to exist individually to do that.
     fn expand_file_selection_to_lines(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
         let Some((change_id, path)) = self.resolve_file(entry_idx, file_idx) else {
             return;
@@ -455,7 +455,7 @@ impl App {
 }
 
 /// Names the first change in `files` that no line selection can narrow, and
-/// how many others share the problem — or `None` when they all can be.
+/// how many others share the problem, or `None` when they all can be.
 /// Phrased as the subject of a sentence the caller completes, so the reason
 /// stays tied to [`FileChange::line_selection_blocker`] rather than being
 /// restated at each call site.
@@ -564,7 +564,7 @@ mod selected_revision_tests {
     #[test]
     fn selected_commits_come_out_in_dag_order() {
         // The selection is a hash set, so without resolving against the DAG the
-        // order handed to `jj` — and shown in the command preview — would vary
+        // order handed to `jj` (and shown in the command preview) would vary
         // between identical invocations. Enough commits that hash order is not
         // going to coincide with DAG order by chance.
         let tags = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
@@ -722,7 +722,7 @@ mod submodule_line_selection_tests {
     }
 
     /// Whole-file selection reaches jj as a fileset rather than a diff editor,
-    /// which handles submodules correctly — so it stays available.
+    /// which handles submodules correctly, so it stays available.
     #[test]
     fn whole_file_selection_still_works_on_a_submodule() {
         let mut app = app_with_files(&[("sub", true)]);
@@ -749,7 +749,7 @@ mod submodule_line_selection_tests {
 
     /// A commit rewritten under a live line selection keeps its change ID, so
     /// the selection survives the refresh. If the rewrite brought in a
-    /// submodule, the selection is now unhonourable and has to go — checked
+    /// submodule, the selection is now unhonourable and has to go: checked
     /// when the new file list lands, the first moment that's knowable.
     #[test]
     fn a_rewrite_that_adds_a_submodule_drops_the_line_selection() {

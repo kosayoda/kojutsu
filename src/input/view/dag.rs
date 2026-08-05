@@ -17,11 +17,11 @@ use crate::input::bookmark::{
 };
 
 /// Shown when a per-hunk conflict action fires off a conflict hunk row.
-pub(in crate::input) const ERR_NOT_ON_HUNK: &str = "per-hunk only — use on a conflict hunk row";
+pub(in crate::input) const ERR_NOT_ON_HUNK: &str = "per-hunk only: use on a conflict hunk row";
 /// Shown when picking a side that deleted the file (assembly can't express
 /// a deletion, only empty content).
 pub(in crate::input) const ERR_SIDE_DELETED: &str =
-    "that side deleted the file — use C,o / C,t to take it whole-file";
+    "that side deleted the file: use C,o / C,t to take it whole-file";
 
 pub(in crate::input) fn dispatch(
     app: &mut App,
@@ -218,7 +218,7 @@ pub(in crate::input) fn dispatch(
                 return Action::None;
             }
             let Some((path, content)) = app.conflict_file_content(entry_idx, file_idx) else {
-                app.set_error("conflict hunks not loaded — unfold the file first (tab)");
+                app.set_error("conflict hunks not loaded: unfold the file first (tab)");
                 return Action::None;
             };
             Action::EditConflictFile {
@@ -662,7 +662,7 @@ fn enter_run_input(app: &mut App, flags: CommandFlags) -> Action {
     if ids.is_empty() {
         return Action::None;
     }
-    // Without presets or history there is nothing to pick from — go
+    // Without presets or history there is nothing to pick from: go
     // straight to the free-text input.
     if app.config.run.presets.is_empty() && app.run_history.is_empty() {
         app.mode = crate::input::modal::run_command_input(ids, flags, "");
@@ -751,7 +751,7 @@ fn picked_term_is_absent(
 /// Complete a hand-edit of one conflict hunk: validate, store it as the
 /// hunk's pick, and offer to apply if the file is now fully picked.
 /// Addressed by stable IDs so it survives reloads while the editor was
-/// open — a vanished commit is reported, never silently dropped.
+/// open: a vanished commit is reported, never silently dropped.
 pub fn complete_hunk_edit(
     app: &mut App,
     commit_id: &crate::types::CommitId,
@@ -761,11 +761,11 @@ pub fn complete_hunk_edit(
     flags: CommandFlags,
 ) {
     if crate::repo::has_conflict_markers(edited) {
-        app.set_error("markers remain — resolve the hunk fully or cancel");
+        app.set_error("markers remain: resolve the hunk fully or cancel");
         return;
     }
     let Some(hunk) = app.resolve_conflict_hunk(commit_id, path, hunk_idx) else {
-        app.set_error("commit changed while editing — edit not applied");
+        app.set_error("commit changed while editing: edit not applied");
         return;
     };
     app.set_conflict_edited(
@@ -776,7 +776,7 @@ pub fn complete_hunk_edit(
 }
 
 /// After a pick, offer to apply immediately when every hunk in the file
-/// is picked — Enter (or `a`) applies, Esc keeps accumulating. Returns
+/// is picked: Enter (or `a`) applies, Esc keeps accumulating. Returns
 /// whether the prompt was shown.
 pub(in crate::input) fn maybe_offer_apply(
     app: &mut App,
@@ -812,7 +812,7 @@ pub(in crate::input) fn maybe_offer_apply(
 /// `jj resolve` command that applies it via the `--apply-resolution` merge
 /// tool. The sole constructor of `ResolveTool::Content` commands; reports
 /// a staging failure on `app` and returns `None`. Content containing
-/// markers stays conflicted — jj parses them back.
+/// markers stays conflicted: jj parses them back.
 pub fn staged_resolution(
     app: &mut App,
     change_id: RevisionArg,

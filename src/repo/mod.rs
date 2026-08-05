@@ -64,7 +64,7 @@ pub struct JjRepo {
     pub(super) workspace_name: WorkspaceNameBuf,
     pub(super) workspace_root: PathBuf,
     /// The synthetic remote `remote_bookmarks()` ignores unless asked for it
-    /// by name — `git` in a git-backed repo, nothing otherwise. Revsets parse
+    /// by name: `git` in a git-backed repo, nothing otherwise. Revsets parse
     /// differently with and without it, so `trunk()` depends on getting this
     /// right.
     pub(super) default_ignored_remote: Option<&'static jj_lib::ref_name::RemoteName>,
@@ -73,7 +73,7 @@ pub struct JjRepo {
     /// `IdPrefixContext` belongs to one view; building it evaluates a revset,
     /// which is far too much work to repeat per lookup.
     pub(super) id_prefix: OnceLock<IdPrefixContext>,
-    /// Max bytes of file content (per side) materialized for a diff —
+    /// Max bytes of file content (per side) materialized for a diff:
     /// a memory guard; larger files get a placeholder.
     pub(super) diff_size_limit: usize,
 }
@@ -320,7 +320,7 @@ where
 
 /// The revset jj disambiguates change/commit ID prefixes within:
 /// `revsets.short-prefixes`, falling back to `revsets.log` when it is unset.
-/// An empty string means "no disambiguation" — prefixes are then made unique
+/// An empty string means "no disambiguation": prefixes are then made unique
 /// against the whole index, hidden commits included.
 ///
 /// Mirrors jj-cli's `load_short_prefixes_expression`. Getting this wrong in

@@ -157,7 +157,7 @@ pub fn help_entries(
 
 /// Help for target- and commit-select. Read from the same keymap the modes
 /// resolve against, and filtered by the same predicate, so the listing can't
-/// drift from what they actually accept — only top-level bindings, since a
+/// drift from what they actually accept: only top-level bindings, since a
 /// sequence needs submenu state these modes don't have.
 pub fn select_mode_help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
     use HelpGroup::General as G;

@@ -525,7 +525,7 @@ pub(super) fn draw_select_list(
             .add_modifier(Modifier::BOLD),
     )];
 
-    // Always show [filter: ] — add a space after the text for the cursor to sit in.
+    // Always show [filter: ], with a space after the text for the cursor to sit in.
     let filter_label = format!("[filter: {filter} ] ");
     let filter_cursor_offset = title_prefix_len + "[filter: ".len();
     let filter_style = if filtering {
@@ -642,7 +642,7 @@ pub(super) fn draw_select_list(
     // Show blinking cursor in the title bar when filter is focused.
     if filtering {
         // Title border starts at area.x, title text offset by border char.
-        // filter_cursor_offset = " title " + "[filter: " — points right after the colon+space.
+        // filter_cursor_offset = " title " + "[filter: ", which points just past the colon.
         let cursor_x = area.x + filter_cursor_offset as u16 + filter.len() as u16;
         frame.set_cursor_position((cursor_x, area.y));
     }

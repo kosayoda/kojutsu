@@ -82,7 +82,7 @@ fn default_tab_width() -> u8 {
 #[serde(deny_unknown_fields)]
 pub struct DiffConfig {
     /// Max file size in MiB (per side) materialized into memory for a diff.
-    /// Larger files show a placeholder instead — a memory guard, not a
+    /// Larger files show a placeholder instead: a memory guard, not a
     /// latency cap (diffs run on background workers).
     #[serde(default = "default_max_file_size_mib")]
     pub max_file_size_mib: u64,
@@ -296,7 +296,7 @@ impl DefaultSearchScopes {
 
 /// Color theme for the TUI.
 ///
-/// All fields are optional in the config file — missing values use the
+/// All fields are optional in the config file: missing values use the
 /// built-in defaults. Colors can be specified as:
 /// - Named: `"cyan"`, `"red"`, `"dark_gray"`, etc.
 /// - RGB table: `{ r = 50, g = 50, b = 60 }`
@@ -453,7 +453,7 @@ pub fn state_path() -> Option<PathBuf> {
 mod color {
     use super::{Color, Deserialize};
 
-    /// Emits `"DarkGray"`, `"#32323C"`, `"244"` — all of which parse back.
+    /// Emits `"DarkGray"`, `"#32323C"`, `"244"`, all of which parse back.
     pub(super) fn serialize<S: serde::Serializer>(
         color: &Color,
         serializer: S,
@@ -462,7 +462,7 @@ mod color {
     }
 
     /// Accepts a string (`"cyan"`, `"dark_gray"`, `"bright-white"`,
-    /// `"#ff8000"`, `"244"`), an ANSI index `0`–`255`, or `{ r, g, b }`.
+    /// `"#ff8000"`, `"244"`), an ANSI index `0`-`255`, or `{ r, g, b }`.
     pub(super) fn deserialize<'de, D: serde::Deserializer<'de>>(
         deserializer: D,
     ) -> Result<Color, D::Error> {

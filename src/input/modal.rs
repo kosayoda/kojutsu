@@ -119,7 +119,7 @@ pub(super) fn handle_text_input(
                             crate::jj_command::replace_current_token(&text, prefix, false);
                         *input = tui_input::Input::new(new_text);
                     } else {
-                        // Already at common prefix — show completion list.
+                        // Already at common prefix: show completion list.
                         let items: Vec<String> = completions
                             .iter()
                             .map(|c| {
@@ -281,7 +281,7 @@ pub(super) fn handle_search_input(
         }
         _ => {
             // Stepping through matches is the same action the DAG binds, so
-            // take it from the keymap — but only for keys that aren't text,
+            // take it from the keymap, but only for keys that aren't text,
             // which in the query field is anything printable.
             if super::typed_char(&key).is_none()
                 && let Some(node) = keymap::key_event_to_node(&key)
@@ -434,7 +434,7 @@ pub(super) fn handle_commit_select(app: &mut App, key: KeyEvent) -> Option<Actio
             let AppMode::CommitSelect { pending, flags, .. } = mode else {
                 return Some(Action::None);
             };
-            // Enter belongs to this mode even with nothing selected — `None`
+            // Enter belongs to this mode even with nothing selected: `None`
             // here would send it back to the keymap after the mode is gone.
             let Some(target) = app.selected_change_id() else {
                 return Some(Action::None);
@@ -480,7 +480,7 @@ pub(super) fn handle_jump(app: &mut App, key: KeyEvent) -> Action {
         app.set_cursor(*row_idx);
         app.exit_overlay();
     } else {
-        // Input is a prefix of remaining labels — stay in jump mode. Assigned
+        // Input is a prefix of remaining labels: stay in jump mode. Assigned
         // directly, not via `enter_overlay`: the mode being restored is the
         // Normal that `take_jump` just put there, which would lose the real one.
         app.mode = AppMode::Jump(state);

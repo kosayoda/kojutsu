@@ -10,14 +10,14 @@ pub enum Stream {
 /// Everything a command wrote, in the order it arrived, remembering which pipe
 /// each run of bytes came from.
 ///
-/// One buffer serves both readers. The interleaved whole is what the UI shows —
+/// One buffer serves both readers. The interleaved whole is what the UI shows,
 /// and what it streams live, so the order bytes arrived in is the order they
 /// have to stay in. A caller parsing an answer wants one pipe on its own
 /// instead: jj writes warnings and hints to stderr, and reading an object name
 /// out of the interleaved buffer can come back with the "a" from "Warning".
 ///
 /// `runs` indexes `bytes`, so both are private and only [`Self::push`] and
-/// [`Self::push_note`] can extend them — there is no way to leave an index
+/// [`Self::push_note`] can extend them: there is no way to leave an index
 /// pointing at bytes that moved, or outside the buffer entirely.
 #[derive(Default)]
 pub struct Captured {
@@ -46,7 +46,7 @@ impl Captured {
     /// Record bytes kojutsu wrote itself: a separator keeping stderr off the
     /// end of an unterminated stdout line, or a stand-in for a command that
     /// produced nothing to capture. Shown along with the rest, and part of
-    /// neither pipe — so a caller reading a pipe never sees kojutsu's words
+    /// neither pipe, so a caller reading a pipe never sees kojutsu's words
     /// mixed in with the command's.
     pub fn push_note(&mut self, text: &str) {
         self.bytes.extend_from_slice(text.as_bytes());
@@ -158,7 +158,7 @@ mod tests {
     }
 
     /// The live overlay is fed the same bytes in the same order as the final
-    /// buffer, so interleaved arrivals must stay interleaved — while each pipe
+    /// buffer, so interleaved arrivals must stay interleaved, while each pipe
     /// still reads back as the command wrote it.
     #[test]
     fn interleaved_arrivals_keep_their_order_and_still_separate() {
@@ -194,7 +194,7 @@ mod tests {
         assert_eq!(captured.runs.len(), 2);
     }
 
-    /// An empty read is not a run — a pipe that only ever returned nothing has
+    /// An empty read is not a run: a pipe that only ever returned nothing has
     /// written nothing.
     #[test]
     fn an_empty_chunk_is_not_a_run() {

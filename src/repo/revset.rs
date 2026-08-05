@@ -18,7 +18,7 @@ use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, WorkspaceNa
 
 use super::commit_info::CommitContext;
 
-/// Entries in the first chunk of a streamed revset load — kept small so the
+/// Entries in the first chunk of a streamed revset load: kept small so the
 /// first screenful appears quickly.
 const FIRST_CHUNK_SIZE: usize = 200;
 /// Entries per subsequent chunk of a streamed revset load.

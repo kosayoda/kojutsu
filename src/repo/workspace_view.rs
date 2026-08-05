@@ -137,7 +137,7 @@ impl JjRepo {
                             info.divergence,
                         ),
                         // Commit isn't in the repo, so its change ID is
-                        // genuinely unknown — leave it empty rather than
+                        // genuinely unknown: leave it empty rather than
                         // showing the commit ID in the change ID's place.
                         None => (ShortId::new(""), ShortId::new(&hex), None, None),
                     };
@@ -229,7 +229,7 @@ impl JjRepo {
                         (None, None)
                     };
 
-                    // Skip fully-synced tracked remotes — no useful info to show.
+                    // Skip fully-synced tracked remotes: no useful info to show.
                     let is_synced = behind_count == Some(0) && ahead_count == Some(0);
                     if is_synced && *is_tracked {
                         continue;

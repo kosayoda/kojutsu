@@ -207,7 +207,7 @@ impl App {
         if self.op_log.has_more {
             self.rows.push(DisplayRow::OpLogLoadMore);
         }
-        // Don't follow the LoadMore sentinel — keep the numeric position so
+        // Don't follow the LoadMore sentinel: keep the numeric position so
         // the cursor lands on the first newly loaded entry.
         let prev_cursor = prev_cursor.filter(|k| *k != DisplayRow::OpLogLoadMore);
         let fallback = match prev_cursor {
@@ -294,7 +294,7 @@ impl App {
         rows.push(DisplayRow::CommitNode { entry_idx });
 
         if self.is_commit_unfolded(entry_idx) {
-            // Description continuation lines (skip first line — already in CommitNode).
+            // Description continuation lines (skip the first, already in CommitNode).
             if let Some(full) = &self.nodes[entry_idx].commit.full_description {
                 for (i, _) in full.lines().skip(1).enumerate() {
                     rows.push(DisplayRow::DescriptionLine {
@@ -474,7 +474,7 @@ impl App {
                 Some(DisplayRow::CommitNode { entry_idx: e }) if *e == entry_idx
             );
         if !range_valid {
-            // Row pointers are stale — regenerate everything.
+            // Row pointers are stale: regenerate everything.
             self.rebuild_dag_rows();
             return;
         }
@@ -507,7 +507,7 @@ impl App {
         if cursor >= end {
             self.cursor = RowIdx::new(cursor.saturating_add_signed(delta));
         } else if cursor >= start {
-            // The cursor was inside the regenerated range — re-find its row
+            // The cursor was inside the regenerated range: re-find its row
             // (or a fallback) within the entry's new rows.
             let fallbacks = dag_cursor_fallbacks(prev_cursor);
             let relative = restore_cursor(
@@ -935,7 +935,7 @@ impl App {
         }
         self.rebuild_entry_rows(entry_idx);
         if !currently_unfolded {
-            // We just unfolded — scroll to show child rows.
+            // We just unfolded: scroll to show child rows.
             self.scroll_to_show_children();
         }
     }

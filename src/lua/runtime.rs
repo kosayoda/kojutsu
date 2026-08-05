@@ -98,7 +98,7 @@ mod tests {
     }
 
     /// A reload has to reflect what the file says now, including bindings it
-    /// used to declare and no longer does — which re-running over the live
+    /// used to declare and no longer does, which re-running over the live
     /// engine could never do, since nothing there knows to remove them.
     #[test]
     fn loading_again_picks_up_an_edit_and_drops_what_it_removed() {
@@ -157,7 +157,7 @@ mod tests {
     }
 
     /// The table is re-read by polling, so the same write must not be
-    /// reported twice — the second look has nothing new to say.
+    /// reported twice: the second look has nothing new to say.
     #[test]
     fn the_same_write_is_only_reported_once() {
         let dir = config_dir_with(

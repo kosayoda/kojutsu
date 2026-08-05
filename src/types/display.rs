@@ -6,7 +6,7 @@ use crate::idx::{
 };
 
 /// Addresses one conflict hunk in the DAG view by row indices. Valid only
-/// until the next row/entry rebuild — for state that must survive reloads
+/// until the next row/entry rebuild; for state that must survive reloads
 /// or suspends, key by `(CommitId, RepoPath)` instead.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ConflictHunkRef {

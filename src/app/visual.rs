@@ -318,7 +318,7 @@ impl App {
     }
 
     /// Whether the diff line at `(entry, file, line)` can be individually
-    /// selected — the single selectability test for line visual mode.
+    /// selected: the single selectability test for line visual mode.
     /// Excludes context lines and conflict-region lines (which the pick
     /// path rejects), so highlight and selection agree.
     fn diff_line_selectable(&self, entry: EntryIdx, file: FileIdx, line: DiffLineIdx) -> bool {
@@ -645,7 +645,7 @@ impl App {
         };
         let anchor = *anchor;
 
-        // If anchor is at the bottom (last), cursor is at top — shrink from top.
+        // If anchor is at the bottom (last), cursor is at top: shrink from top.
         if path.len() > 1 && path.last() == Some(&anchor) {
             let Some(VisualMode::Commits { path, .. }) = &mut self.visual.mode else {
                 return;
@@ -677,7 +677,7 @@ impl App {
         };
         let anchor = *anchor;
 
-        // If anchor is at the top (first), cursor is at bottom — shrink from bottom.
+        // If anchor is at the top (first), cursor is at bottom: shrink from bottom.
         if path.len() > 1 && path.first() == Some(&anchor) {
             let Some(VisualMode::Commits { path, .. }) = &mut self.visual.mode else {
                 return;

@@ -26,7 +26,7 @@ impl SelectionKindSet {
     pub const ALL: Self = Self::COMMIT.union(Self::FILE).union(Self::LINE);
 
     /// Whether this selection rules out an action supporting only `support`.
-    /// `self` is what is selected — empty means nothing is, which rules
+    /// `self` is what is selected: empty means nothing is, which rules
     /// nothing out.
     ///
     /// The one place this rule lives. Dispatch refuses on it; the help panel
@@ -61,7 +61,7 @@ bitflags::bitflags! {
 /// Every dispatchable action. Unit-only by design: the snake_case name each
 /// variant serializes to is the stable identifier Lua plugins bind and hook
 /// on, and `EnumIter` is what exposes the full set to the Lua API and the
-/// generated type definitions — data-carrying variants would silently fall
+/// generated type definitions: data-carrying variants would silently fall
 /// out of both.
 #[derive(
     Debug,
@@ -931,14 +931,14 @@ pub fn action_label(action: AppAction) -> &'static str {
         AppAction::EditRevset | AppAction::EditRevsetInEditor => "revset",
         AppAction::RepeatLast => "repeat",
         // Anything without a friendlier name reads as its stable id, which
-        // is always meaningful — a literal "action" is not, and left the
+        // is always meaningful: a literal "action" is not, and left the
         // conflict-pick group announcing itself as "action does not support
         // 3 commits" until someone noticed.
         other => action_id_name(other),
     }
 }
 
-/// Stable snake_case identifier for an action — the name Lua plugins bind
+/// Stable snake_case identifier for an action: the name Lua plugins bind
 /// and hook on (derived from the variant name via strum).
 pub fn action_id_name(action: AppAction) -> &'static str {
     action.into()
@@ -997,7 +997,7 @@ mod action_label_tests {
     }
 
     /// The conflict picks were the group that reached the placeholder. They
-    /// should read as something written for a person — asserted as "not the
+    /// should read as something written for a person: asserted as "not the
     /// id" rather than by quoting the labels, which would only restate them.
     #[test]
     fn the_conflict_actions_carry_human_labels() {

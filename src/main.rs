@@ -51,7 +51,7 @@ struct Cli {
     debug_graph: bool,
 
     /// Print shortest unique change/commit ID prefixes and exit. Comparable
-    /// against `jj log -T 'change_id.shortest().prefix()'` — see `just
+    /// against `jj log -T 'change_id.shortest().prefix()'`: see `just
     /// check-prefixes`.
     #[arg(long)]
     debug_prefixes: bool,
@@ -549,7 +549,7 @@ fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
     }
 }
 
-/// Reload the current revset. `Snapshot` re-scans the working copy first —
+/// Reload the current revset. `Snapshot` re-scans the working copy first:
 /// needed only when the user may have edited files since jj last looked
 /// (manual refresh, returning from a suspended command). Refreshes after
 /// captured jj commands use `NoSnapshot`: the command itself already
@@ -597,7 +597,7 @@ fn suspend_and_run(
         app.jump_after_refresh = jump;
         app.clear_selection();
         // The user may have edited files while the terminal was suspended
-        // (e.g. in $EDITOR) — re-scan the working copy.
+        // (e.g. in $EDITOR), so re-scan the working copy.
         refresh_app(app, RevsetLoadKind::Snapshot);
     }
 
@@ -650,8 +650,8 @@ fn sync_plugin_config(
 /// All-or-nothing: the new runtime is built first and only installed if its
 /// script ran clean, so a broken edit leaves the running one untouched. The
 /// rebuild is wholesale rather than a re-run over the live engine, because
-/// registering a command or binding appends — a second pass would double
-/// every one of them — and a fresh Lua also drops `package.loaded`, so
+/// registering a command or binding appends: a second pass would double
+/// every one of them, and a fresh Lua also drops `package.loaded`, so
 /// `require`d modules are re-read instead of served from cache.
 fn reload_config(
     app: &mut App,
@@ -698,7 +698,7 @@ fn update_revset(app: &mut App, revset_str: String) {
 }
 
 /// Suspend the TUI, run `$EDITOR` with `args`, and re-init the terminal
-/// afterward. Re-init failure is fatal — the TUI cannot continue. The
+/// afterward. Re-init failure is fatal: the TUI cannot continue. The
 /// event reader thread is the caller's responsibility (stop before, spawn
 /// after). Returns the editor's exit status, or the spawn error.
 fn run_editor_suspended(
@@ -938,7 +938,7 @@ fn run_jj_command(
     });
 }
 
-/// A jj command yielded by a suspended Lua thread finished — log it, dismiss
+/// A jj command yielded by a suspended Lua thread finished: log it, dismiss
 /// the running overlay, and resume the thread with the result table.
 fn resume_lua_jj(
     app: &mut App,

@@ -34,7 +34,7 @@ struct LuaHook {
     callback: mlua::RegistryKey,
     source: String,
     /// Action names this hook's pattern matched, evaluated once at
-    /// registration against the closed set of action names — dispatch is a
+    /// registration against the closed set of action names: dispatch is a
     /// set lookup instead of a Lua pattern match per keypress.
     actions: std::collections::HashSet<&'static str>,
 }
@@ -108,7 +108,7 @@ fn outcome_table(
 }
 
 /// What `kojutsu.jj` hands back: the outcome plus the two pipes on their own.
-/// `output` interleaves them for display, which is the wrong thing to parse —
+/// `output` interleaves them for display, which is the wrong thing to parse:
 /// jj writes warnings and hints to stderr, so a plugin reading an object name
 /// out of `output` can pick up the "a" from "Warning" instead. Only a caller
 /// holding the command's own result can offer this; post-hooks read their bytes
@@ -265,8 +265,8 @@ pub struct LuaEngine {
     suspended_thread: RefCell<Option<(mlua::RegistryKey, SuspendedKind)>>,
     current_header: RefCell<String>,
     /// Set whenever user Lua runs. Writes to `kojutsu.config` can't be
-    /// observed directly — Lua only notifies on absent keys, and every config
-    /// key is present — so the table is re-read by polling. This keeps that
+    /// observed directly: Lua only notifies on absent keys, and every config
+    /// key is present, so the table is re-read by polling. This keeps that
     /// off the keystroke path and on the far rarer "a plugin just ran" path.
     lua_ran: Cell<bool>,
     pub init_error: Option<String>,
@@ -274,7 +274,7 @@ pub struct LuaEngine {
 }
 
 impl LuaEngine {
-    /// Construct via [`LuaRuntime::load`] — the engine, the action registry
+    /// Construct via [`LuaRuntime::load`]: the engine, the action registry
     /// and the keymaps are only correct when built together.
     ///
     /// `config` arrives holding the values read from disk and leaves holding
@@ -746,7 +746,7 @@ impl LuaEngine {
 
     /// Apply queued nav/dispatch requests in call order. Nav requests apply
     /// to the app directly; at most one action that must round-trip through
-    /// the main loop (`jj_interactive`, `dispatch`) is returned — extras are
+    /// the main loop (`jj_interactive`, `dispatch`) is returned: extras are
     /// dropped with a warning. From hooks (`allow_breaking = false`) those
     /// requests are unsupported and warn.
     fn drain_pending_actions(
@@ -936,7 +936,7 @@ impl LuaEngine {
         // One entry per group, not per message: a plugin printing a thirty-line
         // report should leave one row behind with the report folded under it,
         // the way a jj command leaves one row carrying its output. The lines
-        // belong in `output` rather than the summary for the same reason — a
+        // belong in `output` rather than the summary for the same reason: a
         // summary is drawn verbatim, so a plugin's colour would arrive as
         // literal escape codes, while output is ANSI-parsed.
         for group in groups {
@@ -1061,7 +1061,7 @@ mod command_log_tests {
     }
 
     /// A plugin that prints a report wants one row in the command log carrying
-    /// it, the way a jj command leaves one row carrying its output — not one
+    /// it, the way a jj command leaves one row carrying its output, not one
     /// row per line of the report. And the report has to land in the entry's
     /// output, which is ANSI-parsed; a summary is drawn verbatim, so colour put
     /// there would reach the user as escape codes.
@@ -1279,7 +1279,7 @@ mod api_surface_tests {
     /// A read-only probe wants its answer without an overlay, a command-log
     /// entry, or a trip through the main loop; everything else wants all
     /// three. `quiet` is the switch, and it has to work inside the coroutine a
-    /// command or hook runs in — where yielding is possible and would
+    /// command or hook runs in, where yielding is possible and would
     /// otherwise win.
     #[test]
     fn quiet_runs_inline_where_a_plain_call_would_yield() {

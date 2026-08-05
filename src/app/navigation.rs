@@ -128,8 +128,8 @@ impl App {
             .is_some_and(|(cur, prev)| cur.commit_id != prev.commit_id)
     }
 
-    /// Adjust the scroll offset so the cursor row — plus up to
-    /// [`SCROLL_PADDING`] rows of context above and below — is fully visible
+    /// Adjust the scroll offset so the cursor row, plus up to
+    /// [`SCROLL_PADDING`] rows of context above and below: is fully visible
     /// in a viewport of `viewport` display lines. Called before each render.
     pub fn update_scroll(&mut self, viewport: usize) {
         if self.rows.is_empty() || viewport == 0 {
@@ -429,7 +429,7 @@ impl App {
             })
             .find(|&idx| match &self.rows[idx] {
                 // A conflicted commit/file is a stop only when its deeper
-                // rows aren't shown — otherwise land on those instead. The
+                // rows aren't shown: otherwise land on those instead. The
                 // `shown_*` helpers are the same source the row builder uses,
                 // so this can't drift from what's actually on screen.
                 DisplayRow::CommitNode { entry_idx } => {
@@ -494,7 +494,7 @@ impl App {
 
     /// Jump to a commit by change/commit ID prefix. Returns whether it was found.
     ///
-    /// Matched against the whole IDs, so a prefix of any length works — not
+    /// Matched against the whole IDs, so a prefix of any length works, not
     /// just one short enough to fit the displayed form.
     pub fn jump_to_change_id(&mut self, prefix: &str) -> bool {
         for (idx, node) in self.nodes.iter_enumerated() {
@@ -542,7 +542,7 @@ impl App {
             }
             lines_consumed += height;
         }
-        // Past the end — clamp to last row.
+        // Past the end: clamp to last row.
         RowIdx::new(self.rows.len().saturating_sub(1))
     }
 
@@ -597,7 +597,7 @@ mod jump_tests {
     fn a_prefix_of_any_length_finds_the_commit() {
         let mut app = app_with_one_commit();
 
-        // Shorter than the displayed form, exactly it, and longer than it —
+        // Shorter than the displayed form, exactly it, and longer than it:
         // the last only works because we match the whole ID.
         for prefix in ["uu", "uunnomkx", "uunnomkxrqvlyp", CHANGE_ID] {
             assert!(app.jump_to_change_id(prefix), "did not find {prefix:?}");

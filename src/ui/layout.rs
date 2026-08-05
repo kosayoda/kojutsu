@@ -126,7 +126,7 @@ pub(super) fn draw_header(
                     ));
                 }
             } else {
-                // Data not yet loaded — show raw commit ID
+                // Data not yet loaded: show raw commit ID
                 spans.push(Span::styled(" @ ", Style::default().fg(theme.muted)));
                 spans.push(Span::styled(
                     cid.as_str().get(..12).unwrap_or(cid.as_str()).to_string(),
@@ -138,7 +138,7 @@ pub(super) fn draw_header(
             header.push(Line::from(spans));
         }
 
-        // Breadcrumb line — only when history is non-empty.
+        // Breadcrumb line: only when history is non-empty.
         if !app.annotate.history.is_empty() {
             let mut crumbs = Vec::new();
             let muted = Style::default().fg(theme.muted);

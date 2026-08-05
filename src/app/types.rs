@@ -254,7 +254,7 @@ pub struct AnnotateTarget {
 ///
 /// An annotation is a pure function of its target: a commit's ancestry is
 /// immutable, so once computed for a given commit and path the result stays
-/// valid for as long as that commit exists — including across refreshes.
+/// valid for as long as that commit exists, including across refreshes.
 /// Recomputing costs most of a second on a large repo, and time travel walks
 /// back and forth over the same targets.
 #[derive(Default)]
@@ -284,7 +284,7 @@ impl AnnotateCache {
         let mut newest = true;
         self.entries.retain(|(_, r)| {
             lines += r.lines.len();
-            // The entry just inserted is kept whatever its size — a file too
+            // The entry just inserted is kept whatever its size: a file too
             // large for the whole budget is the most expensive one to
             // recompute, so it is the last thing to drop.
             let keep = newest || lines <= MAX_CACHED_ANNOTATE_LINES;
@@ -345,7 +345,7 @@ impl AnnotateState {
     }
 
     /// Reset what belongs to one annotation. The cache and the separator
-    /// preference outlive any single one, so they are left alone — hence
+    /// preference outlive any single one, so they are left alone, hence
     /// clearing field by field rather than replacing `self` wholesale.
     pub fn clear(&mut self) {
         self.target = None;
@@ -872,7 +872,7 @@ pub struct EvoLogEntry {
 
 pub struct WorkspaceViewEntry {
     pub name: WorkspaceName,
-    /// Whole commit ID hex. Never rendered — it is the key the background
+    /// Whole commit ID hex. Never rendered: it is the key the background
     /// prefix-length pass is looked up by, so truncating it silently stops
     /// this view's IDs from ever being shortened.
     pub commit_id: Option<CommitId>,
@@ -939,7 +939,7 @@ pub struct SelectFromListState {
 
 /// The free-input affordance of a select list: what selecting the pinned
 /// custom row does. Carrying the prompt and submit handler here makes the
-/// row's behavior total — a list cannot be built with a custom row that
+/// row's behavior total: a list cannot be built with a custom row that
 /// does nothing.
 pub struct CustomEntry {
     /// Prompt for the text input (e.g. `"run: "`).

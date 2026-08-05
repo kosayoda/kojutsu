@@ -1,7 +1,7 @@
 //! First-class merge-conflict model: pure repo data as materialized from
 //! jj (terms, per-hunk content), plus the user's resolution choices. All
 //! interaction state (which term is picked, base-fold, gap-expansion)
-//! lives App-side in `conflict_ui` — these types carry none of it.
+//! lives App-side in `conflict_ui`: these types carry none of it.
 
 use crate::dag::DiffToken;
 
@@ -10,7 +10,7 @@ use jj_lib::conflicts::ConflictMarkerStyle;
 /// The marker style kojutsu materializes conflicts with, and the name jj
 /// spells it by in configuration.
 ///
-/// Diff line numbers — and so the line selections built from them — are
+/// Diff line numbers (and so the line selections built from them) are
 /// computed against this materialization. Any jj command that re-materializes
 /// a conflict on its own side has to be pinned to the same style, or the two
 /// disagree about how many marker lines precede a given line and the wrong
@@ -155,7 +155,7 @@ pub struct Resolution {
 /// interaction state and can be freely reloaded.
 #[derive(Clone)]
 pub enum ConflictHunkKind {
-    /// Auto-resolved section — just context lines.
+    /// Auto-resolved section: just context lines.
     Resolved { text: ConflictText },
     /// Conflicted section with multiple terms to choose from.
     Conflict {
@@ -220,8 +220,8 @@ mod tests {
 mod marker_style_tests {
     use super::{MARKER_STYLE, MARKER_STYLE_CONFIG};
 
-    /// Parse the config name with jj-lib's own `Deserialize` — the same impl
-    /// that reads the `--config` we emit — and check it lands on the style we
+    /// Parse the config name with jj-lib's own `Deserialize` (the same impl
+    /// that reads the `--config` we emit), and check it lands on the style we
     /// actually materialize with. Fails if the two constants drift apart, and
     /// equally if jj-lib renames the variant out from under the name.
     #[test]

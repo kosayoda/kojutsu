@@ -152,7 +152,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
             let height = (max_col as u16 + 2)
                 .min(overlay_base.height * 7 / 10)
                 .max(4);
-            // Clamp scroll to content that doesn't fit — write back so the
+            // Clamp scroll to content that doesn't fit: write back so the
             // stored value never drifts past the end.
             // Block has Borders::TOP only (no bottom), so inner height = height - 1.
             let visible_rows = height.saturating_sub(1);
