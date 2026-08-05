@@ -197,7 +197,19 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field ok boolean").unwrap();
     writeln!(
         out,
-        "---@field output string stdout+stderr, ANSI-colored; pass through kojutsu.strip_ansi to parse it"
+        "---@field output string both pipes interleaved as they arrived, ANSI-colored — for \
+         showing, not for parsing"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "---@field stdout string the command's answer on its own, ANSI-colored; parse this \
+         rather than output, which carries jj's warnings and hints too"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "---@field stderr string warnings, hints and errors, ANSI-colored"
     )
     .unwrap();
     writeln!(
@@ -270,12 +282,16 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field seq string?").unwrap();
     writeln!(out).unwrap();
 
+    // No stdout/stderr here: a post-hook is handed the finished command's
+    // output, which is where the two pipes have already been interleaved.
     writeln!(out, "---@class HookResultTable").unwrap();
     writeln!(out, "---@field status JJStatus").unwrap();
     writeln!(out, "---@field ok boolean").unwrap();
     writeln!(
         out,
-        "---@field output string stdout+stderr, ANSI-colored; pass through kojutsu.strip_ansi to parse it"
+        "---@field output string both pipes interleaved, ANSI-colored; pass through \
+         kojutsu.strip_ansi to parse it. Unlike JJResult there is no split — the pipes were \
+         already merged before a hook sees them"
     )
     .unwrap();
     writeln!(

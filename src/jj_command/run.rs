@@ -1,7 +1,8 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use super::{CommandPart, JJCommand, JJCommandResult, KillHandle};
+use super::capture::joined;
+use super::{Captured, CommandPart, JJCommand, JJCommandResult, KillHandle, Stream};
 
 impl JJCommand {
     pub fn run_interactive(&self, repo_path: &Path) -> JJCommandResult {
@@ -27,20 +28,25 @@ impl JJCommand {
                 JJCommandResult {
                     display,
                     display_parts,
-                    output: b"interrupted".to_vec(),
+                    output: Captured::from("interrupted"),
                     success: false,
                     cancelled: true,
                     code: None,
                 }
             }
-            Ok(Output { stderr, status, .. }) => JJCommandResult {
-                display,
-                display_parts,
-                output: stderr,
-                success: status.success(),
-                cancelled: false,
-                code: status.code(),
-            },
+            // stdout went straight to the terminal, so stderr is all there is.
+            Ok(Output { stderr, status, .. }) => {
+                let mut output = Captured::default();
+                output.push(Stream::Stderr, &stderr);
+                JJCommandResult {
+                    display,
+                    display_parts,
+                    output,
+                    success: status.success(),
+                    cancelled: false,
+                    code: status.code(),
+                }
+            }
             Err(e) => jj_error(display, display_parts, e),
         }
     }
@@ -84,7 +90,7 @@ impl JJCommand {
                 JJCommandResult {
                     display,
                     display_parts,
-                    output: b"interrupted".to_vec(),
+                    output: Captured::from("interrupted"),
                     success: false,
                     cancelled: true,
                     code: None,
@@ -97,7 +103,7 @@ impl JJCommand {
             }) => JJCommandResult {
                 display,
                 display_parts,
-                output: merge_captured_output(stdout, stderr),
+                output: joined(&stdout, &stderr),
                 success: status.success(),
                 cancelled: false,
                 code: status.code(),
@@ -128,7 +134,7 @@ impl JJCommand {
             }) => JJCommandResult {
                 display,
                 display_parts,
-                output: merge_captured_output(stdout, stderr),
+                output: joined(&stdout, &stderr),
                 success: status.success(),
                 cancelled: false,
                 code: status.code(),
@@ -172,16 +178,18 @@ impl JJCommand {
 
         let child_stdout = child.stdout.take().unwrap();
         let child_stderr = child.stderr.take().unwrap();
-        // Accumulate stdout and stderr into one chronologically interleaved
-        // buffer; the callback observes exactly the same byte order because
-        // both happen under the same lock.
-        let sink = std::sync::Mutex::new((Vec::new(), on_chunk));
+        // Both pipes accumulate under one lock, so the callback observes
+        // exactly the byte order the finished capture has.
+        let sink = std::sync::Mutex::new((Captured::default(), on_chunk));
         let status = std::thread::scope(|scope| {
-            scope.spawn(|| stream_pipe(child_stdout, &sink));
-            scope.spawn(|| stream_pipe(child_stderr, &sink));
+            scope.spawn(|| stream_pipe(child_stdout, Stream::Stdout, &sink));
+            scope.spawn(|| stream_pipe(child_stderr, Stream::Stderr, &sink));
             child.wait()
         });
-        let output = sink.into_inner().map(|(buf, _)| buf).unwrap_or_default();
+        let output = sink
+            .into_inner()
+            .map(|(captured, _)| captured)
+            .unwrap_or_default();
 
         let status = match status {
             Ok(s) => s,
@@ -199,7 +207,7 @@ impl JJCommand {
             return JJCommandResult {
                 display: cmd_str,
                 display_parts,
-                output: b"interrupted".to_vec(),
+                output: Captured::from("interrupted"),
                 success: false,
                 cancelled: true,
                 code: None,
@@ -230,11 +238,15 @@ fn read_chunks(mut pipe: impl std::io::Read, mut on_chunk: impl FnMut(&[u8])) {
     }
 }
 
-fn stream_pipe<F: FnMut(&[u8])>(pipe: impl std::io::Read, sink: &std::sync::Mutex<(Vec<u8>, F)>) {
+fn stream_pipe<F: FnMut(&[u8])>(
+    pipe: impl std::io::Read,
+    source: Stream,
+    sink: &std::sync::Mutex<(Captured, F)>,
+) {
     read_chunks(pipe, |chunk| {
         if let Ok(mut guard) = sink.lock() {
             let (captured, on_chunk) = &mut *guard;
-            captured.extend_from_slice(chunk);
+            captured.push(source, chunk);
             on_chunk(chunk);
         }
     });
@@ -252,16 +264,6 @@ fn tee_pipe(pipe: impl std::io::Read + Send + 'static) -> Vec<u8> {
     captured
 }
 
-fn merge_captured_output(mut stdout: Vec<u8>, stderr: Vec<u8>) -> Vec<u8> {
-    if !stderr.is_empty() {
-        if !stdout.is_empty() && !stdout.ends_with(b"\n") {
-            stdout.push(b'\n');
-        }
-        stdout.extend_from_slice(&stderr);
-    }
-    stdout
-}
-
 fn jj_error(
     display: String,
     display_parts: Vec<CommandPart>,
@@ -270,7 +272,7 @@ fn jj_error(
     JJCommandResult {
         display,
         display_parts,
-        output: format!("failed to run jj: {err}").into_bytes(),
+        output: Captured::from(format!("failed to run jj: {err}").as_str()),
         success: false,
         cancelled: false,
         code: None,

@@ -81,9 +81,9 @@ pub enum ResumeValue {
     JjResult(Box<crate::jj_command::JJCommandResult>),
 }
 
-/// Build the Lua result table for a jj command:
+/// How a finished command is described to Lua:
 /// `{status = "ok"|"failed"|"cancelled", ok, output, code?}`.
-fn jj_result_table(
+fn outcome_table(
     lua: &Lua,
     success: bool,
     cancelled: bool,
@@ -107,6 +107,32 @@ fn jj_result_table(
     Ok(table)
 }
 
+/// What `kojutsu.jj` hands back: the outcome plus the two pipes on their own.
+/// `output` interleaves them for display, which is the wrong thing to parse —
+/// jj writes warnings and hints to stderr, so a plugin reading an object name
+/// out of `output` can pick up the "a" from "Warning" instead. Only a caller
+/// holding the command's own result can offer this; post-hooks read their bytes
+/// back from the finished command's output, where the split is long gone.
+fn jj_result_table(
+    lua: &Lua,
+    result: &crate::jj_command::JJCommandResult,
+) -> mlua::Result<mlua::Table> {
+    use crate::jj_command::Stream;
+
+    let table = outcome_table(
+        lua,
+        result.success,
+        result.cancelled,
+        result.code,
+        result.output.bytes(),
+    )?;
+    for (key, stream) in [("stdout", Stream::Stdout), ("stderr", Stream::Stderr)] {
+        let bytes = result.output.stream(stream);
+        table.set(key, String::from_utf8_lossy(&bytes).into_owned())?;
+    }
+    Ok(table)
+}
+
 /// Convert the value a suspended thread is resumed with into the Lua value the
 /// yield site receives. A conversion failure degrades to `nil`, which every
 /// yield site already treats as "dismissed".
@@ -124,14 +150,7 @@ fn resume_value_to_lua(lua: &Lua, value: ResumeValue) -> mlua::Value {
             }
             Ok(mlua::Value::Table(table))
         })(),
-        ResumeValue::JjResult(result) => jj_result_table(
-            lua,
-            result.success,
-            result.cancelled,
-            result.code,
-            &result.output,
-        )
-        .map(mlua::Value::Table),
+        ResumeValue::JjResult(result) => jj_result_table(lua, &result).map(mlua::Value::Table),
     };
     converted.unwrap_or(mlua::Value::Nil)
 }
@@ -410,7 +429,7 @@ impl LuaEngine {
                 return HookOutcome::Proceed;
             }
         };
-        let result_table = match jj_result_table(
+        let result_table = match outcome_table(
             &self.lua,
             outcome.success,
             outcome.cancelled,
@@ -1195,6 +1214,40 @@ mod api_surface_tests {
         let mut mapped: Vec<String> = classes.iter().map(|(p, _)| p.to_string()).collect();
         mapped.sort();
         assert_eq!(found, mapped, "a table in Config has no declared class");
+    }
+
+    /// The table a plugin actually receives and the class it is documented as
+    /// have to carry the same keys, or the LSP a plugin author leans on is
+    /// telling them something untrue.
+    #[test]
+    fn the_jj_result_table_matches_its_declared_class() {
+        use crate::jj_command::{Captured, JJCommandResult, Stream};
+
+        let engine = LuaEngine::for_test();
+        let mut output = Captured::default();
+        output.push(Stream::Stdout, b"a4f2c1");
+        output.push_note("\n");
+        output.push(Stream::Stderr, b"Warning: no name\n");
+        let result = JJCommandResult {
+            display: String::new(),
+            display_parts: Vec::new(),
+            output,
+            success: true,
+            cancelled: false,
+            // Present, so `code` is among the keys to compare.
+            code: Some(0),
+        };
+        let table = super::jj_result_table(&engine.lua, &result).expect("result table");
+
+        let mut keys: Vec<String> = table
+            .pairs::<String, mlua::Value>()
+            .filter_map(|pair| pair.ok().map(|(key, _)| key))
+            .collect();
+        keys.sort();
+        assert_eq!(keys, declared("JJResult"));
+
+        assert_eq!(table.get::<String>("stdout").unwrap(), "a4f2c1");
+        assert_eq!(table.get::<String>("stderr").unwrap(), "Warning: no name\n");
     }
 
     /// Run a `kojutsu.jj` call inside a coroutine, as a command or hook does.

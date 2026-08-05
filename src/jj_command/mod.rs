@@ -1,8 +1,10 @@
 mod args;
+mod capture;
 pub mod completion;
 mod follow_up;
 mod run;
 
+pub use capture::{Captured, Stream};
 pub use completion::Completion;
 pub use completion::{common_prefix, complete, replace_current_token, split_for_completion};
 pub use follow_up::{FollowUpAction, FollowUpOption};
@@ -267,7 +269,7 @@ pub struct CommandPart {
 pub struct JJCommandResult {
     pub display: String,
     pub display_parts: Vec<CommandPart>,
-    pub output: Vec<u8>,
+    pub output: Captured,
     pub success: bool,
     /// The command was killed (Esc/^C) rather than running to completion.
     pub cancelled: bool,

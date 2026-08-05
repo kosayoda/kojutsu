@@ -589,7 +589,7 @@ fn suspend_and_run(
         kojutsu::app::CommandLogKind::Command,
         &result.display,
         Some(result.display_parts.clone()),
-        result.output.clone(),
+        result.output.bytes().to_vec(),
         result.success,
     );
 
@@ -604,11 +604,11 @@ fn suspend_and_run(
     // Show output if there is any, or if the command failed (so failures are
     // always visible even when interactive commands print to inherited stdio).
     if !result.success || !result.output.is_empty() {
-        let retry = cmd.retry_options(&result.output);
+        let retry = cmd.retry_options(result.output.bytes());
         app.mode = AppMode::command_output(
             result.display,
             Some(result.display_parts),
-            result.output,
+            result.output.into_bytes(),
             result.success,
             retry,
         );
@@ -949,7 +949,7 @@ fn resume_lua_jj(
         kojutsu::app::CommandLogKind::Command,
         &result.display,
         Some(result.display_parts.clone()),
-        result.output.clone(),
+        result.output.bytes().to_vec(),
         result.success,
     );
     if matches!(app.mode, AppMode::CommandRunning(_)) {
@@ -1002,14 +1002,14 @@ fn finish_jj_command(
         kojutsu::app::CommandLogKind::Command,
         &result.display,
         Some(result.display_parts.clone()),
-        result.output.clone(),
+        result.output.bytes().to_vec(),
         result.success,
     );
-    let retry = cmd.retry_options(&result.output);
+    let retry = cmd.retry_options(result.output.bytes());
     app.mode = AppMode::command_output(
         result.display,
         Some(result.display_parts),
-        result.output,
+        result.output.into_bytes(),
         result.success,
         retry,
     );

@@ -24,13 +24,7 @@ impl LuaEngine {
                 flags: CommandFlags::empty(),
             }
             .run(&repo_path);
-            super::jj_result_table(
-                lua,
-                result.success,
-                result.cancelled,
-                result.code,
-                &result.output,
-            )
+            super::jj_result_table(lua, &result)
         })?;
 
         let jj_interactive_fn = self.lua.create_function(|lua, args: mlua::Table| {
