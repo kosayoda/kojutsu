@@ -207,6 +207,15 @@ pub fn generate_type_definitions() -> String {
     .unwrap();
     writeln!(out).unwrap();
 
+    writeln!(out, "---@class JjOpts").unwrap();
+    writeln!(
+        out,
+        "---@field quiet boolean? run inline with no overlay, no live output, no command-log \
+         entry and no way to cancel"
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+
     writeln!(out, "---@class KojutsuUi").unwrap();
     writeln!(out, "---@field status fun(msg: string)").unwrap();
     writeln!(out, "---@field confirm fun(prompt: string?): boolean").unwrap();
@@ -289,7 +298,11 @@ pub fn generate_type_definitions() -> String {
     .unwrap();
     writeln!(out, "---@field ui KojutsuUi").unwrap();
     writeln!(out, "---@field nav KojutsuNav").unwrap();
-    writeln!(out, "---@field jj fun(args: string[]): JJResult").unwrap();
+    writeln!(
+        out,
+        "---@field jj fun(args: string[], opts: JjOpts?): JJResult"
+    )
+    .unwrap();
     writeln!(out, "---@field jj_interactive fun(args: string[])").unwrap();
     writeln!(
         out,

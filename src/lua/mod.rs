@@ -867,14 +867,18 @@ impl LuaEngine {
             return;
         }
 
-        fn render_group(group: &LogGroup, out: &mut Vec<u8>) {
-            if !group.header.is_empty() {
-                out.extend_from_slice(format!("── {} ──\n", group.header).as_bytes());
-            }
+        fn render_messages(group: &LogGroup, out: &mut Vec<u8>) {
             for msg in &group.messages {
                 out.extend_from_slice(msg.as_bytes());
                 out.push(b'\n');
             }
+        }
+
+        fn render_group(group: &LogGroup, out: &mut Vec<u8>) {
+            if !group.header.is_empty() {
+                out.extend_from_slice(format!("── {} ──\n", group.header).as_bytes());
+            }
+            render_messages(group, out);
         }
 
         match &mut app.mode {
@@ -910,16 +914,27 @@ impl LuaEngine {
             }
         }
 
+        // One entry per group, not per message: a plugin printing a thirty-line
+        // report should leave one row behind with the report folded under it,
+        // the way a jj command leaves one row carrying its output. The lines
+        // belong in `output` rather than the summary for the same reason — a
+        // summary is drawn verbatim, so a plugin's colour would arrive as
+        // literal escape codes, while output is ANSI-parsed.
         for group in groups {
-            for msg in group.messages {
-                app.push_command_log(
-                    crate::app::CommandLogKind::Background,
-                    msg,
-                    None,
-                    Vec::new(),
-                    true,
-                );
-            }
+            let mut output = Vec::new();
+            render_messages(&group, &mut output);
+            let summary = if group.header.is_empty() {
+                "plugin output".to_string()
+            } else {
+                group.header
+            };
+            app.push_command_log(
+                crate::app::CommandLogKind::Background,
+                summary,
+                None,
+                output,
+                true,
+            );
         }
     }
 
@@ -984,6 +999,79 @@ impl LuaEngine {
         ctx.set("revset", app.revset.current.as_str())?;
         ctx.set("repo_root", app.repo_root.as_str())?;
         Ok(ctx)
+    }
+}
+
+/// What a plugin's `kojutsu.log` calls leave behind in the command log.
+#[cfg(test)]
+mod command_log_tests {
+    use super::{App, LuaEngine};
+
+    /// Log `messages` from a plugin under `header`, flush, and hand back the
+    /// command log rows that produced.
+    fn logged(header: &str, messages: &[&str]) -> Vec<(String, String)> {
+        let engine = LuaEngine::for_test();
+        let calls: String = messages
+            .iter()
+            .map(|m| format!("kojutsu.log({m})\n"))
+            .collect();
+        engine
+            .lua
+            .load(format!(
+                "{calls}kojutsu._collect_logs('{header}', 'command')"
+            ))
+            .exec()
+            .expect("log and collect");
+
+        let mut app = App::new(
+            String::new(),
+            String::new(),
+            std::rc::Rc::new(crate::theme::Config::default()),
+        );
+        engine.flush_logs(&mut app);
+        app.command_log
+            .entries
+            .iter()
+            .map(|e| {
+                (
+                    e.summary.clone(),
+                    String::from_utf8_lossy(&e.output).into_owned(),
+                )
+            })
+            .collect()
+    }
+
+    /// A plugin that prints a report wants one row in the command log carrying
+    /// it, the way a jj command leaves one row carrying its output — not one
+    /// row per line of the report. And the report has to land in the entry's
+    /// output, which is ANSI-parsed; a summary is drawn verbatim, so colour put
+    /// there would reach the user as escape codes.
+    #[test]
+    fn a_plugins_log_lines_become_one_command_log_entry() {
+        let rows = logged("lua/plugin.lua:12", &["'\\27[32mfirst\\27[0m'", "'second'"]);
+        assert_eq!(
+            rows,
+            vec![(
+                "lua/plugin.lua:12".to_string(),
+                "\u{1b}[32mfirst\u{1b}[0m\nsecond\n".to_string()
+            )]
+        );
+    }
+
+    /// Messages logged outside any collected phase still need a summary.
+    #[test]
+    fn uncollected_log_lines_get_a_summary() {
+        let engine = LuaEngine::for_test();
+        engine.lua.load("kojutsu.log('stray')").exec().expect("log");
+        let mut app = App::new(
+            String::new(),
+            String::new(),
+            std::rc::Rc::new(crate::theme::Config::default()),
+        );
+        engine.flush_logs(&mut app);
+        let entry = app.command_log.entries.first().expect("one entry");
+        assert_eq!(entry.summary, "plugin output");
+        assert_eq!(String::from_utf8_lossy(&entry.output), "stray\n");
     }
 }
 
@@ -1107,6 +1195,51 @@ mod api_surface_tests {
         let mut mapped: Vec<String> = classes.iter().map(|(p, _)| p.to_string()).collect();
         mapped.sort();
         assert_eq!(found, mapped, "a table in Config has no declared class");
+    }
+
+    /// Run a `kojutsu.jj` call inside a coroutine, as a command or hook does.
+    /// Reports whether it parked waiting for the main loop, and what it
+    /// returned if it did not.
+    fn jj_call(call: &str) -> (bool, Option<String>) {
+        let engine = LuaEngine::for_test();
+        // Stands in for the real inline call, which would spawn jj.
+        engine
+            .lua
+            .load("kojutsu._jj_sync = function() return 'inline' end")
+            .exec()
+            .expect("stub _jj_sync");
+        let thread: mlua::Thread = engine
+            .lua
+            .load(format!(
+                "return coroutine.create(function() return {call} end)"
+            ))
+            .eval()
+            .expect("coroutine");
+        let value: mlua::Value = thread.resume(()).expect("resume");
+        let parked = matches!(thread.status(), mlua::ThreadStatus::Resumable);
+        let returned = value
+            .as_string()
+            .and_then(|s| s.to_str().ok().map(|s| s.to_string()));
+        (parked, returned)
+    }
+
+    /// A read-only probe wants its answer without an overlay, a command-log
+    /// entry, or a trip through the main loop; everything else wants all
+    /// three. `quiet` is the switch, and it has to work inside the coroutine a
+    /// command or hook runs in — where yielding is possible and would
+    /// otherwise win.
+    #[test]
+    fn quiet_runs_inline_where_a_plain_call_would_yield() {
+        assert_eq!(jj_call("kojutsu.jj({'log'})"), (true, None));
+        assert_eq!(
+            jj_call("kojutsu.jj({'log'}, {quiet = true})"),
+            (false, Some("inline".into()))
+        );
+        // An explicit `quiet = false` is still the loud path, not truthiness.
+        assert_eq!(
+            jj_call("kojutsu.jj({'log'}, {quiet = false})"),
+            (true, None)
+        );
     }
 
     /// Only one direction at the top level: `command`, `hook`, `bind`,

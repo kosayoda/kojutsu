@@ -10,9 +10,9 @@ impl LuaEngine {
         register_globals(&self.lua)?;
 
         let repo_path = self.repo_path.clone();
-        // Synchronous fallback for contexts that can't yield (top-level
-        // init.lua code); commands and hooks run as coroutines and go
-        // through the async yield path in `kojutsu.jj` below instead.
+        // Runs the command inline and returns its result, leaving the UI
+        // untouched. Two callers: contexts that cannot yield (top-level
+        // init.lua code), and `quiet` calls — see `kojutsu.jj` below.
         let jj_sync_fn = self.lua.create_function(move |lua, args: mlua::Table| {
             let cmd_args: Vec<String> = (1..=args.raw_len())
                 .map(|i| args.raw_get(i))
@@ -162,11 +162,20 @@ impl LuaEngine {
                 })?;
 
         self.lua.load(r#"
-            function kojutsu.jj(args)
-                if coroutine.isyieldable() then
-                    return coroutine.yield({type = "jj", args = args or {}})
+            -- A command normally runs through the pipeline a keypress would
+            -- use: running overlay, live output, Esc to cancel, an entry in
+            -- the command log. `quiet` trades all of that for running inline
+            -- and just handing back the result, which is what a read-only
+            -- probe wants — a scan of twenty submodules should not leave
+            -- sixty rows in the command log. The catch is that inline means
+            -- inline: nothing redraws and nothing cancels until it returns,
+            -- so keep quiet calls short.
+            function kojutsu.jj(args, opts)
+                args = args or {}
+                if (opts and opts.quiet) or not coroutine.isyieldable() then
+                    return kojutsu._jj_sync(args)
                 end
-                return kojutsu._jj_sync(args)
+                return coroutine.yield({type = "jj", args = args})
             end
             function kojutsu.ui.input(prompt, default)
                 return coroutine.yield({type = "input", prompt = prompt or "", default = default or ""})
