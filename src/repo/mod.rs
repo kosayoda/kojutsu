@@ -293,6 +293,16 @@ impl JjRepo {
     }
 }
 
+/// Parse a hex commit ID handed to us by the UI.
+///
+/// The hex is ours, not the user's, so a failure here means some view built
+/// an ID we can't read back. The error carries the hex because that is the
+/// only part of a bug report that says which view it was.
+pub(super) fn parse_commit_id(hex: &str) -> Result<jj_lib::backend::CommitId> {
+    jj_lib::backend::CommitId::try_from_hex(hex)
+        .ok_or_else(|| color_eyre::eyre::eyre!("can't parse `{hex}` as a commit ID"))
+}
+
 /// Build an aliases map from `table_name` across all config layers.
 ///
 /// Layers come in precedence order, so higher-precedence ones (User, Repo)

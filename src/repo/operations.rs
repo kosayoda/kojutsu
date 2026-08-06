@@ -132,8 +132,7 @@ impl JjRepo {
     /// Load the evolution log (predecessor chain) for a commit.
     pub fn evolution_log(&self, commit_id_hex: &str) -> Result<Vec<crate::app::EvoLogEntry>> {
         let repo = self.repo.as_ref();
-        let commit_id = BackendCommitId::try_from_hex(commit_id_hex)
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit id hex"))?;
+        let commit_id = super::parse_commit_id(commit_id_hex)?;
 
         // Build ID prefix context for disambiguation.
         let prefix_index = self.id_prefix_index()?;
@@ -249,8 +248,9 @@ impl JjRepo {
         use crate::dag::DiffKind;
 
         let op_store = self.repo.op_store();
-        let prefix = jj_lib::object_id::HexPrefix::try_from_hex(op_id_hex)
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid operation ID hex"))?;
+        let prefix = jj_lib::object_id::HexPrefix::try_from_hex(op_id_hex).ok_or_else(|| {
+            color_eyre::eyre::eyre!("can't parse `{op_id_hex}` as an operation ID")
+        })?;
         let resolution = op_store
             .resolve_operation_id_prefix(&prefix)
             .block_on()

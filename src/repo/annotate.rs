@@ -17,8 +17,7 @@ impl JjRepo {
     /// List all file paths at a specific commit.
     pub fn list_files(&self, commit_id: &UiCommitId) -> Result<Vec<RepoPath>> {
         let repo = self.repo.as_ref();
-        let backend_id = BackendCommitId::try_from_hex(commit_id.as_str())
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit id hex"))?;
+        let backend_id = super::parse_commit_id(commit_id.as_str())?;
         let commit = repo.store().get_commit(&backend_id)?;
         let tree = commit.tree();
         let mut paths = Vec::new();
@@ -39,8 +38,7 @@ impl JjRepo {
 
         let repo = self.repo.as_ref();
 
-        let backend_id = BackendCommitId::try_from_hex(commit_id.as_str())
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit id hex"))?;
+        let backend_id = super::parse_commit_id(commit_id.as_str())?;
         let commit = repo.store().get_commit(&backend_id)?;
 
         let repo_path = RepoPathBuf::from_internal_string(file_path.as_str())

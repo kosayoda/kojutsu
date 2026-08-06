@@ -5,7 +5,7 @@ use color_eyre::Result;
 use color_eyre::eyre::Context;
 use futures::AsyncReadExt as _;
 use futures::StreamExt as _;
-use jj_lib::backend::{CommitId as BackendCommitId, TreeValue};
+use jj_lib::backend::TreeValue;
 use jj_lib::conflict_labels::ConflictLabels;
 use jj_lib::conflicts::{
     ConflictMaterializeOptions, MaterializedTreeValue, materialize_tree_value,
@@ -208,8 +208,7 @@ impl JjRepo {
     pub fn commit_details(&self, commit_id: &UiCommitId) -> Result<CommitDetails> {
         let repo = self.repo.as_ref();
         let commit_hex_id = commit_id.as_str();
-        let commit_id = BackendCommitId::try_from_hex(commit_hex_id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
+        let commit_id = super::parse_commit_id(commit_hex_id)?;
         let commit = repo
             .store()
             .get_commit(&commit_id)
@@ -391,8 +390,7 @@ impl JjRepo {
     ) -> Result<DiffResult> {
         let repo = self.repo.as_ref();
         let commit_hex_id = commit_id.as_str();
-        let commit_id = BackendCommitId::try_from_hex(commit_hex_id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex: {commit_hex_id}"))?;
+        let commit_id = super::parse_commit_id(commit_hex_id)?;
         let commit = repo
             .store()
             .get_commit(&commit_id)
@@ -413,8 +411,7 @@ impl JjRepo {
         use crate::conflict::ConflictHunkKind;
 
         let repo = self.repo.as_ref();
-        let backend_id = BackendCommitId::try_from_hex(commit_id.as_str())
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
+        let backend_id = super::parse_commit_id(commit_id.as_str())?;
         let commit = repo
             .store()
             .get_commit(&backend_id)
@@ -466,10 +463,8 @@ impl JjRepo {
     /// Compute file-level changes between two commits (for evolog level-1 unfold).
     pub fn inter_commit_details(&self, from_id: &str, to_id: &str) -> Result<Vec<FileChange>> {
         let repo = self.repo.as_ref();
-        let from_commit_id = BackendCommitId::try_from_hex(from_id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
-        let to_commit_id = BackendCommitId::try_from_hex(to_id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
+        let from_commit_id = super::parse_commit_id(from_id)?;
+        let to_commit_id = super::parse_commit_id(to_id)?;
         let from_commit = repo.store().get_commit(&from_commit_id)?;
         let to_commit = repo.store().get_commit(&to_commit_id)?;
 
@@ -564,10 +559,8 @@ impl JjRepo {
         path: &RepoPath,
     ) -> Result<DiffResult> {
         let repo = self.repo.as_ref();
-        let from_commit_id = BackendCommitId::try_from_hex(from_id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
-        let to_commit_id = BackendCommitId::try_from_hex(to_id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
+        let from_commit_id = super::parse_commit_id(from_id)?;
+        let to_commit_id = super::parse_commit_id(to_id)?;
         let from_commit = repo.store().get_commit(&from_commit_id)?;
         let to_commit = repo.store().get_commit(&to_commit_id)?;
 
@@ -657,10 +650,8 @@ impl JjRepo {
         to_id: &str,
     ) -> Result<(MergedTree, MergedTree)> {
         let repo = self.repo.as_ref();
-        let from_commit_id = BackendCommitId::try_from_hex(from_id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
-        let to_commit_id = BackendCommitId::try_from_hex(to_id)
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit ID hex"))?;
+        let from_commit_id = super::parse_commit_id(from_id)?;
+        let to_commit_id = super::parse_commit_id(to_id)?;
         let from_commit = repo.store().get_commit(&from_commit_id)?;
         let to_commit = repo.store().get_commit(&to_commit_id)?;
 
@@ -784,8 +775,7 @@ impl JjRepo {
         file_path: &RepoPath,
     ) -> Result<Vec<u8>> {
         let repo = self.repo.as_ref();
-        let backend_id = BackendCommitId::try_from_hex(commit_id.as_str())
-            .ok_or_else(|| color_eyre::eyre::eyre!("invalid commit id hex"))?;
+        let backend_id = super::parse_commit_id(commit_id.as_str())?;
         let commit = repo.store().get_commit(&backend_id)?;
         let tree = commit.tree();
         let repo_path = RepoPathBuf::from_internal_string(file_path.as_str())
