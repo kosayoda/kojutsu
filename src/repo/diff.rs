@@ -74,7 +74,7 @@ fn materialize_diff_side(
     match materialized {
         MaterializedTreeValue::File(mut file) => {
             let read_err = |e: futures::io::Error| {
-                color_eyre::eyre::eyre!("failed to read {}: {e}", path.as_internal_file_string())
+                color_eyre::eyre::eyre!("failed to read `{}`: {e}", path.as_internal_file_string())
             };
             // Sniff the first 8k for a null byte (git's binary heuristic) so
             // binary blobs are detected without reading their full content.

@@ -31,7 +31,7 @@ impl JjRepo {
         let context = self.revset_parse_context();
         let mut diagnostics = RevsetDiagnostics::new();
         let parsed = jj_lib::revset::parse(&mut diagnostics, revset_str, &context)
-            .wrap_err_with(|| format!("failed to parse revset: {revset_str}"))?;
+            .wrap_err_with(|| format!("failed to parse revset `{revset_str}`"))?;
         let symbol_resolver = SymbolResolver::new(
             repo,
             &[] as &[Box<dyn jj_lib::revset::SymbolResolverExtension>],
@@ -44,9 +44,9 @@ impl JjRepo {
             .wrap_err("failed to evaluate revset")?;
         let mut ids: Vec<BackendCommitId> = revset.stream().try_collect().block_on()?;
         match ids.len() {
-            0 => color_eyre::eyre::bail!("revset '{revset_str}' matched no commits"),
+            0 => color_eyre::eyre::bail!("revset `{revset_str}` matched no commits"),
             1 => Ok(ids.remove(0).hex()),
-            n => color_eyre::eyre::bail!("revset '{revset_str}' matched {n} commits, expected 1"),
+            n => color_eyre::eyre::bail!("revset `{revset_str}` matched {n} commits, expected 1"),
         }
     }
 
@@ -58,7 +58,7 @@ impl JjRepo {
         };
         let repo_path = path_converter
             .parse_file_path(input)
-            .map_err(|e| color_eyre::eyre::eyre!("invalid file path '{input}': {e}"))?;
+            .map_err(|e| color_eyre::eyre::eyre!("invalid file path `{input}`: {e}"))?;
         Ok(repo_path.as_internal_file_string().to_string())
     }
 
@@ -99,7 +99,7 @@ impl JjRepo {
         // Parse -> Resolve -> Evaluate the user's revset
         let mut diagnostics = RevsetDiagnostics::new();
         let parsed = jj_lib::revset::parse(&mut diagnostics, revset_str, &context)
-            .wrap_err_with(|| format!("failed to parse revset: {revset_str}"))?;
+            .wrap_err_with(|| format!("failed to parse revset `{revset_str}`"))?;
 
         let symbol_resolver = SymbolResolver::new(
             repo,

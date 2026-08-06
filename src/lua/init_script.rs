@@ -133,7 +133,7 @@ impl LuaEngine {
                         "post" => HookPhase::Post,
                         other => {
                             return Err(mlua::Error::external(format!(
-                                "invalid hook phase: {other} (expected 'pre' or 'post')"
+                                "invalid hook phase `{other}` (expected `pre` or `post`)"
                             )));
                         }
                     };
@@ -264,7 +264,7 @@ impl LuaEngine {
             } else {
                 let valid: Vec<String> = super::helpers::selection_names().collect();
                 tracing::warn!(
-                    "kojutsu.command '{}': unknown selection '{}', defaulting to 'all' (valid: {})",
+                    "kojutsu.command `{}`: unknown selection `{}`, defaulting to `all` (valid: {})",
                     reg.name,
                     reg.selection,
                     valid.join(", ")
@@ -283,7 +283,7 @@ impl LuaEngine {
                 Ok(group) => group,
                 Err(_) => {
                     tracing::warn!(
-                        "kojutsu.command '{}': unknown group '{}', defaulting to 'commands'",
+                        "kojutsu.command `{}`: unknown group `{}`, defaulting to `commands`",
                         reg.name,
                         reg.group
                     );
@@ -322,7 +322,7 @@ impl LuaEngine {
                     warn_shadow,
                 } => {
                     let Some(action_id) = registry.find_by_name(&action) else {
-                        tracing::warn!("kojutsu.bind: unknown action '{action}'");
+                        tracing::warn!("kojutsu.bind: unknown action `{action}`");
                         continue;
                     };
                     let Some(keys) = parse_keys(key.as_ref(), seq.as_ref()) else {

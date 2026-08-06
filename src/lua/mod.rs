@@ -762,7 +762,7 @@ impl LuaEngine {
                 (None, Action::RunJjForLua(cmd))
             }
             other => {
-                app.set_error(format!("plugin: unknown yield type '{other}'"));
+                app.set_error(format!("plugin: unknown yield type `{other}`"));
                 return Action::None;
             }
         };

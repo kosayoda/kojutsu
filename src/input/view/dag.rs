@@ -830,7 +830,7 @@ pub fn staged_resolution(
             flags,
         }),
         Err(e) => {
-            app.set_error(format!("failed to stage resolution for {path}: {e}"));
+            app.set_error(format!("failed to stage resolution for `{path}`: {e}"));
             None
         }
     }

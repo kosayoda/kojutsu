@@ -39,7 +39,7 @@ pub(super) fn parse_keys(
     let parse = |k: &str| {
         let node = crate::keymap::try_parse_key(k);
         if node.is_none() {
-            tracing::warn!("invalid key '{k}', skipping binding");
+            tracing::warn!("invalid key `{k}`, skipping binding");
         }
         node
     };
@@ -406,7 +406,7 @@ pub(super) fn hook_action_set(
         .filter(|name| hook_matches(lua, pattern, name).unwrap_or(false))
         .collect();
     if actions.is_empty() {
-        tracing::warn!("kojutsu.hook: pattern '{pattern}' matches no actions");
+        tracing::warn!("kojutsu.hook: pattern `{pattern}` matches no actions");
     }
     actions
 }
@@ -426,7 +426,7 @@ pub(super) fn parse_scope(s: &str) -> crate::keymap::Scope {
         Err(_) => {
             let valid: Vec<String> = scope_names().collect();
             tracing::warn!(
-                "unknown scope '{s}', defaulting to 'all' (valid: {})",
+                "unknown scope `{s}`, defaulting to `all` (valid: {})",
                 valid.join(", ")
             );
             crate::keymap::Scope::All

@@ -66,7 +66,7 @@ impl LuaEngine {
         let switch_view_fn = self.lua.create_function(|lua, view: String| {
             let av: crate::app::ActiveView = view
                 .parse()
-                .map_err(|_| mlua::Error::external(format!("unknown view: {view}")))?;
+                .map_err(|_| mlua::Error::external(format!("unknown view `{view}`")))?;
             lua_state!(lua)
                 .borrow_mut()
                 .pending_actions
@@ -86,7 +86,7 @@ impl LuaEngine {
 
         let dispatch_fn = self.lua.create_function(|lua, name: String| {
             let action: crate::keymap::AppAction = name.parse().map_err(|_| {
-                mlua::Error::external(format!("kojutsu.dispatch: unknown action '{name}'"))
+                mlua::Error::external(format!("kojutsu.dispatch: unknown action `{name}`"))
             })?;
             lua_state!(lua)
                 .borrow_mut()

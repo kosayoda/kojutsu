@@ -258,10 +258,10 @@ impl JjRepo {
         let op_id = match resolution {
             jj_lib::object_id::PrefixResolution::SingleMatch(id) => id,
             jj_lib::object_id::PrefixResolution::AmbiguousMatch => {
-                color_eyre::eyre::bail!("ambiguous operation ID prefix: {op_id_hex}");
+                color_eyre::eyre::bail!("ambiguous operation ID prefix `{op_id_hex}`");
             }
             jj_lib::object_id::PrefixResolution::NoMatch => {
-                color_eyre::eyre::bail!("no operation matches prefix: {op_id_hex}");
+                color_eyre::eyre::bail!("no operation matches prefix `{op_id_hex}`");
             }
         };
 

@@ -479,7 +479,7 @@ mod color {
             ColorRepr::Rgb { r, g, b } => Ok(Color::Rgb(r, g, b)),
             ColorRepr::Named(s) => s
                 .parse()
-                .map_err(|_| serde::de::Error::custom(format!("unknown color: {s}"))),
+                .map_err(|_| serde::de::Error::custom(format!("unknown color `{s}`"))),
         }
     }
 }
@@ -538,7 +538,7 @@ mod color_round_trip_tests {
     fn an_unknown_color_name_is_an_error() {
         let err = serde_json::from_str::<ColorField>(r#""chartreuse""#).unwrap_err();
         assert!(
-            err.to_string().contains("unknown color: chartreuse"),
+            err.to_string().contains("unknown color `chartreuse`"),
             "{err}"
         );
     }
