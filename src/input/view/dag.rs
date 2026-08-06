@@ -722,7 +722,10 @@ fn arrange(app: &mut App, flags: CommandFlags, direction: ArrangeDirection) -> A
     };
 
     if neighbors.len() != 1 {
-        app.set_error(format!("arrange: commit must have exactly one {noun}"));
+        app.set_error(format!(
+            "arrange: commit must have exactly one {noun}, not {}",
+            neighbors.len()
+        ));
         return Action::None;
     }
 

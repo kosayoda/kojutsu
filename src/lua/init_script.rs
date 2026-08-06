@@ -122,10 +122,12 @@ impl LuaEngine {
                     let action_names: Vec<String> = match first {
                         mlua::Value::String(s) => vec![s.to_str()?.to_string()],
                         mlua::Value::Table(t) => table_to_string_vec(&t),
-                        _ => {
-                            return Err(mlua::Error::external(
-                                "first argument must be an action name or table of action names",
-                            ));
+                        other => {
+                            return Err(mlua::Error::external(format!(
+                                "first argument must be an action name or table of action names, \
+                                 not {}",
+                                other.type_name()
+                            )));
                         }
                     };
                     let phase = match phase_str.as_str() {

@@ -740,9 +740,12 @@ impl LuaEngine {
                         }
                     }
                 } else {
-                    let Ok(args) = string_list(&args) else {
-                        app.set_error("plugin: jj arguments must be strings");
-                        return Action::None;
+                    let args = match string_list(&args) {
+                        Ok(args) => args,
+                        Err(e) => {
+                            app.set_error(format!("plugin: jj arguments must be strings: {e}"));
+                            return Action::None;
+                        }
                     };
                     if args.is_empty() {
                         app.set_error("plugin: jj requires at least one argument");
