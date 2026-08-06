@@ -374,8 +374,20 @@ impl App {
                             false,
                         );
                     }
-                    if !data.warnings.is_empty() {
-                        self.set_error(data.warnings.join("; "));
+                    // The status bar is one line and does not wrap, so joining
+                    // every warning into it hides all but the first behind the
+                    // right edge. Show the first and count the rest: each one
+                    // was just logged above, so the count is a pointer, not a
+                    // summary.
+                    if let Some((first, rest)) = data.warnings.split_first() {
+                        if rest.is_empty() {
+                            self.set_error(first.clone());
+                        } else {
+                            self.set_error(format!(
+                                "{first} (+{} more in the command log)",
+                                rest.len()
+                            ));
+                        }
                     }
                     // apply_entries does its own rebuild_rows (needed for cursor restoration).
                     self.apply_entries(data.entries, data.done);
@@ -1018,6 +1030,65 @@ mod repo_result_tests {
 
         let entry = &app.views.workspace_entries[0];
         assert_eq!(entry.change_id.as_ref().unwrap().prefix(), "uu");
+    }
+
+    fn loaded_with_warnings(warnings: &[&str]) -> App {
+        use crate::repo_service::RevsetData;
+
+        let mut app = App::for_test();
+        app.handle_repo_result(RepoResult::Revset {
+            revset: "@".into(),
+            result: Ok(Box::new(RevsetData {
+                revset: "@".into(),
+                repo_root: String::new(),
+                entries: Vec::new(),
+                remote_bookmarks: Vec::new(),
+                remotes: Vec::new(),
+                all_tags: Vec::new(),
+                tag_details: Default::default(),
+                bookmark_details: Default::default(),
+                workspace_entries: Vec::new(),
+                warnings: warnings.iter().map(|w| (*w).to_string()).collect(),
+                done: true,
+            })),
+        });
+        app
+    }
+
+    fn status_of(app: &App) -> String {
+        app.status_message
+            .as_ref()
+            .expect("a warning reaches the status bar")
+            .0
+            .clone()
+    }
+
+    #[test]
+    fn a_lone_revset_warning_reaches_the_status_bar_whole() {
+        let app = loaded_with_warnings(&["immutable() failed"]);
+        assert_eq!(status_of(&app), "immutable() failed");
+    }
+
+    /// The status bar is one line and never wraps, so warnings joined into it
+    /// are lost past the right edge. The count is what says to go looking.
+    #[test]
+    fn extra_revset_warnings_are_counted_rather_than_run_together() {
+        let app = loaded_with_warnings(&["first", "second", "third"]);
+        assert_eq!(status_of(&app), "first (+2 more in the command log)");
+    }
+
+    /// Every warning is logged individually, so the count the status bar
+    /// quotes has somewhere to lead.
+    #[test]
+    fn every_revset_warning_is_logged_even_when_the_status_bar_counts_them() {
+        let app = loaded_with_warnings(&["first", "second", "third"]);
+        let logged = app
+            .command_log
+            .entries
+            .iter()
+            .filter(|e| matches!(e.kind, crate::app::CommandLogKind::Warning))
+            .count();
+        assert_eq!(logged, 3);
     }
 }
 
