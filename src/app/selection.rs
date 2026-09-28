@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use super::App;
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
+use crate::types::FileOwner;
 use crate::types::{
     ChangeId, FileRef, FileSelectionState, RepoPath, RevisionArg, Selection, SelectionKind,
     SmallVec,
@@ -13,7 +14,7 @@ impl App {
     /// Returns `None` if the file list isn't loaded yet.
     fn resolve_file(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<(ChangeId, RepoPath)> {
         let change_id = self.nodes[entry_idx].commit.unique_change_id();
-        let files = self.files_for_entry(entry_idx)?;
+        let files = self.nodes[entry_idx].files.files()?;
         Some((change_id, files[file_idx.raw()].path.clone()))
     }
 
@@ -24,7 +25,7 @@ impl App {
             .nodes
             .iter()
             .find(|node| node.commit.unique_change_id() == *change_id)
-            .and_then(|node| node.files.loaded())?;
+            .and_then(|node| node.files.files())?;
         line_selection_blocker(files)
     }
 
@@ -172,7 +173,7 @@ impl App {
 
     /// Toggle all files in an unfolded commit (select all / deselect all).
     fn toggle_commit_file_selection(&mut self, entry_idx: EntryIdx) {
-        if self.files_for_entry(entry_idx).is_none() {
+        if self.nodes[entry_idx].files.files().is_none() {
             return;
         }
 
@@ -181,8 +182,9 @@ impl App {
         self.selection.ensure_compatible(SelectionKind::File);
 
         // Collect file paths upfront to avoid borrowing loaded file state across mutations.
-        let file_paths: Vec<RepoPath> = self
-            .files_for_entry(entry_idx)
+        let file_paths: Vec<RepoPath> = self.nodes[entry_idx]
+            .files
+            .files()
             .into_iter()
             .flatten()
             .map(|f| f.path.clone())
@@ -226,7 +228,7 @@ impl App {
             return;
         }
 
-        let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
+        let Some(diff_lines) = self.diff_lines(FileOwner::Dag(entry_idx), file_idx) else {
             return;
         };
         let lines: Vec<Selection> = diff_lines
@@ -255,7 +257,7 @@ impl App {
         };
 
         // Extract what we need from the diff line before mutating self.
-        let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
+        let Some(diff_lines) = self.diff_lines(FileOwner::Dag(entry_idx), file_idx) else {
             return;
         };
         let dl = &diff_lines[line_idx.raw()];
@@ -295,7 +297,7 @@ impl App {
         // Collect hunk line data before mutating self.
         let mut hunk_lines = Vec::new();
         {
-            let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
+            let Some(diff_lines) = self.diff_lines(FileOwner::Dag(entry_idx), file_idx) else {
                 return;
             };
             for dl in diff_lines.iter().skip(header_line_idx.raw() + 1) {
@@ -341,7 +343,7 @@ impl App {
         let Some((change_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
             return false;
         };
-        let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
+        let Some(diff_lines) = self.diff_lines(FileOwner::Dag(entry_idx), file_idx) else {
             return false;
         };
         let diff_line = &diff_lines[line_idx.raw()];
@@ -384,7 +386,7 @@ impl App {
 
         // Check if any lines for this file are selected by scanning the diff
         // and testing membership, rather than scanning all selections.
-        let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) else {
+        let Some(diff_lines) = self.diff_lines(FileOwner::Dag(entry_idx), file_idx) else {
             return FileSelectionState::None;
         };
         let file_ref = FileRef {
@@ -621,9 +623,10 @@ mod selected_revision_tests {
 
 #[cfg(test)]
 mod submodule_line_selection_tests {
-    use super::super::{App, DagNode, Loadable};
+    use super::super::{App, DagNode};
     use crate::dag::{
-        CommitInfo, DiffLine, DiffLineKind, DiffResult, FileChange, FileStatus, LineStats,
+        CommitInfo, DiffLine, DiffLineKind, DiffResult, DiffSummary, FileChange, FileStatus,
+        LineStats,
     };
     use crate::graph::GraphLines;
     use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
@@ -675,14 +678,17 @@ mod submodule_line_selection_tests {
             SmallVec::new(),
         ));
         let idx = EntryIdx::new(0);
-        app.nodes[idx].files = Loadable::Loaded(
-            paths
+        app.nodes[idx].files.set_summary(Ok(DiffSummary {
+            files: paths
                 .iter()
                 .map(|(path, is_submodule)| file(path, *is_submodule))
                 .collect(),
-        );
-        for i in 0..paths.len() {
-            app.nodes[idx].set_diff(FileIdx::new(i), two_line_diff());
+            stats: LineStats::default(),
+        }));
+        for (path, _) in paths {
+            app.nodes[idx]
+                .files
+                .set_diff(&RepoPath::new(*path), Ok(two_line_diff()));
         }
         app
     }
@@ -758,7 +764,10 @@ mod submodule_line_selection_tests {
         app.toggle_line_selection(entry, FileIdx::new(0), REMOVED);
         assert_eq!(app.selection_kind(), SelectionKind::Line);
 
-        app.nodes[entry].files = Loadable::Loaded(vec![file("readme", false), file("sub", true)]);
+        app.nodes[entry].files.set_summary(Ok(DiffSummary {
+            files: vec![file("readme", false), file("sub", true)],
+            stats: LineStats::default(),
+        }));
         app.drop_blocked_line_selection(entry);
 
         assert!(!app.selection_active());

@@ -1,6 +1,7 @@
 use super::App;
 use crate::dag::DiffLineKind;
 use crate::idx::{EntryIdx, RowIdx};
+use crate::types::FileOwner;
 use crate::types::{DisplayRow, NavDirection};
 
 /// Rows of context kept visible above and below the cursor when scrolling.
@@ -18,25 +19,8 @@ impl App {
             | DisplayRow::DescriptionLine { .. }
             | DisplayRow::ConflictContext { .. }
             | DisplayRow::BookmarkSeparator => true,
-            DisplayRow::DiffLine {
-                entry_idx,
-                file_idx,
-                line_idx,
-            } => self
-                .diff_lines(*entry_idx, *file_idx)
-                .and_then(|lines| lines.get(line_idx.raw()))
-                .is_some_and(|dl| dl.kind == DiffLineKind::Context),
-            DisplayRow::InterdiffDiffLine { file_idx, line_idx } => self
-                .interdiff_diff_lines(*file_idx)
-                .and_then(|lines| lines.get(line_idx.raw()))
-                .is_some_and(|dl| dl.kind == DiffLineKind::Context),
-            DisplayRow::EvoLogFileDiffLine {
-                evolog_idx,
-                file_idx,
-                line_idx,
-            } => self
-                .evolog_diff_lines(*evolog_idx, *file_idx)
-                .and_then(|lines| lines.get(line_idx.raw()))
+            row @ DisplayRow::DiffLine { .. } => self
+                .row_diff_line(*row)
                 .is_some_and(|dl| dl.kind == DiffLineKind::Context),
             _ => false,
         }
@@ -278,11 +262,11 @@ impl App {
         match self.rows.get(self.cursor.raw()) {
             Some(DisplayRow::CommitNode { .. }) => true,
             Some(DisplayRow::FileChange {
-                entry_idx,
+                owner: FileOwner::Dag(entry_idx),
                 file_idx,
             }) => {
                 // Collapsed file → commit-level. Expanded → file-level.
-                !self.is_file_unfolded(*entry_idx, *file_idx)
+                !self.is_file_unfolded(FileOwner::Dag(*entry_idx), *file_idx)
             }
             _ => false, // DiffLine, GraphLink → file-level
         }
@@ -344,14 +328,14 @@ impl App {
             crate::app::ActiveView::Evolog => {
                 matches!(
                     row,
-                    DisplayRow::EvoLogItem { .. } | DisplayRow::EvoLogFileChange { .. }
+                    DisplayRow::EvoLogItem { .. } | DisplayRow::FileChange { .. }
                 )
             }
             crate::app::ActiveView::CommandLog => {
                 matches!(row, DisplayRow::CommandLogItem { .. })
             }
             crate::app::ActiveView::Interdiff => {
-                matches!(row, DisplayRow::InterdiffFileChange { .. })
+                matches!(row, DisplayRow::FileChange { .. })
             }
             crate::app::ActiveView::Annotate => {
                 // Jump between commit boundaries in annotate view.
@@ -437,10 +421,12 @@ impl App {
                         && self.shown_files(*entry_idx).is_none()
                 }
                 DisplayRow::FileChange {
-                    entry_idx,
+                    owner: FileOwner::Dag(entry_idx),
                     file_idx,
                 } => {
-                    self.files_for_entry(*entry_idx)
+                    self.nodes[*entry_idx]
+                        .files
+                        .files()
                         .and_then(|f| f.get(file_idx.raw()))
                         .is_some_and(|f| f.has_conflict)
                         && self.shown_conflict_hunks(*entry_idx, *file_idx).is_none()

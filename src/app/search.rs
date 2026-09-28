@@ -226,30 +226,22 @@ impl App {
                     || (scopes.contains(SearchScopes::TAG)
                         && commit.tags.iter().any(|t| contains(t.as_str())))
             }
-            DisplayRow::FileChange {
-                entry_idx,
-                file_idx,
-            } => {
+            DisplayRow::FileChange { owner, file_idx } => {
                 scopes.contains(SearchScopes::PATH_COMMAND)
                     && self
-                        .files_for_entry(*entry_idx)
-                        .and_then(|files| files.get(file_idx.raw()))
+                        .file(*owner, *file_idx)
                         .is_some_and(|file| contains(file.path.as_str()))
             }
-            DisplayRow::DiffLine {
-                entry_idx,
-                file_idx,
-                line_idx,
+            row @ DisplayRow::DiffLine {
+                owner, file_idx, ..
             } => {
                 (scopes.contains(SearchScopes::LINE)
                     && self
-                        .diff_lines(*entry_idx, *file_idx)
-                        .and_then(|lines| lines.get(line_idx.raw()))
+                        .row_diff_line(*row)
                         .is_some_and(|line| contains(line.content.as_str())))
                     || (scopes.contains(SearchScopes::PATH_COMMAND)
                         && self
-                            .files_for_entry(*entry_idx)
-                            .and_then(|files| files.get(file_idx.raw()))
+                            .file(*owner, *file_idx)
                             .is_some_and(|file| contains(file.path.as_str())))
             }
             DisplayRow::GraphLink { .. } => false,
@@ -310,38 +302,6 @@ impl App {
                         && entry.description.as_deref().is_some_and(contains))
                     || (scopes.contains(SearchScopes::AUTHOR) && contains(entry.author.as_str()))
             }
-            DisplayRow::EvoLogFileChange {
-                evolog_idx,
-                file_idx,
-            } => {
-                scopes.contains(SearchScopes::PATH_COMMAND)
-                    && self
-                        .evolog
-                        .entries
-                        .get(evolog_idx.raw())
-                        .and_then(|e| self.evolog.files.get(&e.commit_id))
-                        .and_then(|l| l.loaded())
-                        .and_then(|files| files.get(file_idx.raw()))
-                        .is_some_and(|file| contains(file.path.as_str()))
-            }
-            DisplayRow::EvoLogFileDiffLine {
-                evolog_idx,
-                file_idx,
-                line_idx,
-            } => {
-                scopes.contains(SearchScopes::LINE)
-                    && self
-                        .evolog_diff_lines(*evolog_idx, *file_idx)
-                        .and_then(|lines| lines.get(line_idx.raw()))
-                        .is_some_and(|line| contains(line.content.as_str()))
-            }
-            DisplayRow::InterdiffDiffLine { file_idx, line_idx } => {
-                scopes.contains(SearchScopes::LINE)
-                    && self
-                        .interdiff_diff_lines(*file_idx)
-                        .and_then(|lines| lines.get(line_idx.raw()))
-                        .is_some_and(|line| contains(line.content.as_str()))
-            }
             DisplayRow::WorkspaceItem { workspace_idx } => {
                 let Some(entry) = self.views.workspace_entries.get(workspace_idx.raw()) else {
                     return false;
@@ -364,18 +324,8 @@ impl App {
                 scopes.contains(SearchScopes::DESCRIPTION)
                     && self
                         .interdiff
-                        .target
                         .as_ref()
-                        .is_some_and(|t| contains(&t.from_label) || contains(&t.to_label))
-            }
-            DisplayRow::InterdiffFileChange { file_idx } => {
-                scopes.contains(SearchScopes::PATH_COMMAND)
-                    && self
-                        .interdiff
-                        .files
-                        .loaded()
-                        .and_then(|files| files.get(file_idx.raw()))
-                        .is_some_and(|file| contains(file.path.as_str()))
+                        .is_some_and(|i| contains(&i.from_label) || contains(&i.to_label))
             }
             DisplayRow::CommandLogDetail { .. } => false,
             DisplayRow::AnnotateLine { line_idx } => {

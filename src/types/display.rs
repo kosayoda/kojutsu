@@ -15,6 +15,17 @@ pub struct ConflictHunkRef {
     pub hunk_idx: ConflictHunkIdx,
 }
 
+/// The view item a file row and its diff lines hang under.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileOwner {
+    /// A commit in the DAG.
+    Dag(EntryIdx),
+    /// A step in the evolution log.
+    EvoLog(EvoLogIdx),
+    /// The interdiff view's single comparison.
+    Interdiff,
+}
+
 /// One visual row in the list.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DisplayRow {
@@ -30,14 +41,11 @@ pub enum DisplayRow {
         entry_idx: EntryIdx,
         line_idx: GraphLineIdx,
     },
-    /// A file change line (shown when commit is unfolded).
-    FileChange {
-        entry_idx: EntryIdx,
-        file_idx: FileIdx,
-    },
-    /// A diff hunk line (shown when a file is unfolded).
+    /// A changed file (shown when its owner is unfolded).
+    FileChange { owner: FileOwner, file_idx: FileIdx },
+    /// A diff line (shown when its file is unfolded).
     DiffLine {
-        entry_idx: EntryIdx,
+        owner: FileOwner,
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     },
@@ -78,17 +86,6 @@ pub enum DisplayRow {
     OpLogLoadMore,
     /// An evolution log entry.
     EvoLogItem { evolog_idx: EvoLogIdx },
-    /// A file change row within an unfolded evolog entry.
-    EvoLogFileChange {
-        evolog_idx: EvoLogIdx,
-        file_idx: FileIdx,
-    },
-    /// A diff line within an unfolded evolog file.
-    EvoLogFileDiffLine {
-        evolog_idx: EvoLogIdx,
-        file_idx: FileIdx,
-        line_idx: DiffLineIdx,
-    },
     /// A graph link/pad line between evolog entries.
     EvoLogGraphLink {
         evolog_idx: EvoLogIdx,
@@ -140,13 +137,6 @@ pub enum DisplayRow {
     },
     /// Header row in the interdiff view.
     InterdiffHeader,
-    /// A file change row in the interdiff view.
-    InterdiffFileChange { file_idx: FileIdx },
-    /// A diff line within an unfolded interdiff file.
-    InterdiffDiffLine {
-        file_idx: FileIdx,
-        line_idx: DiffLineIdx,
-    },
     /// A single annotated line in the annotate view.
     AnnotateLine { line_idx: AnnotateLineIdx },
     /// A detail row within an expanded annotate line.
@@ -163,8 +153,14 @@ impl DisplayRow {
             Self::CommitNode { entry_idx }
             | Self::DescriptionLine { entry_idx, .. }
             | Self::GraphLink { entry_idx, .. }
-            | Self::FileChange { entry_idx, .. }
-            | Self::DiffLine { entry_idx, .. }
+            | Self::FileChange {
+                owner: FileOwner::Dag(entry_idx),
+                ..
+            }
+            | Self::DiffLine {
+                owner: FileOwner::Dag(entry_idx),
+                ..
+            }
             | Self::ConflictHeader { entry_idx, .. }
             | Self::ConflictTerm { entry_idx, .. }
             | Self::ConflictContext { entry_idx, .. }
@@ -174,15 +170,27 @@ impl DisplayRow {
         }
     }
 
-    /// The DAG file index, if this row is a file or diff line in the DAG view.
+    /// The file this row belongs to, if it is a file or diff line row.
+    pub fn file(self) -> Option<(FileOwner, FileIdx)> {
+        match self {
+            Self::FileChange { owner, file_idx }
+            | Self::DiffLine {
+                owner, file_idx, ..
+            } => Some((owner, file_idx)),
+            _ => self.dag_file().map(|(e, f)| (FileOwner::Dag(e), f)),
+        }
+    }
+
+    /// The DAG file index, if this row is a file, diff line or conflict row
+    /// in the DAG view.
     pub fn dag_file(self) -> Option<(EntryIdx, FileIdx)> {
         match self {
             Self::FileChange {
-                entry_idx,
+                owner: FileOwner::Dag(entry_idx),
                 file_idx,
             }
             | Self::DiffLine {
-                entry_idx,
+                owner: FileOwner::Dag(entry_idx),
                 file_idx,
                 ..
             }
@@ -277,8 +285,14 @@ impl DisplayRow {
     pub fn evolog_idx(self) -> Option<EvoLogIdx> {
         match self {
             Self::EvoLogItem { evolog_idx }
-            | Self::EvoLogFileChange { evolog_idx, .. }
-            | Self::EvoLogFileDiffLine { evolog_idx, .. }
+            | Self::FileChange {
+                owner: FileOwner::EvoLog(evolog_idx),
+                ..
+            }
+            | Self::DiffLine {
+                owner: FileOwner::EvoLog(evolog_idx),
+                ..
+            }
             | Self::EvoLogGraphLink { evolog_idx, .. } => Some(evolog_idx),
             _ => None,
         }

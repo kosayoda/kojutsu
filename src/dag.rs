@@ -159,7 +159,31 @@ pub enum DiffTarget {
     Interdiff { from: CommitId, to: CommitId },
 }
 
+impl DiffTarget {
+    /// The commit on the after side: the one whose content is shown.
+    pub fn after(&self) -> &CommitId {
+        match self {
+            Self::Commit(commit) | Self::Evolution { commit, .. } => commit,
+            Self::Interdiff { to, .. } => to,
+        }
+    }
+}
+
+impl std::fmt::Display for DiffTarget {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Commit(commit) => write!(f, "{commit}"),
+            Self::Evolution {
+                predecessor,
+                commit,
+            } => write!(f, "{predecessor} → {commit}"),
+            Self::Interdiff { from, to } => write!(f, "interdiff {from} → {to}"),
+        }
+    }
+}
+
 /// The changed files between a `DiffTarget`'s trees, with line totals.
+#[derive(Clone)]
 pub struct DiffSummary {
     pub files: Vec<FileChange>,
     pub stats: LineStats,
@@ -456,6 +480,22 @@ pub struct FileChange {
     pub is_submodule: bool,
     /// Per-file line stats (added/removed counts).
     pub stats: LineStats,
+}
+
+#[cfg(test)]
+impl FileChange {
+    /// A plain modification of `path`.
+    pub fn for_test(path: &str) -> Self {
+        Self {
+            path: RepoPath::new(path),
+            old_path: None,
+            status: FileStatus::Modified,
+            has_conflict: false,
+            baseline_conflicted: false,
+            is_submodule: false,
+            stats: LineStats::default(),
+        }
+    }
 }
 
 impl FileChange {

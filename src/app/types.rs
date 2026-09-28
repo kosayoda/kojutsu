@@ -15,7 +15,7 @@ use crate::types::{
     TargetOperation, VisualRange, WorkspaceName,
 };
 
-use super::Loadable;
+use super::{FileTree, Loadable};
 
 /// Visual selection state.
 pub struct VisualState {
@@ -144,9 +144,9 @@ pub struct EvoLogState {
     pub loaded: bool,
     pub commit_id: Option<CommitId>,
     pub unfolded: HashSet<CommitId>,
-    pub files: HashMap<CommitId, Loadable<Vec<crate::dag::FileChange>>>,
+    /// Each unfolded step's changed files, keyed by the step's commit.
+    pub files: HashMap<CommitId, FileTree>,
     pub unfolded_files: HashSet<(CommitId, RepoPath)>,
-    pub file_diffs: HashMap<(CommitId, RepoPath), Loadable<crate::dag::DiffResult>>,
 }
 
 impl Default for EvoLogState {
@@ -164,7 +164,6 @@ impl EvoLogState {
             unfolded: HashSet::new(),
             files: HashMap::new(),
             unfolded_files: HashSet::new(),
-            file_diffs: HashMap::new(),
         }
     }
 
@@ -174,7 +173,6 @@ impl EvoLogState {
         self.unfolded.clear();
         self.files.clear();
         self.unfolded_files.clear();
-        self.file_diffs.clear();
     }
 }
 
@@ -199,48 +197,13 @@ impl CommandLogState {
     }
 }
 
-/// The two commits being compared in the interdiff view.
-pub struct InterdiffTarget {
-    pub from_commit_id: CommitId,
-    pub to_commit_id: CommitId,
+/// The interdiff view's comparison of two commits.
+pub struct Interdiff {
     pub from_label: Str,
     pub to_label: Str,
-}
-
-/// State for the interdiff view.
-pub struct InterdiffState {
-    pub target: Option<InterdiffTarget>,
-    pub files: Loadable<Vec<crate::dag::FileChange>>,
+    /// The files that differ, for a `DiffTarget::Interdiff`.
+    pub files: FileTree,
     pub unfolded_files: HashSet<RepoPath>,
-    pub file_diffs: HashMap<RepoPath, Loadable<crate::dag::DiffResult>>,
-}
-
-impl Default for InterdiffState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl InterdiffState {
-    pub fn new() -> Self {
-        Self {
-            target: None,
-            files: Loadable::NotRequested,
-            unfolded_files: HashSet::new(),
-            file_diffs: HashMap::new(),
-        }
-    }
-
-    pub fn clear(&mut self) {
-        *self = Self::new();
-    }
-
-    /// Whether the current target matches the given from/to commit pair.
-    pub fn target_is(&self, from: &CommitId, to: &CommitId) -> bool {
-        self.target
-            .as_ref()
-            .is_some_and(|t| t.from_commit_id == *from && t.to_commit_id == *to)
-    }
 }
 
 /// The commit + path being annotated.
@@ -868,6 +831,24 @@ pub struct EvoLogEntry {
     pub predecessor_ids: Vec<CommitId>,
     /// Pre-rendered graph lines.
     pub graph: crate::graph::GraphLines,
+}
+
+#[cfg(test)]
+impl EvoLogEntry {
+    /// A step carrying only its identity and ancestry.
+    pub fn for_test(commit_id: CommitId, predecessor_ids: Vec<CommitId>) -> Self {
+        Self {
+            commit_id,
+            change_id: crate::dag::ShortId::new("zzzzzzzz"),
+            description: None,
+            author: Str::default(),
+            relative_time: Str::default(),
+            op_description: None,
+            is_current: false,
+            predecessor_ids,
+            graph: crate::graph::GraphLines::default(),
+        }
+    }
 }
 
 pub struct WorkspaceViewEntry {

@@ -1,6 +1,7 @@
 use super::{App, PersistentVisualRange, VisualMode};
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, RowIdx};
 use crate::keymap::AppAction;
+use crate::types::FileOwner;
 use crate::types::{DisplayRow, FileRef, Selection, SelectionKind, VisualRange};
 
 enum SearchDir {
@@ -44,7 +45,7 @@ impl App {
     fn file_idx_at_row(&self, row: RowIdx, entry_idx: EntryIdx) -> Option<FileIdx> {
         match self.rows.get(row.raw()) {
             Some(DisplayRow::FileChange {
-                entry_idx: ei,
+                owner: FileOwner::Dag(ei),
                 file_idx,
             }) if *ei == entry_idx => Some(*file_idx),
             _ => None,
@@ -71,11 +72,12 @@ impl App {
                 self.visual.persistent = None;
             }
             Some(DisplayRow::DiffLine {
-                entry_idx,
+                owner: FileOwner::Dag(entry_idx),
                 file_idx,
                 line_idx,
             }) => {
-                let Some(diff_lines) = self.diff_lines(*entry_idx, *file_idx) else {
+                let Some(diff_lines) = self.diff_lines(FileOwner::Dag(*entry_idx), *file_idx)
+                else {
                     return;
                 };
                 let dl = &diff_lines[line_idx.raw()];
@@ -86,7 +88,10 @@ impl App {
                     self.visual.persistent = None;
                 }
             }
-            Some(DisplayRow::FileChange { entry_idx, .. }) => {
+            Some(DisplayRow::FileChange {
+                owner: FileOwner::Dag(entry_idx),
+                ..
+            }) => {
                 let entry_idx = *entry_idx;
                 self.visual.mode = Some(VisualMode::Files {
                     anchor: self.cursor,
@@ -145,14 +150,15 @@ impl App {
         match &self.visual.persistent {
             Some(PersistentVisualRange::Lines(vr)) => {
                 if let Some(DisplayRow::DiffLine {
-                    entry_idx,
+                    owner: FileOwner::Dag(entry_idx),
                     file_idx,
                     line_idx,
                 }) = self.rows.get(self.cursor.raw())
                 {
                     let cid = self.nodes[*entry_idx].commit.unique_change_id();
-                    if let Some(file) = self
-                        .files_for_entry(*entry_idx)
+                    if let Some(file) = self.nodes[*entry_idx]
+                        .files
+                        .files()
                         .and_then(|f| f.get(file_idx.raw()))
                     {
                         return cid == vr.change_id
@@ -170,7 +176,7 @@ impl App {
             Some(PersistentVisualRange::Files { entry_idx, lo, hi }) => {
                 match self.rows.get(self.cursor.raw()) {
                     Some(DisplayRow::FileChange {
-                        entry_idx: ei,
+                        owner: FileOwner::Dag(ei),
                         file_idx,
                     }) => ei == entry_idx && file_idx >= lo && file_idx <= hi,
                     _ => false,
@@ -289,7 +295,7 @@ impl App {
     fn clamp_line_visual_cursor(&mut self, anchor: RowIdx) -> bool {
         let Some((anchor_entry, anchor_file)) = (match self.rows.get(anchor.raw()) {
             Some(DisplayRow::DiffLine {
-                entry_idx,
+                owner: FileOwner::Dag(entry_idx),
                 file_idx,
                 ..
             }) => Some((*entry_idx, *file_idx)),
@@ -322,14 +328,14 @@ impl App {
     /// Excludes context lines and conflict-region lines (which the pick
     /// path rejects), so highlight and selection agree.
     fn diff_line_selectable(&self, entry: EntryIdx, file: FileIdx, line: DiffLineIdx) -> bool {
-        self.diff_lines(entry, file)
+        self.diff_lines(FileOwner::Dag(entry), file)
             .and_then(|lines| lines.get(line.raw()))
             .is_some_and(|dl| dl.is_selectable())
     }
 
     fn is_valid_line_visual_row(&self, row: RowIdx, entry: EntryIdx, file: FileIdx) -> bool {
         if let Some(DisplayRow::DiffLine {
-            entry_idx,
+            owner: FileOwner::Dag(entry_idx),
             file_idx,
             line_idx,
         }) = self.rows.get(row.raw())
@@ -358,7 +364,7 @@ impl App {
             match &self.rows[j] {
                 DisplayRow::GraphLink { .. } => continue,
                 DisplayRow::DiffLine {
-                    entry_idx,
+                    owner: FileOwner::Dag(entry_idx),
                     file_idx,
                     line_idx,
                 } if *entry_idx == entry && *file_idx == file => {
@@ -375,7 +381,7 @@ impl App {
     fn clamp_file_visual_cursor(&mut self, entry_idx: EntryIdx) -> bool {
         if matches!(
             self.rows.get(self.cursor.raw()),
-            Some(DisplayRow::FileChange { entry_idx: ei, .. }) if *ei == entry_idx
+            Some(DisplayRow::FileChange { owner: FileOwner::Dag(ei), .. }) if *ei == entry_idx
         ) {
             return true;
         }
@@ -412,7 +418,10 @@ impl App {
         for j in range {
             match &self.rows[j] {
                 DisplayRow::GraphLink { .. } => continue,
-                DisplayRow::FileChange { entry_idx: ei, .. } if *ei == entry_idx => {
+                DisplayRow::FileChange {
+                    owner: FileOwner::Dag(ei),
+                    ..
+                } if *ei == entry_idx => {
                     last_valid = Some(RowIdx::new(j));
                 }
                 _ => break,
@@ -441,7 +450,7 @@ impl App {
         // Check persistent line range.
         if let Some(PersistentVisualRange::Lines(vr)) = &self.visual.persistent {
             let cid = self.nodes[entry_idx].commit.unique_change_id();
-            if let Some(files) = self.files_for_entry(entry_idx)
+            if let Some(files) = self.nodes[entry_idx].files.files()
                 && let Some(file) = files.get(file_idx.raw())
                 && cid == vr.change_id
                 && file.path == vr.path
@@ -476,7 +485,7 @@ impl App {
         };
         match self.rows.get(anchor.raw()) {
             Some(DisplayRow::DiffLine {
-                entry_idx,
+                owner: FileOwner::Dag(entry_idx),
                 file_idx,
                 ..
             }) => Some((*entry_idx, *file_idx)),
@@ -492,7 +501,7 @@ impl App {
             match &self.rows[j] {
                 DisplayRow::GraphLink { .. } => continue,
                 DisplayRow::DiffLine {
-                    entry_idx,
+                    owner: FileOwner::Dag(entry_idx),
                     file_idx,
                     line_idx,
                 } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
@@ -517,7 +526,7 @@ impl App {
             match &self.rows[j] {
                 DisplayRow::GraphLink { .. } => continue,
                 DisplayRow::DiffLine {
-                    entry_idx,
+                    owner: FileOwner::Dag(entry_idx),
                     file_idx,
                     line_idx,
                 } if *entry_idx == anchor_entry && *file_idx == anchor_file => {
@@ -546,7 +555,7 @@ impl App {
 
         for idx in lo..=hi {
             if let Some(DisplayRow::DiffLine {
-                entry_idx,
+                owner: FileOwner::Dag(entry_idx),
                 file_idx,
                 line_idx,
             }) = self.rows.get(idx)
@@ -554,8 +563,9 @@ impl App {
                 if start_line.is_none() {
                     start_line = Some(*line_idx);
                     change_id = Some(self.nodes[*entry_idx].commit.unique_change_id());
-                    path = self
-                        .files_for_entry(*entry_idx)
+                    path = self.nodes[*entry_idx]
+                        .files
+                        .files()
                         .and_then(|files| files.get(file_idx.raw()))
                         .map(|file| file.path.clone());
                 }
@@ -591,9 +601,8 @@ impl App {
                 if cid != vr.change_id {
                     return None;
                 }
-                let files = node.files.loaded()?;
-                let fi = FileIdx::new(files.iter().position(|f| f.path == vr.path)?);
-                let diff_lines = node.diff(fi, super::DiffFormat::Git)?;
+                let fi = node.files.file_idx(&vr.path)?;
+                let diff_lines = node.files.diff_lines(fi, super::DiffFormat::Git)?;
                 let lines: Vec<_> = diff_lines
                     .iter()
                     .enumerate()
@@ -758,7 +767,10 @@ impl App {
         for j in (self.cursor.raw() + 1)..self.rows.len() {
             match &self.rows[j] {
                 DisplayRow::GraphLink { .. } => continue,
-                DisplayRow::FileChange { entry_idx: ei, .. } if *ei == entry_idx => {
+                DisplayRow::FileChange {
+                    owner: FileOwner::Dag(ei),
+                    ..
+                } if *ei == entry_idx => {
                     self.cursor = RowIdx::new(j);
                     return;
                 }
@@ -775,7 +787,10 @@ impl App {
         for j in (0..self.cursor.raw()).rev() {
             match &self.rows[j] {
                 DisplayRow::GraphLink { .. } => continue,
-                DisplayRow::FileChange { entry_idx: ei, .. } if *ei == entry_idx => {
+                DisplayRow::FileChange {
+                    owner: FileOwner::Dag(ei),
+                    ..
+                } if *ei == entry_idx => {
                     self.cursor = RowIdx::new(j);
                     return;
                 }
@@ -795,7 +810,7 @@ impl App {
         let mut max_fi: Option<FileIdx> = None;
         for i in lo..=hi {
             if let Some(DisplayRow::FileChange {
-                entry_idx: ei,
+                owner: FileOwner::Dag(ei),
                 file_idx,
             }) = self.rows.get(i)
                 && *ei == entry_idx
@@ -817,7 +832,7 @@ impl App {
         };
         let (entry_idx, lo, hi) = (*entry_idx, *lo, *hi);
 
-        let Some(files) = self.files_for_entry(entry_idx) else {
+        let Some(files) = self.nodes[entry_idx].files.files() else {
             return;
         };
         let change_id = self.nodes[entry_idx].commit.unique_change_id();

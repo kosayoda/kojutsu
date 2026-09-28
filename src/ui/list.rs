@@ -13,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 use crate::app::{App, AppMode, TargetMode};
 use crate::idx::EntryIdx;
 use crate::theme::Config;
+use crate::types::FileOwner;
 use crate::types::RevisionArg;
 use crate::types::{ConflictHunkRef, DisplayRow, SearchScopes};
 
@@ -151,7 +152,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         graph_cont,
                         &node.commit,
                         app.is_commit_unfolded(*entry_idx)
-                            .then(|| app.commit_stats(*entry_idx))
+                            .then(|| node.files.stats())
                             .flatten(),
                         &flags,
                         row_search.as_ref(),
@@ -222,14 +223,15 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     vec![Line::from(spans)]
                 }
                 DisplayRow::FileChange {
-                    entry_idx,
+                    owner: FileOwner::Dag(entry_idx),
                     file_idx,
                 } => {
-                    let files = app
-                        .files_for_entry(*entry_idx)
+                    let files = app.nodes[*entry_idx]
+                        .files
+                        .files()
                         .expect("visible file row must be loaded");
                     let file = &files[file_idx.raw()];
-                    let is_unfolded = app.is_file_unfolded(*entry_idx, *file_idx);
+                    let is_unfolded = app.is_file_unfolded(FileOwner::Dag(*entry_idx), *file_idx);
                     let sel_state = app.file_selection_state(*entry_idx, *file_idx);
                     let in_visual = app.is_in_visual_file_range(*entry_idx, *file_idx);
                     render_file_line(
@@ -242,12 +244,12 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     )
                 }
                 DisplayRow::DiffLine {
-                    entry_idx,
+                    owner: FileOwner::Dag(entry_idx),
                     file_idx,
                     line_idx,
                 } => {
                     let diff_lines = app
-                        .diff_lines(*entry_idx, *file_idx)
+                        .diff_lines(FileOwner::Dag(*entry_idx), *file_idx)
                         .expect("visible diff row must be loaded");
                     let diff_line = &diff_lines[line_idx.raw()];
                     let flags = RenderFlags {
@@ -364,55 +366,6 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         vec![Line::raw(""), Line::raw("")]
                     }
                 }
-                DisplayRow::EvoLogFileChange {
-                    evolog_idx,
-                    file_idx,
-                } => {
-                    let file = app
-                        .evolog
-                        .entries
-                        .get(evolog_idx.raw())
-                        .and_then(|e| app.evolog.files.get(&e.commit_id))
-                        .and_then(|l| l.loaded())
-                        .and_then(|files| files.get(file_idx.raw()));
-                    if let Some(file) = file {
-                        let (status_str, status_color) = file_status_display(file.status, theme);
-                        let mut spans = vec![
-                            gutter_span(row_search.as_ref(), theme),
-                            Span::styled(
-                                format!("  {status_str} "),
-                                Style::default().fg(status_color),
-                            ),
-                            Span::styled(
-                                file.path.as_str().to_string(),
-                                Style::default().fg(theme.text),
-                            ),
-                        ];
-                        if file.stats.added > 0 || file.stats.removed > 0 {
-                            spans.push(Span::raw(" "));
-                            push_line_stats(&mut spans, file.stats, false, theme);
-                        }
-                        vec![Line::from(spans)]
-                    } else {
-                        vec![Line::raw("")]
-                    }
-                }
-                DisplayRow::EvoLogFileDiffLine {
-                    evolog_idx,
-                    file_idx,
-                    line_idx,
-                } => {
-                    let diff_line = app
-                        .evolog_diff_lines(*evolog_idx, *file_idx)
-                        .and_then(|lines| lines.get(line_idx.raw()));
-                    render_simple_diff_line(
-                        diff_line,
-                        app.diff_underline,
-                        row_search.as_ref(),
-                        theme,
-                        &tab_spaces,
-                    )
-                }
                 DisplayRow::EvoLogGraphLink {
                     evolog_idx,
                     line_idx,
@@ -524,9 +477,8 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                 DisplayRow::InterdiffHeader => {
                     let (from, to) = app
                         .interdiff
-                        .target
                         .as_ref()
-                        .map(|t| (t.from_label.to_string(), t.to_label.to_string()))
+                        .map(|i| (i.from_label.to_string(), i.to_label.to_string()))
                         .unwrap_or_default();
                     let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
                     spans.push(Span::styled(
@@ -538,15 +490,10 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     spans.push(Span::styled(to, Style::default().fg(theme.change_id)));
                     vec![Line::from(spans)]
                 }
-                DisplayRow::InterdiffFileChange { file_idx } => {
-                    let file = app
-                        .interdiff
-                        .files
-                        .loaded()
-                        .and_then(|files| files.get(file_idx.raw()));
-                    if let Some(file) = file {
+                DisplayRow::FileChange { owner, file_idx } => {
+                    if let Some(file) = app.file(*owner, *file_idx) {
                         let (status_str, status_color) = file_status_display(file.status, theme);
-                        let is_unfolded = app.interdiff.unfolded_files.contains(&file.path);
+                        let is_unfolded = app.is_file_unfolded(*owner, *file_idx);
                         let fold_char = if is_unfolded { "\u{25be}" } else { "\u{25b8}" };
                         let mut spans = vec![
                             gutter_span(row_search.as_ref(), theme),
@@ -571,18 +518,13 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                         vec![Line::raw("")]
                     }
                 }
-                DisplayRow::InterdiffDiffLine { file_idx, line_idx } => {
-                    let diff_line = app
-                        .interdiff_diff_lines(*file_idx)
-                        .and_then(|lines| lines.get(line_idx.raw()));
-                    render_simple_diff_line(
-                        diff_line,
-                        app.diff_underline,
-                        row_search.as_ref(),
-                        theme,
-                        &tab_spaces,
-                    )
-                }
+                row @ DisplayRow::DiffLine { .. } => render_simple_diff_line(
+                    app.row_diff_line(*row),
+                    app.diff_underline,
+                    row_search.as_ref(),
+                    theme,
+                    &tab_spaces,
+                ),
                 DisplayRow::AnnotateLine { line_idx } => {
                     let lines_data = app.annotate.lines.loaded();
                     let line = lines_data.and_then(|lines| lines.get(line_idx.raw()));

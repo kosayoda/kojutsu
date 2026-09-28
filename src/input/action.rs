@@ -10,6 +10,7 @@ use crate::keymap::{
 };
 use crate::repo_service::RevsetLoadKind;
 use crate::types::ChangeSelection;
+use crate::types::FileOwner;
 use crate::types::{
     CommitId, DisplayRow, FollowUpAction, FollowUpOption, PendingCommand, PendingSelection,
     SelectionKind, TargetOperation, WorkspaceName,
@@ -442,15 +443,16 @@ pub fn dispatch_action_after_hooks(
                     Some(SelectTarget::Commit(*entry_idx))
                 }
                 Some(DisplayRow::FileChange {
-                    entry_idx,
+                    owner: FileOwner::Dag(entry_idx),
                     file_idx,
                 }) => Some(SelectTarget::File(*entry_idx, *file_idx)),
                 Some(DisplayRow::DiffLine {
-                    entry_idx,
+                    owner: FileOwner::Dag(entry_idx),
                     file_idx,
                     line_idx,
                 }) => {
-                    let Some(diff_lines) = app.diff_lines(*entry_idx, *file_idx) else {
+                    let Some(diff_lines) = app.diff_lines(FileOwner::Dag(*entry_idx), *file_idx)
+                    else {
                         return Action::None;
                     };
                     let dl = &diff_lines[line_idx.raw()];
@@ -935,7 +937,13 @@ pub fn has_conflict_context(app: &App) -> bool {
         row.conflict_hunk().is_some()
             || matches!(
                 row,
-                DisplayRow::FileChange { .. } | DisplayRow::DiffLine { .. }
+                DisplayRow::FileChange {
+                    owner: FileOwner::Dag(_),
+                    ..
+                } | DisplayRow::DiffLine {
+                    owner: FileOwner::Dag(_),
+                    ..
+                }
             )
     })
 }
@@ -944,51 +952,16 @@ pub fn has_conflict_context(app: &App) -> bool {
 /// Works across DAG, evolog, interdiff, and annotate views.
 fn extract_file_and_line(app: &App) -> Option<(crate::types::RepoPath, usize)> {
     match app.rows.get(app.cursor.raw())? {
-        // DAG view
-        DisplayRow::FileChange {
-            entry_idx,
-            file_idx,
-        } => {
-            let file = app.files_for_entry(*entry_idx)?.get(file_idx.raw())?;
-            Some((file.path.clone(), 1))
-        }
-        DisplayRow::DiffLine {
-            entry_idx,
-            file_idx,
-            line_idx,
-        } => {
-            let file = app.files_for_entry(*entry_idx)?.get(file_idx.raw())?;
+        row @ (DisplayRow::FileChange { owner, file_idx }
+        | DisplayRow::DiffLine {
+            owner, file_idx, ..
+        }) => {
+            let file = app.file(*owner, *file_idx)?;
             let line = app
-                .diff_lines(*entry_idx, *file_idx)
-                .and_then(|lines| lines.get(line_idx.raw()))
+                .row_diff_line(*row)
                 .and_then(|dl| dl.new_line)
                 .unwrap_or(1) as usize;
             Some((file.path.clone(), line))
-        }
-        // Evolog view
-        DisplayRow::EvoLogFileChange {
-            evolog_idx,
-            file_idx,
-        }
-        | DisplayRow::EvoLogFileDiffLine {
-            evolog_idx,
-            file_idx,
-            ..
-        } => {
-            let entry = app.evolog.entries.get(evolog_idx.raw())?;
-            let file = app
-                .evolog
-                .files
-                .get(&entry.commit_id)?
-                .loaded()?
-                .get(file_idx.raw())?;
-            Some((file.path.clone(), 1))
-        }
-        // Interdiff view
-        DisplayRow::InterdiffFileChange { file_idx }
-        | DisplayRow::InterdiffDiffLine { file_idx, .. } => {
-            let file = app.interdiff.files.loaded()?.get(file_idx.raw())?;
-            Some((file.path.clone(), 1))
         }
         // Annotate view
         DisplayRow::AnnotateLine { line_idx } => {
@@ -1009,22 +982,10 @@ fn extract_file_and_line(app: &App) -> Option<(crate::types::RepoPath, usize)> {
 /// Extract the commit ID for the current cursor row.
 fn extract_commit_id(app: &App) -> Option<CommitId> {
     match app.rows.get(app.cursor.raw())? {
-        DisplayRow::CommitNode { entry_idx }
-        | DisplayRow::FileChange { entry_idx, .. }
-        | DisplayRow::DiffLine { entry_idx, .. } => {
-            Some(app.nodes[*entry_idx].commit.graph_id.clone())
-        }
-        DisplayRow::EvoLogFileChange { evolog_idx, .. }
-        | DisplayRow::EvoLogFileDiffLine { evolog_idx, .. } => app
-            .evolog
-            .entries
-            .get(evolog_idx.raw())
-            .map(|e| e.commit_id.clone()),
-        DisplayRow::InterdiffFileChange { .. } | DisplayRow::InterdiffDiffLine { .. } => app
-            .interdiff
-            .target
-            .as_ref()
-            .map(|t| t.to_commit_id.clone()),
+        DisplayRow::CommitNode { entry_idx } => Some(app.nodes[*entry_idx].commit.graph_id.clone()),
+        DisplayRow::FileChange { owner, .. } | DisplayRow::DiffLine { owner, .. } => app
+            .file_tree(*owner)
+            .map(|tree| tree.target().after().clone()),
         DisplayRow::AnnotateLine { line_idx } => app
             .annotate
             .lines

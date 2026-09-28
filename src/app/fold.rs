@@ -1,4 +1,4 @@
-use super::{ActiveView, App, Loadable};
+use super::{ActiveView, App, FileTree, Loadable, toggle_membership};
 use crate::dag::DiffTarget;
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, CommandLogIdx, ConflictHunkIdx,
@@ -6,7 +6,7 @@ use crate::idx::{
     FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, RowIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
-use crate::types::{DisplayRow, SmallVec};
+use crate::types::{DisplayRow, FileOwner, SmallVec};
 
 /// Restore cursor position after a row rebuild. Finds all fallback keys in a
 /// single pass over the rows, then picks the highest-priority match. Falls back
@@ -222,51 +222,24 @@ impl App {
 
     fn rebuild_evolog_rows(&mut self) {
         let prev_cursor = self.rows.get(self.cursor.raw()).copied();
-        self.rows.clear();
-        for idx in 0..self.evolog.entries.len() {
-            let ei = EvoLogIdx::new(idx);
-            self.rows.push(DisplayRow::EvoLogItem { evolog_idx: ei });
-
-            // Emit file change rows if this entry is unfolded.
-            let commit_id = &self.evolog.entries[idx].commit_id;
-            if self.evolog.unfolded.contains(commit_id)
-                && let Some(Loadable::Loaded(files)) = self.evolog.files.get(commit_id)
-            {
-                for (fi, file) in files.iter().enumerate() {
-                    let file_idx = FileIdx::new(fi);
-                    self.rows.push(DisplayRow::EvoLogFileChange {
-                        evolog_idx: ei,
-                        file_idx,
-                    });
-                    // Emit diff lines if this file is unfolded.
-                    let key = (commit_id.clone(), file.path.clone());
-                    if self.evolog.unfolded_files.contains(&key)
-                        && let Some(lines) = self
-                            .evolog
-                            .file_diffs
-                            .get(&key)
-                            .and_then(|l| l.loaded())
-                            .map(|r| r.lines(self.diff_format))
-                    {
-                        for li in 0..lines.len() {
-                            self.rows.push(DisplayRow::EvoLogFileDiffLine {
-                                evolog_idx: ei,
-                                file_idx,
-                                line_idx: DiffLineIdx::new(li),
-                            });
-                        }
-                    }
-                }
+        let mut rows = std::mem::take(&mut self.rows);
+        rows.clear();
+        for (idx, entry) in self.evolog.entries.iter().enumerate() {
+            let evolog_idx = EvoLogIdx::new(idx);
+            rows.push(DisplayRow::EvoLogItem { evolog_idx });
+            if self.evolog.unfolded.contains(&entry.commit_id) {
+                self.push_file_rows(FileOwner::EvoLog(evolog_idx), &mut rows);
             }
-
-            for li in 0..self.evolog.entries[idx].graph.extra.len() {
-                self.rows.push(DisplayRow::EvoLogGraphLink {
-                    evolog_idx: ei,
+            rows.extend(
+                (0..entry.graph.extra.len()).map(|li| DisplayRow::EvoLogGraphLink {
+                    evolog_idx,
                     line_idx: GraphLineIdx::new(li),
-                });
-            }
+                }),
+            );
         }
-        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
+        self.rows = rows;
+        let fallbacks = cursor_fallbacks(prev_cursor);
+        self.cursor = restore_cursor(&self.rows, self.cursor, &fallbacks);
     }
 
     fn rebuild_dag_rows(&mut self) {
@@ -285,7 +258,7 @@ impl App {
         // Restore cursor: try exact match, then fall back to parent file,
         // then parent commit. This handles fold scenarios where the cursor
         // was on a diff line that disappeared when the file was folded.
-        let fallbacks = dag_cursor_fallbacks(prev_cursor);
+        let fallbacks = cursor_fallbacks(prev_cursor);
         self.cursor = restore_cursor(&self.rows, self.cursor, &fallbacks);
     }
 
@@ -304,129 +277,7 @@ impl App {
                     });
                 }
             }
-            if let Some(files) = self.shown_files(entry_idx) {
-                for file_idx_raw in 0..files.len() {
-                    let file_idx = FileIdx::new(file_idx_raw);
-                    rows.push(DisplayRow::FileChange {
-                        entry_idx,
-                        file_idx,
-                    });
-
-                    // If this file is unfolded, show diff lines or conflict hunks.
-                    if self.is_file_unfolded(entry_idx, file_idx) {
-                        if let Some(hunks) = self.shown_conflict_hunks(entry_idx, file_idx) {
-                            // Show conflict hunks instead of diff.
-                            for (hi, hunk) in hunks.iter().enumerate() {
-                                let hunk_ref = crate::types::ConflictHunkRef {
-                                    entry_idx,
-                                    file_idx,
-                                    hunk_idx: ConflictHunkIdx::new(hi),
-                                };
-                                match hunk {
-                                    crate::conflict::ConflictHunkKind::Resolved { text } => {
-                                        // Trim to context around adjacent
-                                        // conflicts; the hidden middle is an
-                                        // expandable gap row.
-                                        let push_ctx = |li: usize, rows: &mut Vec<_>| {
-                                            rows.push(DisplayRow::ConflictContext {
-                                                entry_idx,
-                                                file_idx,
-                                                hunk_idx: ConflictHunkIdx::new(hi),
-                                                line_idx: ConflictLineIdx::new(li),
-                                            });
-                                        };
-                                        let n = text.lines.len();
-                                        if let Some(trim) = self.hunk_trimmed_context(hunk_ref) {
-                                            for li in 0..trim.head {
-                                                push_ctx(li, rows);
-                                            }
-                                            rows.push(DisplayRow::ConflictGap {
-                                                entry_idx,
-                                                file_idx,
-                                                hunk_idx: ConflictHunkIdx::new(hi),
-                                            });
-                                            for li in (n - trim.tail)..n {
-                                                push_ctx(li, rows);
-                                            }
-                                        } else {
-                                            for li in 0..n {
-                                                push_ctx(li, rows);
-                                            }
-                                        }
-                                    }
-                                    crate::conflict::ConflictHunkKind::Conflict { terms } => {
-                                        rows.push(DisplayRow::ConflictHeader {
-                                            entry_idx,
-                                            file_idx,
-                                            hunk_idx: ConflictHunkIdx::new(hi),
-                                        });
-                                        // A hand-edited resolution renders
-                                        // above the terms.
-                                        if let Some(crate::conflict::ConflictPick::Edited(text)) =
-                                            self.hunk_pick(hunk_ref)
-                                        {
-                                            for li in 0..text.lines.len().max(1) {
-                                                rows.push(DisplayRow::ConflictEdited {
-                                                    entry_idx,
-                                                    file_idx,
-                                                    hunk_idx: ConflictHunkIdx::new(hi),
-                                                    line_idx: ConflictLineIdx::new(li),
-                                                });
-                                            }
-                                        }
-                                        let base_folded = self.hunk_base_folded(hunk_ref);
-                                        // Display order: sides first, bases
-                                        // last (dimmed; folded to a stub by
-                                        // default). Storage order stays
-                                        // interleaved for assembly.
-                                        let display_order = terms
-                                            .iter()
-                                            .enumerate()
-                                            .filter(|(_, t)| t.kind.is_side())
-                                            .chain(
-                                                terms
-                                                    .iter()
-                                                    .enumerate()
-                                                    .filter(|(_, t)| !t.kind.is_side()),
-                                            );
-                                        for (ti, term) in display_order {
-                                            // A folded base renders as a
-                                            // one-line stub.
-                                            let n = if !term.kind.is_side() && base_folded {
-                                                1
-                                            } else {
-                                                // Empty terms (deleted or
-                                                // emptied file) still get one
-                                                // row so the side is visible
-                                                // and pickable.
-                                                term.text.lines.len().max(1)
-                                            };
-                                            for li in 0..n {
-                                                rows.push(DisplayRow::ConflictTerm {
-                                                    entry_idx,
-                                                    file_idx,
-                                                    hunk_idx: ConflictHunkIdx::new(hi),
-                                                    term_idx: ConflictTermIdx::new(ti),
-                                                    line_idx: ConflictLineIdx::new(li),
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else if let Some(diff_lines) = self.diff_lines(entry_idx, file_idx) {
-                            let n = diff_lines.len();
-                            for line_idx_raw in 0..n {
-                                rows.push(DisplayRow::DiffLine {
-                                    entry_idx,
-                                    file_idx,
-                                    line_idx: DiffLineIdx::new(line_idx_raw),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+            self.push_file_rows(FileOwner::Dag(entry_idx), rows);
         }
 
         // Extra graph lines (link/pad/term) are rendered as separate
@@ -436,6 +287,142 @@ impl App {
                 entry_idx,
                 line_idx: GraphLineIdx::new(line_idx_raw),
             });
+        }
+    }
+
+    /// Emit the rows of an owner's files: each file and, under an unfolded
+    /// one, its diff lines or, for a conflicted DAG file, its conflict hunks.
+    fn push_file_rows(&self, owner: FileOwner, rows: &mut Vec<DisplayRow>) {
+        let Some(files) = self.file_tree(owner).and_then(FileTree::files) else {
+            return;
+        };
+        for file_idx in (0..files.len()).map(FileIdx::new) {
+            rows.push(DisplayRow::FileChange { owner, file_idx });
+            if !self.is_file_unfolded(owner, file_idx) {
+                continue;
+            }
+            if let FileOwner::Dag(entry_idx) = owner
+                && let Some(hunks) = self.shown_conflict_hunks(entry_idx, file_idx)
+            {
+                self.push_conflict_rows(entry_idx, file_idx, hunks, rows);
+            } else if let Some(lines) = self.diff_lines(owner, file_idx) {
+                rows.extend((0..lines.len()).map(|li| DisplayRow::DiffLine {
+                    owner,
+                    file_idx,
+                    line_idx: DiffLineIdx::new(li),
+                }));
+            }
+        }
+    }
+
+    /// Emit the rows of a conflicted file's hunks, shown instead of its diff.
+    fn push_conflict_rows(
+        &self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        hunks: &[crate::conflict::ConflictHunkKind],
+        rows: &mut Vec<DisplayRow>,
+    ) {
+        for (hi, hunk) in hunks.iter().enumerate() {
+            let hunk_ref = crate::types::ConflictHunkRef {
+                entry_idx,
+                file_idx,
+                hunk_idx: ConflictHunkIdx::new(hi),
+            };
+            match hunk {
+                crate::conflict::ConflictHunkKind::Resolved { text } => {
+                    // Trim to context around adjacent
+                    // conflicts; the hidden middle is an
+                    // expandable gap row.
+                    let push_ctx = |li: usize, rows: &mut Vec<_>| {
+                        rows.push(DisplayRow::ConflictContext {
+                            entry_idx,
+                            file_idx,
+                            hunk_idx: ConflictHunkIdx::new(hi),
+                            line_idx: ConflictLineIdx::new(li),
+                        });
+                    };
+                    let n = text.lines.len();
+                    if let Some(trim) = self.hunk_trimmed_context(hunk_ref) {
+                        for li in 0..trim.head {
+                            push_ctx(li, rows);
+                        }
+                        rows.push(DisplayRow::ConflictGap {
+                            entry_idx,
+                            file_idx,
+                            hunk_idx: ConflictHunkIdx::new(hi),
+                        });
+                        for li in (n - trim.tail)..n {
+                            push_ctx(li, rows);
+                        }
+                    } else {
+                        for li in 0..n {
+                            push_ctx(li, rows);
+                        }
+                    }
+                }
+                crate::conflict::ConflictHunkKind::Conflict { terms } => {
+                    rows.push(DisplayRow::ConflictHeader {
+                        entry_idx,
+                        file_idx,
+                        hunk_idx: ConflictHunkIdx::new(hi),
+                    });
+                    // A hand-edited resolution renders
+                    // above the terms.
+                    if let Some(crate::conflict::ConflictPick::Edited(text)) =
+                        self.hunk_pick(hunk_ref)
+                    {
+                        for li in 0..text.lines.len().max(1) {
+                            rows.push(DisplayRow::ConflictEdited {
+                                entry_idx,
+                                file_idx,
+                                hunk_idx: ConflictHunkIdx::new(hi),
+                                line_idx: ConflictLineIdx::new(li),
+                            });
+                        }
+                    }
+                    let base_folded = self.hunk_base_folded(hunk_ref);
+                    // Display order: sides first, bases
+                    // last (dimmed; folded to a stub by
+                    // default). Storage order stays
+                    // interleaved for assembly.
+                    let display_order = terms
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, t)| t.kind.is_side())
+                        .chain(terms.iter().enumerate().filter(|(_, t)| !t.kind.is_side()));
+                    for (ti, term) in display_order {
+                        // A folded base renders as a
+                        // one-line stub.
+                        let n = if !term.kind.is_side() && base_folded {
+                            1
+                        } else {
+                            // Empty terms (deleted or
+                            // emptied file) still get one
+                            // row so the side is visible
+                            // and pickable.
+                            term.text.lines.len().max(1)
+                        };
+                        for li in 0..n {
+                            rows.push(DisplayRow::ConflictTerm {
+                                entry_idx,
+                                file_idx,
+                                hunk_idx: ConflictHunkIdx::new(hi),
+                                term_idx: ConflictTermIdx::new(ti),
+                                line_idx: ConflictLineIdx::new(li),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Rebuild the rows an owner's files appear in.
+    fn rebuild_owner_rows(&mut self, owner: FileOwner) {
+        match owner {
+            FileOwner::Dag(entry_idx) => self.rebuild_entry_rows(entry_idx),
+            FileOwner::EvoLog(_) | FileOwner::Interdiff => self.rebuild_rows(),
         }
     }
 
@@ -510,7 +497,7 @@ impl App {
         } else if cursor >= start {
             // The cursor was inside the regenerated range: re-find its row
             // (or a fallback) within the entry's new rows.
-            let fallbacks = dag_cursor_fallbacks(prev_cursor);
+            let fallbacks = cursor_fallbacks(prev_cursor);
             let relative = restore_cursor(
                 &self.rows[start..new_end],
                 RowIdx::new(cursor - start),
@@ -521,40 +508,25 @@ impl App {
     }
 }
 
-/// Cursor fallback chain for DAG row rebuilds: exact match, then parent
-/// file, then parent commit.
-fn dag_cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>; 3] {
+/// Cursor fallback chain for row rebuilds: exact match, then the parent
+/// file, then the row the file hangs under.
+fn cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>; 3] {
     match prev_cursor {
-        Some(DisplayRow::DiffLine {
-            entry_idx,
-            file_idx,
-            line_idx,
-        }) => [
-            Some(DisplayRow::DiffLine {
-                entry_idx,
-                file_idx,
-                line_idx,
-            }),
-            Some(DisplayRow::FileChange {
-                entry_idx,
-                file_idx,
-            }),
-            Some(DisplayRow::CommitNode { entry_idx }),
+        Some(
+            row @ DisplayRow::DiffLine {
+                owner, file_idx, ..
+            },
+        ) => [
+            Some(row),
+            Some(DisplayRow::FileChange { owner, file_idx }),
+            Some(owner_row(owner)),
         ],
-        Some(DisplayRow::DescriptionLine { entry_idx, .. }) => {
-            [Some(DisplayRow::CommitNode { entry_idx }), None, None]
+        Some(row @ DisplayRow::FileChange { owner, .. }) => {
+            [Some(row), Some(owner_row(owner)), None]
         }
-        Some(DisplayRow::FileChange {
-            entry_idx,
-            file_idx,
-        }) => [
-            Some(DisplayRow::FileChange {
-                entry_idx,
-                file_idx,
-            }),
-            Some(DisplayRow::CommitNode { entry_idx }),
-            None,
-        ],
+        Some(
+            DisplayRow::DescriptionLine { entry_idx, .. } | DisplayRow::GraphLink { entry_idx, .. },
+        ) => [Some(DisplayRow::CommitNode { entry_idx }), None, None],
         Some(
             DisplayRow::ConflictTerm {
                 entry_idx,
@@ -586,7 +558,7 @@ fn dag_cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>;
                 hunk_idx,
             }),
             Some(DisplayRow::FileChange {
-                entry_idx,
+                owner: FileOwner::Dag(entry_idx),
                 file_idx,
             }),
             Some(DisplayRow::CommitNode { entry_idx }),
@@ -597,17 +569,23 @@ fn dag_cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>;
             ..
         }) => [
             Some(DisplayRow::FileChange {
-                entry_idx,
+                owner: FileOwner::Dag(entry_idx),
                 file_idx,
             }),
             Some(DisplayRow::CommitNode { entry_idx }),
             None,
         ],
-        Some(DisplayRow::GraphLink { entry_idx, .. }) => {
-            [Some(DisplayRow::CommitNode { entry_idx }), None, None]
-        }
         Some(key) => [Some(key), None, None],
         None => [None, None, None],
+    }
+}
+
+/// The row an owner's files hang under.
+fn owner_row(owner: FileOwner) -> DisplayRow {
+    match owner {
+        FileOwner::Dag(entry_idx) => DisplayRow::CommitNode { entry_idx },
+        FileOwner::EvoLog(evolog_idx) => DisplayRow::EvoLogItem { evolog_idx },
+        FileOwner::Interdiff => DisplayRow::InterdiffHeader,
     }
 }
 
@@ -626,6 +604,8 @@ impl App {
             match self.rows[idx] {
                 DisplayRow::CommitNode { .. }
                 | DisplayRow::GraphLink { .. }
+                | DisplayRow::EvoLogItem { .. }
+                | DisplayRow::EvoLogGraphLink { .. }
                 | DisplayRow::OpLogItem { .. }
                 | DisplayRow::OpLogGraphLink { .. }
                 | DisplayRow::OpLogLoadMore
@@ -666,19 +646,14 @@ impl App {
             Some(DisplayRow::CommitNode { entry_idx }) => {
                 self.toggle_commit_fold(*entry_idx);
             }
-            Some(DisplayRow::FileChange {
-                entry_idx,
-                file_idx,
-            }) => {
-                self.toggle_file_fold(*entry_idx, *file_idx);
-            }
-            Some(DisplayRow::DiffLine {
-                entry_idx,
-                file_idx,
-                ..
-            }) => {
-                // Folding on a diff line folds the parent file.
-                self.toggle_file_fold(*entry_idx, *file_idx);
+            // Folding on a diff line folds the parent file.
+            Some(
+                DisplayRow::FileChange { owner, file_idx }
+                | DisplayRow::DiffLine {
+                    owner, file_idx, ..
+                },
+            ) => {
+                self.toggle_file_fold(*owner, *file_idx);
             }
             Some(DisplayRow::ConflictTerm {
                 entry_idx,
@@ -692,7 +667,7 @@ impl App {
                 let (entry_idx, file_idx, hunk_idx, term_idx) =
                     (*entry_idx, *file_idx, *hunk_idx, *term_idx);
                 if !self.toggle_conflict_base_fold(entry_idx, file_idx, hunk_idx, term_idx) {
-                    self.toggle_file_fold(entry_idx, file_idx);
+                    self.toggle_file_fold(FileOwner::Dag(entry_idx), file_idx);
                 }
             }
             Some(
@@ -707,7 +682,7 @@ impl App {
                     ..
                 },
             ) => {
-                self.toggle_file_fold(*entry_idx, *file_idx);
+                self.toggle_file_fold(FileOwner::Dag(*entry_idx), *file_idx);
             }
             Some(DisplayRow::ConflictGap {
                 entry_idx,
@@ -728,25 +703,8 @@ impl App {
             Some(DisplayRow::EvoLogItem { evolog_idx }) => {
                 self.toggle_evolog_fold(*evolog_idx);
             }
-            Some(DisplayRow::EvoLogFileChange {
-                evolog_idx,
-                file_idx,
-            }) => {
-                self.toggle_evolog_file_fold(*evolog_idx, *file_idx);
-            }
-            Some(DisplayRow::EvoLogFileDiffLine {
-                evolog_idx,
-                file_idx,
-                ..
-            }) => {
-                self.toggle_evolog_file_fold(*evolog_idx, *file_idx);
-            }
             Some(DisplayRow::CommandLogItem { log_idx }) => {
-                if self.command_log.unfolded.contains(log_idx) {
-                    self.command_log.unfolded.remove(log_idx);
-                } else {
-                    self.command_log.unfolded.insert(*log_idx);
-                }
+                toggle_membership(&mut self.command_log.unfolded, *log_idx);
                 self.rebuild_rows();
             }
             Some(DisplayRow::CommandLogDetail { log_idx, .. }) => {
@@ -756,11 +714,7 @@ impl App {
             Some(DisplayRow::BookmarkItem { bookmark_idx }) => {
                 if let Some(entry) = self.views.bookmark_entries.get(bookmark_idx.raw()) {
                     let name = entry.name.clone();
-                    if self.views.folded_bookmarks.contains(&name) {
-                        self.views.folded_bookmarks.remove(&name);
-                    } else {
-                        self.views.folded_bookmarks.insert(name);
-                    }
+                    toggle_membership(&mut self.views.folded_bookmarks, name);
                     self.rebuild_rows();
                 }
             }
@@ -776,11 +730,7 @@ impl App {
             Some(DisplayRow::TagItem { tag_idx }) => {
                 if let Some(entry) = self.views.tag_entries.get(tag_idx.raw()) {
                     let name = entry.name.clone();
-                    if self.views.folded_tags.contains(&name) {
-                        self.views.folded_tags.remove(&name);
-                    } else {
-                        self.views.folded_tags.insert(name);
-                    }
+                    toggle_membership(&mut self.views.folded_tags, name);
                     self.rebuild_rows();
                 }
             }
@@ -790,21 +740,10 @@ impl App {
                     self.rebuild_rows();
                 }
             }
-            Some(DisplayRow::InterdiffFileChange { file_idx }) => {
-                self.toggle_interdiff_file_fold(*file_idx);
-            }
-            Some(DisplayRow::InterdiffDiffLine { file_idx, .. }) => {
-                self.toggle_interdiff_file_fold(*file_idx);
-            }
             Some(DisplayRow::AnnotateLine { line_idx }) => {
-                let li = *line_idx;
-                if self.annotate.unfolded_lines.contains(&li) {
-                    self.annotate.unfolded_lines.remove(&li);
-                } else {
-                    self.annotate.unfolded_lines.insert(li);
-                }
+                let unfolded = toggle_membership(&mut self.annotate.unfolded_lines, *line_idx);
                 self.rebuild_rows();
-                if self.annotate.unfolded_lines.contains(&li) {
+                if unfolded {
                     self.scroll_to_show_children();
                 }
             }
@@ -818,21 +757,13 @@ impl App {
 
     pub(crate) fn toggle_commit_fold(&mut self, entry_idx: EntryIdx) {
         let change_id = self.change_id(entry_idx);
-        if self.is_commit_unfolded(entry_idx) {
-            self.unfolded_commits.remove(&change_id);
-        } else {
-            if self.nodes[entry_idx].files.should_request() {
-                let commit_id = self.commit_id(entry_idx).clone();
-                self.nodes[entry_idx].files = Loadable::Loading;
-                self.nodes[entry_idx].stats = Loadable::Loading;
-                self.pending_repo_requests.push(RepoRequest::DiffSummary {
-                    target: DiffTarget::Commit(commit_id),
-                });
-            }
-            self.unfolded_commits.insert(change_id);
+        let unfolded = toggle_membership(&mut self.unfolded_commits, change_id);
+        if unfolded {
+            let request = self.nodes[entry_idx].files.request_summary();
+            self.pending_repo_requests.extend(request);
         }
         self.rebuild_entry_rows(entry_idx);
-        if self.is_commit_unfolded(entry_idx) {
+        if unfolded {
             self.scroll_to_show_children();
         }
     }
@@ -886,59 +817,41 @@ impl App {
         is_base
     }
 
-    pub(crate) fn toggle_file_fold(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
-        let Some(fold_key) = self.file_fold_key(entry_idx, file_idx) else {
+    pub(crate) fn toggle_file_fold(&mut self, owner: FileOwner, file_idx: FileIdx) {
+        if self.file(owner, file_idx).is_none() {
             return;
-        };
-        let currently_unfolded = self.unfolded_files.contains(&fold_key);
-
-        if currently_unfolded {
-            self.unfolded_files.remove(&fold_key);
+        }
+        let unfold = !self.is_file_unfolded(owner, file_idx);
+        if unfold {
+            self.request_file_contents(owner, file_idx);
+        } else if let FileOwner::Dag(entry_idx) = owner {
             // Clear visual state if it's for this file.
-            if let Some(super::PersistentVisualRange::Lines(vr)) = &self.visual.persistent {
-                let cid = self.change_id(entry_idx);
-                if let Some(file) = self
-                    .files_for_entry(entry_idx)
-                    .and_then(|f| f.get(file_idx.raw()))
-                    && cid == vr.change_id
-                    && file.path == vr.path
-                {
-                    self.visual.persistent = None;
-                }
+            if let Some(super::PersistentVisualRange::Lines(vr)) = &self.visual.persistent
+                && let Some(file) = self.file(owner, file_idx)
+                && self.change_id(entry_idx) == vr.change_id
+                && file.path == vr.path
+            {
+                self.visual.persistent = None;
             }
             self.visual.mode = None;
-        } else {
-            let file_info = self
-                .files_for_entry(entry_idx)
-                .and_then(|f| f.get(file_idx.raw()))
-                .map(|f| (f.path.clone(), f.old_path.clone(), f.has_conflict));
-
-            if let Some((path, old_path, has_conflict)) = file_info {
-                let commit_id = self.commit_id(entry_idx).clone();
-
-                // Request diff lines if needed.
-                if self.nodes[entry_idx].diff_should_request(file_idx) {
-                    self.nodes[entry_idx].set_diff_state(file_idx, Loadable::Loading);
-                    self.pending_repo_requests.push(RepoRequest::FileDiff {
-                        target: DiffTarget::Commit(commit_id.clone()),
-                        path: path.clone(),
-                        old_path,
-                    });
-                }
-
-                // Also request conflict hunks if the file is conflicted.
-                if has_conflict && self.nodes[entry_idx].conflict_hunks_should_request(file_idx) {
-                    self.nodes[entry_idx].set_conflict_hunks(file_idx, Loadable::Loading);
-                    self.pending_repo_requests
-                        .push(RepoRequest::ConflictHunks { commit_id, path });
-                }
-            }
-            self.unfolded_files.insert(fold_key);
         }
-        self.rebuild_entry_rows(entry_idx);
-        if !currently_unfolded {
-            // We just unfolded: scroll to show child rows.
+        self.set_file_unfolded(owner, file_idx, unfold);
+        self.rebuild_owner_rows(owner);
+        if unfold {
             self.scroll_to_show_children();
+        }
+    }
+
+    /// Request what an unfolded file shows: its diff and, for a conflicted
+    /// DAG file, its conflict hunks.
+    pub(super) fn request_file_contents(&mut self, owner: FileOwner, file_idx: FileIdx) {
+        let request = self
+            .file_tree_mut(owner)
+            .and_then(|tree| tree.request_diff(file_idx));
+        self.pending_repo_requests.extend(request);
+        if let FileOwner::Dag(entry_idx) = owner {
+            let request = self.nodes[entry_idx].request_conflict_hunks(file_idx);
+            self.pending_repo_requests.extend(request);
         }
     }
 
@@ -947,112 +860,40 @@ impl App {
             return;
         };
         let commit_id = entry.commit_id.clone();
-
-        if self.evolog.unfolded.contains(&commit_id) {
-            self.evolog.unfolded.remove(&commit_id);
-        } else {
-            if self
+        // A step with no predecessor is where the change was created: it
+        // shows the commit's own changes, as `jj evolog -p` does.
+        let target = match entry.predecessor_ids.first() {
+            Some(predecessor) => DiffTarget::Evolution {
+                predecessor: predecessor.clone(),
+                commit: commit_id.clone(),
+            },
+            None => DiffTarget::Commit(commit_id.clone()),
+        };
+        let unfolded = toggle_membership(&mut self.evolog.unfolded, commit_id.clone());
+        if unfolded {
+            let request = self
                 .evolog
                 .files
-                .get(&commit_id)
-                .is_none_or(Loadable::should_request)
-                && let Some(pred_id) = entry.predecessor_ids.first()
-            {
-                self.evolog
-                    .files
-                    .insert(commit_id.clone(), Loadable::Loading);
-                self.pending_repo_requests.push(RepoRequest::DiffSummary {
-                    target: DiffTarget::Evolution {
-                        predecessor: pred_id.clone(),
-                        commit: commit_id.clone(),
-                    },
-                });
-            }
-            self.evolog.unfolded.insert(commit_id.clone());
+                .entry(commit_id)
+                .or_insert_with(|| FileTree::new(target))
+                .request_summary();
+            self.pending_repo_requests.extend(request);
         }
         self.rebuild_rows();
-        if self.evolog.unfolded.contains(&commit_id) {
-            self.scroll_to_show_children();
-        }
-    }
-
-    pub(crate) fn toggle_evolog_file_fold(&mut self, evolog_idx: EvoLogIdx, file_idx: FileIdx) {
-        let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) else {
-            return;
-        };
-        let commit_id = entry.commit_id.clone();
-        let files = match self.evolog.files.get(&commit_id) {
-            Some(Loadable::Loaded(f)) => f,
-            _ => return,
-        };
-        let Some(file) = files.get(file_idx.raw()) else {
-            return;
-        };
-        let path = file.path.clone();
-        let key = (commit_id.clone(), path.clone());
-
-        if self.evolog.unfolded_files.contains(&key) {
-            self.evolog.unfolded_files.remove(&key);
-        } else {
-            if self
-                .evolog
-                .file_diffs
-                .get(&key)
-                .is_none_or(Loadable::should_request)
-                && let Some(pred_id) = entry.predecessor_ids.first()
-            {
-                self.evolog
-                    .file_diffs
-                    .insert(key.clone(), Loadable::Loading);
-                self.pending_repo_requests.push(RepoRequest::FileDiff {
-                    target: DiffTarget::Evolution {
-                        predecessor: pred_id.clone(),
-                        commit: commit_id,
-                    },
-                    path,
-                    old_path: None,
-                });
-            }
-            self.evolog.unfolded_files.insert(key.clone());
-        }
-        self.rebuild_rows();
-        if self.evolog.unfolded_files.contains(&key) {
+        if unfolded {
             self.scroll_to_show_children();
         }
     }
 
     fn rebuild_interdiff_rows(&mut self) {
         let prev_cursor = self.rows.get(self.cursor.raw()).copied();
-        self.rows.clear();
-        self.rows.push(DisplayRow::InterdiffHeader);
-
-        if let Loadable::Loaded(files) = &self.interdiff.files {
-            for (fi, file) in files.iter().enumerate() {
-                let file_idx = FileIdx::new(fi);
-                self.rows.push(DisplayRow::InterdiffFileChange { file_idx });
-
-                let path = &file.path;
-                if self.interdiff.unfolded_files.contains(path) {
-                    let format = self.diff_format;
-                    if let Some(lines) = self
-                        .interdiff
-                        .file_diffs
-                        .get(path)
-                        .and_then(|l| l.loaded())
-                        .map(|r| r.lines(format))
-                    {
-                        for li in 0..lines.len() {
-                            self.rows.push(DisplayRow::InterdiffDiffLine {
-                                file_idx,
-                                line_idx: DiffLineIdx::new(li),
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
+        let mut rows = std::mem::take(&mut self.rows);
+        rows.clear();
+        rows.push(DisplayRow::InterdiffHeader);
+        self.push_file_rows(FileOwner::Interdiff, &mut rows);
+        self.rows = rows;
+        let fallbacks = cursor_fallbacks(prev_cursor);
+        self.cursor = restore_cursor(&self.rows, self.cursor, &fallbacks);
     }
 
     fn rebuild_annotate_rows(&mut self) {
@@ -1093,71 +934,25 @@ impl App {
         self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
     }
 
-    pub(crate) fn toggle_interdiff_file_fold(&mut self, file_idx: FileIdx) {
-        let files = match &self.interdiff.files {
-            Loadable::Loaded(f) => f,
-            _ => return,
-        };
-        let Some(file) = files.get(file_idx.raw()) else {
-            return;
-        };
-        let path = file.path.clone();
-
-        if self.interdiff.unfolded_files.contains(&path) {
-            self.interdiff.unfolded_files.remove(&path);
-        } else {
-            if self
-                .interdiff
-                .file_diffs
-                .get(&path)
-                .is_none_or(Loadable::should_request)
-                && let Some(target) = &self.interdiff.target
-            {
-                let (from, to) = (&target.from_commit_id, &target.to_commit_id);
-                self.interdiff
-                    .file_diffs
-                    .insert(path.clone(), Loadable::Loading);
-                self.pending_repo_requests.push(RepoRequest::FileDiff {
-                    target: DiffTarget::Interdiff {
-                        from: from.clone(),
-                        to: to.clone(),
-                    },
-                    path: path.clone(),
-                    old_path: None,
-                });
-            }
-            self.interdiff.unfolded_files.insert(path.clone());
-        }
-        self.rebuild_rows();
-        if self.interdiff.unfolded_files.contains(&path) {
-            self.scroll_to_show_children();
-        }
-    }
-
     pub(crate) fn toggle_op_fold(&mut self, op_log_idx: OpLogIdx) {
         let Some(entry) = self.op_log.entries.get(op_log_idx.raw()) else {
             return;
         };
         let op_id = entry.id.clone();
-
-        if self.op_log.unfolded.contains(&op_id) {
-            self.op_log.unfolded.remove(&op_id);
-        } else {
-            if self
+        let unfolded = toggle_membership(&mut self.op_log.unfolded, op_id.clone());
+        if unfolded
+            && self
                 .op_log
                 .details
-                .get(&op_id)
-                .is_none_or(Loadable::should_request)
-            {
-                self.op_log.details.insert(op_id.clone(), Loadable::Loading);
-                self.pending_repo_requests.push(RepoRequest::OpDiff {
-                    op_id: op_id.clone(),
-                });
-            }
-            self.op_log.unfolded.insert(op_id.clone());
+                .entry(op_id.clone())
+                .or_insert(Loadable::NotRequested)
+                .begin()
+        {
+            self.pending_repo_requests
+                .push(RepoRequest::OpDiff { op_id });
         }
         self.rebuild_rows();
-        if self.op_log.unfolded.contains(&op_id) {
+        if unfolded {
             self.scroll_to_show_children();
         }
     }

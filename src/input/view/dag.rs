@@ -75,8 +75,9 @@ pub(in crate::input) fn dispatch(
                 app.set_error("cursor must be on a conflicted file");
                 return Action::None;
             };
-            let Some(file) = app
-                .files_for_entry(entry_idx)
+            let Some(file) = app.nodes[entry_idx]
+                .files
+                .files()
                 .and_then(|f| f.get(file_idx.raw()))
             else {
                 return Action::None;
@@ -154,8 +155,9 @@ pub(in crate::input) fn dispatch(
                 app.set_error(ERR_NOT_ON_HUNK);
                 return Action::None;
             };
-            let Some(path) = app
-                .files_for_entry(hunk.entry_idx)
+            let Some(path) = app.nodes[hunk.entry_idx]
+                .files
+                .files()
                 .and_then(|f| f.get(hunk.file_idx.raw()))
                 .map(|f| f.path.clone())
             else {
@@ -207,8 +209,9 @@ pub(in crate::input) fn dispatch(
                 app.set_error("cursor must be on a conflicted file");
                 return Action::None;
             };
-            let Some(file) = app
-                .files_for_entry(entry_idx)
+            let Some(file) = app.nodes[entry_idx]
+                .files
+                .files()
                 .and_then(|f| f.get(file_idx.raw()))
             else {
                 return Action::None;

@@ -1,4 +1,5 @@
 mod data;
+mod file_tree;
 mod fold;
 mod navigation;
 mod search;
@@ -6,6 +7,7 @@ mod selection;
 mod types;
 mod visual;
 
+pub use file_tree::FileTree;
 pub use types::*;
 
 use std::collections::{HashMap, HashSet};
@@ -72,14 +74,14 @@ impl DeferredWork {
 }
 
 use crate::conflict::{ConflictPick, ConflictTermKind};
-use crate::dag::{DiffLine, DiffTarget, FileChange, LineStats};
-use crate::idx::{ConflictHunkIdx, EntryIdx, EvoLogIdx, FileIdx, IndexVec, RowIdx};
+use crate::dag::{DiffLine, DiffTarget, FileChange};
+use crate::idx::{ConflictHunkIdx, EntryIdx, FileIdx, IndexVec, RowIdx};
 use crate::types::SmallVec;
 
 use crate::keymap::CommandFlags;
 use crate::repo_service::{RepoError, RepoRequest, RevsetLoadKind};
 use crate::types::{
-    ChangeId, CommitId, ConflictHunkRef, DisplayRow, JumpTarget, RepoPath, RevisionArg,
+    ChangeId, CommitId, ConflictHunkRef, DisplayRow, FileOwner, JumpTarget, RepoPath, RevisionArg,
     SearchScopes, SearchState, SelectionContext,
 };
 
@@ -102,6 +104,25 @@ impl<T> Loadable<T> {
     fn should_request(&self) -> bool {
         matches!(self, Self::NotRequested | Self::Failed(_))
     }
+
+    /// Move to `Loading` if a request is due (never requested, or failed),
+    /// returning whether the caller should send it.
+    fn begin(&mut self) -> bool {
+        let due = self.should_request();
+        if due {
+            *self = Self::Loading;
+        }
+        due
+    }
+}
+
+impl<T> From<Result<T, RepoError>> for Loadable<T> {
+    fn from(result: Result<T, RepoError>) -> Self {
+        match result {
+            Ok(value) => Self::Loaded(value),
+            Err(error) => Self::Failed(error),
+        }
+    }
 }
 
 /// Consolidated per-commit node in the DAG. Holds commit metadata, resolved
@@ -116,13 +137,10 @@ pub struct DagNode {
     /// Row index of this commit's `CommitNode` in the display rows.
     /// Only valid immediately after `rebuild_rows()`. Use `row_of_commit()` externally.
     pub(super) row: usize,
-    /// Lazily loaded file changes for this commit.
-    pub files: Loadable<Vec<FileChange>>,
-    /// Lazily loaded per-commit line stats.
-    pub stats: Loadable<LineStats>,
-    /// Lazily loaded diff results (both formats), parallel to `files` (indexed by FileIdx).
-    diffs: Vec<Loadable<crate::dag::DiffResult>>,
-    /// Lazily loaded conflict hunks, parallel to `files` (for conflicted files).
+    /// The commit's changed files and their diffs, loaded lazily.
+    pub files: FileTree,
+    /// Lazily loaded conflict hunks, parallel to the files (for conflicted
+    /// files).
     conflict_hunks: Vec<Loadable<Vec<crate::conflict::ConflictHunkKind>>>,
 }
 
@@ -151,27 +169,16 @@ impl DagNode {
         graph: crate::graph::GraphLines,
         parents: SmallVec<EntryIdx>,
     ) -> Self {
+        let files = FileTree::new(DiffTarget::Commit(commit.graph_id.clone()));
         Self {
             commit,
             graph,
             parents,
             children: SmallVec::new(),
             row: 0,
-            files: Loadable::NotRequested,
-            stats: Loadable::NotRequested,
-            diffs: Vec::new(),
+            files,
             conflict_hunks: Vec::new(),
         }
-    }
-
-    /// Get the loaded diff lines for a file in the given format.
-    pub fn diff(&self, fi: FileIdx, format: DiffFormat) -> Option<&Vec<DiffLine>> {
-        Some(self.diffs.get(fi.raw())?.loaded()?.lines(format))
-    }
-
-    /// Get the raw diff result state for a file.
-    pub fn diff_result(&self, fi: FileIdx) -> Option<&Loadable<crate::dag::DiffResult>> {
-        self.diffs.get(fi.raw())
     }
 
     /// Get loaded conflict hunks for a file.
@@ -182,80 +189,46 @@ impl DagNode {
         self.conflict_hunks.get(fi.raw())
     }
 
-    /// Set the diff result for a file, growing the vector if needed.
-    pub fn set_diff(&mut self, fi: FileIdx, result: crate::dag::DiffResult) {
-        let i = fi.raw();
-        self.ensure_diffs(i + 1);
-        self.diffs[i] = Loadable::Loaded(result);
+    /// Mark a conflicted file's hunks as loading and return their request,
+    /// unless the file isn't conflicted or they're loaded or on their way.
+    pub fn request_conflict_hunks(&mut self, fi: FileIdx) -> Option<RepoRequest> {
+        let file = self.files.file(fi).filter(|f| f.has_conflict)?;
+        let request = RepoRequest::ConflictHunks {
+            commit_id: self.commit.graph_id.clone(),
+            path: file.path.clone(),
+        };
+        self.conflict_hunks_slot(fi).begin().then_some(request)
     }
 
-    /// Set the diff state for a file (e.g. Loading/Failed).
-    pub fn set_diff_state(&mut self, fi: FileIdx, state: Loadable<crate::dag::DiffResult>) {
-        let i = fi.raw();
-        self.ensure_diffs(i + 1);
-        self.diffs[i] = state;
-    }
-
-    /// Set the conflict hunks state for a file, growing the vector if needed.
+    /// Set the conflict hunks state for a file.
     pub fn set_conflict_hunks(
         &mut self,
         fi: FileIdx,
         state: Loadable<Vec<crate::conflict::ConflictHunkKind>>,
     ) {
-        let i = fi.raw();
-        self.ensure_conflict_hunks(i + 1);
-        self.conflict_hunks[i] = state;
+        *self.conflict_hunks_slot(fi) = state;
     }
 
-    /// Extract and take ownership of cached diffs (used during DAG refresh).
-    pub fn take_diffs(&mut self) -> Vec<Loadable<crate::dag::DiffResult>> {
-        std::mem::take(&mut self.diffs)
+    /// Carry a surviving commit's loaded data over from its node before a
+    /// refresh. Same commit ID means identical content, so conflict hunks
+    /// (including any picks) are still valid.
+    fn restore(&mut self, old: DagNode) {
+        if !old.files.summary().should_request() {
+            self.files = old.files;
+            self.conflict_hunks = old.conflict_hunks;
+        }
     }
 
-    /// Preserve cached diffs from another node (used during DAG refresh).
-    pub fn restore_diffs(&mut self, diffs: Vec<Loadable<crate::dag::DiffResult>>) {
-        self.diffs = diffs;
-    }
-
-    /// Extract cached conflict hunks (used during DAG refresh).
-    pub fn take_conflict_hunks(&mut self) -> Vec<Loadable<Vec<crate::conflict::ConflictHunkKind>>> {
-        std::mem::take(&mut self.conflict_hunks)
-    }
-
-    /// Preserve cached conflict hunks from another node (used during DAG
-    /// refresh; valid because the commit ID, and thus the content, matched).
-    pub fn restore_conflict_hunks(
+    fn conflict_hunks_slot(
         &mut self,
-        hunks: Vec<Loadable<Vec<crate::conflict::ConflictHunkKind>>>,
-    ) {
-        self.conflict_hunks = hunks;
-    }
-
-    /// Check if a diff should be requested for a file.
-    pub fn diff_should_request(&self, fi: FileIdx) -> bool {
-        self.diffs
-            .get(fi.raw())
-            .is_none_or(Loadable::should_request)
-    }
-
-    /// Check if conflict hunks should be requested for a file.
-    pub fn conflict_hunks_should_request(&self, fi: FileIdx) -> bool {
-        self.conflict_hunks
-            .get(fi.raw())
-            .is_none_or(Loadable::should_request)
-    }
-
-    fn ensure_diffs(&mut self, n: usize) {
-        if self.diffs.len() < n {
-            self.diffs.resize_with(n, || Loadable::NotRequested);
-        }
-    }
-
-    fn ensure_conflict_hunks(&mut self, n: usize) {
-        if self.conflict_hunks.len() < n {
+        fi: FileIdx,
+    ) -> &mut Loadable<Vec<crate::conflict::ConflictHunkKind>> {
+        let i = fi.raw();
+        if self.conflict_hunks.len() <= i {
             self.conflict_hunks
-                .resize_with(n, || Loadable::NotRequested);
+                .resize_with(i + 1, || Loadable::NotRequested);
         }
+        &mut self.conflict_hunks[i]
     }
 }
 
@@ -282,7 +255,8 @@ pub struct App {
     /// Command log view state.
     pub command_log: CommandLogState,
     /// Interdiff view state.
-    pub interdiff: InterdiffState,
+    /// The interdiff view's comparison, once one has been entered.
+    pub interdiff: Option<Interdiff>,
     /// Annotate (blame) view state.
     pub annotate: AnnotateState,
     /// Flattened display rows (one per visual line).
@@ -444,7 +418,7 @@ impl App {
             op_log: OpLogState::new(),
             evolog: EvoLogState::new(),
             command_log: CommandLogState::new(),
-            interdiff: InterdiffState::new(),
+            interdiff: None,
             annotate: AnnotateState::new(),
             rows: Vec::new(),
             cursor: RowIdx::new(0),
@@ -692,29 +666,15 @@ impl App {
         from_label: crate::types::Str,
         to_label: crate::types::Str,
     ) {
-        self.interdiff.clear();
-        self.interdiff.target = Some(crate::app::types::InterdiffTarget {
-            from_commit_id: from.clone(),
-            to_commit_id: to.clone(),
+        let mut files = FileTree::new(DiffTarget::Interdiff { from, to });
+        self.pending_repo_requests.extend(files.request_summary());
+        self.interdiff = Some(Interdiff {
             from_label,
             to_label,
-        });
-        self.interdiff.files = Loadable::Loading;
-        self.pending_repo_requests.push(RepoRequest::DiffSummary {
-            target: DiffTarget::Interdiff { from, to },
+            files,
+            unfolded_files: HashSet::new(),
         });
         self.switch_view(ActiveView::Interdiff);
-    }
-
-    /// Get the diff lines for an interdiff file.
-    pub fn interdiff_diff_lines(
-        &self,
-        file_idx: crate::idx::FileIdx,
-    ) -> Option<&Vec<crate::dag::DiffLine>> {
-        let files = self.interdiff.files.loaded()?;
-        let file = files.get(file_idx.raw())?;
-        let diff = self.interdiff.file_diffs.get(&file.path)?.loaded()?;
-        Some(diff.lines(self.diff_format))
     }
 
     /// Enter the annotate (blame) view for a file at a specific commit.
@@ -933,8 +893,9 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
     ) -> Option<(CommitId, RepoPath)> {
-        let path = self
-            .files_for_entry(entry_idx)
+        let path = self.nodes[entry_idx]
+            .files
+            .files()
             .and_then(|f| f.get(file_idx.raw()))
             .map(|f| f.path.clone())?;
         Some((self.nodes[entry_idx].commit.graph_id.clone(), path))
@@ -1116,8 +1077,9 @@ impl App {
         if picks.is_empty() {
             return None;
         }
-        let path = self
-            .files_for_entry(entry_idx)
+        let path = self.nodes[entry_idx]
+            .files
+            .files()
             .and_then(|f| f.get(file_idx.raw()))
             .map(|f| f.path.clone())?;
         Some((path, crate::repo::assemble_resolution(hunks, &picks)))
@@ -1133,8 +1095,9 @@ impl App {
         file_idx: FileIdx,
     ) -> Option<(RepoPath, String)> {
         let hunks = self.conflict_hunks_loaded(entry_idx, file_idx)?;
-        let path = self
-            .files_for_entry(entry_idx)
+        let path = self.nodes[entry_idx]
+            .files
+            .files()
             .and_then(|f| f.get(file_idx.raw()))
             .map(|f| f.path.clone())?;
         let picks = self.file_picks(entry_idx, file_idx);
@@ -1197,7 +1160,13 @@ impl App {
     /// Get the file path under the cursor (if on a file or diff line row).
     pub fn selected_file_path(&self) -> Option<&crate::types::RepoPath> {
         let (entry_idx, file_idx) = self.rows.get(self.cursor.raw())?.dag_file()?;
-        Some(&self.files_for_entry(entry_idx)?.get(file_idx.raw())?.path)
+        Some(
+            &self.nodes[entry_idx]
+                .files
+                .files()?
+                .get(file_idx.raw())?
+                .path,
+        )
     }
 
     /// Whether the cursor is on a working copy commit.
@@ -1244,33 +1213,93 @@ impl App {
             .map(|n| n.commit.graph_id.clone())
     }
 
-    pub(crate) fn file_fold_key(
-        &self,
-        entry_idx: EntryIdx,
-        file_idx: FileIdx,
-    ) -> Option<FileFoldKey> {
-        let path = self
-            .files_for_entry(entry_idx)?
-            .get(file_idx.raw())?
-            .path
-            .clone();
-        Some(FileFoldKey {
-            change_id: self.change_id(entry_idx),
-            path,
-        })
-    }
-
     pub fn is_commit_unfolded(&self, entry_idx: EntryIdx) -> bool {
         self.unfolded_commits.contains(&self.change_id(entry_idx))
     }
 
-    pub fn is_file_unfolded(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> bool {
-        self.file_fold_key(entry_idx, file_idx)
-            .is_some_and(|key| self.unfolded_files.contains(&key))
+    /// The file tree listing an owner's changed files.
+    pub fn file_tree(&self, owner: FileOwner) -> Option<&FileTree> {
+        match owner {
+            FileOwner::Dag(entry_idx) => self.nodes.get(entry_idx).map(|n| &n.files),
+            FileOwner::EvoLog(evolog_idx) => {
+                let entry = self.evolog.entries.get(evolog_idx.raw())?;
+                self.evolog.files.get(&entry.commit_id)
+            }
+            FileOwner::Interdiff => self.interdiff.as_ref().map(|i| &i.files),
+        }
     }
 
-    pub fn files_for_entry(&self, entry_idx: EntryIdx) -> Option<&Vec<FileChange>> {
-        self.nodes[entry_idx].files.loaded()
+    fn file_tree_mut(&mut self, owner: FileOwner) -> Option<&mut FileTree> {
+        match owner {
+            FileOwner::Dag(entry_idx) => self.nodes.get_mut(entry_idx).map(|n| &mut n.files),
+            FileOwner::EvoLog(evolog_idx) => {
+                let entry = self.evolog.entries.get(evolog_idx.raw())?;
+                self.evolog.files.get_mut(&entry.commit_id)
+            }
+            FileOwner::Interdiff => self.interdiff.as_mut().map(|i| &mut i.files),
+        }
+    }
+
+    pub fn file(&self, owner: FileOwner, file_idx: FileIdx) -> Option<&FileChange> {
+        self.file_tree(owner)?.file(file_idx)
+    }
+
+    /// Loaded diff lines of a file, in the current diff format.
+    pub fn diff_lines(&self, owner: FileOwner, file_idx: FileIdx) -> Option<&Vec<DiffLine>> {
+        self.file_tree(owner)?
+            .diff_lines(file_idx, self.diff_format)
+    }
+
+    /// Whether a file is unfolded to show its diff. Each view keys its fold
+    /// state by what identifies the file there: the DAG by change ID so
+    /// folds survive rewrites, the evolog by step, the interdiff by path.
+    pub fn is_file_unfolded(&self, owner: FileOwner, file_idx: FileIdx) -> bool {
+        let Some(path) = self.file(owner, file_idx).map(|f| &f.path) else {
+            return false;
+        };
+        match owner {
+            FileOwner::Dag(entry_idx) => self.unfolded_files.contains(&FileFoldKey {
+                change_id: self.change_id(entry_idx),
+                path: path.clone(),
+            }),
+            FileOwner::EvoLog(evolog_idx) => {
+                self.evolog.entries.get(evolog_idx.raw()).is_some_and(|e| {
+                    self.evolog
+                        .unfolded_files
+                        .contains(&(e.commit_id.clone(), path.clone()))
+                })
+            }
+            FileOwner::Interdiff => self
+                .interdiff
+                .as_ref()
+                .is_some_and(|i| i.unfolded_files.contains(path)),
+        }
+    }
+
+    fn set_file_unfolded(&mut self, owner: FileOwner, file_idx: FileIdx, unfolded: bool) {
+        let Some(path) = self.file(owner, file_idx).map(|f| f.path.clone()) else {
+            return;
+        };
+        match owner {
+            FileOwner::Dag(entry_idx) => {
+                let key = FileFoldKey {
+                    change_id: self.change_id(entry_idx),
+                    path,
+                };
+                set_membership(&mut self.unfolded_files, key, unfolded);
+            }
+            FileOwner::EvoLog(evolog_idx) => {
+                if let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) {
+                    let key = (entry.commit_id.clone(), path);
+                    set_membership(&mut self.evolog.unfolded_files, key, unfolded);
+                }
+            }
+            FileOwner::Interdiff => {
+                if let Some(interdiff) = &mut self.interdiff {
+                    set_membership(&mut interdiff.unfolded_files, path, unfolded);
+                }
+            }
+        }
     }
 
     /// The file changes the DAG actually emits rows for under a commit:
@@ -1278,9 +1307,9 @@ impl App {
     /// source for "are file rows shown": used both when building rows and
     /// when navigation decides whether a commit node is a conflict's
     /// deepest-visible representation.
-    pub fn shown_files(&self, entry_idx: EntryIdx) -> Option<&Vec<FileChange>> {
+    pub fn shown_files(&self, entry_idx: EntryIdx) -> Option<&[FileChange]> {
         self.is_commit_unfolded(entry_idx)
-            .then(|| self.files_for_entry(entry_idx))
+            .then(|| self.nodes[entry_idx].files.files())
             .flatten()
     }
 
@@ -1292,41 +1321,13 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
     ) -> Option<&[crate::conflict::ConflictHunkKind]> {
-        self.is_file_unfolded(entry_idx, file_idx)
+        self.is_file_unfolded(FileOwner::Dag(entry_idx), file_idx)
             .then(|| self.conflict_hunks_loaded(entry_idx, file_idx))
             .flatten()
     }
 
     pub fn diff_format(&self) -> DiffFormat {
         self.diff_format
-    }
-
-    pub fn diff_lines(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<&Vec<DiffLine>> {
-        let format = self.diff_format();
-        self.nodes[entry_idx].diff(file_idx, format)
-    }
-
-    pub fn evolog_diff_lines(
-        &self,
-        evolog_idx: EvoLogIdx,
-        file_idx: FileIdx,
-    ) -> Option<&Vec<DiffLine>> {
-        let entry = self.evolog.entries.get(evolog_idx.raw())?;
-        let files = self.evolog.files.get(&entry.commit_id)?.loaded()?;
-        let file = files.get(file_idx.raw())?;
-        let key = (entry.commit_id.clone(), file.path.clone());
-        let result = self.evolog.file_diffs.get(&key)?.loaded()?;
-        Some(result.lines(self.diff_format))
-    }
-
-    pub fn commit_stats(&self, entry_idx: EntryIdx) -> Option<LineStats> {
-        self.nodes[entry_idx].stats.loaded().copied()
-    }
-
-    /// Find the file index for a given path within a commit's loaded files.
-    pub fn file_idx_by_path(&self, entry_idx: EntryIdx, path: &RepoPath) -> Option<FileIdx> {
-        let files = self.files_for_entry(entry_idx)?;
-        files.iter().position(|f| f.path == *path).map(FileIdx::new)
     }
 
     /// Enter jump mode: assign labels to visible jumpable rows.
@@ -1412,8 +1413,6 @@ impl App {
                     | DisplayRow::WorkspaceItem { .. }
                     | DisplayRow::CommandLogItem { .. }
                     | DisplayRow::FileChange { .. }
-                    | DisplayRow::EvoLogFileChange { .. }
-                    | DisplayRow::InterdiffFileChange { .. }
                     | DisplayRow::AnnotateLine { .. }
                     | DisplayRow::ConflictHeader { .. } => Some(idx),
                     // First line of each conflict term: jump onto a side,
@@ -1468,29 +1467,21 @@ impl App {
 
     /// Whether a row is a diff hunk header (`@@` line).
     fn is_hunk_header(&self, row_idx: RowIdx) -> bool {
-        match &self.rows[row_idx.raw()] {
-            DisplayRow::DiffLine {
-                entry_idx,
-                file_idx,
-                line_idx,
-            } => self
-                .diff_lines(*entry_idx, *file_idx)
-                .and_then(|lines| lines.get(line_idx.raw()))
-                .is_some_and(|dl| dl.kind == crate::dag::DiffLineKind::Header),
-            DisplayRow::EvoLogFileDiffLine {
-                evolog_idx,
-                file_idx,
-                line_idx,
-            } => self
-                .evolog_diff_lines(*evolog_idx, *file_idx)
-                .and_then(|lines| lines.get(line_idx.raw()))
-                .is_some_and(|dl| dl.kind == crate::dag::DiffLineKind::Header),
-            DisplayRow::InterdiffDiffLine { file_idx, line_idx } => self
-                .interdiff_diff_lines(*file_idx)
-                .and_then(|lines| lines.get(line_idx.raw()))
-                .is_some_and(|dl| dl.kind == crate::dag::DiffLineKind::Header),
-            _ => false,
-        }
+        self.row_diff_line(self.rows[row_idx.raw()])
+            .is_some_and(|dl| dl.kind == crate::dag::DiffLineKind::Header)
+    }
+
+    /// The diff line a `DiffLine` row shows.
+    pub fn row_diff_line(&self, row: DisplayRow) -> Option<&DiffLine> {
+        let DisplayRow::DiffLine {
+            owner,
+            file_idx,
+            line_idx,
+        } = row
+        else {
+            return None;
+        };
+        self.diff_lines(owner, file_idx)?.get(line_idx.raw())
     }
 
     pub fn take_repo_requests(&mut self) -> Vec<RepoRequest> {
@@ -1586,13 +1577,29 @@ impl App {
         hunk_idx: crate::idx::ConflictHunkIdx,
     ) -> Option<ConflictHunkRef> {
         let entry_idx = self.entry_by_commit_id(commit_id)?;
-        let file_idx = self.file_idx_by_path(entry_idx, path)?;
+        let file_idx = self.nodes[entry_idx].files.file_idx(path)?;
         Some(ConflictHunkRef {
             entry_idx,
             file_idx,
             hunk_idx,
         })
     }
+}
+
+/// Add `key` to `set` if `member`, else remove it.
+fn set_membership<T: Eq + std::hash::Hash>(set: &mut HashSet<T>, key: T, member: bool) {
+    if member {
+        set.insert(key);
+    } else {
+        set.remove(&key);
+    }
+}
+
+/// Flip `key`'s membership of `set`, returning whether it is now a member.
+fn toggle_membership<T: Eq + std::hash::Hash>(set: &mut HashSet<T>, key: T) -> bool {
+    let member = !set.contains(&key);
+    set_membership(set, key, member);
+    member
 }
 
 #[cfg(test)]
