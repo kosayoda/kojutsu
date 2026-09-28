@@ -58,7 +58,7 @@ pub fn generate_type_definitions() -> String {
 
     writeln!(out, "---@class KojutsuAction").unwrap();
     for action in <crate::keymap::AppAction as strum::IntoEnumIterator>::iter() {
-        let name = crate::keymap::action_id_name(action);
+        let name = action.id_name();
         writeln!(out, "---@field {name} string").unwrap();
     }
     writeln!(out).unwrap();
@@ -402,7 +402,7 @@ pub(super) fn hook_action_set(
     pattern: &str,
 ) -> std::collections::HashSet<&'static str> {
     let actions: std::collections::HashSet<&'static str> = crate::keymap::AppAction::iter()
-        .map(crate::keymap::action_id_name)
+        .map(crate::keymap::AppAction::id_name)
         .filter(|name| hook_matches(lua, pattern, name).unwrap_or(false))
         .collect();
     if actions.is_empty() {

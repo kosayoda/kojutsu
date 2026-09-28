@@ -5,8 +5,7 @@ use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{
-    self, ActionId, ActionRegistry, AppAction, CommandFlags, Keymap, LookupResult, TrieNode,
-    action_label,
+    self, ActionId, ActionRegistry, AppAction, CommandFlags, Effect, Keymap, LookupResult, TrieNode,
 };
 use crate::repo_service::RevsetLoadKind;
 use crate::types::ChangeSelection;
@@ -120,7 +119,9 @@ pub(super) fn handle_select_navigation(
     node: &keymap_parser::Node,
 ) -> Action {
     match keymap.lookup(node) {
-        LookupResult::Action(ActionId::Builtin(action)) if action.is_cursor_navigation() => {
+        LookupResult::Action(ActionId::Builtin(action))
+            if action.spec().effect == Effect::Navigate =>
+        {
             app.status_message = None;
             dispatch_action(app, registry, lua, keymap, action, CommandFlags::empty())
         }
@@ -244,7 +245,7 @@ fn dispatch_action(
         };
     }
 
-    let id_name = crate::keymap::action_id_name(action);
+    let id_name = action.id_name();
 
     match lua.run_pre_hooks(id_name, action, flags, app) {
         crate::lua::HookOutcome::Cancel => {
@@ -260,9 +261,10 @@ fn dispatch_action(
 
     let result = dispatch_action_after_hooks(app, registry, lua, keymap, action, flags);
 
-    if action.is_repeatable() {
+    let spec = action.spec();
+    if spec.repeatable {
         app.last_repeatable = Some((action, flags));
-    } else if action.is_mutation() {
+    } else if spec.effect == Effect::Mutate {
         app.last_repeatable = None;
     }
 
@@ -277,18 +279,13 @@ pub fn dispatch_action_after_hooks(
     action: AppAction,
     flags: CommandFlags,
 ) -> Action {
-    let id_name = crate::keymap::action_id_name(action);
+    let id_name = action.id_name();
     app.last_action_label = Some(id_name);
 
     // Merge global toggles into the command flags.
     let flags = flags | app.toggles;
 
-    if rejects_selection(
-        app,
-        registry,
-        ActionId::Builtin(action),
-        action_label(action),
-    ) {
+    if rejects_selection(app, registry, ActionId::Builtin(action), action.label()) {
         return Action::None;
     }
 

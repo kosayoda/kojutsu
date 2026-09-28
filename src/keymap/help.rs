@@ -1,6 +1,7 @@
 use super::registry::{ActionId, ActionRegistry};
 use super::trie::{Keymap, TrieNode};
-use super::{SelectionKindSet, display_key, toggle_hint};
+use super::{Requires, SelectionKindSet, display_key, toggle_hint};
+use keymap_parser::Node;
 
 #[derive(
     Debug,
@@ -26,13 +27,27 @@ pub struct HelpEntry {
     pub description: String,
     pub group: HelpGroup,
     pub selection_support: SelectionKindSet,
-    pub requires_conflict: bool,
-    pub requires_file: bool,
+    pub requires: Requires,
 }
 
 fn sort_key(keys: &str) -> (String, bool) {
     let upper = keys.starts_with(|c: char| c.is_uppercase());
     (keys.to_lowercase(), upper)
+}
+
+/// What every action under a prefix requires, so the prefix greys out only
+/// when none of its entries could run.
+fn common_requirement(registry: &ActionRegistry, children: &[(Node, TrieNode)]) -> Requires {
+    let mut requirements = children.iter().map(|(_, child)| match child {
+        TrieNode::Action { id, .. } => registry.requires(*id),
+        TrieNode::Prefix { .. } | TrieNode::Toggle { .. } => Requires::Nothing,
+    });
+    let first = requirements.next().unwrap_or(Requires::Nothing);
+    if requirements.all(|r| r == first) {
+        first
+    } else {
+        Requires::Nothing
+    }
 }
 
 pub fn help_entries(
@@ -76,18 +91,11 @@ pub fn help_entries(
                     selection_support: children.iter().fold(
                         SelectionKindSet::empty(),
                         |acc, (_, child)| match child {
-                            TrieNode::Action { id, .. } => {
-                                acc | registry.selection_support(*id)
-                            }
+                            TrieNode::Action { id, .. } => acc | registry.selection_support(*id),
                             _ => acc,
                         },
                     ),
-                    requires_conflict: children.iter().all(|(_, c)| {
-                        matches!(c, TrieNode::Action { id, .. } if registry.requires_conflict(*id))
-                    }),
-                    requires_file: children.iter().all(|(_, c)| {
-                        matches!(c, TrieNode::Action { id, .. } if registry.requires_file(*id))
-                    }),
+                    requires: common_requirement(registry, children),
                 });
             }
             TrieNode::Toggle { .. } => {}
@@ -105,8 +113,7 @@ pub fn help_entries(
             description: "pick conflict side at cursor".into(),
             group: HelpGroup::Commands,
             selection_support: SelectionKindSet::ALL,
-            requires_conflict: true,
-            requires_file: false,
+            requires: Requires::Conflict,
         });
 
     let mut entries: Vec<HelpEntry> = action_keys
@@ -126,8 +133,7 @@ pub fn help_entries(
                 description,
                 group,
                 selection_support: registry.selection_support(id),
-                requires_conflict: false,
-                requires_file: false,
+                requires: registry.requires(id),
             }
         })
         .collect();
@@ -168,8 +174,7 @@ pub fn select_mode_help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntr
             description: desc,
             group,
             selection_support: SelectionKindSet::ALL,
-            requires_conflict: false,
-            requires_file: false,
+            requires: Requires::Nothing,
         }
     }
 
@@ -183,7 +188,7 @@ pub fn select_mode_help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntr
         else {
             continue;
         };
-        if !action.is_cursor_navigation() {
+        if action.spec().effect != crate::keymap::Effect::Navigate {
             continue;
         }
         match by_action.iter_mut().find(|(a, ..)| a == action) {

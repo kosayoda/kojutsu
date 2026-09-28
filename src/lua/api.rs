@@ -248,7 +248,7 @@ fn register_globals(lua: &mlua::Lua) -> mlua::Result<()> {
 
     let action_table = lua.create_table()?;
     for action in <crate::keymap::AppAction as strum::IntoEnumIterator>::iter() {
-        let name = crate::keymap::action_id_name(action);
+        let name = action.id_name();
         action_table.set(name, name)?;
     }
     kojutsu.set("action", action_table)?;

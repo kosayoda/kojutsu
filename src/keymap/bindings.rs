@@ -642,7 +642,9 @@ mod tests {
         let admits = |key: &str| {
             let node = try_parse_key(key).unwrap_or_else(|| panic!("unparsable key: {key}"));
             match keymap.lookup(&node) {
-                LookupResult::Action(ActionId::Builtin(action)) => action.is_cursor_navigation(),
+                LookupResult::Action(ActionId::Builtin(action)) => {
+                    action.spec().effect == crate::keymap::Effect::Navigate
+                }
                 _ => false,
             }
         };

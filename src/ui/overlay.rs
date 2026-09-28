@@ -114,11 +114,7 @@ fn render_help_column(
             } else {
                 entry.description.clone()
             };
-            let blocked = availability.blocks(
-                entry.selection_support,
-                entry.requires_file,
-                entry.requires_conflict,
-            );
+            let blocked = availability.blocks(entry.selection_support, entry.requires);
             let key_style = if blocked {
                 key_style
                     .fg(theme.muted)
@@ -222,11 +218,8 @@ pub(super) fn draw_submenu(
             TrieNode::Action {
                 id, description, ..
             } => {
-                let blocked = availability.blocks(
-                    registry.selection_support(*id),
-                    registry.requires_file(*id),
-                    registry.requires_conflict(*id),
-                );
+                let blocked =
+                    availability.blocks(registry.selection_support(*id), registry.requires(*id));
                 (description.as_str(), blocked)
             }
             TrieNode::Prefix { label, .. } => (label.as_str(), false),
