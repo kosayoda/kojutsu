@@ -1,6 +1,7 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
-use crate::app::{App, AppMode, TargetMode};
+use crate::app::{App, AppMode, Invocation, SubmenuToggle, TargetMode};
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{JJCommand, JJCommandKind};
@@ -66,7 +67,15 @@ pub(super) fn handle_normal_key(
     match keymap.lookup(node) {
         LookupResult::Action(ActionId::Builtin(action)) => {
             app.status_message = None;
-            dispatch_action(app, registry, lua, keymap, action, CommandFlags::empty())
+            dispatch_action(
+                app,
+                registry,
+                lua,
+                keymap,
+                action,
+                CommandFlags::empty(),
+                no_toggles(),
+            )
         }
         LookupResult::Action(ActionId::Lua(id)) => {
             app.status_message = None;
@@ -123,7 +132,15 @@ pub(super) fn handle_select_navigation(
             if action.spec().effect == Effect::Navigate =>
         {
             app.status_message = None;
-            dispatch_action(app, registry, lua, keymap, action, CommandFlags::empty())
+            dispatch_action(
+                app,
+                registry,
+                lua,
+                keymap,
+                action,
+                CommandFlags::empty(),
+                no_toggles(),
+            )
         }
         // Unlike normal mode, an unrecognised key is ignored rather than
         // reported: most of the keymap is simply out of scope mid-pick.
@@ -149,10 +166,10 @@ pub(super) fn handle_submenu_key(
 
     match result {
         LookupResult::Action(ActionId::Builtin(action)) => {
-            app.pending_toggles = children
+            let toggles = children
                 .iter()
                 .filter_map(|(key_node, child)| match child {
-                    TrieNode::Toggle { flag, description } => Some(crate::app::SubmenuToggle {
+                    TrieNode::Toggle { flag, description } => Some(SubmenuToggle {
                         node: key_node.clone(),
                         flag: *flag,
                         description: description.clone(),
@@ -161,7 +178,7 @@ pub(super) fn handle_submenu_key(
                 })
                 .collect();
             app.mode = AppMode::Normal;
-            dispatch_action(app, registry, lua, keymap, action, flags)
+            dispatch_action(app, registry, lua, keymap, action, flags, toggles)
         }
         LookupResult::Action(ActionId::Lua(id)) => {
             app.mode = AppMode::Normal;
@@ -222,10 +239,15 @@ fn run_lua_command(
         return Action::None;
     }
     let result = lua.execute_command(id, app, flags);
-    if matches!(result, Action::RunJj(_)) {
+    if matches!(result, Action::RunJj { .. }) {
         app.last_repeatable = None;
     }
     result
+}
+
+/// The toggles of an action invoked outside a submenu.
+pub fn no_toggles() -> Arc<[SubmenuToggle]> {
+    Arc::from([])
 }
 
 fn dispatch_action(
@@ -235,10 +257,19 @@ fn dispatch_action(
     keymap: &Keymap,
     action: AppAction,
     flags: CommandFlags,
+    toggles: Arc<[SubmenuToggle]>,
 ) -> Action {
     if action == AppAction::RepeatLast {
         return if let Some((prev_action, prev_flags)) = app.last_repeatable {
-            dispatch_action(app, registry, lua, keymap, prev_action, prev_flags)
+            dispatch_action(
+                app,
+                registry,
+                lua,
+                keymap,
+                prev_action,
+                prev_flags,
+                no_toggles(),
+            )
         } else {
             app.set_error("no action to repeat");
             Action::None
@@ -259,7 +290,7 @@ fn dispatch_action(
         crate::lua::HookOutcome::Proceed => {}
     }
 
-    let result = dispatch_action_after_hooks(app, registry, lua, keymap, action, flags);
+    let result = dispatch_action_after_hooks(app, registry, lua, keymap, action, flags, toggles);
 
     let spec = action.spec();
     if spec.repeatable {
@@ -271,6 +302,9 @@ fn dispatch_action(
     result
 }
 
+/// Run an action whose pre-hooks have passed. A prompt it opens starts a
+/// chain that belongs to it, and a command it runs, now or at the end of
+/// that chain, runs its post-hooks.
 pub fn dispatch_action_after_hooks(
     app: &mut App,
     registry: &ActionRegistry,
@@ -278,10 +312,21 @@ pub fn dispatch_action_after_hooks(
     keymap: &Keymap,
     action: AppAction,
     flags: CommandFlags,
+    toggles: Arc<[SubmenuToggle]>,
 ) -> Action {
-    let id_name = action.id_name();
-    app.last_action_label = Some(id_name);
+    let result = perform(app, registry, lua, keymap, action, flags);
+    app.mode.adopt_origin(&Invocation { action, toggles });
+    result.attributed_to(Some(action))
+}
 
+fn perform(
+    app: &mut App,
+    registry: &ActionRegistry,
+    lua: &crate::lua::LuaEngine,
+    keymap: &Keymap,
+    action: AppAction,
+    flags: CommandFlags,
+) -> Action {
     // Merge global toggles into the command flags.
     let flags = flags | app.toggles;
 
@@ -643,7 +688,7 @@ pub fn dispatch_action_after_hooks(
                 })
                 .unwrap_or_default();
             if workspaces.len() == 1 {
-                Action::RunJj(JJCommand {
+                Action::run(JJCommand {
                     kind: JJCommandKind::WorkspaceForget {
                         names: workspaces.into(),
                     },
@@ -664,7 +709,7 @@ pub fn dispatch_action_after_hooks(
                 Action::None
             }
         }
-        AppAction::WorkspaceList => Action::RunJj(JJCommand {
+        AppAction::WorkspaceList => Action::run(JJCommand {
             kind: JJCommandKind::WorkspaceList,
             flags,
         }),
@@ -991,12 +1036,13 @@ fn offer_widen_revset(app: &mut App, id: &str) {
                 change_id: id.into(),
             },
         }],
+        origin: None,
     };
 }
 
 pub(super) fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action {
     match action {
-        FollowUpAction::Execute(cmd) => Action::RunJj(cmd),
+        FollowUpAction::Execute(cmd) => Action::run(cmd),
         FollowUpAction::TextInput { prompt, pending } => {
             app.mode = AppMode::text_input(prompt, "", pending);
             Action::None
@@ -1014,7 +1060,7 @@ pub(super) fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action
             content,
             flags,
         } => match super::view::dag::staged_resolution(app, change_id, &path, &content, flags) {
-            Some(cmd) => Action::RunJj(cmd),
+            Some(cmd) => Action::run(cmd),
             None => Action::None,
         },
         FollowUpAction::EnterInterdiff {
@@ -1045,7 +1091,6 @@ pub(super) fn enter_target_select(
     } else {
         TargetMode::Single
     };
-    let toggles = std::mem::take(&mut app.pending_toggles);
     app.mode = AppMode::TargetSelect {
         prompt: operation.label(),
         source,
@@ -1053,7 +1098,7 @@ pub(super) fn enter_target_select(
         operation,
         flags,
         target_mode,
-        toggles,
+        origin: None,
     };
     Action::None
 }

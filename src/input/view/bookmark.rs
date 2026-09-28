@@ -15,7 +15,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             };
             let name = entry.name.clone();
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::BookmarkDelete {
                     names: smallvec![name],
                 },
@@ -27,7 +27,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 app.set_error("bookmark is already local");
                 return Action::None;
             };
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::BookmarkTrack {
                     bookmarks: smallvec![br],
                 },
@@ -39,7 +39,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 app.set_error("bookmark has no remote to untrack");
                 return Action::None;
             };
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::BookmarkUntrack {
                     bookmarks: smallvec![br],
                 },
@@ -65,7 +65,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 );
                 Action::None
             } else {
-                Action::RunJj(JJCommand {
+                Action::run(JJCommand {
                     kind: JJCommandKind::GitPushBookmark {
                         bookmarks: smallvec![name],
                         remote: None,
@@ -78,7 +78,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             // On a conflict target row: resolve by setting the bookmark there.
             if let Some((entry, target)) = app.selected_conflict_target() {
                 let name = entry.name.clone();
-                return Action::RunJj(JJCommand {
+                return Action::run(JJCommand {
                     kind: JJCommandKind::BookmarkSet {
                         name,
                         change_id: target.summary.revision(),
@@ -117,7 +117,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 app.set_error("bookmark has no associated commit");
                 return Action::None;
             };
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::Edit { change_id },
                 flags,
             })
@@ -147,7 +147,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             };
             let name = entry.name.clone();
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::BookmarkForget {
                     names: smallvec![name],
                 },
@@ -181,7 +181,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 );
                 Action::None
             } else {
-                Action::RunJj(JJCommand {
+                Action::run(JJCommand {
                     kind: JJCommandKind::GitFetch {
                         all_remotes: false,
                         remote: None,
@@ -192,7 +192,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
         }
         AppAction::BookmarkViewFetchBookmark => {
             if let Some((entry, target)) = app.selected_remote_target() {
-                return Action::RunJj(JJCommand {
+                return Action::run(JJCommand {
                     kind: JJCommandKind::GitFetchBookmark {
                         bookmark: entry.name.clone(),
                         remote: RemoteName::new(target.remote.as_str()),
@@ -204,7 +204,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             };
             if let Some(remote) = entry.kind.remote() {
-                return Action::RunJj(JJCommand {
+                return Action::run(JJCommand {
                     kind: JJCommandKind::GitFetchBookmark {
                         bookmark: entry.name.clone(),
                         remote: RemoteName::new(remote.as_str()),
@@ -215,7 +215,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             app.set_error("no remote to fetch from");
             Action::None
         }
-        AppAction::BookmarkViewFetchAllRemotes => Action::RunJj(JJCommand {
+        AppAction::BookmarkViewFetchAllRemotes => Action::run(JJCommand {
             kind: JJCommandKind::GitFetch {
                 all_remotes: true,
                 remote: None,

@@ -15,7 +15,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             };
             let name = entry.name.clone();
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::TagDelete {
                     names: smallvec![name],
                 },
@@ -57,7 +57,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 app.set_error("tag has no associated commit");
                 return Action::None;
             };
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::Edit { change_id },
                 flags,
             })

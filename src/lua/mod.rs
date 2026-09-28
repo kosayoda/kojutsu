@@ -762,7 +762,13 @@ impl LuaEngine {
                         flags,
                     }
                 };
-                (None, Action::RunJjForLua(cmd))
+                (
+                    None,
+                    Action::RunJj {
+                        cmd,
+                        completion: crate::input::Completion::ResumeLua,
+                    },
+                )
             }
             other => {
                 app.set_error(format!("plugin: unknown yield type `{other}`"));
@@ -829,7 +835,7 @@ impl LuaEngine {
                         },
                         flags,
                     };
-                    self.set_breaking(app, &mut breaking, Action::RunJj(cmd), allow_breaking);
+                    self.set_breaking(app, &mut breaking, Action::run(cmd), allow_breaking);
                 }
                 // The dispatched action skips its own pre-hooks (same as a
                 // pre-hook resumption) so hooks can't recurse into themselves.

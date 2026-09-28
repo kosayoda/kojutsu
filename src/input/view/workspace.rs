@@ -14,7 +14,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             };
             let name = entry.name.clone();
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::WorkspaceForget {
                     names: smallvec![name],
                 },

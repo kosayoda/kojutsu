@@ -6,7 +6,7 @@ mod view;
 
 pub use view::dag::{complete_hunk_edit, staged_resolution};
 
-pub use action::{dispatch_action_after_hooks, has_conflict_context, has_file_context};
+pub use action::{dispatch_action_after_hooks, has_conflict_context, has_file_context, no_toggles};
 
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -46,18 +46,28 @@ fn scroll_delta(keymap: &crate::keymap::Keymap, node: &keymap_parser::Node) -> O
     }
 }
 
+/// What happens once a jj command finishes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Completion {
+    /// Refresh, then run the post-hooks of the action whose flow started
+    /// the command, if one did.
+    Refresh { hook: Option<keymap::AppAction> },
+    /// Resume the suspended Lua thread that yielded it with its result.
+    ResumeLua,
+}
+
 /// Result of handling an input event.
 pub enum Action {
     /// Quit the application.
     Quit,
     /// No action needed (already handled by mutating App).
     None,
-    /// Run a jj CLI command, then refresh the DAG. The command's
-    /// `terminal_use` decides whether the TUI steps aside for it.
-    RunJj(crate::jj_command::JJCommand),
-    /// Run a jj CLI command yielded by a suspended Lua thread; completion
-    /// resumes the thread with the result instead of refreshing.
-    RunJjForLua(crate::jj_command::JJCommand),
+    /// Run a jj CLI command. Its `terminal_use` decides whether the TUI
+    /// steps aside for it; `completion` what happens once it finishes.
+    RunJj {
+        cmd: crate::jj_command::JJCommand,
+        completion: Completion,
+    },
     /// Snapshot the working copy and reload the DAG.
     Refresh,
     /// Re-read `init.lua` and swap in the runtime it produces.
@@ -100,6 +110,31 @@ pub enum Action {
     },
 }
 
+impl Action {
+    /// Run `cmd` and refresh, attributed to no action yet.
+    pub fn run(cmd: crate::jj_command::JJCommand) -> Self {
+        Self::RunJj {
+            cmd,
+            completion: Completion::Refresh { hook: None },
+        }
+    }
+
+    /// Attribute a command not yet attributed to `origin`, the action whose
+    /// flow produced it, so that action's post-hooks run after it.
+    pub fn attributed_to(self, origin: Option<keymap::AppAction>) -> Self {
+        match self {
+            Self::RunJj {
+                cmd,
+                completion: Completion::Refresh { hook: None },
+            } => Self::RunJj {
+                cmd,
+                completion: Completion::Refresh { hook: origin },
+            },
+            other => other,
+        }
+    }
+}
+
 /// Handle a key press, dispatching through the keymap trie and app mode.
 pub fn handle_key(
     app: &mut App,
@@ -110,9 +145,26 @@ pub fn handle_key(
     let Some(node) = keymap::key_event_to_node(&key) else {
         return Action::None;
     };
-    let keymap = keymaps.for_view(app.active_view);
+    // A key in a prompt continues the chain an action started: whatever
+    // prompt or command it leads to belongs to that action too.
+    let origin = app.mode.origin().cloned();
+    let action = handle_key_in_mode(app, keymaps, lua, key, &node);
+    if let Some(origin) = &origin {
+        app.mode.adopt_origin(origin);
+    }
+    action.attributed_to(origin.map(|o| o.action))
+}
 
+fn handle_key_in_mode(
+    app: &mut App,
+    keymaps: &crate::keymap::Keymaps,
+    lua: &crate::lua::LuaEngine,
+    key: KeyEvent,
+    node: &keymap_parser::Node,
+) -> Action {
+    let keymap = keymaps.for_view(app.active_view);
     let registry = &keymaps.registry;
+    let node = node.clone();
 
     match &mut app.mode {
         AppMode::Normal => action::handle_normal_key(app, registry, lua, keymap, &node),
@@ -133,14 +185,10 @@ pub fn handle_key(
                 state.scroll = state.scroll.saturating_add_signed(delta);
                 return Action::None;
             }
-            let retry = app.mode.take_command_retry();
             if node.key == keymap_parser::Key::Esc {
+                app.mode = AppMode::Normal;
                 Action::None
-            } else if !retry.is_empty() {
-                app.mode = AppMode::FollowUp {
-                    prompt: "Retry?".into(),
-                    options: retry,
-                };
+            } else if app.mode.open_command_retry() {
                 Action::None
             } else {
                 action::handle_normal_key(app, registry, lua, keymap, &node)
@@ -398,5 +446,95 @@ mod scroll_delta_tests {
 
         assert_eq!(delta(&keymaps, ","), Some(1));
         assert_eq!(delta(&keymaps, "j"), None);
+    }
+}
+
+#[cfg(test)]
+mod hook_attribution_tests {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::{Action, Completion, handle_key};
+    use crate::app::{App, AppMode, Invocation};
+    use crate::jj_command::{JJCommand, JJCommandKind};
+    use crate::keymap::{ActionRegistry, AppAction, CommandFlags, Keymaps, default_bindings};
+    use crate::lua::LuaEngine;
+    use crate::types::{FollowUpAction, FollowUpOption};
+
+    fn press(app: &mut App, code: KeyCode) -> Action {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let lua = LuaEngine::for_test();
+        handle_key(app, &keymaps, &lua, KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn hook(action: &Action) -> Option<AppAction> {
+        match action {
+            Action::RunJj {
+                completion: Completion::Refresh { hook },
+                ..
+            } => *hook,
+            _ => panic!("expected a jj command"),
+        }
+    }
+
+    /// Output of a failed command offering a retry with `r`.
+    fn output_offering_retry(app: &mut App, ran_by: Option<AppAction>) {
+        app.mode = AppMode::command_output(
+            "$ jj undo".into(),
+            None,
+            Vec::new(),
+            false,
+            vec![FollowUpOption {
+                key: 'r',
+                label: "retry",
+                action: FollowUpAction::Execute(JJCommand {
+                    kind: JJCommandKind::Undo,
+                    flags: CommandFlags::empty(),
+                }),
+            }],
+        );
+        if let Some(action) = ran_by {
+            app.mode.adopt_origin(&Invocation {
+                action,
+                toggles: super::no_toggles(),
+            });
+        }
+    }
+
+    /// A command reached through a prompt belongs to the action that opened
+    /// the prompt: describe's post-hooks run after the describe it submits.
+    #[test]
+    fn a_prompted_command_runs_the_opening_actions_hooks() {
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        press(&mut app, KeyCode::Char('d'));
+        press(&mut app, KeyCode::Char('d'));
+        assert!(matches!(app.mode, AppMode::TextInput { .. }));
+
+        let submitted = press(&mut app, KeyCode::Enter);
+        assert_eq!(hook(&submitted), Some(AppAction::Describe));
+    }
+
+    /// A retry offered on a command's output runs that command's hooks.
+    #[test]
+    fn a_retry_runs_the_original_commands_hooks() {
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        output_offering_retry(&mut app, Some(AppAction::Abandon));
+        press(&mut app, KeyCode::Enter);
+        assert!(matches!(app.mode, AppMode::FollowUp { .. }));
+
+        let retried = press(&mut app, KeyCode::Char('r'));
+        assert_eq!(hook(&retried), Some(AppAction::Abandon));
+    }
+
+    /// Keys pressed in between belong to nobody's chain: a retry of a
+    /// command no action ran is not handed the last key's hooks.
+    #[test]
+    fn an_unrelated_key_lends_no_hook() {
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        press(&mut app, KeyCode::Char('j'));
+        output_offering_retry(&mut app, None);
+        press(&mut app, KeyCode::Enter);
+
+        let retried = press(&mut app, KeyCode::Char('r'));
+        assert_eq!(hook(&retried), None);
     }
 }

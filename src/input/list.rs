@@ -223,32 +223,32 @@ pub(super) fn resolve_selection(
     match on_select {
         PendingSelection::BookmarkDelete { flags, .. } => {
             let names = names.into_iter().map(BookmarkName::new).collect();
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::BookmarkDelete { names },
                 flags,
             })
         }
         PendingSelection::BookmarkForget { flags, .. } => {
             let names = names.into_iter().map(BookmarkName::new).collect();
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::BookmarkForget { names },
                 flags,
             })
         }
         PendingSelection::WorkspaceForget { flags } => {
             let names = names.into_iter().map(WorkspaceName::new).collect();
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::WorkspaceForget { names },
                 flags,
             })
         }
-        PendingSelection::BookmarkTrack { flags } => Action::RunJj(JJCommand {
+        PendingSelection::BookmarkTrack { flags } => Action::run(JJCommand {
             kind: JJCommandKind::BookmarkTrack {
                 bookmarks: super::bookmark::parse_remote_bookmarks(names),
             },
             flags,
         }),
-        PendingSelection::BookmarkUntrack { flags } => Action::RunJj(JJCommand {
+        PendingSelection::BookmarkUntrack { flags } => Action::run(JJCommand {
             kind: JJCommandKind::BookmarkUntrack {
                 bookmarks: super::bookmark::parse_remote_bookmarks(names),
             },
@@ -268,7 +268,7 @@ pub(super) fn resolve_selection(
                 );
                 Action::None
             } else {
-                Action::RunJj(JJCommand {
+                Action::run(JJCommand {
                     kind: JJCommandKind::GitPushBookmark {
                         bookmarks,
                         remote: None,
@@ -279,7 +279,7 @@ pub(super) fn resolve_selection(
         }
         PendingSelection::GitRemoteForFetch { all_remotes, flags } => {
             let remote = names.into_iter().next().map(RemoteName::new);
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::GitFetch {
                     all_remotes,
                     remote,
@@ -289,21 +289,21 @@ pub(super) fn resolve_selection(
         }
         PendingSelection::GitRemoteForPush { all, flags } => {
             let remote = names.into_iter().next().map(RemoteName::new);
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::GitPush { all, remote },
                 flags,
             })
         }
         PendingSelection::GitRemoteForPushBookmark { bookmarks, flags } => {
             let remote = names.into_iter().next().map(RemoteName::new);
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::GitPushBookmark { bookmarks, remote },
                 flags,
             })
         }
         PendingSelection::TagDelete { flags } => {
             let names = names.into_iter().map(TagName::new).collect();
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::TagDelete { names },
                 flags,
             })
@@ -323,7 +323,6 @@ pub(super) fn resolve_selection(
             change_id, flags, ..
         } => {
             let name = BookmarkName::new(names.into_iter().next().unwrap_or_default());
-            let toggles = std::mem::take(&mut app.pending_toggles);
             app.mode = AppMode::TargetSelect {
                 prompt: "move bookmark",
                 source: change_id,
@@ -333,7 +332,7 @@ pub(super) fn resolve_selection(
                 },
                 flags,
                 target_mode: TargetMode::Single,
-                toggles,
+                origin: None,
             };
             Action::None
         }

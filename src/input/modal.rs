@@ -56,6 +56,7 @@ pub(super) fn handle_text_input(
                             restore_cursor,
                             pending: crate::types::PendingCommitSelect::WorkspaceAdd { path, name },
                             flags,
+                            origin: None,
                         };
                         Action::None
                     }
@@ -69,12 +70,12 @@ pub(super) fn handle_text_input(
                     } => submit_run_jobs(app, change_ids, argv, flags, text),
                     PendingCommand::RawCommand => {
                         match PendingCommand::RawCommand.into_jj_command(text) {
-                            Some(jj_cmd) => Action::RunJj(jj_cmd),
+                            Some(jj_cmd) => Action::run(jj_cmd),
                             None => Action::None,
                         }
                     }
                     cmd => match cmd.into_jj_command(text) {
-                        Some(jj_cmd) => Action::RunJj(jj_cmd),
+                        Some(jj_cmd) => Action::run(jj_cmd),
                         None => Action::None,
                     },
                 }
@@ -211,7 +212,7 @@ pub(in crate::input) fn submit_run_command(
     app.record_run_command(&text);
     // --jobs only matters when running over several revisions.
     if change_ids.len() == 1 {
-        return Action::RunJj(JJCommand {
+        return Action::run(JJCommand {
             kind: JJCommandKind::Run {
                 change_ids,
                 argv,
@@ -249,7 +250,7 @@ fn submit_run_jobs(
             }
         }
     };
-    Action::RunJj(JJCommand {
+    Action::run(JJCommand {
         kind: JJCommandKind::Run {
             change_ids,
             argv,
@@ -353,9 +354,12 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Option<Actio
             Some(Action::None)
         }
         KeyCode::Char(_) => {
-            if let (Some(node), AppMode::TargetSelect { toggles, flags, .. }) =
+            if let (Some(node), AppMode::TargetSelect { origin, flags, .. }) =
                 (crate::keymap::key_event_to_node(&key), &mut app.mode)
-                && let Some(toggle) = toggles.iter().find(|t| t.node == node)
+                && let Some(toggle) = origin
+                    .iter()
+                    .flat_map(|o| o.toggles.iter())
+                    .find(|t| t.node == node)
             {
                 flags.toggle(toggle.flag);
                 app.status_message = None;
@@ -421,7 +425,11 @@ fn confirm_target_select(app: &mut App) -> Action {
             .collect::<Vec<_>>()
             .join(", ");
         let prompt = format!("{label} {target_str}:");
-        app.mode = AppMode::FollowUp { prompt, options };
+        app.mode = AppMode::FollowUp {
+            prompt,
+            options,
+            origin: None,
+        };
     }
     Action::None
 }
@@ -439,7 +447,7 @@ pub(super) fn handle_commit_select(app: &mut App, key: KeyEvent) -> Option<Actio
             let Some(target) = app.selected_change_id() else {
                 return Some(Action::None);
             };
-            Some(Action::RunJj(pending.into_jj_command(target, flags)))
+            Some(Action::run(pending.into_jj_command(target, flags)))
         }
         KeyCode::Esc => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
@@ -545,6 +553,7 @@ mod jump_tests {
             },
             flags: CommandFlags::empty(),
             restore_cursor: RowIdx::new(0),
+            origin: None,
         };
         app
     }

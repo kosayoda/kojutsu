@@ -366,6 +366,16 @@ pub struct SubmenuToggle {
     pub description: CompactString,
 }
 
+/// The action a chain of prompts was started by. Each prompt in the chain
+/// carries it until the chain ends: the command the chain produces runs
+/// that action's post-hooks, and the toggles of the submenu it was picked
+/// from stay on offer along the way.
+#[derive(Clone)]
+pub struct Invocation {
+    pub action: crate::keymap::AppAction,
+    pub toggles: Arc<[SubmenuToggle]>,
+}
+
 /// Parse ANSI-colored bytes into styled lines, falling back to plain text
 /// on malformed escape sequences.
 pub fn parse_ansi_lines(output: &[u8]) -> Vec<ratatui::text::Line<'static>> {
@@ -459,6 +469,8 @@ pub struct CommandOutputState {
     /// Follow-up options offered when the overlay is dismissed (e.g. retry
     /// with `--ignore-immutable`). Empty means no retry available.
     pub retry: Vec<crate::types::FollowUpOption>,
+    /// The invocation that ran the command, handed on to a retry.
+    pub origin: Option<Invocation>,
     /// Scroll offset in lines from the top; clamped during draw.
     pub scroll: u16,
 }
@@ -479,6 +491,7 @@ impl CommandOutputState {
             parsed_lines,
             success,
             retry,
+            origin: None,
             scroll: 0,
         }
     }
@@ -930,6 +943,7 @@ pub struct SelectFromListState {
     /// resolving to an item.
     pub custom_entry: Option<CustomEntry>,
     pub on_select: PendingSelection,
+    pub origin: Option<Invocation>,
 }
 
 /// The free-input affordance of a select list: what selecting the pinned
@@ -965,11 +979,11 @@ impl SelectFromListState {
             filtering: focus_filter,
             custom_entry: None,
             on_select,
+            origin: None,
         }
     }
 }
 
-/// The current interaction mode.
 /// State for jump mode: typed-label navigation to a visible row.
 pub struct JumpState {
     /// (label_string, row_index) for each visible jumpable row.
@@ -978,6 +992,7 @@ pub struct JumpState {
     pub input: String,
 }
 
+/// The current interaction mode.
 pub enum AppMode {
     /// Normal browsing.
     Normal,
@@ -999,6 +1014,7 @@ pub enum AppMode {
         prompt: String,
         input: Input,
         on_submit: PendingCommand,
+        origin: Option<Invocation>,
     },
     /// Live search input at the bottom bar.
     SearchInput,
@@ -1010,18 +1026,20 @@ pub enum AppMode {
         operation: TargetOperation,
         flags: CommandFlags,
         target_mode: TargetMode,
-        toggles: Vec<SubmenuToggle>,
+        origin: Option<Invocation>,
     },
     /// Navigating to select a single commit (e.g. for workspace revision).
     CommitSelect {
         restore_cursor: RowIdx,
         pending: PendingCommitSelect,
         flags: CommandFlags,
+        origin: Option<Invocation>,
     },
     /// Choosing from a set of follow-up options after target selection.
     FollowUp {
         prompt: String,
         options: Vec<FollowUpOption>,
+        origin: Option<Invocation>,
     },
     /// Jump mode: labels visible on jumpable rows, type label chars to jump.
     Jump(JumpState),
@@ -1060,6 +1078,7 @@ impl AppMode {
             prompt: prompt.into(),
             input: Input::new(prefill.into()),
             on_submit,
+            origin: None,
         }
     }
 
@@ -1096,14 +1115,52 @@ impl AppMode {
         AppMode::SelectFromList(state)
     }
 
-    /// Take the `retry` field out of a `CommandOutput` mode, replacing `self` with `Normal`.
-    pub fn take_command_retry(&mut self) -> Vec<crate::types::FollowUpOption> {
+    /// Replace a `CommandOutput` mode with its retry prompt, if it offers
+    /// one, or with `Normal`. Returns whether it offered one.
+    pub fn open_command_retry(&mut self) -> bool {
         match std::mem::replace(self, AppMode::Normal) {
-            AppMode::CommandOutput(state) => state.retry,
+            AppMode::CommandOutput(state) if !state.retry.is_empty() => {
+                *self = AppMode::FollowUp {
+                    prompt: "Retry?".into(),
+                    options: state.retry,
+                    origin: state.origin,
+                };
+                true
+            }
+            AppMode::CommandOutput(_) => false,
             other => {
                 *self = other;
-                Vec::new()
+                false
             }
+        }
+    }
+
+    /// The invocation the current prompt chain was started by.
+    pub fn origin(&self) -> Option<&Invocation> {
+        match self {
+            AppMode::TextInput { origin, .. }
+            | AppMode::TargetSelect { origin, .. }
+            | AppMode::CommitSelect { origin, .. }
+            | AppMode::FollowUp { origin, .. } => origin.as_ref(),
+            AppMode::SelectFromList(state) => state.origin.as_ref(),
+            _ => None,
+        }
+    }
+
+    /// Record `origin` on a prompt, or a command's output, that doesn't
+    /// have one yet.
+    pub fn adopt_origin(&mut self, origin: &Invocation) {
+        let slot = match self {
+            AppMode::TextInput { origin, .. }
+            | AppMode::TargetSelect { origin, .. }
+            | AppMode::CommitSelect { origin, .. }
+            | AppMode::FollowUp { origin, .. } => origin,
+            AppMode::SelectFromList(state) => &mut state.origin,
+            AppMode::CommandOutput(state) => &mut state.origin,
+            _ => return,
+        };
+        if slot.is_none() {
+            *slot = Some(origin.clone());
         }
     }
 

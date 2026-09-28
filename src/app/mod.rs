@@ -303,8 +303,6 @@ pub struct App {
     pub diff_format: DiffFormat,
     /// Transient status notice shown in the status bar.
     pub status_message: Option<(String, StatusLevel)>,
-    /// Label of the last dispatched action (for Lua post-hooks).
-    pub last_action_label: Option<&'static str>,
     /// Mode to restore after an overlay (search/help) is dismissed.
     /// Used when search or help is entered from TargetSelect/CommitSelect.
     pub pre_overlay_mode: Option<AppMode>,
@@ -324,7 +322,6 @@ pub struct App {
     /// Where to jump the cursor after the next DAG refresh.
     pub jump_after_refresh: Option<JumpTarget>,
     pub last_repeatable: Option<(crate::keymap::AppAction, CommandFlags)>,
-    pub pending_toggles: Vec<SubmenuToggle>,
     /// Per-hunk conflict UI state (picks, base-fold, gap-expansion),
     /// authoritative and persisted across reloads. Keyed by commit ID:
     /// identical ID means identical content and thus identical hunk
@@ -454,7 +451,6 @@ impl App {
             toggles: CommandFlags::empty(),
             diff_format: DiffFormat::ColorWords,
             status_message: None,
-            last_action_label: None,
             pre_overlay_mode: None,
             show_line_numbers: false,
             diff_underline: true,
@@ -464,7 +460,6 @@ impl App {
             search: None,
             jump_after_refresh: None,
             last_repeatable: None,
-            pending_toggles: Vec::new(),
             conflict_ui: HashMap::new(),
         };
         app.rebuild_rows();
@@ -479,6 +474,22 @@ impl App {
             String::new(),
             Rc::new(crate::theme::Config::default()),
         )
+    }
+
+    /// An app showing one commit in the DAG, with the cursor on it.
+    #[cfg(test)]
+    pub fn with_test_commit(change_id: &str, commit_id: &str) -> Self {
+        let mut app = Self::for_test();
+        let commit = crate::dag::CommitInfo::for_test(change_id, commit_id);
+        app.commit_index
+            .insert(commit.graph_id.clone(), EntryIdx::new(0));
+        app.nodes.push(DagNode::new(
+            commit,
+            crate::graph::GraphLines::default(),
+            SmallVec::new(),
+        ));
+        app.rebuild_rows();
+        app
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {

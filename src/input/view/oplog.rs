@@ -34,7 +34,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             };
             let op_id = entry.id.clone();
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::OpRestore { op_id },
                 flags,
             })
@@ -44,7 +44,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             };
             let op_id = entry.id.clone();
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::OpRevert { op_id },
                 flags,
             })
@@ -54,7 +54,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             };
             let op_id = entry.id.clone();
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::OpAbandon { op_id },
                 flags,
             })

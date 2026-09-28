@@ -7,8 +7,9 @@ use color_eyre::Result;
 use crossterm::event::{Event, KeyEventKind};
 
 use kojutsu::app::{App, AppMode, DeferredWork};
-use kojutsu::input::{self, Action};
+use kojutsu::input::{self, Action, Completion};
 use kojutsu::jj_command::{JJCommand, JJCommandResult, TerminalUse};
+use kojutsu::keymap::AppAction;
 use kojutsu::repo::JjRepo;
 use kojutsu::repo_service::{
     CancellationToken, RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind,
@@ -279,15 +280,6 @@ fn main() -> Result<()> {
     session.close()
 }
 
-/// What to do once a background jj command finishes.
-enum Completion {
-    /// Refresh, then run the post-hooks of the action that issued it, if a
-    /// labelled action did.
-    Refresh { hook_label: Option<&'static str> },
-    /// Resume the suspended Lua thread that yielded it with its result.
-    ResumeLua,
-}
-
 /// The terminal and the thread reading its events. They are handed to a
 /// child process together, so the thread doesn't steal the child's input.
 struct Screen {
@@ -422,12 +414,12 @@ impl Session {
                 completion,
             } => match completion {
                 Completion::ResumeLua => resume_lua_jj(&mut self.app, result, &self.runtime.engine),
-                Completion::Refresh { hook_label } => finish_jj_command(
+                Completion::Refresh { hook } => finish_jj_command(
                     &mut self.app,
                     *result,
                     *cmd,
                     jump,
-                    hook_label,
+                    hook,
                     &self.runtime.engine,
                 ),
             },
@@ -460,30 +452,28 @@ impl Session {
         match action {
             Action::None => {}
             Action::Quit => return ControlFlow::Break(()),
-            Action::RunJj(cmd) => {
-                let hook_label = self.app.last_action_label.take();
+            Action::RunJj { cmd, completion } => {
                 if cmd.terminal_use() == TerminalUse::Background {
-                    self.run_jj(cmd, Completion::Refresh { hook_label });
-                } else {
-                    let result = self
-                        .screen
-                        .suspended(|| run_in_foreground(&cmd, &self.repo_path));
-                    finish_foreground_command(&mut self.app, &cmd, result);
-                    if let Some(label) = hook_label {
-                        return self.run_post_hooks_after_suspend(label);
+                    self.run_jj(cmd, completion);
+                    return ControlFlow::Continue(());
+                }
+                let result = self
+                    .screen
+                    .suspended(|| run_in_foreground(&cmd, &self.repo_path));
+                return match completion {
+                    Completion::Refresh { hook } => {
+                        finish_foreground_command(&mut self.app, &cmd, result, hook);
+                        match hook {
+                            Some(action) => self.run_post_hooks_after_suspend(action),
+                            None => ControlFlow::Continue(()),
+                        }
                     }
-                }
-            }
-            Action::RunJjForLua(cmd) => {
-                if cmd.terminal_use() == TerminalUse::Background {
-                    self.run_jj(cmd, Completion::ResumeLua);
-                } else {
-                    let result = self
-                        .screen
-                        .suspended(|| run_in_foreground(&cmd, &self.repo_path));
-                    let next = resume_lua_jj(&mut self.app, Box::new(result), &self.runtime.engine);
-                    return self.execute(next);
-                }
+                    Completion::ResumeLua => {
+                        let next =
+                            resume_lua_jj(&mut self.app, Box::new(result), &self.runtime.engine);
+                        self.execute(next)
+                    }
+                };
             }
             Action::Refresh => self.app.refresh(RevsetLoadKind::Snapshot),
             Action::ReloadConfig => {
@@ -521,7 +511,9 @@ impl Session {
                             &edited,
                             flags,
                         ) {
-                            return self.execute(Action::RunJj(cmd));
+                            return self.execute(Action::run(cmd).attributed_to(Some(
+                                kojutsu::keymap::AppAction::ConflictEditFile,
+                            )));
                         }
                     }
                     outcome => report_unapplied_edit(&mut self.app, outcome),
@@ -574,7 +566,7 @@ impl Session {
                     }
                     result
                 });
-                finish_foreground_command(&mut self.app, &cmd, result);
+                finish_foreground_command(&mut self.app, &cmd, result, None);
             }
             Action::DeferredDispatch { action, flags } => {
                 let keymap = self.runtime.keymaps.for_view(self.app.active_view);
@@ -585,6 +577,7 @@ impl Session {
                     keymap,
                     action,
                     flags,
+                    input::no_toggles(),
                 );
                 return self.execute(next);
             }
@@ -625,10 +618,10 @@ impl Session {
 
     /// Run post-hooks for a command that ran while the TUI was suspended,
     /// and carry out whatever action a hook leads to.
-    fn run_post_hooks_after_suspend(&mut self, label: &'static str) -> ControlFlow<()> {
+    fn run_post_hooks_after_suspend(&mut self, hook: AppAction) -> ControlFlow<()> {
         let (success, output) = extract_command_result(&self.app);
         let outcome = self.runtime.engine.run_post_hooks(
-            label,
+            hook.id_name(),
             &mut self.app,
             kojutsu::lua::CommandOutcome {
                 success,
@@ -711,7 +704,12 @@ fn run_in_foreground(cmd: &JJCommand, repo_path: &std::path::Path) -> JJCommandR
 
 /// Record a command that ran on the real terminal, refresh after success,
 /// and show its output if it printed any or failed.
-fn finish_foreground_command(app: &mut App, cmd: &JJCommand, result: JJCommandResult) {
+fn finish_foreground_command(
+    app: &mut App,
+    cmd: &JJCommand,
+    result: JJCommandResult,
+    hook: Option<AppAction>,
+) {
     app.push_command_log(
         kojutsu::app::CommandLogKind::Command,
         &result.display,
@@ -739,6 +737,18 @@ fn finish_foreground_command(app: &mut App, cmd: &JJCommand, result: JJCommandRe
             result.success,
             retry,
         );
+        adopt_hook(app, hook);
+    }
+}
+
+/// Hand a finished command's hook to its output, so a retry offered there
+/// runs the same post-hooks.
+fn adopt_hook(app: &mut App, hook: Option<AppAction>) {
+    if let Some(action) = hook {
+        app.mode.adopt_origin(&kojutsu::app::Invocation {
+            action,
+            toggles: input::no_toggles(),
+        });
     }
 }
 
@@ -1015,7 +1025,7 @@ fn finish_jj_command(
     result: JJCommandResult,
     cmd: JJCommand,
     jump: Option<JumpTarget>,
-    label: Option<&'static str>,
+    hook: Option<AppAction>,
     lua_engine: &kojutsu::lua::LuaEngine,
 ) -> Action {
     let (cancelled, code) = (result.cancelled, result.code);
@@ -1034,6 +1044,7 @@ fn finish_jj_command(
         result.success,
         retry,
     );
+    adopt_hook(app, hook);
 
     if result.success {
         let switch_to_dag = match &jump {
@@ -1052,10 +1063,10 @@ fn finish_jj_command(
         app.refresh(RevsetLoadKind::NoSnapshot);
     }
 
-    if let Some(lbl) = label {
+    if let Some(hook) = hook {
         let (success, output) = extract_command_result(app);
         let outcome = lua_engine.run_post_hooks(
-            lbl,
+            hook.id_name(),
             app,
             kojutsu::lua::CommandOutcome {
                 success,

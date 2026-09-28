@@ -178,13 +178,14 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
             source,
             flags,
             target_mode,
-            toggles,
+            origin,
             ..
         } => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
             let multi = matches!(target_mode, TargetMode::Multi { .. });
             let title = format!(" {prompt} from {source} ");
+            let toggles = origin.as_ref().map_or(&[][..], |o| &o.toggles[..]);
             overlay::draw_target_select(frame, area, &title, multi, toggles, *flags, theme);
         }
         AppMode::CommitSelect { pending, .. } => {
@@ -192,7 +193,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
             frame.render_widget(ratatui::widgets::Clear, area);
             overlay::draw_commit_select(frame, area, pending.prompt(), theme);
         }
-        AppMode::FollowUp { prompt, options } => {
+        AppMode::FollowUp {
+            prompt, options, ..
+        } => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
             overlay::draw_follow_up(frame, area, prompt, options, theme);

@@ -504,6 +504,7 @@ pub(super) fn draw_select_list(
         filtering,
         custom_entry,
         on_select: _,
+        origin: _,
     } = s;
     let (cursor, multi, filtering) = (*cursor, *multi, *filtering);
     let has_custom_entry = custom_entry.is_some();

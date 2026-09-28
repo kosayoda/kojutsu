@@ -13,7 +13,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             };
             let change_id = RevisionArg::new(entry.commit_id.as_str());
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::Edit { change_id },
                 flags,
             })
@@ -23,7 +23,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             };
             let change_id = RevisionArg::new(entry.commit_id.as_str());
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::New {
                     change_ids: smallvec::smallvec![change_id],
                     insert: None,
@@ -65,7 +65,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 .iter()
                 .find(|e| e.is_current)
                 .map(|e| RevisionArg::new(e.commit_id.as_str()));
-            Action::RunJj(JJCommand {
+            Action::run(JJCommand {
                 kind: JJCommandKind::Restore {
                     from: Some(from),
                     into,
