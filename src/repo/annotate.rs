@@ -16,9 +16,7 @@ use crate::types::{CommitId as UiCommitId, RepoPath};
 impl JjRepo {
     /// List all file paths at a specific commit.
     pub fn list_files(&self, commit_id: &UiCommitId) -> Result<Vec<RepoPath>> {
-        let repo = self.repo.as_ref();
-        let backend_id = super::parse_commit_id(commit_id.as_str())?;
-        let commit = repo.store().get_commit(&backend_id)?;
+        let commit = self.load_commit(commit_id)?;
         let tree = commit.tree();
         let mut paths = Vec::new();
         for (path, _value) in tree.entries() {
@@ -38,8 +36,7 @@ impl JjRepo {
 
         let repo = self.repo.as_ref();
 
-        let backend_id = super::parse_commit_id(commit_id.as_str())?;
-        let commit = repo.store().get_commit(&backend_id)?;
+        let commit = self.load_commit(commit_id)?;
 
         let repo_path = RepoPathBuf::from_internal_string(file_path.as_str())
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
@@ -72,7 +69,7 @@ impl JjRepo {
         // Pre-seed with the annotated-at commit so header info is always available.
         {
             let change_id = Self::short_change_id(&prefix_index, repo, &commit);
-            let short_cid = Self::short_commit_id(&prefix_index, repo, &backend_id);
+            let short_cid = Self::short_commit_id(&prefix_index, repo, commit.id());
             commit_info.insert(
                 commit_id.clone(),
                 build_annotate_commit_info(&commit, short_cid, change_id),

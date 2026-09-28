@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{App, DeferredWork, JumpTarget, Loadable};
-use crate::dag::{DagEntry, EdgeKind};
+use crate::dag::{DagEntry, DiffTarget, EdgeKind};
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, RowIdx};
-use crate::repo_service::{RepoRequest, RepoResult};
+use crate::repo_service::{RepoRequest, RepoResult, RevsetLoadKind};
 use crate::types::{ChangeId, CommitId, DisplayRow, RepoPath, SmallVec};
 
 /// Cached per-commit data carried across a refresh.
@@ -36,38 +36,25 @@ pub(super) struct DagStreamState {
 }
 
 impl App {
-    pub fn request_revset_load(&mut self, revset: Option<String>) {
+    /// Load a revset (`None` for jj's default). `NoSnapshot` suits pure
+    /// revset/UI changes (editing the revset string, switching presets) where
+    /// no filesystem mutation occurred.
+    pub fn request_revset_load(&mut self, revset: Option<String>, load_kind: RevsetLoadKind) {
         self.revset.load_state = Loadable::Loading;
         self.revset.pending = revset.clone().map(Into::into);
         self.clear_info_status();
         self.pending_repo_requests
-            .push(RepoRequest::load_revset(revset));
+            .push(RepoRequest::Revset { revset, load_kind });
     }
 
     /// Reload the current revset. `Snapshot` re-scans the working copy first:
     /// needed only when the user may have edited files since jj last looked.
-    pub fn refresh(&mut self, load_kind: crate::repo_service::RevsetLoadKind) {
+    pub fn refresh(&mut self, load_kind: RevsetLoadKind) {
         let revset = match &self.revset.load_state {
             Loadable::Loading => self.revset.pending.as_ref().map(|s| s.to_string()),
             _ => Some(self.revset.current.to_string()),
         };
-        match load_kind {
-            crate::repo_service::RevsetLoadKind::Snapshot => self.request_revset_load(revset),
-            crate::repo_service::RevsetLoadKind::NoSnapshot => {
-                self.request_revset_load_no_snapshot(revset)
-            }
-        }
-    }
-
-    /// Request a revset load without snapshotting the working copy first.
-    /// Use when the refresh is purely a revset/UI change (e.g. editing the
-    /// revset string, switching presets) and no filesystem mutation occurred.
-    pub fn request_revset_load_no_snapshot(&mut self, revset: Option<String>) {
-        self.revset.load_state = Loadable::Loading;
-        self.revset.pending = revset.clone().map(Into::into);
-        self.clear_info_status();
-        self.pending_repo_requests
-            .push(RepoRequest::load_revset_no_snapshot(revset));
+        self.request_revset_load(revset, load_kind);
     }
 
     /// Replace the DAG with the first chunk of a (possibly streamed) revset
@@ -222,8 +209,9 @@ impl App {
                 let commit_id = self.nodes[idx].commit.graph_id.clone();
                 self.nodes[idx].files = Loadable::Loading;
                 self.nodes[idx].stats = Loadable::Loading;
-                self.pending_repo_requests
-                    .push(RepoRequest::load_commit_details(commit_id));
+                self.pending_repo_requests.push(RepoRequest::DiffSummary {
+                    target: DiffTarget::Commit(commit_id),
+                });
             }
         }
 
@@ -354,8 +342,9 @@ impl App {
                     self.op_log.details.clear();
                     self.op_log.unfolded.clear();
                     if self.active_view == super::ActiveView::Operations {
-                        self.pending_repo_requests
-                            .push(RepoRequest::load_operations(self.op_log.limit));
+                        self.pending_repo_requests.push(RepoRequest::Operations {
+                            limit: self.op_log.limit,
+                        });
                     }
                     self.repo_root = data.repo_root;
                     self.views.remote_bookmarks = data.remote_bookmarks;
@@ -404,91 +393,173 @@ impl App {
             RepoResult::RevsetChunk { entries, done } => {
                 self.append_entries(entries, done);
             }
-            RepoResult::CommitDetails { commit_id, result } => match result {
-                Ok(details) => {
-                    self.clear_info_status();
-                    let Some(idx) = self.entry_by_commit_id(&commit_id) else {
-                        return deferred;
-                    };
-                    // Update is_empty for this commit.
-                    self.nodes[idx].commit.is_empty = details.is_empty;
-
-                    // Re-request diffs for files that were previously unfolded.
-                    let change_id = self.change_id(idx);
-                    for (fi, file) in details.files.iter().enumerate() {
-                        let file_idx = FileIdx::new(fi);
-                        let fold_key = super::FileFoldKey {
-                            change_id: change_id.clone(),
-                            path: file.path.clone(),
+            RepoResult::DiffSummary { target, result } => match target {
+                DiffTarget::Commit(commit_id) => match result {
+                    Ok(details) => {
+                        self.clear_info_status();
+                        let Some(idx) = self.entry_by_commit_id(&commit_id) else {
+                            return deferred;
                         };
-                        if self.unfolded_files.contains(&fold_key) {
-                            if self.nodes[idx].diff_should_request(file_idx) {
-                                self.nodes[idx].set_diff_state(file_idx, Loadable::Loading);
-                                self.pending_repo_requests.push(RepoRequest::load_file_diff(
-                                    commit_id.clone(),
-                                    file.path.clone(),
-                                    file.old_path.clone(),
-                                ));
-                            }
-                            // Conflicted files show hunks instead of the
-                            // diff: re-request those too (a rewritten
-                            // commit gets a fresh node with no hunk cache).
-                            if file.has_conflict
-                                && self.nodes[idx].conflict_hunks_should_request(file_idx)
-                            {
-                                self.nodes[idx].set_conflict_hunks(file_idx, Loadable::Loading);
-                                self.pending_repo_requests
-                                    .push(RepoRequest::load_conflict_hunks(
-                                        commit_id.clone(),
-                                        file.path.clone(),
-                                    ));
+                        // Update is_empty for this commit.
+                        self.nodes[idx].commit.is_empty = details.files.is_empty();
+
+                        // Re-request diffs for files that were previously unfolded.
+                        let change_id = self.change_id(idx);
+                        for (fi, file) in details.files.iter().enumerate() {
+                            let file_idx = FileIdx::new(fi);
+                            let fold_key = super::FileFoldKey {
+                                change_id: change_id.clone(),
+                                path: file.path.clone(),
+                            };
+                            if self.unfolded_files.contains(&fold_key) {
+                                if self.nodes[idx].diff_should_request(file_idx) {
+                                    self.nodes[idx].set_diff_state(file_idx, Loadable::Loading);
+                                    self.pending_repo_requests.push(RepoRequest::FileDiff {
+                                        target: DiffTarget::Commit(commit_id.clone()),
+                                        path: file.path.clone(),
+                                        old_path: file.old_path.clone(),
+                                    });
+                                }
+                                // Conflicted files show hunks instead of the
+                                // diff: re-request those too (a rewritten
+                                // commit gets a fresh node with no hunk cache).
+                                if file.has_conflict
+                                    && self.nodes[idx].conflict_hunks_should_request(file_idx)
+                                {
+                                    self.nodes[idx].set_conflict_hunks(file_idx, Loadable::Loading);
+                                    self.pending_repo_requests.push(RepoRequest::ConflictHunks {
+                                        commit_id: commit_id.clone(),
+                                        path: file.path.clone(),
+                                    });
+                                }
                             }
                         }
-                    }
 
-                    // Store loaded files and stats.
-                    self.nodes[idx].files = Loadable::Loaded(details.files);
-                    self.nodes[idx].stats = Loadable::Loaded(details.stats);
-                    // The file list is the first point this commit's changes
-                    // are known, so it's also where a line selection made
-                    // before a rewrite gets re-checked against them.
-                    self.drop_blocked_line_selection(idx);
-                    deferred.rebuild.add_entry(idx);
-                    deferred.scroll = true;
-                }
-                Err(error) => {
-                    if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                        self.nodes[idx].files = Loadable::Failed(error.clone());
-                        self.nodes[idx].stats = Loadable::Failed(error.clone());
-                        deferred.rebuild.add_entry(idx);
-                    }
-                    self.show_error_overlay(format!("load files for {commit_id}"), error);
-                }
-            },
-            RepoResult::FileDiff {
-                commit_id,
-                path,
-                result,
-            } => match result {
-                Ok(diff_result) => {
-                    self.clear_info_status();
-                    if let Some(idx) = self.entry_by_commit_id(&commit_id)
-                        && let Some(file_idx) = self.file_idx_by_path(idx, &path)
-                    {
-                        self.nodes[idx].set_diff(file_idx, diff_result);
+                        // Store loaded files and stats.
+                        self.nodes[idx].files = Loadable::Loaded(details.files);
+                        self.nodes[idx].stats = Loadable::Loaded(details.stats);
+                        // The file list is the first point this commit's changes
+                        // are known, so it's also where a line selection made
+                        // before a rewrite gets re-checked against them.
+                        self.drop_blocked_line_selection(idx);
                         deferred.rebuild.add_entry(idx);
                         deferred.scroll = true;
                     }
-                }
-                Err(error) => {
-                    if let Some(idx) = self.entry_by_commit_id(&commit_id)
-                        && let Some(file_idx) = self.file_idx_by_path(idx, &path)
-                    {
-                        self.nodes[idx].set_diff_state(file_idx, Loadable::Failed(error.clone()));
-                        deferred.rebuild.add_entry(idx);
+                    Err(error) => {
+                        if let Some(idx) = self.entry_by_commit_id(&commit_id) {
+                            self.nodes[idx].files = Loadable::Failed(error.clone());
+                            self.nodes[idx].stats = Loadable::Failed(error.clone());
+                            deferred.rebuild.add_entry(idx);
+                        }
+                        self.show_error_overlay(format!("load files for {commit_id}"), error);
                     }
-                    self.show_error_overlay(format!("load diff for {path}"), error);
+                },
+                DiffTarget::Evolution { commit, .. } => {
+                    let commit_id = commit;
+                    match result {
+                        Ok(files) => {
+                            self.evolog
+                                .files
+                                .insert(commit_id, super::Loadable::Loaded(files.files));
+                            if self.active_view == super::ActiveView::Evolog {
+                                deferred.rebuild.set_full();
+                                deferred.scroll = true;
+                            }
+                        }
+                        Err(error) => {
+                            self.evolog
+                                .files
+                                .insert(commit_id, super::Loadable::Failed(error.clone()));
+                            let msg = format!("failed to load evolog details: {error}");
+                            self.log_background_error(msg);
+                        }
+                    }
                 }
+                DiffTarget::Interdiff { from, to } => match result {
+                    // The interdiff target changed while this result was in flight.
+                    _ if !self.interdiff.target_is(&from, &to) => {}
+                    Ok(files) => {
+                        self.interdiff.files = Loadable::Loaded(files.files);
+                        if self.active_view == super::ActiveView::Interdiff {
+                            deferred.rebuild.set_full();
+                        }
+                    }
+                    Err(error) => {
+                        self.interdiff.files = Loadable::Failed(error.clone());
+                        let msg = format!("failed to load interdiff: {error}");
+                        self.log_background_error(msg);
+                    }
+                },
+            },
+            RepoResult::FileDiff {
+                target,
+                path,
+                result,
+            } => match target {
+                DiffTarget::Commit(commit_id) => match result {
+                    Ok(diff_result) => {
+                        self.clear_info_status();
+                        if let Some(idx) = self.entry_by_commit_id(&commit_id)
+                            && let Some(file_idx) = self.file_idx_by_path(idx, &path)
+                        {
+                            self.nodes[idx].set_diff(file_idx, diff_result);
+                            deferred.rebuild.add_entry(idx);
+                            deferred.scroll = true;
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(idx) = self.entry_by_commit_id(&commit_id)
+                            && let Some(file_idx) = self.file_idx_by_path(idx, &path)
+                        {
+                            self.nodes[idx]
+                                .set_diff_state(file_idx, Loadable::Failed(error.clone()));
+                            deferred.rebuild.add_entry(idx);
+                        }
+                        self.show_error_overlay(format!("load diff for {path}"), error);
+                    }
+                },
+                DiffTarget::Evolution { commit, .. } => {
+                    let commit_id = commit;
+                    match result {
+                        Ok(diff_result) => {
+                            let key = (commit_id, path);
+                            self.evolog
+                                .file_diffs
+                                .insert(key, super::Loadable::Loaded(diff_result));
+                            if self.active_view == super::ActiveView::Evolog {
+                                deferred.rebuild.set_full();
+                                deferred.scroll = true;
+                            }
+                        }
+                        Err(error) => {
+                            self.evolog
+                                .file_diffs
+                                .insert((commit_id, path), super::Loadable::Failed(error.clone()));
+                            let msg = format!("failed to load evolog file diff: {error}");
+                            self.log_background_error(msg);
+                        }
+                    }
+                }
+                DiffTarget::Interdiff { from, to } => match result {
+                    // The interdiff target changed while this result was in flight.
+                    _ if !self.interdiff.target_is(&from, &to) => {}
+                    Ok(diff_result) => {
+                        self.interdiff
+                            .file_diffs
+                            .insert(path, Loadable::Loaded(diff_result));
+                        if self.active_view == super::ActiveView::Interdiff {
+                            deferred.rebuild.set_full();
+                            deferred.scroll = true;
+                        }
+                    }
+                    Err(error) => {
+                        self.interdiff
+                            .file_diffs
+                            .insert(path, Loadable::Failed(error.clone()));
+                        let msg = format!("failed to load interdiff file diff: {error}");
+                        self.log_background_error(msg);
+                    }
+                },
             },
             RepoResult::WorkspaceUpdatedStale { message } => {
                 self.set_status(message);
@@ -629,91 +700,6 @@ impl App {
                 Err(error) => {
                     self.evolog.clear();
                     let msg = format!("failed to load evolog: {error}");
-                    self.log_background_error(msg);
-                }
-            },
-            RepoResult::EvoLogDetails { commit_id, result } => match result {
-                Ok(files) => {
-                    self.evolog
-                        .files
-                        .insert(commit_id, super::Loadable::Loaded(files));
-                    if self.active_view == super::ActiveView::Evolog {
-                        deferred.rebuild.set_full();
-                        deferred.scroll = true;
-                    }
-                }
-                Err(error) => {
-                    self.evolog
-                        .files
-                        .insert(commit_id, super::Loadable::Failed(error.clone()));
-                    let msg = format!("failed to load evolog details: {error}");
-                    self.log_background_error(msg);
-                }
-            },
-            RepoResult::EvoLogFileDiff {
-                commit_id,
-                path,
-                result,
-            } => match result {
-                Ok(diff_result) => {
-                    let key = (commit_id, path);
-                    self.evolog
-                        .file_diffs
-                        .insert(key, super::Loadable::Loaded(diff_result));
-                    if self.active_view == super::ActiveView::Evolog {
-                        deferred.rebuild.set_full();
-                        deferred.scroll = true;
-                    }
-                }
-                Err(error) => {
-                    self.evolog
-                        .file_diffs
-                        .insert((commit_id, path), super::Loadable::Failed(error.clone()));
-                    let msg = format!("failed to load evolog file diff: {error}");
-                    self.log_background_error(msg);
-                }
-            },
-            RepoResult::InterdiffDetails {
-                from_commit_id,
-                to_commit_id,
-                result,
-            } => match result {
-                // The interdiff target changed while this result was in flight.
-                _ if !self.interdiff.target_is(&from_commit_id, &to_commit_id) => {}
-                Ok(files) => {
-                    self.interdiff.files = Loadable::Loaded(files);
-                    if self.active_view == super::ActiveView::Interdiff {
-                        deferred.rebuild.set_full();
-                    }
-                }
-                Err(error) => {
-                    self.interdiff.files = Loadable::Failed(error.clone());
-                    let msg = format!("failed to load interdiff: {error}");
-                    self.log_background_error(msg);
-                }
-            },
-            RepoResult::InterdiffFileDiff {
-                from_commit_id,
-                to_commit_id,
-                path,
-                result,
-            } => match result {
-                // The interdiff target changed while this result was in flight.
-                _ if !self.interdiff.target_is(&from_commit_id, &to_commit_id) => {}
-                Ok(diff_result) => {
-                    self.interdiff
-                        .file_diffs
-                        .insert(path, Loadable::Loaded(diff_result));
-                    if self.active_view == super::ActiveView::Interdiff {
-                        deferred.rebuild.set_full();
-                        deferred.scroll = true;
-                    }
-                }
-                Err(error) => {
-                    self.interdiff
-                        .file_diffs
-                        .insert(path, Loadable::Failed(error.clone()));
-                    let msg = format!("failed to load interdiff file diff: {error}");
                     self.log_background_error(msg);
                 }
             },
@@ -950,6 +936,7 @@ impl App {
 #[cfg(test)]
 mod repo_result_tests {
     use super::super::{App, Loadable};
+    use crate::dag::DiffTarget;
     use crate::repo_service::{RepoError, RepoErrorKind, RepoResult};
     use crate::types::{CommitId, RepoPath};
 
@@ -968,8 +955,11 @@ mod repo_result_tests {
             .files
             .insert(commit_id.clone(), Loadable::Loading);
 
-        app.handle_repo_result(RepoResult::EvoLogDetails {
-            commit_id: commit_id.clone(),
+        app.handle_repo_result(RepoResult::DiffSummary {
+            target: DiffTarget::Evolution {
+                predecessor: CommitId::new("def456"),
+                commit: commit_id.clone(),
+            },
             result: Err(failure()),
         });
 
@@ -987,8 +977,11 @@ mod repo_result_tests {
         let key = (commit_id.clone(), path.clone());
         app.evolog.file_diffs.insert(key.clone(), Loadable::Loading);
 
-        app.handle_repo_result(RepoResult::EvoLogFileDiff {
-            commit_id,
+        app.handle_repo_result(RepoResult::FileDiff {
+            target: DiffTarget::Evolution {
+                predecessor: CommitId::new("def456"),
+                commit: commit_id,
+            },
             path,
             result: Err(failure()),
         });

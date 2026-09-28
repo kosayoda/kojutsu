@@ -72,12 +72,12 @@ impl DeferredWork {
 }
 
 use crate::conflict::{ConflictPick, ConflictTermKind};
-use crate::dag::{DiffLine, FileChange, LineStats};
+use crate::dag::{DiffLine, DiffTarget, FileChange, LineStats};
 use crate::idx::{ConflictHunkIdx, EntryIdx, EvoLogIdx, FileIdx, IndexVec, RowIdx};
 use crate::types::SmallVec;
 
 use crate::keymap::CommandFlags;
-use crate::repo_service::{RepoError, RepoRequest};
+use crate::repo_service::{RepoError, RepoRequest, RevsetLoadKind};
 use crate::types::{
     ChangeId, CommitId, ConflictHunkRef, DisplayRow, JumpTarget, RepoPath, RevisionArg,
     SearchScopes, SearchState, SelectionContext,
@@ -653,8 +653,9 @@ impl App {
         self.active_view = view;
         // Trigger lazy load of operation log data.
         if view == ActiveView::Operations && !self.op_log.loaded {
-            self.pending_repo_requests
-                .push(RepoRequest::load_operations(self.op_log.limit));
+            self.pending_repo_requests.push(RepoRequest::Operations {
+                limit: self.op_log.limit,
+            });
         }
         // Trigger lazy load of evolog data.
         if view == ActiveView::Evolog {
@@ -670,7 +671,7 @@ impl App {
                     self.evolog.clear();
                     self.evolog.commit_id = Some(commit_id.clone());
                     self.pending_repo_requests
-                        .push(RepoRequest::load_evolution_log(commit_id));
+                        .push(RepoRequest::EvolutionLog { commit_id });
                 }
             }
         }
@@ -699,10 +700,9 @@ impl App {
             to_label,
         });
         self.interdiff.files = Loadable::Loading;
-        self.pending_repo_requests
-            .push(crate::repo_service::RepoRequest::load_interdiff_details(
-                from, to,
-            ));
+        self.pending_repo_requests.push(RepoRequest::DiffSummary {
+            target: DiffTarget::Interdiff { from, to },
+        });
         self.switch_view(ActiveView::Interdiff);
     }
 
@@ -720,7 +720,7 @@ impl App {
     /// Enter the annotate (blame) view for a file at a specific commit.
     pub fn request_file_list(&mut self, commit_id: CommitId) {
         self.pending_repo_requests
-            .push(crate::repo_service::RepoRequest::load_file_list(commit_id));
+            .push(RepoRequest::FileList { commit_id });
     }
 
     pub fn enter_annotate_view(&mut self, commit_id: CommitId, path: crate::types::RepoPath) {
@@ -750,9 +750,7 @@ impl App {
         self.annotate.target = Some(target);
         self.annotate.lines = Loadable::Loading;
         self.pending_repo_requests
-            .push(crate::repo_service::RepoRequest::load_file_annotate(
-                commit_id, path,
-            ));
+            .push(RepoRequest::Annotate { commit_id, path });
     }
 
     /// Navigate to a different commit within the annotate view (time travel).
@@ -824,18 +822,16 @@ impl App {
         };
 
         self.jump_after_refresh = Some(JumpTarget::Prefix(change_str));
-        self.revset.load_state = Loadable::Loading;
-        self.revset.pending = Some(new_revset.clone().into());
         // Pure revset change: no filesystem interaction, no snapshot needed.
-        self.pending_repo_requests
-            .push(RepoRequest::load_revset_no_snapshot(Some(new_revset)));
+        self.request_revset_load(Some(new_revset), RevsetLoadKind::NoSnapshot);
     }
 
     pub fn request_op_log_load_more(&mut self) {
         self.op_log.limit += OP_LOG_BATCH_SIZE;
         self.op_log.loaded = false;
-        self.pending_repo_requests
-            .push(RepoRequest::load_operations(self.op_log.limit));
+        self.pending_repo_requests.push(RepoRequest::Operations {
+            limit: self.op_log.limit,
+        });
     }
 
     pub fn selected_bookmark_entry(&self) -> Option<&BookmarkViewEntry> {
@@ -1558,7 +1554,7 @@ impl App {
     ///
     /// Does not carry `diff.max_file_size_mib`, which lives in the repo
     /// service; send
-    /// [`RepoRequest::set_diff_size_limit`](crate::repo_service::RepoRequest::set_diff_size_limit)
+    /// [`RepoRequest::set_diff_size_limit`](RepoRequest::set_diff_size_limit)
     /// alongside this.
     pub fn apply_reloaded_config(&mut self, config: Rc<crate::theme::Config>) {
         self.config = config;

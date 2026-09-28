@@ -143,11 +143,26 @@ pub struct LineStats {
     pub removed: u32,
 }
 
-/// Result of computing file-level changes for a commit.
-pub struct CommitDetails {
+/// Two trees whose difference is shown as a list of changed files, each
+/// unfoldable to its diff.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum DiffTarget {
+    /// A commit against its parents: the commit's own changes.
+    Commit(CommitId),
+    /// One evolution step: a predecessor's tree against its successor's.
+    Evolution {
+        predecessor: CommitId,
+        commit: CommitId,
+    },
+    /// `from` rebased onto `to`'s parents, against `to`: how the change
+    /// itself differs, ignoring what its parents brought in.
+    Interdiff { from: CommitId, to: CommitId },
+}
+
+/// The changed files between a `DiffTarget`'s trees, with line totals.
+pub struct DiffSummary {
     pub files: Vec<FileChange>,
     pub stats: LineStats,
-    pub is_empty: bool,
 }
 
 /// Shortest unique prefix lengths for a commit's change and commit IDs,

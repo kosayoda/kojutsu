@@ -1,4 +1,5 @@
 use super::{ActiveView, App, Loadable};
+use crate::dag::DiffTarget;
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, CommandLogIdx, ConflictHunkIdx,
     ConflictLineIdx, ConflictTermIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx,
@@ -824,8 +825,9 @@ impl App {
                 let commit_id = self.commit_id(entry_idx).clone();
                 self.nodes[entry_idx].files = Loadable::Loading;
                 self.nodes[entry_idx].stats = Loadable::Loading;
-                self.pending_repo_requests
-                    .push(RepoRequest::load_commit_details(commit_id));
+                self.pending_repo_requests.push(RepoRequest::DiffSummary {
+                    target: DiffTarget::Commit(commit_id),
+                });
             }
             self.unfolded_commits.insert(change_id);
         }
@@ -917,18 +919,18 @@ impl App {
                 // Request diff lines if needed.
                 if self.nodes[entry_idx].diff_should_request(file_idx) {
                     self.nodes[entry_idx].set_diff_state(file_idx, Loadable::Loading);
-                    self.pending_repo_requests.push(RepoRequest::load_file_diff(
-                        commit_id.clone(),
-                        path.clone(),
+                    self.pending_repo_requests.push(RepoRequest::FileDiff {
+                        target: DiffTarget::Commit(commit_id.clone()),
+                        path: path.clone(),
                         old_path,
-                    ));
+                    });
                 }
 
                 // Also request conflict hunks if the file is conflicted.
                 if has_conflict && self.nodes[entry_idx].conflict_hunks_should_request(file_idx) {
                     self.nodes[entry_idx].set_conflict_hunks(file_idx, Loadable::Loading);
                     self.pending_repo_requests
-                        .push(RepoRequest::load_conflict_hunks(commit_id, path));
+                        .push(RepoRequest::ConflictHunks { commit_id, path });
                 }
             }
             self.unfolded_files.insert(fold_key);
@@ -959,11 +961,12 @@ impl App {
                 self.evolog
                     .files
                     .insert(commit_id.clone(), Loadable::Loading);
-                self.pending_repo_requests
-                    .push(RepoRequest::load_evolog_details(
-                        pred_id.clone(),
-                        commit_id.clone(),
-                    ));
+                self.pending_repo_requests.push(RepoRequest::DiffSummary {
+                    target: DiffTarget::Evolution {
+                        predecessor: pred_id.clone(),
+                        commit: commit_id.clone(),
+                    },
+                });
             }
             self.evolog.unfolded.insert(commit_id.clone());
         }
@@ -1001,12 +1004,14 @@ impl App {
                 self.evolog
                     .file_diffs
                     .insert(key.clone(), Loadable::Loading);
-                self.pending_repo_requests
-                    .push(RepoRequest::load_evolog_file_diff(
-                        pred_id.clone(),
-                        commit_id,
-                        path,
-                    ));
+                self.pending_repo_requests.push(RepoRequest::FileDiff {
+                    target: DiffTarget::Evolution {
+                        predecessor: pred_id.clone(),
+                        commit: commit_id,
+                    },
+                    path,
+                    old_path: None,
+                });
             }
             self.evolog.unfolded_files.insert(key.clone());
         }
@@ -1112,12 +1117,14 @@ impl App {
                 self.interdiff
                     .file_diffs
                     .insert(path.clone(), Loadable::Loading);
-                self.pending_repo_requests
-                    .push(RepoRequest::load_interdiff_file_diff(
-                        from.clone(),
-                        to.clone(),
-                        path.clone(),
-                    ));
+                self.pending_repo_requests.push(RepoRequest::FileDiff {
+                    target: DiffTarget::Interdiff {
+                        from: from.clone(),
+                        to: to.clone(),
+                    },
+                    path: path.clone(),
+                    old_path: None,
+                });
             }
             self.interdiff.unfolded_files.insert(path.clone());
         }
@@ -1143,8 +1150,9 @@ impl App {
                 .is_none_or(Loadable::should_request)
             {
                 self.op_log.details.insert(op_id.clone(), Loadable::Loading);
-                self.pending_repo_requests
-                    .push(RepoRequest::load_op_diff(op_id.clone()));
+                self.pending_repo_requests.push(RepoRequest::OpDiff {
+                    op_id: op_id.clone(),
+                });
             }
             self.op_log.unfolded.insert(op_id.clone());
         }

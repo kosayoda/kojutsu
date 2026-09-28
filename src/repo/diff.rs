@@ -24,8 +24,8 @@ use pollster::FutureExt as _;
 use super::JjRepo;
 use crate::conflict::{ConflictTerm, ConflictTermKind, ConflictText};
 use crate::dag::{
-    CommitDetails, DiffLine, DiffLineKind, DiffResult, DiffToken, DiffTokenKind, FileChange,
-    FileStatus, LineStats,
+    DiffLine, DiffLineKind, DiffResult, DiffSummary, DiffTarget, DiffToken, DiffTokenKind,
+    FileChange, FileStatus, LineStats,
 };
 use crate::types::{CommitId as UiCommitId, RepoPath};
 
@@ -203,31 +203,68 @@ fn too_large_placeholder(limit: usize) -> DiffResult {
     ))
 }
 
+/// The trees a `DiffTarget` compares, resolved against the repo.
+struct TreePair {
+    before: MergedTree,
+    after: MergedTree,
+}
+
 impl JjRepo {
-    /// Compute the file-level changes and line totals for a commit.
-    pub fn commit_details(&self, commit_id: &UiCommitId) -> Result<CommitDetails> {
+    /// Resolve a diff target to the pair of trees it compares.
+    fn tree_pair(&self, target: &DiffTarget) -> Result<TreePair> {
         let repo = self.repo.as_ref();
-        let commit_hex_id = commit_id.as_str();
-        let commit_id = super::parse_commit_id(commit_hex_id)?;
-        let commit = repo
-            .store()
-            .get_commit(&commit_id)
-            .wrap_err("failed to load commit for diff")?;
+        match target {
+            DiffTarget::Commit(commit_id) => {
+                let commit = self.load_commit(commit_id)?;
+                let before = commit
+                    .parent_tree(repo)
+                    .block_on()
+                    .wrap_err("failed to get parent tree")?;
+                Ok(TreePair {
+                    before,
+                    after: commit.tree(),
+                })
+            }
+            DiffTarget::Evolution {
+                predecessor,
+                commit,
+            } => Ok(TreePair {
+                before: self.load_commit(predecessor)?.tree(),
+                after: self.load_commit(commit)?.tree(),
+            }),
+            DiffTarget::Interdiff { from, to } => {
+                let from = self.load_commit(from)?;
+                let to = self.load_commit(to)?;
+                let merge_input = Merge::from_removes_adds(
+                    [(from.parent_tree(repo).block_on()?, String::new())],
+                    [
+                        (to.parent_tree(repo).block_on()?, String::new()),
+                        (from.tree(), String::new()),
+                    ],
+                );
+                let before = MergedTree::merge(merge_input)
+                    .block_on()
+                    .map_err(|e| color_eyre::eyre::eyre!("tree merge failed: {e}"))?;
+                Ok(TreePair {
+                    before,
+                    after: to.tree(),
+                })
+            }
+        }
+    }
 
-        let parent_tree = commit
-            .parent_tree(repo)
-            .block_on()
-            .wrap_err("failed to get parent tree")?;
-        let commit_tree = commit.tree();
-
-        let mut changes = Vec::new();
-        let mut stats = LineStats::default();
-        let labels = ConflictLabels::unlabeled();
-
-        // Build copy records for rename/copy detection.
+    /// Rename and copy records for a target. Only a commit's own changes
+    /// carry them; the other targets compare trees that aren't parent and
+    /// child, so their files are listed as plain adds and deletes.
+    fn copy_records(&self, target: &DiffTarget) -> Result<jj_lib::copies::CopyRecords> {
         let mut copy_records = jj_lib::copies::CopyRecords::default();
+        let DiffTarget::Commit(commit_id) = target else {
+            return Ok(copy_records);
+        };
+        let commit = self.load_commit(commit_id)?;
+        let store = self.repo.store();
         for parent_id in commit.parent_ids() {
-            match repo.store().get_copy_records(None, parent_id, commit.id()) {
+            match store.get_copy_records(None, parent_id, commit.id()) {
                 Ok(stream) => {
                     use futures::TryStreamExt as _;
                     let records: Vec<_> = stream
@@ -242,123 +279,24 @@ impl JjRepo {
                 }
             }
         }
+        Ok(copy_records)
+    }
 
-        let mut diff_stream =
-            parent_tree.diff_stream_with_copies(&commit_tree, &EverythingMatcher, &copy_records);
-
-        while let Some(entry) = diff_stream.next().block_on() {
-            let target_path = entry.path.target().as_internal_file_string().to_string();
-            let values = match entry.values {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("diff entry error for {target_path}: {e}");
-                    changes.push(FileChange {
-                        path: RepoPath::new(&target_path),
-                        old_path: None,
-                        status: FileStatus::Error,
-                        has_conflict: false,
-                        baseline_conflicted: false,
-                        is_submodule: false,
-                        stats: LineStats::default(),
-                    });
-                    continue;
-                }
-            };
-
-            let before_present = values.before.is_present();
-            let after_present = values.after.is_present();
-
-            let (status, old_path) = if let Some(copy_op) = entry.path.copy_operation() {
-                match copy_op {
-                    jj_lib::copies::CopyOperation::Rename => (
-                        FileStatus::Renamed,
-                        entry
-                            .path
-                            .source
-                            .as_ref()
-                            .map(|(p, _)| RepoPath::new(p.as_internal_file_string())),
-                    ),
-                    jj_lib::copies::CopyOperation::Copy => (
-                        FileStatus::Copied,
-                        entry
-                            .path
-                            .source
-                            .as_ref()
-                            .map(|(p, _)| RepoPath::new(p.as_internal_file_string())),
-                    ),
-                }
-            } else {
-                match (before_present, after_present) {
-                    (false, true) => (FileStatus::Added, None),
-                    (true, false) => (FileStatus::Deleted, None),
-                    (true, true) => (FileStatus::Modified, None),
-                    (false, false) => continue,
-                }
-            };
-
-            let has_conflict = !values.after.is_resolved();
-            let baseline_conflicted = !values.before.is_resolved();
-            changes.push(FileChange {
-                path: RepoPath::new(&target_path),
-                old_path: old_path.clone(),
-                status,
-                has_conflict,
-                baseline_conflicted,
-                is_submodule: is_submodule_change(&values),
-                stats: LineStats::default(),
-            });
-
-            // For stats: materialize before content from old path if renamed/copied.
-            let before_repo_path = old_path
-                .as_ref()
-                .and_then(|p| RepoPathBuf::from_internal_string(p.as_str()).ok())
-                .unwrap_or_else(|| {
-                    RepoPathBuf::from_internal_string(&target_path).expect("target path is valid")
-                });
-            let after_repo_path =
-                RepoPathBuf::from_internal_string(&target_path).expect("target path is valid");
-
-            let before = materialize_diff_side(
-                repo.store(),
-                &before_repo_path,
-                values.before,
-                &labels,
-                self.diff_size_limit,
-            )?;
-            let after = materialize_diff_side(
-                repo.store(),
-                &after_repo_path,
-                values.after,
-                &labels,
-                self.diff_size_limit,
-            )?;
-            let (
-                DiffSideContent::Text {
-                    content: before, ..
-                },
-                DiffSideContent::Text { content: after, .. },
-            ) = (before, after)
-            else {
-                continue;
-            };
-
-            let contents = Diff::new(before.as_ref(), after.as_ref());
-            let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
-            let file_stats = count_line_stats(&hunks);
-            stats.added = stats.added.saturating_add(file_stats.added);
-            stats.removed = stats.removed.saturating_add(file_stats.removed);
-            if let Some(fc) = changes.last_mut() {
-                fc.stats = file_stats;
-            }
-        }
-
-        // Add any conflicted files not already found by the diff pass.
-        if commit.has_conflict() {
-            let existing: HashSet<RepoPath> = changes.iter().map(|c| c.path.clone()).collect();
-            for (path, value) in commit_tree.conflicts() {
+    /// Compute the changed files and line totals for a diff target.
+    pub fn diff_summary(&self, target: &DiffTarget) -> Result<DiffSummary> {
+        let TreePair { before, after } = self.tree_pair(target)?;
+        let copy_records = self.copy_records(target)?;
+        let mut summary = self.tree_changes(&before, &after, &copy_records)?;
+        // A commit lists every file it leaves conflicted, including ones its
+        // parents already had conflicted and it didn't touch: they still
+        // need resolving there, as `jj status` reports.
+        if matches!(target, DiffTarget::Commit(_)) && after.has_conflict() {
+            let existing: HashSet<RepoPath> =
+                summary.files.iter().map(|c| c.path.clone()).collect();
+            for (path, value) in after.conflicts() {
                 let repo_path = RepoPath::new(path.as_internal_file_string());
                 if !existing.contains(&repo_path) {
-                    changes.push(FileChange {
+                    summary.files.push(FileChange {
                         path: repo_path,
                         old_path: None,
                         status: FileStatus::Modified,
@@ -370,35 +308,115 @@ impl JjRepo {
                 }
             }
         }
-
-        let is_empty = changes.is_empty();
-        Ok(CommitDetails {
-            files: changes,
-            stats,
-            is_empty,
-        })
+        Ok(summary)
     }
 
-    /// Compute the line-level diff for a single file in a commit.
-    /// For renamed/copied files, `old_path` provides the source path to diff against.
-    /// Returns (git_diff_lines, color_words_lines).
+    /// List the files that differ between two trees, with per-file and total
+    /// line stats.
+    fn tree_changes(
+        &self,
+        before_tree: &MergedTree,
+        after_tree: &MergedTree,
+        copy_records: &jj_lib::copies::CopyRecords,
+    ) -> Result<DiffSummary> {
+        let store = self.repo.store();
+        let labels = ConflictLabels::unlabeled();
+        let mut files = Vec::new();
+        let mut stats = LineStats::default();
+
+        let mut diff_stream =
+            before_tree.diff_stream_with_copies(after_tree, &EverythingMatcher, copy_records);
+        while let Some(entry) = diff_stream.next().block_on() {
+            let after_path = entry.path.target();
+            let path = RepoPath::new(after_path.as_internal_file_string());
+            let values = match entry.values {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!("diff entry error for {path}: {e}");
+                    files.push(FileChange {
+                        path,
+                        old_path: None,
+                        status: FileStatus::Error,
+                        has_conflict: false,
+                        baseline_conflicted: false,
+                        is_submodule: false,
+                        stats: LineStats::default(),
+                    });
+                    continue;
+                }
+            };
+
+            let source_path = entry.path.source.as_ref().map(|(p, _)| p);
+            let status = match entry.path.copy_operation() {
+                Some(jj_lib::copies::CopyOperation::Rename) => FileStatus::Renamed,
+                Some(jj_lib::copies::CopyOperation::Copy) => FileStatus::Copied,
+                None => match (values.before.is_present(), values.after.is_present()) {
+                    (false, true) => FileStatus::Added,
+                    (true, false) => FileStatus::Deleted,
+                    (true, true) => FileStatus::Modified,
+                    (false, false) => continue,
+                },
+            };
+            let old_path = source_path.map(|p| RepoPath::new(p.as_internal_file_string()));
+            let has_conflict = !values.after.is_resolved();
+            let baseline_conflicted = !values.before.is_resolved();
+            let is_submodule = is_submodule_change(&values);
+
+            // Stats diff the renamed or copied file against its source.
+            let before_path = source_path.map_or(after_path, |p| p.as_ref());
+            let before = materialize_diff_side(
+                store,
+                before_path,
+                values.before,
+                &labels,
+                self.diff_size_limit,
+            )?;
+            let after = materialize_diff_side(
+                store,
+                after_path,
+                values.after,
+                &labels,
+                self.diff_size_limit,
+            )?;
+            let file_stats = match (before, after) {
+                (
+                    DiffSideContent::Text {
+                        content: before, ..
+                    },
+                    DiffSideContent::Text { content: after, .. },
+                ) => {
+                    let contents = Diff::new(before.as_ref(), after.as_ref());
+                    let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
+                    count_line_stats(&hunks)
+                }
+                _ => LineStats::default(),
+            };
+            stats.added = stats.added.saturating_add(file_stats.added);
+            stats.removed = stats.removed.saturating_add(file_stats.removed);
+
+            files.push(FileChange {
+                path,
+                old_path,
+                status,
+                has_conflict,
+                baseline_conflicted,
+                is_submodule,
+                stats: file_stats,
+            });
+        }
+        Ok(DiffSummary { files, stats })
+    }
+
+    /// Compute the line-level diff of one file in a diff target. For renamed
+    /// or copied files, `old_path` is the source path in the before tree.
     pub fn file_diff(
         &self,
-        commit_id: &UiCommitId,
+        target: &DiffTarget,
         path: &RepoPath,
         old_path: Option<&RepoPath>,
     ) -> Result<DiffResult> {
-        let repo = self.repo.as_ref();
-        let commit_hex_id = commit_id.as_str();
-        let commit_id = super::parse_commit_id(commit_hex_id)?;
-        let commit = repo
-            .store()
-            .get_commit(&commit_id)
-            .wrap_err("failed to load commit for diff")?;
-
-        let parent_tree = commit.parent_tree(repo).block_on()?;
-        let commit_tree = commit.tree();
-        self.trees_file_diff(&parent_tree, &commit_tree, path, old_path)
+        let TreePair { before, after } = self.tree_pair(target)?;
+        self.trees_file_diff(&before, &after, path, old_path)
     }
 
     /// Get the conflict hunks for a conflicted file, broken down by hunk.
@@ -411,12 +429,7 @@ impl JjRepo {
         use crate::conflict::ConflictHunkKind;
 
         let repo = self.repo.as_ref();
-        let backend_id = super::parse_commit_id(commit_id.as_str())?;
-        let commit = repo
-            .store()
-            .get_commit(&backend_id)
-            .wrap_err("failed to load commit")?;
-        let tree = commit.tree();
+        let tree = self.load_commit(commit_id)?.tree();
         let repo_path = RepoPathBuf::from_internal_string(path.as_str())
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
         let tree_value = tree.path_value(&repo_path).block_on()?;
@@ -458,115 +471,6 @@ impl JjRepo {
         };
 
         Ok(hunks)
-    }
-
-    /// Compute file-level changes between two commits (for evolog level-1 unfold).
-    pub fn inter_commit_details(&self, from_id: &str, to_id: &str) -> Result<Vec<FileChange>> {
-        let repo = self.repo.as_ref();
-        let from_commit_id = super::parse_commit_id(from_id)?;
-        let to_commit_id = super::parse_commit_id(to_id)?;
-        let from_commit = repo.store().get_commit(&from_commit_id)?;
-        let to_commit = repo.store().get_commit(&to_commit_id)?;
-
-        let from_tree = from_commit.tree();
-        let to_tree = to_commit.tree();
-        let copy_records = jj_lib::copies::CopyRecords::default();
-        let labels = ConflictLabels::unlabeled();
-
-        let mut changes = Vec::new();
-        let mut diff_stream =
-            from_tree.diff_stream_with_copies(&to_tree, &EverythingMatcher, &copy_records);
-
-        while let Some(entry) = diff_stream.next().block_on() {
-            let path = entry.path.target();
-            let target_path = path.as_internal_file_string().to_string();
-            let values = match entry.values {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("inter-commit diff entry error for {target_path}: {e}");
-                    changes.push(FileChange {
-                        path: RepoPath::new(&target_path),
-                        old_path: None,
-                        status: FileStatus::Error,
-                        has_conflict: false,
-                        baseline_conflicted: false,
-                        is_submodule: false,
-                        stats: LineStats::default(),
-                    });
-                    continue;
-                }
-            };
-
-            let before_present = values.before.is_present();
-            let after_present = values.after.is_present();
-            let status = match (before_present, after_present) {
-                (false, true) => FileStatus::Added,
-                (true, false) => FileStatus::Deleted,
-                (true, true) => FileStatus::Modified,
-                (false, false) => continue,
-            };
-            let has_conflict = !values.after.is_resolved();
-            let baseline_conflicted = !values.before.is_resolved();
-            let is_submodule = is_submodule_change(&values);
-
-            // Compute line stats by materializing + diffing.
-            let mut file_stats = LineStats::default();
-            let before = materialize_diff_side(
-                repo.store(),
-                path,
-                values.before,
-                &labels,
-                self.diff_size_limit,
-            )?;
-            let after = materialize_diff_side(
-                repo.store(),
-                path,
-                values.after,
-                &labels,
-                self.diff_size_limit,
-            )?;
-            if let (
-                DiffSideContent::Text {
-                    content: before, ..
-                },
-                DiffSideContent::Text { content: after, .. },
-            ) = (before, after)
-            {
-                let contents = Diff::new(before.as_ref(), after.as_ref());
-                let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
-                file_stats = count_line_stats(&hunks);
-            }
-
-            changes.push(FileChange {
-                path: RepoPath::new(&target_path),
-                old_path: None,
-                status,
-                has_conflict,
-                baseline_conflicted,
-                is_submodule,
-                stats: file_stats,
-            });
-        }
-
-        Ok(changes)
-    }
-
-    /// Compute the diff for a single file between two commits (for evolog level-2 unfold).
-    pub fn inter_commit_file_diff(
-        &self,
-        from_id: &str,
-        to_id: &str,
-        path: &RepoPath,
-    ) -> Result<DiffResult> {
-        let repo = self.repo.as_ref();
-        let from_commit_id = super::parse_commit_id(from_id)?;
-        let to_commit_id = super::parse_commit_id(to_id)?;
-        let from_commit = repo.store().get_commit(&from_commit_id)?;
-        let to_commit = repo.store().get_commit(&to_commit_id)?;
-
-        let from_tree = from_commit.tree();
-        let to_tree = to_commit.tree();
-        self.trees_file_diff(&from_tree, &to_tree, path, None)
     }
 
     /// Compute the diff for a single file between two trees.
@@ -641,133 +545,6 @@ impl JjRepo {
         })
     }
 
-    /// Compute the rebased tree pair for an interdiff.
-    /// Returns (rebased_from_tree, to_tree) where rebased_from_tree has from's
-    /// changes applied onto to's parent base via 3-way merge.
-    fn compute_interdiff_trees(
-        &self,
-        from_id: &str,
-        to_id: &str,
-    ) -> Result<(MergedTree, MergedTree)> {
-        let repo = self.repo.as_ref();
-        let from_commit_id = super::parse_commit_id(from_id)?;
-        let to_commit_id = super::parse_commit_id(to_id)?;
-        let from_commit = repo.store().get_commit(&from_commit_id)?;
-        let to_commit = repo.store().get_commit(&to_commit_id)?;
-
-        let from_parent_tree = from_commit.parent_tree(repo).block_on()?;
-        let from_tree = from_commit.tree();
-        let to_parent_tree = to_commit.parent_tree(repo).block_on()?;
-        let to_tree = to_commit.tree();
-
-        let merge_input = Merge::from_removes_adds(
-            [(from_parent_tree, String::new())],
-            [(to_parent_tree, String::new()), (from_tree, String::new())],
-        );
-        let rebased_tree = MergedTree::merge(merge_input)
-            .block_on()
-            .map_err(|e| color_eyre::eyre::eyre!("tree merge failed: {e}"))?;
-
-        Ok((rebased_tree, to_tree))
-    }
-
-    /// Compute file-level changes for an interdiff between two commits.
-    /// Rebases `from` onto `to`'s parents, then diffs the result against `to`.
-    pub fn interdiff_details(&self, from_id: &str, to_id: &str) -> Result<Vec<FileChange>> {
-        let repo = self.repo.as_ref();
-        let (rebased_tree, to_tree) = self.compute_interdiff_trees(from_id, to_id)?;
-
-        let copy_records = jj_lib::copies::CopyRecords::default();
-        let labels = ConflictLabels::unlabeled();
-
-        let mut changes = Vec::new();
-        let mut diff_stream =
-            rebased_tree.diff_stream_with_copies(&to_tree, &EverythingMatcher, &copy_records);
-
-        while let Some(entry) = diff_stream.next().block_on() {
-            let path = entry.path.target();
-            let target_path = path.as_internal_file_string().to_string();
-            let values = match entry.values {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!("interdiff entry error for {target_path}: {e}");
-                    changes.push(FileChange {
-                        path: RepoPath::new(&target_path),
-                        old_path: None,
-                        status: FileStatus::Error,
-                        has_conflict: false,
-                        baseline_conflicted: false,
-                        is_submodule: false,
-                        stats: LineStats::default(),
-                    });
-                    continue;
-                }
-            };
-
-            let before_present = values.before.is_present();
-            let after_present = values.after.is_present();
-            let status = match (before_present, after_present) {
-                (false, true) => FileStatus::Added,
-                (true, false) => FileStatus::Deleted,
-                (true, true) => FileStatus::Modified,
-                (false, false) => continue,
-            };
-            let has_conflict = !values.after.is_resolved();
-            let baseline_conflicted = !values.before.is_resolved();
-            let is_submodule = is_submodule_change(&values);
-
-            let mut file_stats = LineStats::default();
-            let before = materialize_diff_side(
-                repo.store(),
-                path,
-                values.before,
-                &labels,
-                self.diff_size_limit,
-            )?;
-            let after = materialize_diff_side(
-                repo.store(),
-                path,
-                values.after,
-                &labels,
-                self.diff_size_limit,
-            )?;
-            if let (
-                DiffSideContent::Text {
-                    content: before, ..
-                },
-                DiffSideContent::Text { content: after, .. },
-            ) = (before, after)
-            {
-                let contents = Diff::new(before.as_ref(), after.as_ref());
-                let hunks = unified::unified_diff_hunks(contents, 0, Default::default());
-                file_stats = count_line_stats(&hunks);
-            }
-
-            changes.push(FileChange {
-                path: RepoPath::new(&target_path),
-                old_path: None,
-                status,
-                has_conflict,
-                baseline_conflicted,
-                is_submodule,
-                stats: file_stats,
-            });
-        }
-
-        Ok(changes)
-    }
-
-    /// Compute per-file diff for an interdiff between two commits.
-    pub fn interdiff_file_diff(
-        &self,
-        from_id: &str,
-        to_id: &str,
-        path: &RepoPath,
-    ) -> Result<DiffResult> {
-        let (rebased_tree, to_tree) = self.compute_interdiff_trees(from_id, to_id)?;
-        self.trees_file_diff(&rebased_tree, &to_tree, path, None)
-    }
-
     /// Get the raw content of a file at a specific commit.
     pub fn get_file_at_commit(
         &self,
@@ -775,9 +552,7 @@ impl JjRepo {
         file_path: &RepoPath,
     ) -> Result<Vec<u8>> {
         let repo = self.repo.as_ref();
-        let backend_id = super::parse_commit_id(commit_id.as_str())?;
-        let commit = repo.store().get_commit(&backend_id)?;
-        let tree = commit.tree();
+        let tree = self.load_commit(commit_id)?.tree();
         let repo_path = RepoPathBuf::from_internal_string(file_path.as_str())
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
         let value = tree.path_value(&repo_path).block_on()?;

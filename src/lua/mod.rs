@@ -806,7 +806,10 @@ impl LuaEngine {
                     app.refresh(crate::repo_service::RevsetLoadKind::NoSnapshot);
                 }
                 PendingAction::SetRevset(revset) => {
-                    app.request_revset_load_no_snapshot(Some(revset));
+                    app.request_revset_load(
+                        Some(revset),
+                        crate::repo_service::RevsetLoadKind::NoSnapshot,
+                    );
                 }
                 PendingAction::SwitchView(view) => {
                     app.switch_view(view);

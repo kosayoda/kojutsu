@@ -8,7 +8,7 @@ use std::thread;
 use jj_lib::repo::Repo as _;
 use pollster::FutureExt as _;
 
-use crate::dag::{CommitDetails, DagEntry, DivergenceInfo, PrefixLengthUpdate};
+use crate::dag::{DagEntry, DiffSummary, DiffTarget, DivergenceInfo, PrefixLengthUpdate};
 use crate::repo::{JjRepo, SnapshotError};
 use crate::types::{BookmarkName, CommitId, OperationId, RemoteName, RepoPath, TagName};
 
@@ -16,7 +16,7 @@ pub struct RepoService;
 
 #[derive(Clone)]
 pub struct RepoRequestHandle {
-    request_tx: Sender<RepoRequest>,
+    request_tx: Sender<Envelope>,
     current_epoch: Arc<AtomicU64>,
 }
 
@@ -33,17 +33,22 @@ pub enum RevsetLoadKind {
     NoSnapshot,
 }
 
+/// Work for the repository service. Results come back as [`RepoResult`]s
+/// carrying the request's key.
 #[derive(Clone)]
-enum RepoRequestKind {
+pub enum RepoRequest {
     Revset {
         revset: Option<String>,
         load_kind: RevsetLoadKind,
     },
-    Commit {
-        commit_id: CommitId,
+    /// The changed files of a diff target.
+    DiffSummary {
+        target: DiffTarget,
     },
+    /// One file's diff within a diff target. `old_path` is the source of a
+    /// rename or copy.
     FileDiff {
-        commit_id: CommitId,
+        target: DiffTarget,
         path: RepoPath,
         old_path: Option<RepoPath>,
     },
@@ -60,24 +65,6 @@ enum RepoRequestKind {
     EvolutionLog {
         commit_id: CommitId,
     },
-    EvoLogDetails {
-        from_commit_id: CommitId,
-        to_commit_id: CommitId,
-    },
-    EvoLogFileDiff {
-        from_commit_id: CommitId,
-        to_commit_id: CommitId,
-        path: RepoPath,
-    },
-    InterdiffDetails {
-        from_commit_id: CommitId,
-        to_commit_id: CommitId,
-    },
-    InterdiffFileDiff {
-        from_commit_id: CommitId,
-        to_commit_id: CommitId,
-        path: RepoPath,
-    },
     Annotate {
         commit_id: CommitId,
         path: RepoPath,
@@ -85,26 +72,24 @@ enum RepoRequestKind {
     FileList {
         commit_id: CommitId,
     },
-    /// Replace the diff size limit, after the config was reloaded.
+    /// Replace the diff size limit, after the config was reloaded. Queued
+    /// behind whatever is in flight, so a diff already being computed keeps
+    /// the limit it started under.
     SetDiffSizeLimit {
         bytes: usize,
     },
 }
 
-impl RepoRequestKind {
+impl RepoRequest {
     fn label(&self) -> &'static str {
         match self {
             Self::Revset { .. } => "revset",
-            Self::Commit { .. } => "commit",
+            Self::DiffSummary { .. } => "diff_summary",
             Self::FileDiff { .. } => "file_diff",
             Self::Operations { .. } => "operations",
             Self::ConflictHunks { .. } => "conflict_hunks",
             Self::OpDiff { .. } => "op_diff",
             Self::EvolutionLog { .. } => "evolution_log",
-            Self::EvoLogDetails { .. } => "evolog_details",
-            Self::EvoLogFileDiff { .. } => "evolog_file_diff",
-            Self::InterdiffDetails { .. } => "interdiff_details",
-            Self::InterdiffFileDiff { .. } => "interdiff_file_diff",
             Self::Annotate { .. } => "annotate",
             Self::FileList { .. } => "file_list",
             Self::SetDiffSizeLimit { .. } => "set_diff_size_limit",
@@ -112,10 +97,10 @@ impl RepoRequestKind {
     }
 }
 
-#[derive(Clone)]
-pub struct RepoRequest {
+/// A request stamped with the revset epoch current when it was sent.
+struct Envelope {
     epoch: u64,
-    kind: RepoRequestKind,
+    request: RepoRequest,
 }
 
 /// What subsystem produced the error.
@@ -191,12 +176,12 @@ pub enum RepoResult {
     PrefixLengths {
         updates: Vec<(CommitId, PrefixLengthUpdate)>,
     },
-    CommitDetails {
-        commit_id: CommitId,
-        result: Result<CommitDetails, RepoError>,
+    DiffSummary {
+        target: DiffTarget,
+        result: Result<DiffSummary, RepoError>,
     },
     FileDiff {
-        commit_id: CommitId,
+        target: DiffTarget,
         path: RepoPath,
         result: Result<crate::dag::DiffResult, RepoError>,
     },
@@ -222,26 +207,6 @@ pub enum RepoResult {
         commit_id: CommitId,
         result: Result<Vec<crate::app::EvoLogEntry>, RepoError>,
     },
-    EvoLogDetails {
-        commit_id: CommitId,
-        result: Result<Vec<crate::dag::FileChange>, RepoError>,
-    },
-    EvoLogFileDiff {
-        commit_id: CommitId,
-        path: RepoPath,
-        result: Result<crate::dag::DiffResult, RepoError>,
-    },
-    InterdiffDetails {
-        from_commit_id: CommitId,
-        to_commit_id: CommitId,
-        result: Result<Vec<crate::dag::FileChange>, RepoError>,
-    },
-    InterdiffFileDiff {
-        from_commit_id: CommitId,
-        to_commit_id: CommitId,
-        path: RepoPath,
-        result: Result<crate::dag::DiffResult, RepoError>,
-    },
     Annotate {
         commit_id: CommitId,
         path: RepoPath,
@@ -253,144 +218,6 @@ pub enum RepoResult {
     },
     /// A background computation thread panicked or failed.
     BackgroundError { error: RepoError },
-}
-
-impl RepoRequest {
-    pub fn load_revset(revset: Option<String>) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::Revset {
-                revset,
-                load_kind: RevsetLoadKind::Snapshot,
-            },
-        }
-    }
-
-    pub fn load_revset_no_snapshot(revset: Option<String>) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::Revset {
-                revset,
-                load_kind: RevsetLoadKind::NoSnapshot,
-            },
-        }
-    }
-
-    pub fn load_commit_details(commit_id: CommitId) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::Commit { commit_id },
-        }
-    }
-
-    pub fn load_file_diff(commit_id: CommitId, path: RepoPath, old_path: Option<RepoPath>) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::FileDiff {
-                commit_id,
-                path,
-                old_path,
-            },
-        }
-    }
-
-    pub fn load_conflict_hunks(commit_id: CommitId, path: RepoPath) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::ConflictHunks { commit_id, path },
-        }
-    }
-
-    pub fn load_operations(limit: usize) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::Operations { limit },
-        }
-    }
-
-    pub fn load_op_diff(op_id: OperationId) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::OpDiff { op_id },
-        }
-    }
-
-    pub fn load_evolog_details(from_commit_id: CommitId, to_commit_id: CommitId) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::EvoLogDetails {
-                from_commit_id,
-                to_commit_id,
-            },
-        }
-    }
-
-    pub fn load_evolog_file_diff(
-        from_commit_id: CommitId,
-        to_commit_id: CommitId,
-        path: RepoPath,
-    ) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::EvoLogFileDiff {
-                from_commit_id,
-                to_commit_id,
-                path,
-            },
-        }
-    }
-
-    pub fn load_evolution_log(commit_id: CommitId) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::EvolutionLog { commit_id },
-        }
-    }
-
-    pub fn load_interdiff_details(from: CommitId, to: CommitId) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::InterdiffDetails {
-                from_commit_id: from,
-                to_commit_id: to,
-            },
-        }
-    }
-
-    pub fn load_interdiff_file_diff(from: CommitId, to: CommitId, path: RepoPath) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::InterdiffFileDiff {
-                from_commit_id: from,
-                to_commit_id: to,
-                path,
-            },
-        }
-    }
-
-    pub fn load_file_annotate(commit_id: CommitId, path: RepoPath) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::Annotate { commit_id, path },
-        }
-    }
-
-    pub fn load_file_list(commit_id: CommitId) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::FileList { commit_id },
-        }
-    }
-
-    /// Apply a diff size limit read from a reloaded config. Queued behind
-    /// whatever is in flight, so a diff already being computed keeps the
-    /// limit it started under.
-    pub fn set_diff_size_limit(bytes: usize) -> Self {
-        Self {
-            epoch: 0,
-            kind: RepoRequestKind::SetDiffSizeLimit { bytes },
-        }
-    }
 }
 
 impl RepoService {
@@ -418,15 +245,15 @@ impl RepoService {
 }
 
 impl RepoRequestHandle {
-    pub fn send(&self, mut request: RepoRequest) {
+    pub fn send(&self, request: RepoRequest) {
         // Each revset load starts a new epoch; a queued revset load whose
         // epoch is no longer current has been superseded and is skipped.
         // Other requests deliver keyed results and don't need an epoch.
-        request.epoch = match request.kind {
-            RepoRequestKind::Revset { .. } => self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1,
+        let epoch = match request {
+            RepoRequest::Revset { .. } => self.current_epoch.fetch_add(1, Ordering::SeqCst) + 1,
             _ => self.current_epoch.load(Ordering::SeqCst),
         };
-        let _ = self.request_tx.send(request);
+        let _ = self.request_tx.send(Envelope { epoch, request });
     }
 }
 
@@ -507,8 +334,8 @@ impl RepoServiceState {
         }
     }
 
-    fn run(&mut self, request_rx: Receiver<RepoRequest>) {
-        let mut pending: VecDeque<RepoRequest> = VecDeque::new();
+    fn run(&mut self, request_rx: Receiver<Envelope>) {
+        let mut pending: VecDeque<Envelope> = VecDeque::new();
         loop {
             if pending.is_empty() {
                 match request_rx.recv() {
@@ -521,7 +348,7 @@ impl RepoServiceState {
             // and re-open the repo that subsequent requests run against.
             let request = pending
                 .iter()
-                .position(|r| matches!(r.kind, RepoRequestKind::Revset { .. }))
+                .position(|e| matches!(e.request, RepoRequest::Revset { .. }))
                 .and_then(|i| pending.remove(i))
                 .or_else(|| pending.pop_front())
                 .expect("pending is non-empty");
@@ -529,11 +356,11 @@ impl RepoServiceState {
         }
     }
 
-    fn handle_request(&mut self, request: RepoRequest) {
-        let RepoRequest { epoch, kind } = request;
-        tracing::debug!(epoch, request = %kind.label(), "repo request");
-        match kind {
-            RepoRequestKind::Revset { revset, load_kind } => {
+    fn handle_request(&mut self, envelope: Envelope) {
+        let Envelope { epoch, request } = envelope;
+        tracing::debug!(epoch, request = %request.label(), "repo request");
+        match request {
+            RepoRequest::Revset { revset, load_kind } => {
                 // A newer revset load has been requested since this one was
                 // queued: skip the snapshot and evaluation entirely.
                 if epoch != self.current_epoch.load(Ordering::SeqCst) {
@@ -544,61 +371,35 @@ impl RepoServiceState {
                 self.bg_cancel = CancellationToken::new();
                 self.handle_revset(epoch, revset, load_kind);
             }
-            RepoRequestKind::Commit { commit_id } => {
-                self.handle_commit_details(commit_id);
+            RepoRequest::DiffSummary { target } => {
+                self.handle_diff_summary(target);
             }
-            RepoRequestKind::FileDiff {
-                commit_id,
+            RepoRequest::FileDiff {
+                target,
                 path,
                 old_path,
             } => {
-                self.handle_file_diff(commit_id, path, old_path);
+                self.handle_file_diff(target, path, old_path);
             }
-            RepoRequestKind::Operations { limit } => {
+            RepoRequest::Operations { limit } => {
                 self.handle_operations(limit);
             }
-            RepoRequestKind::ConflictHunks { commit_id, path } => {
+            RepoRequest::ConflictHunks { commit_id, path } => {
                 self.handle_conflict_hunks(commit_id, path);
             }
-            RepoRequestKind::OpDiff { op_id } => {
+            RepoRequest::OpDiff { op_id } => {
                 self.handle_op_diff(op_id);
             }
-            RepoRequestKind::EvolutionLog { commit_id } => {
+            RepoRequest::EvolutionLog { commit_id } => {
                 self.handle_evolution_log(commit_id);
             }
-            RepoRequestKind::EvoLogDetails {
-                from_commit_id,
-                to_commit_id,
-            } => {
-                self.handle_evolog_details(from_commit_id, to_commit_id);
-            }
-            RepoRequestKind::EvoLogFileDiff {
-                from_commit_id,
-                to_commit_id,
-                path,
-            } => {
-                self.handle_evolog_file_diff(from_commit_id, to_commit_id, path);
-            }
-            RepoRequestKind::InterdiffDetails {
-                from_commit_id,
-                to_commit_id,
-            } => {
-                self.handle_interdiff_details(from_commit_id, to_commit_id);
-            }
-            RepoRequestKind::InterdiffFileDiff {
-                from_commit_id,
-                to_commit_id,
-                path,
-            } => {
-                self.handle_interdiff_file_diff(from_commit_id, to_commit_id, path);
-            }
-            RepoRequestKind::Annotate { commit_id, path } => {
+            RepoRequest::Annotate { commit_id, path } => {
                 self.handle_file_annotate(commit_id, path);
             }
-            RepoRequestKind::FileList { commit_id } => {
+            RepoRequest::FileList { commit_id } => {
                 self.handle_file_list(commit_id);
             }
-            RepoRequestKind::SetDiffSizeLimit { bytes } => {
+            RepoRequest::SetDiffSizeLimit { bytes } => {
                 self.diff_size_limit = bytes;
             }
         }
@@ -683,30 +484,25 @@ impl RepoServiceState {
         });
     }
 
-    fn handle_commit_details(&mut self, commit_id: CommitId) {
+    fn handle_diff_summary(&mut self, target: DiffTarget) {
         self.repo_op(
             {
-                let commit_id = commit_id.clone();
-                move |repo| repo.commit_details(&commit_id)
+                let target = target.clone();
+                move |repo| repo.diff_summary(&target)
             },
-            move |result| RepoResult::CommitDetails { commit_id, result },
+            move |result| RepoResult::DiffSummary { target, result },
         );
     }
 
-    fn handle_file_diff(
-        &mut self,
-        commit_id: CommitId,
-        path: RepoPath,
-        old_path: Option<RepoPath>,
-    ) {
+    fn handle_file_diff(&mut self, target: DiffTarget, path: RepoPath, old_path: Option<RepoPath>) {
         self.repo_op(
             {
-                let commit_id = commit_id.clone();
+                let target = target.clone();
                 let path = path.clone();
-                move |repo| repo.file_diff(&commit_id, &path, old_path.as_ref())
+                move |repo| repo.file_diff(&target, &path, old_path.as_ref())
             },
             move |result| RepoResult::FileDiff {
-                commit_id,
+                target,
                 path,
                 result,
             },
@@ -745,86 +541,6 @@ impl RepoServiceState {
         );
     }
 
-    fn handle_evolog_details(&mut self, from_commit_id: CommitId, to_commit_id: CommitId) {
-        self.repo_op(
-            {
-                let to_commit_id = to_commit_id.clone();
-                move |repo| {
-                    repo.inter_commit_details(from_commit_id.as_str(), to_commit_id.as_str())
-                }
-            },
-            move |result| RepoResult::EvoLogDetails {
-                commit_id: to_commit_id,
-                result,
-            },
-        );
-    }
-
-    fn handle_evolog_file_diff(
-        &mut self,
-        from_commit_id: CommitId,
-        to_commit_id: CommitId,
-        path: RepoPath,
-    ) {
-        self.repo_op(
-            {
-                let to_commit_id = to_commit_id.clone();
-                let path = path.clone();
-                move |repo| {
-                    repo.inter_commit_file_diff(
-                        from_commit_id.as_str(),
-                        to_commit_id.as_str(),
-                        &path,
-                    )
-                }
-            },
-            move |result| RepoResult::EvoLogFileDiff {
-                commit_id: to_commit_id,
-                path,
-                result,
-            },
-        );
-    }
-
-    fn handle_interdiff_details(&mut self, from_commit_id: CommitId, to_commit_id: CommitId) {
-        self.repo_op(
-            {
-                let from_commit_id = from_commit_id.clone();
-                let to_commit_id = to_commit_id.clone();
-                move |repo| repo.interdiff_details(from_commit_id.as_str(), to_commit_id.as_str())
-            },
-            move |result| RepoResult::InterdiffDetails {
-                from_commit_id,
-                to_commit_id,
-                result,
-            },
-        );
-    }
-
-    fn handle_interdiff_file_diff(
-        &mut self,
-        from_commit_id: CommitId,
-        to_commit_id: CommitId,
-        path: RepoPath,
-    ) {
-        self.repo_op(
-            {
-                let from_commit_id = from_commit_id.clone();
-                let to_commit_id = to_commit_id.clone();
-                let path = path.clone();
-                move |repo| {
-                    repo.interdiff_file_diff(from_commit_id.as_str(), to_commit_id.as_str(), &path)
-                }
-            },
-            move |result| RepoResult::InterdiffFileDiff {
-                from_commit_id,
-                to_commit_id,
-                path,
-                result,
-            },
-        );
-    }
-
     fn handle_file_annotate(&mut self, commit_id: CommitId, path: RepoPath) {
         self.repo_op(
             {
@@ -854,7 +570,7 @@ impl RepoServiceState {
         self.repo_op(
             {
                 let commit_id = commit_id.clone();
-                move |repo| repo.evolution_log(commit_id.as_str())
+                move |repo| repo.evolution_log(&commit_id)
             },
             move |result| RepoResult::EvoLog { commit_id, result },
         );

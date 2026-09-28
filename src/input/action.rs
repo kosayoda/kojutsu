@@ -8,6 +8,7 @@ use crate::keymap::{
     self, ActionId, ActionRegistry, AppAction, CommandFlags, Keymap, LookupResult, TrieNode,
     action_label,
 };
+use crate::repo_service::RevsetLoadKind;
 use crate::types::ChangeSelection;
 use crate::types::{
     CommitId, DisplayRow, FollowUpAction, FollowUpOption, PendingCommand, PendingSelection,
@@ -586,18 +587,21 @@ pub fn dispatch_action_after_hooks(
         AppAction::ResetRevset => {
             app.revset.active_preset = None;
             app.revset.conflicted_prev = None;
-            app.request_revset_load_no_snapshot(None);
+            app.request_revset_load(None, RevsetLoadKind::NoSnapshot);
             Action::None
         }
         AppAction::ToggleConflictedRevset => {
             app.revset.active_preset = None;
             if let Some(prev) = app.revset.conflicted_prev.take() {
                 // Toggle off: return to the revset we were viewing before.
-                app.request_revset_load_no_snapshot(Some(prev.to_string()));
+                app.request_revset_load(Some(prev.to_string()), RevsetLoadKind::NoSnapshot);
             } else {
                 // Toggle on: remember where we were so we can come back.
                 app.revset.conflicted_prev = Some(app.revset.current.clone());
-                app.request_revset_load_no_snapshot(Some(CONFLICTED_REVSET.to_string()));
+                app.request_revset_load(
+                    Some(CONFLICTED_REVSET.to_string()),
+                    RevsetLoadKind::NoSnapshot,
+                );
             }
             Action::None
         }
@@ -614,7 +618,7 @@ pub fn dispatch_action_after_hooks(
                 // No preset at this slot: use jj's default revset.
                 app.revset.active_preset = None;
                 app.revset.conflicted_prev = None;
-                app.request_revset_load_no_snapshot(None);
+                app.request_revset_load(None, RevsetLoadKind::NoSnapshot);
                 Action::None
             }
         }

@@ -229,7 +229,7 @@ fn main() -> Result<()> {
     );
     app.apply_persisted_state(&persisted);
     app.revset.active_preset = active_preset;
-    app.request_revset_load(requested_revset);
+    app.request_revset_load(requested_revset, RevsetLoadKind::Snapshot);
 
     // If launched with `blame`, enter annotate view immediately.
     if let Some((commit_hex, internal_path)) = blame_target {
@@ -623,9 +623,9 @@ fn install_config(
     repo_requests: &RepoRequestHandle,
     config: std::rc::Rc<kojutsu::theme::Config>,
 ) {
-    repo_requests.send(kojutsu::repo_service::RepoRequest::set_diff_size_limit(
-        config.diff.max_file_size_bytes(),
-    ));
+    repo_requests.send(kojutsu::repo_service::RepoRequest::SetDiffSizeLimit {
+        bytes: config.diff.max_file_size_bytes(),
+    });
     app.apply_reloaded_config(config);
 }
 
@@ -694,7 +694,7 @@ fn reload_config(
 fn update_revset(app: &mut App, revset_str: String) {
     // An explicit revset change leaves any active conflicted() toggle.
     app.revset.conflicted_prev = None;
-    app.request_revset_load_no_snapshot(Some(revset_str));
+    app.request_revset_load(Some(revset_str), RevsetLoadKind::NoSnapshot);
 }
 
 /// Suspend the TUI, run `$EDITOR` with `args`, and re-init the terminal

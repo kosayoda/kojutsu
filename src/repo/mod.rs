@@ -175,6 +175,18 @@ impl JjRepo {
         Arc::clone(&self.repo)
     }
 
+    /// Load a commit the UI refers to by ID.
+    pub(super) fn load_commit(
+        &self,
+        commit_id: &crate::types::CommitId,
+    ) -> Result<jj_lib::commit::Commit> {
+        let backend_id = parse_commit_id(commit_id.as_str())?;
+        self.repo
+            .store()
+            .get_commit(&backend_id)
+            .wrap_err_with(|| format!("failed to load commit {commit_id}"))
+    }
+
     fn remote_bookmarks(
         &'_ self,
     ) -> impl Iterator<

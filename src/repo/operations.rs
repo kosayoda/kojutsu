@@ -130,9 +130,9 @@ impl JjRepo {
     }
 
     /// Load the evolution log (predecessor chain) for a commit.
-    pub fn evolution_log(&self, commit_id_hex: &str) -> Result<Vec<crate::app::EvoLogEntry>> {
+    pub fn evolution_log(&self, commit_id: &UiCommitId) -> Result<Vec<crate::app::EvoLogEntry>> {
         let repo = self.repo.as_ref();
-        let commit_id = super::parse_commit_id(commit_id_hex)?;
+        let commit_id = super::parse_commit_id(commit_id.as_str())?;
 
         // Build ID prefix context for disambiguation.
         let prefix_index = self.id_prefix_index()?;
