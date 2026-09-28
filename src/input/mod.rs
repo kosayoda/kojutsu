@@ -52,13 +52,12 @@ pub enum Action {
     Quit,
     /// No action needed (already handled by mutating App).
     None,
-    /// Run a jj CLI command (captured output), then refresh the DAG.
+    /// Run a jj CLI command, then refresh the DAG. The command's
+    /// `terminal_use` decides whether the TUI steps aside for it.
     RunJj(crate::jj_command::JJCommand),
     /// Run a jj CLI command yielded by a suspended Lua thread; completion
     /// resumes the thread with the result instead of refreshing.
     RunJjForLua(crate::jj_command::JJCommand),
-    /// Suspend the TUI, run an interactive jj command, then resume.
-    SuspendAndRunJj(crate::jj_command::JJCommand),
     /// Snapshot the working copy and reload the DAG.
     Refresh,
     /// Re-read `init.lua` and swap in the runtime it produces.

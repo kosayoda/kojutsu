@@ -285,6 +285,18 @@ pub struct JJCommandResult {
     pub code: Option<i32>,
 }
 
+/// How a command uses the terminal while it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TerminalUse {
+    /// Output captured on a background thread while the TUI stays up.
+    Background,
+    /// Output captured, but the TUI steps aside so the child has the real
+    /// stdin.
+    Foreground,
+    /// The child takes the whole terminal: an editor or a diff editor.
+    Interactive,
+}
+
 impl JJCommand {
     pub fn with_flag(mut self, flag: CommandFlags) -> Self {
         self.flags |= flag;
@@ -398,6 +410,24 @@ impl JJCommand {
         parts
     }
 
+    /// How the command uses the terminal while it runs: the one place that
+    /// decides whether the TUI steps aside for it.
+    pub fn terminal_use(&self) -> TerminalUse {
+        if self.is_interactive() {
+            return TerminalUse::Interactive;
+        }
+        match &self.kind {
+            // Talking to a remote may prompt for an SSH passphrase or
+            // credentials on stdin.
+            JJCommandKind::GitFetch { .. }
+            | JJCommandKind::GitFetchBookmark { .. }
+            | JJCommandKind::GitPush { .. }
+            | JJCommandKind::GitPushChange { .. }
+            | JJCommandKind::GitPushBookmark { .. } => TerminalUse::Foreground,
+            _ => TerminalUse::Background,
+        }
+    }
+
     /// Whether the command needs the terminal handed to it, rather than being
     /// run with its output captured.
     ///
@@ -410,7 +440,7 @@ impl JJCommand {
     /// since it's the *absence* of `-m` or a tool default, so those stay
     /// listed; a miss there is milder, because captured runs set
     /// `JJ_EDITOR=:` and the edit is simply skipped.
-    pub fn is_interactive(&self) -> bool {
+    fn is_interactive(&self) -> bool {
         if self.args().iter().any(|a| a.as_str() == "--interactive") {
             return true;
         }
@@ -534,6 +564,30 @@ mod is_interactive_tests {
         );
         assert!(!cmd.args().iter().any(|a| a.as_str() == "--interactive"));
         assert!(!cmd.is_interactive());
+    }
+
+    /// Git talking to a remote runs captured but in the foreground, where an
+    /// SSH passphrase prompt can reach the user; local git plumbing doesn't.
+    #[test]
+    fn remote_git_commands_take_the_foreground() {
+        let cmd = |kind| JJCommand {
+            kind,
+            flags: CommandFlags::empty(),
+        };
+        let push = cmd(JJCommandKind::GitPush {
+            all: false,
+            remote: None,
+        });
+        assert_eq!(push.terminal_use(), TerminalUse::Foreground);
+        assert_eq!(
+            cmd(JJCommandKind::GitExport).terminal_use(),
+            TerminalUse::Background
+        );
+        let editor_commit = cmd(JJCommandKind::Commit {
+            message: None,
+            selection: ChangeSelection::All,
+        });
+        assert_eq!(editor_commit.terminal_use(), TerminalUse::Interactive);
     }
 
     /// The reason to read the args rather than restate the rules: every way a

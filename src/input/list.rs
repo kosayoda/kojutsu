@@ -268,7 +268,7 @@ pub(super) fn resolve_selection(
                 );
                 Action::None
             } else {
-                Action::SuspendAndRunJj(JJCommand {
+                Action::RunJj(JJCommand {
                     kind: JJCommandKind::GitPushBookmark {
                         bookmarks,
                         remote: None,
@@ -279,7 +279,7 @@ pub(super) fn resolve_selection(
         }
         PendingSelection::GitRemoteForFetch { all_remotes, flags } => {
             let remote = names.into_iter().next().map(RemoteName::new);
-            Action::SuspendAndRunJj(JJCommand {
+            Action::RunJj(JJCommand {
                 kind: JJCommandKind::GitFetch {
                     all_remotes,
                     remote,
@@ -289,14 +289,14 @@ pub(super) fn resolve_selection(
         }
         PendingSelection::GitRemoteForPush { all, flags } => {
             let remote = names.into_iter().next().map(RemoteName::new);
-            Action::SuspendAndRunJj(JJCommand {
+            Action::RunJj(JJCommand {
                 kind: JJCommandKind::GitPush { all, remote },
                 flags,
             })
         }
         PendingSelection::GitRemoteForPushBookmark { bookmarks, flags } => {
             let remote = names.into_iter().next().map(RemoteName::new);
-            Action::SuspendAndRunJj(JJCommand {
+            Action::RunJj(JJCommand {
                 kind: JJCommandKind::GitPushBookmark { bookmarks, remote },
                 flags,
             })

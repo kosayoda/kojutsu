@@ -10,7 +10,7 @@ use crate::types::{
 };
 
 use crate::input::Action;
-use crate::input::action::{build_change_selection, enter_target_select, run_cmd};
+use crate::input::action::{build_change_selection, enter_target_select};
 use crate::input::bookmark::{
     BookmarkTextAction, PendingSelectionKind, enter_bookmark_advance, enter_bookmark_select,
     enter_bookmark_text_input, enter_remote_bookmark_select, enter_tag_delete,
@@ -93,19 +93,14 @@ pub(in crate::input) fn dispatch(
                 AppAction::ResolveTheirs => crate::jj_command::ResolveTool::Theirs,
                 _ => crate::jj_command::ResolveTool::Default,
             };
-            let cmd = JJCommand {
+            Action::RunJj(JJCommand {
                 kind: JJCommandKind::Resolve {
                     change_id,
                     path,
-                    tool: tool.clone(),
+                    tool,
                 },
                 flags,
-            };
-            if matches!(tool, crate::jj_command::ResolveTool::Default) {
-                Action::SuspendAndRunJj(cmd)
-            } else {
-                Action::RunJj(cmd)
-            }
+            })
         }
         AppAction::ConflictPickOurs
         | AppAction::ConflictPickTheirs
@@ -252,7 +247,7 @@ pub(in crate::input) fn dispatch(
                 },
                 flags,
             };
-            Action::SuspendAndRunJj(cmd)
+            Action::RunJj(cmd)
         }
         AppAction::CommitWithMessage => {
             app.mode = AppMode::text_input(
@@ -487,7 +482,7 @@ pub(in crate::input) fn dispatch(
                 );
                 Action::None
             } else {
-                Action::SuspendAndRunJj(JJCommand {
+                Action::RunJj(JJCommand {
                     kind: JJCommandKind::GitFetch {
                         all_remotes: false,
                         remote: None,
@@ -496,7 +491,7 @@ pub(in crate::input) fn dispatch(
                 })
             }
         }
-        AppAction::GitFetchAllRemotes => Action::SuspendAndRunJj(JJCommand {
+        AppAction::GitFetchAllRemotes => Action::RunJj(JJCommand {
             kind: JJCommandKind::GitFetch {
                 all_remotes: true,
                 remote: None,
@@ -515,7 +510,7 @@ pub(in crate::input) fn dispatch(
                 );
                 Action::None
             } else {
-                Action::SuspendAndRunJj(JJCommand {
+                Action::RunJj(JJCommand {
                     kind: JJCommandKind::GitPush {
                         all: false,
                         remote: None,
@@ -536,7 +531,7 @@ pub(in crate::input) fn dispatch(
                 );
                 Action::None
             } else {
-                Action::SuspendAndRunJj(JJCommand {
+                Action::RunJj(JJCommand {
                     kind: JJCommandKind::GitPush {
                         all: true,
                         remote: None,
@@ -549,7 +544,7 @@ pub(in crate::input) fn dispatch(
             let Some(change_id) = app.selected_change_id() else {
                 return Action::None;
             };
-            Action::SuspendAndRunJj(JJCommand {
+            Action::RunJj(JJCommand {
                 kind: JJCommandKind::GitPushChange {
                     change_id,
                     remote: None,
@@ -581,7 +576,7 @@ pub(in crate::input) fn dispatch(
                     );
                     return Action::None;
                 }
-                return Action::SuspendAndRunJj(JJCommand {
+                return Action::RunJj(JJCommand {
                     kind: JJCommandKind::GitPushBookmark {
                         bookmarks: bookmark_names,
                         remote: None,
@@ -647,7 +642,7 @@ fn make_multi_command(app: &App, build: impl FnOnce(SmallVec<RevisionArg>) -> JJ
     if ids.is_empty() {
         return Action::None;
     }
-    run_cmd(build(ids))
+    Action::RunJj(build(ids))
 }
 
 fn make_command(app: &App, build: impl FnOnce(RevisionArg) -> JJCommand) -> Action {
@@ -657,7 +652,7 @@ fn make_command(app: &App, build: impl FnOnce(RevisionArg) -> JJCommand) -> Acti
     let Some(change_id) = app.selected_change_id() else {
         return Action::None;
     };
-    run_cmd(build(change_id))
+    Action::RunJj(build(change_id))
 }
 
 fn enter_run_input(app: &mut App, flags: CommandFlags) -> Action {
@@ -733,7 +728,7 @@ fn arrange(app: &mut App, flags: CommandFlags, direction: ArrangeDirection) -> A
     }
 
     let target_id = app.nodes[neighbors[0]].commit.unique_prefix();
-    run_cmd(JJCommand {
+    Action::RunJj(JJCommand {
         kind: JJCommandKind::Rebase {
             change_ids: smallvec![change_id],
             source_mode: RebaseSource::Revision,

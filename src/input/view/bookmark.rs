@@ -65,7 +65,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 );
                 Action::None
             } else {
-                Action::SuspendAndRunJj(JJCommand {
+                Action::RunJj(JJCommand {
                     kind: JJCommandKind::GitPushBookmark {
                         bookmarks: smallvec![name],
                         remote: None,
@@ -181,7 +181,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 );
                 Action::None
             } else {
-                Action::SuspendAndRunJj(JJCommand {
+                Action::RunJj(JJCommand {
                     kind: JJCommandKind::GitFetch {
                         all_remotes: false,
                         remote: None,
@@ -192,7 +192,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
         }
         AppAction::BookmarkViewFetchBookmark => {
             if let Some((entry, target)) = app.selected_remote_target() {
-                return Action::SuspendAndRunJj(JJCommand {
+                return Action::RunJj(JJCommand {
                     kind: JJCommandKind::GitFetchBookmark {
                         bookmark: entry.name.clone(),
                         remote: RemoteName::new(target.remote.as_str()),
@@ -204,7 +204,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             };
             if let Some(remote) = entry.kind.remote() {
-                return Action::SuspendAndRunJj(JJCommand {
+                return Action::RunJj(JJCommand {
                     kind: JJCommandKind::GitFetchBookmark {
                         bookmark: entry.name.clone(),
                         remote: RemoteName::new(remote.as_str()),
@@ -215,7 +215,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             app.set_error("no remote to fetch from");
             Action::None
         }
-        AppAction::BookmarkViewFetchAllRemotes => Action::SuspendAndRunJj(JJCommand {
+        AppAction::BookmarkViewFetchAllRemotes => Action::RunJj(JJCommand {
             kind: JJCommandKind::GitFetch {
                 all_remotes: true,
                 remote: None,

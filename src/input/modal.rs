@@ -69,7 +69,7 @@ pub(super) fn handle_text_input(
                     } => submit_run_jobs(app, change_ids, argv, flags, text),
                     PendingCommand::RawCommand => {
                         match PendingCommand::RawCommand.into_jj_command(text) {
-                            Some(jj_cmd) => Action::SuspendAndRunJj(jj_cmd),
+                            Some(jj_cmd) => Action::RunJj(jj_cmd),
                             None => Action::None,
                         }
                     }

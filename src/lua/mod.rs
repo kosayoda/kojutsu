@@ -829,12 +829,7 @@ impl LuaEngine {
                         },
                         flags,
                     };
-                    self.set_breaking(
-                        app,
-                        &mut breaking,
-                        Action::SuspendAndRunJj(cmd),
-                        allow_breaking,
-                    );
+                    self.set_breaking(app, &mut breaking, Action::RunJj(cmd), allow_breaking);
                 }
                 // The dispatched action skips its own pre-hooks (same as a
                 // pre-hook resumption) so hooks can't recurse into themselves.

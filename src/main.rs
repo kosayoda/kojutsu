@@ -8,7 +8,7 @@ use crossterm::event::{Event, KeyEventKind};
 
 use kojutsu::app::{App, AppMode, DeferredWork};
 use kojutsu::input::{self, Action};
-use kojutsu::jj_command::{JJCommand, JJCommandResult};
+use kojutsu::jj_command::{JJCommand, JJCommandResult, TerminalUse};
 use kojutsu::repo::JjRepo;
 use kojutsu::repo_service::{
     CancellationToken, RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind,
@@ -462,17 +462,27 @@ impl Session {
             Action::Quit => return ControlFlow::Break(()),
             Action::RunJj(cmd) => {
                 let hook_label = self.app.last_action_label.take();
-                self.run_jj(cmd, Completion::Refresh { hook_label });
+                if cmd.terminal_use() == TerminalUse::Background {
+                    self.run_jj(cmd, Completion::Refresh { hook_label });
+                } else {
+                    let result = self
+                        .screen
+                        .suspended(|| run_in_foreground(&cmd, &self.repo_path));
+                    finish_foreground_command(&mut self.app, &cmd, result);
+                    if let Some(label) = hook_label {
+                        return self.run_post_hooks_after_suspend(label);
+                    }
+                }
             }
-            Action::RunJjForLua(cmd) => self.run_jj(cmd, Completion::ResumeLua),
-            Action::SuspendAndRunJj(cmd) => {
-                let hook_label = self.app.last_action_label.take();
-                let result = self
-                    .screen
-                    .suspended(|| run_in_foreground(&cmd, &self.repo_path));
-                finish_foreground_command(&mut self.app, &cmd, result);
-                if let Some(label) = hook_label {
-                    return self.run_post_hooks_after_suspend(label);
+            Action::RunJjForLua(cmd) => {
+                if cmd.terminal_use() == TerminalUse::Background {
+                    self.run_jj(cmd, Completion::ResumeLua);
+                } else {
+                    let result = self
+                        .screen
+                        .suspended(|| run_in_foreground(&cmd, &self.repo_path));
+                    let next = resume_lua_jj(&mut self.app, Box::new(result), &self.runtime.engine);
+                    return self.execute(next);
                 }
             }
             Action::Refresh => self.app.refresh(RevsetLoadKind::Snapshot),
@@ -693,10 +703,9 @@ fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
 /// Run a jj command on the real terminal. Interactive commands need full
 /// terminal access; captured ones still need stdin for SSH password prompts.
 fn run_in_foreground(cmd: &JJCommand, repo_path: &std::path::Path) -> JJCommandResult {
-    if cmd.is_interactive() {
-        cmd.run_interactive(repo_path)
-    } else {
-        cmd.run_suspend_captured(repo_path)
+    match cmd.terminal_use() {
+        TerminalUse::Interactive => cmd.run_interactive(repo_path),
+        TerminalUse::Foreground | TerminalUse::Background => cmd.run_suspend_captured(repo_path),
     }
 }
 

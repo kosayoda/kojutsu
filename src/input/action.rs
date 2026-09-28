@@ -222,7 +222,7 @@ fn run_lua_command(
         return Action::None;
     }
     let result = lua.execute_command(id, app, flags);
-    if matches!(result, Action::RunJj(_) | Action::SuspendAndRunJj(_)) {
+    if matches!(result, Action::RunJj(_)) {
         app.last_repeatable = None;
     }
     result
@@ -884,15 +884,6 @@ pub fn dispatch_action_after_hooks(
     }
 }
 
-/// Turn a command into the appropriate run/suspend action.
-pub(super) fn run_cmd(cmd: JJCommand) -> Action {
-    if cmd.is_interactive() {
-        Action::SuspendAndRunJj(cmd)
-    } else {
-        Action::RunJj(cmd)
-    }
-}
-
 /// Try to jump to a commit in the DAG view. If the commit is in the current
 /// revset, switches to DAG and moves the cursor. Otherwise offers to widen
 /// the revset. If there's no commit at all, shows an error.
@@ -1005,7 +996,7 @@ fn offer_widen_revset(app: &mut App, id: &str) {
 
 pub(super) fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action {
     match action {
-        FollowUpAction::Execute(cmd) => run_cmd(cmd),
+        FollowUpAction::Execute(cmd) => Action::RunJj(cmd),
         FollowUpAction::TextInput { prompt, pending } => {
             app.mode = AppMode::text_input(prompt, "", pending);
             Action::None
@@ -1023,7 +1014,7 @@ pub(super) fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action
             content,
             flags,
         } => match super::view::dag::staged_resolution(app, change_id, &path, &content, flags) {
-            Some(cmd) => run_cmd(cmd),
+            Some(cmd) => Action::RunJj(cmd),
             None => Action::None,
         },
         FollowUpAction::EnterInterdiff {
