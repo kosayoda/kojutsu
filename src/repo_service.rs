@@ -72,6 +72,11 @@ pub enum RepoRequest {
     FileList {
         commit_id: CommitId,
     },
+    /// A file's content at a commit, conflicts materialized with markers.
+    FileContent {
+        commit_id: CommitId,
+        path: RepoPath,
+    },
     /// Replace the diff size limit, after the config was reloaded. Queued
     /// behind whatever is in flight, so a diff already being computed keeps
     /// the limit it started under.
@@ -92,6 +97,7 @@ impl RepoRequest {
             Self::EvolutionLog { .. } => "evolution_log",
             Self::Annotate { .. } => "annotate",
             Self::FileList { .. } => "file_list",
+            Self::FileContent { .. } => "file_content",
             Self::SetDiffSizeLimit { .. } => "set_diff_size_limit",
         }
     }
@@ -215,6 +221,11 @@ pub enum RepoResult {
     FileList {
         commit_id: CommitId,
         result: Result<Vec<RepoPath>, RepoError>,
+    },
+    FileContent {
+        commit_id: CommitId,
+        path: RepoPath,
+        result: Result<Vec<u8>, RepoError>,
     },
     /// A background computation thread panicked or failed.
     BackgroundError { error: RepoError },
@@ -399,6 +410,9 @@ impl RepoServiceState {
             RepoRequest::FileList { commit_id } => {
                 self.handle_file_list(commit_id);
             }
+            RepoRequest::FileContent { commit_id, path } => {
+                self.handle_file_content(commit_id, path);
+            }
             RepoRequest::SetDiffSizeLimit { bytes } => {
                 self.diff_size_limit = bytes;
             }
@@ -563,6 +577,21 @@ impl RepoServiceState {
                 move |repo| repo.list_files(&commit_id)
             },
             move |result| RepoResult::FileList { commit_id, result },
+        );
+    }
+
+    fn handle_file_content(&mut self, commit_id: CommitId, path: RepoPath) {
+        self.repo_op(
+            {
+                let commit_id = commit_id.clone();
+                let path = path.clone();
+                move |repo| repo.get_file_at_commit(&commit_id, &path)
+            },
+            move |result| RepoResult::FileContent {
+                commit_id,
+                path,
+                result,
+            },
         );
     }
 

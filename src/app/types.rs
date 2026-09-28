@@ -206,6 +206,20 @@ pub struct Interdiff {
     pub unfolded_files: HashSet<RepoPath>,
 }
 
+/// A file at a revision the user asked to view, waiting on its content.
+pub struct FileViewRequest {
+    pub commit_id: CommitId,
+    pub path: RepoPath,
+    pub line: usize,
+}
+
+/// A file's content, ready to open read-only in `$EDITOR` at `line`.
+pub struct FileView {
+    pub path: RepoPath,
+    pub content: Vec<u8>,
+    pub line: usize,
+}
+
 /// The commit + path being annotated.
 #[derive(Clone, PartialEq, Eq)]
 pub struct AnnotateTarget {

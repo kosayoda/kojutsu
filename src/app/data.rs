@@ -552,6 +552,31 @@ impl App {
                     self.set_error(format!("file list: {}", error.message));
                 }
             },
+            RepoResult::FileContent {
+                commit_id,
+                path,
+                result,
+            } => {
+                // Only the latest request is still wanted.
+                let Some(request) = self
+                    .pending_file_view
+                    .take_if(|r| r.commit_id == commit_id && r.path == path)
+                else {
+                    return deferred;
+                };
+                match result {
+                    Ok(content) => {
+                        deferred.file_view = Some(super::FileView {
+                            path,
+                            content,
+                            line: request.line,
+                        });
+                    }
+                    Err(error) => {
+                        self.show_error_overlay(format!("read {path} at {commit_id}"), error)
+                    }
+                }
+            }
             RepoResult::BackgroundError { error } => {
                 let msg = format!("background task failed: {}", error.message);
                 self.log_background_error(msg);
@@ -958,6 +983,34 @@ mod repo_result_tests {
         });
 
         assert!(matches!(step_files(&app).summary(), Loadable::Loading));
+    }
+
+    /// A file view opens with the content of the latest request only: an
+    /// earlier request still in flight is superseded rather than opened
+    /// over the one the user asked for since.
+    #[test]
+    fn a_file_view_opens_only_for_the_latest_request() {
+        let mut app = App::for_test();
+        let commit_id = CommitId::new("abc123");
+        let (old, new) = (RepoPath::new("old.rs"), RepoPath::new("new.rs"));
+        app.request_file_view(commit_id.clone(), old.clone(), 1);
+        app.request_file_view(commit_id.clone(), new.clone(), 7);
+
+        let content = |path: &RepoPath| RepoResult::FileContent {
+            commit_id: commit_id.clone(),
+            path: path.clone(),
+            result: Ok(b"x".to_vec()),
+        };
+        assert!(
+            app.handle_repo_result_deferred(content(&old))
+                .file_view
+                .is_none()
+        );
+        let view = app
+            .handle_repo_result_deferred(content(&new))
+            .file_view
+            .expect("the latest request opens");
+        assert_eq!((view.path, view.line), (new, 7));
     }
 
     /// The background pass keys its updates by whole commit ID. A workspace

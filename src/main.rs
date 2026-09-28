@@ -1,3 +1,4 @@
+use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::mpsc;
 
@@ -12,7 +13,7 @@ use kojutsu::repo::JjRepo;
 use kojutsu::repo_service::{
     CancellationToken, RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind,
 };
-use kojutsu::terminal::spawn_terminal_events;
+use kojutsu::terminal::{TerminalEvents, spawn_terminal_events};
 use kojutsu::types::JumpTarget;
 use kojutsu::ui;
 
@@ -28,10 +29,7 @@ enum AppEvent {
         result: Box<JJCommandResult>,
         cmd: Box<JJCommand>,
         jump: Option<JumpTarget>,
-        label: Option<&'static str>,
-        /// The command was yielded by a suspended Lua thread; completion
-        /// resumes the thread with the result instead of refreshing.
-        for_lua: bool,
+        completion: Completion,
     },
 }
 
@@ -200,7 +198,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let mut runtime = kojutsu::lua::LuaRuntime::load(&repo_path);
+    let runtime = kojutsu::lua::LuaRuntime::load(&repo_path);
     let config = runtime.config.clone();
     let (event_tx, event_rx) = mpsc::channel();
     let (repo_requests, repo_responses) =
@@ -266,148 +264,234 @@ fn main() -> Result<()> {
     }
 
     flush_repo_requests(&mut app, &repo_requests);
-    let mut terminal = kojutsu::terminal::init()?;
-    let mut terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+    let screen = Screen::open(event_tx.clone())?;
     let _ = event_tx.send(AppEvent::Init);
 
-    let mut dirty = true;
-    let mut events: Vec<AppEvent> = Vec::new();
-    loop {
-        if dirty {
-            terminal.draw(|frame| ui::draw(frame, &mut app, &runtime.keymaps))?;
-            dirty = false;
+    let mut session = Session {
+        app,
+        runtime,
+        repo_path,
+        repo_requests,
+        event_tx,
+        screen,
+    };
+    session.run(&event_rx)?;
+    session.close()
+}
+
+/// What to do once a background jj command finishes.
+enum Completion {
+    /// Refresh, then run the post-hooks of the action that issued it, if a
+    /// labelled action did.
+    Refresh { hook_label: Option<&'static str> },
+    /// Resume the suspended Lua thread that yielded it with its result.
+    ResumeLua,
+}
+
+/// The terminal and the thread reading its events. They are handed to a
+/// child process together, so the thread doesn't steal the child's input.
+struct Screen {
+    terminal: kojutsu::terminal::Term,
+    events: Option<TerminalEvents>,
+    event_tx: mpsc::Sender<AppEvent>,
+}
+
+impl Screen {
+    fn open(event_tx: mpsc::Sender<AppEvent>) -> Result<Self> {
+        let terminal = kojutsu::terminal::init()?;
+        let events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+        Ok(Self {
+            terminal,
+            events: Some(events),
+            event_tx,
+        })
+    }
+
+    /// Give the terminal to a child process for the duration of `f`, then
+    /// take it back. Failing to take it back is fatal: the TUI can't go on.
+    fn suspended<T>(&mut self, f: impl FnOnce() -> T) -> T {
+        if let Some(events) = self.events.take() {
+            events.stop();
         }
+        let _ = kojutsu::terminal::restore();
+        let out = f();
+        self.terminal = kojutsu::terminal::init().unwrap_or_else(|e| {
+            eprintln!("fatal: failed to re-init terminal: {e}");
+            std::process::exit(1);
+        });
+        self.events = Some(spawn_terminal_events(
+            self.event_tx.clone(),
+            AppEvent::Terminal,
+        ));
+        out
+    }
 
-        // Block for the first event.
-        let first = match event_rx.recv() {
-            Ok(event) => event,
-            Err(_) => break,
-        };
-
-        // Drain all pending events so we can process them as a batch.
-        events.clear();
-        events.push(first);
-        while let Ok(ev) = event_rx.try_recv() {
-            events.push(ev);
+    fn close(mut self) -> Result<()> {
+        if let Some(events) = self.events.take() {
+            events.stop();
         }
+        kojutsu::terminal::restore()?;
+        Ok(())
+    }
+}
 
-        // Process batch.
-        let mut deferred = DeferredWork::default();
-        let mut breaking_action: Option<Action> = None;
+/// Everything the event loop acts on.
+struct Session {
+    app: App,
+    runtime: kojutsu::lua::LuaRuntime,
+    repo_path: PathBuf,
+    repo_requests: RepoRequestHandle,
+    event_tx: mpsc::Sender<AppEvent>,
+    screen: Screen,
+}
 
-        for event in events.drain(..) {
-            let action = match event {
-                AppEvent::Init => Action::None,
-                AppEvent::Repo(result) => {
-                    deferred.merge(app.handle_repo_result_deferred(*result));
-                    dirty = true;
-                    Action::None
-                }
-                AppEvent::JjOutput { chunk } => {
-                    app.append_running_output(&chunk);
-                    dirty = true;
-                    Action::None
-                }
-                AppEvent::JjDone {
-                    result,
-                    cmd,
-                    jump,
-                    label,
-                    for_lua,
-                } => {
-                    dirty = true;
-                    if for_lua {
-                        resume_lua_jj(&mut app, result, &runtime.engine)
-                    } else {
-                        finish_jj_command(&mut app, *result, *cmd, jump, label, &runtime.engine)
-                    }
-                }
-                AppEvent::Terminal(ev) => match ev {
-                    Event::Key(key) if key.kind == KeyEventKind::Press => {
-                        dirty = true;
-                        input::handle_key(&mut app, &runtime.keymaps, &runtime.engine, key)
-                    }
-                    Event::Mouse(mouse) => {
-                        dirty = true;
-                        let hdr = app.last_header_height;
-                        input::handle_mouse(&mut app, mouse, hdr)
-                    }
-                    Event::Resize(..) => {
-                        dirty = true;
-                        Action::None
-                    }
-                    _ => Action::None,
-                },
+impl Session {
+    /// Draw, wait for events, handle them in batches, until told to quit.
+    fn run(&mut self, event_rx: &mpsc::Receiver<AppEvent>) -> Result<()> {
+        let mut dirty = true;
+        let mut events: Vec<AppEvent> = Vec::new();
+        loop {
+            if dirty {
+                let (app, keymaps) = (&mut self.app, &self.runtime.keymaps);
+                self.screen
+                    .terminal
+                    .draw(|frame| ui::draw(frame, app, keymaps))?;
+                dirty = false;
+            }
+
+            // Block for the first event, then drain the rest so they are
+            // handled as one batch.
+            let Ok(first) = event_rx.recv() else {
+                return Ok(());
             };
-            match action {
-                Action::None => {}
-                _ => {
-                    breaking_action = Some(action);
+            events.clear();
+            events.push(first);
+            events.extend(event_rx.try_iter());
+
+            let mut deferred = DeferredWork::default();
+            let mut breaking_action = Action::None;
+            for event in events.drain(..) {
+                if !matches!(event, AppEvent::Init | AppEvent::Terminal(_)) {
+                    dirty = true;
+                }
+                let action = self.handle_event(event, &mut deferred, &mut dirty);
+                if !matches!(action, Action::None) {
+                    breaking_action = action;
                     break;
                 }
             }
-        }
 
-        // Apply deferred work once for the whole batch.
-        app.apply_rebuild(deferred.rebuild);
-        if deferred.scroll {
-            app.scroll_to_show_children();
-        }
+            // Apply deferred work once for the whole batch.
+            self.app.apply_rebuild(deferred.rebuild);
+            if deferred.scroll {
+                self.app.scroll_to_show_children();
+            }
+            if let Some(view) = deferred.file_view {
+                self.view_file(view);
+            }
 
-        // Handle breaking action.
-        match breaking_action.unwrap_or(Action::None) {
-            Action::Quit => break,
+            if self.execute(breaking_action).is_break() {
+                return Ok(());
+            }
+            self.runtime.engine.flush_logs(&mut self.app);
+            sync_plugin_config(&mut self.app, &mut self.runtime, &self.repo_requests);
+            flush_repo_requests(&mut self.app, &self.repo_requests);
+        }
+    }
+
+    fn handle_event(
+        &mut self,
+        event: AppEvent,
+        deferred: &mut DeferredWork,
+        dirty: &mut bool,
+    ) -> Action {
+        match event {
+            AppEvent::Init => Action::None,
+            AppEvent::Repo(result) => {
+                deferred.merge(self.app.handle_repo_result_deferred(*result));
+                Action::None
+            }
+            AppEvent::JjOutput { chunk } => {
+                self.app.append_running_output(&chunk);
+                Action::None
+            }
+            AppEvent::JjDone {
+                result,
+                cmd,
+                jump,
+                completion,
+            } => match completion {
+                Completion::ResumeLua => resume_lua_jj(&mut self.app, result, &self.runtime.engine),
+                Completion::Refresh { hook_label } => finish_jj_command(
+                    &mut self.app,
+                    *result,
+                    *cmd,
+                    jump,
+                    hook_label,
+                    &self.runtime.engine,
+                ),
+            },
+            AppEvent::Terminal(ev) => match ev {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
+                    *dirty = true;
+                    input::handle_key(
+                        &mut self.app,
+                        &self.runtime.keymaps,
+                        &self.runtime.engine,
+                        key,
+                    )
+                }
+                Event::Mouse(mouse) => {
+                    *dirty = true;
+                    let hdr = self.app.last_header_height;
+                    input::handle_mouse(&mut self.app, mouse, hdr)
+                }
+                Event::Resize(..) => {
+                    *dirty = true;
+                    Action::None
+                }
+                _ => Action::None,
+            },
+        }
+    }
+
+    /// Carry out an action, and whatever action it leads to. Breaks to quit.
+    fn execute(&mut self, action: Action) -> ControlFlow<()> {
+        match action {
+            Action::None => {}
+            Action::Quit => return ControlFlow::Break(()),
             Action::RunJj(cmd) => {
-                let action_label = app.last_action_label.take();
-                run_jj_command(&mut app, &repo_path, cmd, action_label, &event_tx, false);
+                let hook_label = self.app.last_action_label.take();
+                self.run_jj(cmd, Completion::Refresh { hook_label });
             }
-            Action::RunJjForLua(cmd) => {
-                run_jj_command(&mut app, &repo_path, cmd, None, &event_tx, true);
-            }
+            Action::RunJjForLua(cmd) => self.run_jj(cmd, Completion::ResumeLua),
             Action::SuspendAndRunJj(cmd) => {
-                let action_label = app.last_action_label.take();
-                terminal_events.stop();
-                suspend_and_run(&mut app, &repo_path, &mut terminal, cmd);
-                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
-                if let Some(label) = action_label {
-                    run_post_hooks_after_suspend(
-                        &mut app,
-                        &runtime.engine,
-                        label,
-                        &repo_path,
-                        &event_tx,
-                    );
+                let hook_label = self.app.last_action_label.take();
+                let result = self
+                    .screen
+                    .suspended(|| run_in_foreground(&cmd, &self.repo_path));
+                finish_foreground_command(&mut self.app, &cmd, result);
+                if let Some(label) = hook_label {
+                    return self.run_post_hooks_after_suspend(label);
                 }
             }
-            Action::Refresh => {
-                refresh_app(&mut app, RevsetLoadKind::Snapshot);
-            }
+            Action::Refresh => self.app.refresh(RevsetLoadKind::Snapshot),
             Action::ReloadConfig => {
-                reload_config(&mut app, &mut runtime, &repo_path, &repo_requests);
+                reload_config(
+                    &mut self.app,
+                    &mut self.runtime,
+                    &self.repo_path,
+                    &self.repo_requests,
+                );
             }
-            Action::UpdateRevset(revset_str) => {
-                update_revset(&mut app, revset_str);
-            }
+            Action::UpdateRevset(revset_str) => update_revset(&mut self.app, revset_str),
             Action::EditRevsetInEditor => {
-                app.revset.active_preset = None;
-                terminal_events.stop();
-                edit_revset_in_editor(&mut app, &mut terminal);
-                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+                self.app.revset.active_preset = None;
+                self.edit_revset();
             }
             Action::EditWorkingCopyFile { path, line } => {
-                terminal_events.stop();
-                open_file_in_editor(&repo_path, &path, line, &mut terminal);
-                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
-            }
-            Action::EditFileAtRevision {
-                commit_id,
-                path,
-                line,
-                ..
-            } => {
-                terminal_events.stop();
-                open_revision_in_editor(&repo_path, &commit_id, &path, line, &mut terminal);
-                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+                let path = self.repo_path.join(path);
+                self.screen.suspended(|| open_in_editor(&path, line));
             }
             Action::EditConflictFile {
                 change_id,
@@ -415,29 +499,22 @@ fn main() -> Result<()> {
                 content,
                 flags,
             } => {
-                terminal_events.stop();
-                let edited = edit_content_in_editor(&content, path.as_str(), &mut terminal);
-                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+                let edited = self
+                    .screen
+                    .suspended(|| edit_in_editor(&content, path.as_str()));
                 match edited {
                     EditOutcome::Edited(edited) => {
                         if let Some(cmd) = kojutsu::input::staged_resolution(
-                            &mut app, change_id, &path, &edited, flags,
+                            &mut self.app,
+                            change_id,
+                            &path,
+                            &edited,
+                            flags,
                         ) {
-                            let action_label = app.last_action_label.take();
-                            run_jj_command(
-                                &mut app,
-                                &repo_path,
-                                cmd,
-                                action_label,
-                                &event_tx,
-                                false,
-                            );
+                            return self.execute(Action::RunJj(cmd));
                         }
                     }
-                    EditOutcome::Failed(e) => app.set_error(format!("editor: {e}")),
-                    EditOutcome::Unchanged | EditOutcome::Cancelled => {
-                        app.set_status("edit cancelled - no changes")
-                    }
+                    outcome => report_unapplied_edit(&mut self.app, outcome),
                 }
             }
             Action::EditConflictHunk {
@@ -447,19 +524,21 @@ fn main() -> Result<()> {
                 seed,
                 flags,
             } => {
-                terminal_events.stop();
-                let edited = edit_content_in_editor(&seed, path.as_str(), &mut terminal);
-                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+                let edited = self
+                    .screen
+                    .suspended(|| edit_in_editor(&seed, path.as_str()));
                 match edited {
                     EditOutcome::Edited(edited) => {
                         kojutsu::input::complete_hunk_edit(
-                            &mut app, &commit_id, &path, hunk_idx, &edited, flags,
+                            &mut self.app,
+                            &commit_id,
+                            &path,
+                            hunk_idx,
+                            &edited,
+                            flags,
                         );
                     }
-                    EditOutcome::Failed(e) => app.set_error(format!("editor: {e}")),
-                    EditOutcome::Unchanged | EditOutcome::Cancelled => {
-                        app.set_status("edit cancelled - no changes")
-                    }
+                    outcome => report_unapplied_edit(&mut self.app, outcome),
                 }
             }
             Action::CheckoutAndEdit {
@@ -476,64 +555,126 @@ fn main() -> Result<()> {
                     },
                     flags: kojutsu::keymap::CommandFlags::empty(),
                 };
-                terminal_events.stop();
-                let success = suspend_and_run(&mut app, &repo_path, &mut terminal, cmd);
-                if success {
-                    open_file_in_editor(&repo_path, &path, line, &mut terminal);
-                }
-                terminal_events = spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
+                let path = self.repo_path.join(path);
+                // One suspension for both, so the TUI doesn't flash between.
+                let result = self.screen.suspended(|| {
+                    let result = run_in_foreground(&cmd, &self.repo_path);
+                    if result.success {
+                        open_in_editor(&path, line);
+                    }
+                    result
+                });
+                finish_foreground_command(&mut self.app, &cmd, result);
             }
             Action::DeferredDispatch { action, flags } => {
-                let keymap = runtime.keymaps.for_view(app.active_view);
-                let result = input::dispatch_action_after_hooks(
-                    &mut app,
-                    &runtime.keymaps.registry,
-                    &runtime.engine,
+                let keymap = self.runtime.keymaps.for_view(self.app.active_view);
+                let next = input::dispatch_action_after_hooks(
+                    &mut self.app,
+                    &self.runtime.keymaps.registry,
+                    &self.runtime.engine,
                     keymap,
                     action,
                     flags,
                 );
-                // Re-process the resulting action.
-                match result {
-                    Action::RunJj(cmd) => {
-                        let action_label = app.last_action_label.take();
-                        run_jj_command(&mut app, &repo_path, cmd, action_label, &event_tx, false);
-                    }
-                    Action::RunJjForLua(cmd) => {
-                        run_jj_command(&mut app, &repo_path, cmd, None, &event_tx, true);
-                    }
-                    Action::SuspendAndRunJj(cmd) => {
-                        let action_label = app.last_action_label.take();
-                        terminal_events.stop();
-                        suspend_and_run(&mut app, &repo_path, &mut terminal, cmd);
-                        terminal_events =
-                            spawn_terminal_events(event_tx.clone(), AppEvent::Terminal);
-                        if let Some(label) = action_label {
-                            run_post_hooks_after_suspend(
-                                &mut app,
-                                &runtime.engine,
-                                label,
-                                &repo_path,
-                                &event_tx,
-                            );
-                        }
-                    }
-                    Action::Refresh => refresh_app(&mut app, RevsetLoadKind::Snapshot),
-                    Action::UpdateRevset(revset_str) => update_revset(&mut app, revset_str),
-                    _ => {}
-                }
+                return self.execute(next);
             }
-            Action::None => {}
         }
-        runtime.engine.flush_logs(&mut app);
-        sync_plugin_config(&mut app, &mut runtime, &repo_requests);
-        flush_repo_requests(&mut app, &repo_requests);
+        ControlFlow::Continue(())
     }
 
-    kojutsu::app::save_persisted_state(&app.to_persisted_state());
-    terminal_events.stop();
-    kojutsu::terminal::restore()?;
-    Ok(())
+    /// Spawn a background thread to run a non-interactive jj command.
+    ///
+    /// Sets `app.mode` to `CommandRunning` immediately so the UI shows
+    /// progress, then sends `AppEvent::JjDone` when the child exits (or is
+    /// cancelled via Esc, which kills the child process group).
+    fn run_jj(&mut self, cmd: JJCommand, completion: Completion) {
+        let jump = cmd.jump_target();
+        let (kill_main, kill_bg) = kojutsu::jj_command::KillHandle::pair();
+        self.app.mode = AppMode::CommandRunning(kojutsu::app::CommandRunningState::new(
+            cmd.display(),
+            cmd.display_parts(),
+            kill_main,
+        ));
+
+        let repo_path = self.repo_path.clone();
+        let event_tx = self.event_tx.clone();
+        std::thread::spawn(move || {
+            let result = cmd.run_cancellable(&repo_path, &kill_bg, |chunk| {
+                let _ = event_tx.send(AppEvent::JjOutput {
+                    chunk: chunk.to_vec(),
+                });
+            });
+            let _ = event_tx.send(AppEvent::JjDone {
+                result: Box::new(result),
+                cmd: Box::new(cmd),
+                jump,
+                completion,
+            });
+        });
+    }
+
+    /// Run post-hooks for a command that ran while the TUI was suspended,
+    /// and carry out whatever action a hook leads to.
+    fn run_post_hooks_after_suspend(&mut self, label: &'static str) -> ControlFlow<()> {
+        let (success, output) = extract_command_result(&self.app);
+        let outcome = self.runtime.engine.run_post_hooks(
+            label,
+            &mut self.app,
+            kojutsu::lua::CommandOutcome {
+                success,
+                cancelled: false,
+                code: None,
+                output: &output,
+            },
+        );
+        match outcome {
+            kojutsu::lua::HookOutcome::Suspended(action) => self.execute(action),
+            kojutsu::lua::HookOutcome::Proceed | kojutsu::lua::HookOutcome::Cancel => {
+                ControlFlow::Continue(())
+            }
+        }
+    }
+
+    /// Open the revset in `$EDITOR` and load what comes back.
+    fn edit_revset(&mut self) {
+        let text = format!("{}\n", self.app.revset_input_text());
+        match self.screen.suspended(|| edit_in_editor(&text, "revset")) {
+            EditOutcome::Edited(edited) => {
+                let revset = edited.trim();
+                if !revset.is_empty() {
+                    update_revset(&mut self.app, revset.to_string());
+                }
+            }
+            EditOutcome::Unchanged | EditOutcome::Cancelled => {}
+            EditOutcome::Failed(e) => {
+                self.app.mode = AppMode::command_output(
+                    "revset editor".to_string(),
+                    None,
+                    e.into_bytes(),
+                    false,
+                    vec![],
+                );
+            }
+        }
+    }
+
+    /// Open a file's content at a revision read-only in `$EDITOR`, from a
+    /// temp file named like it so the editor picks the right syntax.
+    fn view_file(&mut self, view: kojutsu::app::FileView) {
+        let staged = temp_file_like(view.path.as_str(), &view.content);
+        match staged {
+            Ok(file) => {
+                self.screen
+                    .suspended(|| open_in_editor(file.path(), view.line));
+            }
+            Err(e) => self.app.set_error(format!("temp file: {e}")),
+        }
+    }
+
+    fn close(self) -> Result<()> {
+        kojutsu::app::save_persisted_state(&self.app.to_persisted_state());
+        self.screen.close()
+    }
 }
 
 fn extract_command_result(app: &App) -> (bool, Vec<u8>) {
@@ -549,42 +690,19 @@ fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
     }
 }
 
-/// Reload the current revset. `Snapshot` re-scans the working copy first:
-/// needed only when the user may have edited files since jj last looked
-/// (manual refresh, returning from a suspended command). Refreshes after
-/// captured jj commands use `NoSnapshot`: the command itself already
-/// snapshotted the working copy when it started.
-fn refresh_app(app: &mut App, load_kind: RevsetLoadKind) {
-    app.refresh(load_kind);
-}
-
-fn suspend_and_run(
-    app: &mut App,
-    repo_path: &std::path::Path,
-    terminal: &mut kojutsu::terminal::Term,
-    cmd: JJCommand,
-) -> bool {
-    // Store the jump target before running (cmd is consumed).
-    let jump = cmd.jump_target();
-
-    // Leave the alternate screen so the child can use the terminal.
-    // Interactive commands need full terminal access; captured commands
-    // need stdin for SSH password prompts.
-    let _ = kojutsu::terminal::restore();
-    let result = if cmd.is_interactive() {
+/// Run a jj command on the real terminal. Interactive commands need full
+/// terminal access; captured ones still need stdin for SSH password prompts.
+fn run_in_foreground(cmd: &JJCommand, repo_path: &std::path::Path) -> JJCommandResult {
+    if cmd.is_interactive() {
         cmd.run_interactive(repo_path)
     } else {
         cmd.run_suspend_captured(repo_path)
-    };
-    // Re-enter the TUI.
-    *terminal = match kojutsu::terminal::init() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("fatal: failed to re-init terminal: {e}");
-            std::process::exit(1);
-        }
-    };
+    }
+}
 
+/// Record a command that ran on the real terminal, refresh after success,
+/// and show its output if it printed any or failed.
+fn finish_foreground_command(app: &mut App, cmd: &JJCommand, result: JJCommandResult) {
     app.push_command_log(
         kojutsu::app::CommandLogKind::Command,
         &result.display,
@@ -594,11 +712,11 @@ fn suspend_and_run(
     );
 
     if result.success {
-        app.jump_after_refresh = jump;
+        app.jump_after_refresh = cmd.jump_target();
         app.clear_selection();
         // The user may have edited files while the terminal was suspended
         // (e.g. in $EDITOR), so re-scan the working copy.
-        refresh_app(app, RevsetLoadKind::Snapshot);
+        app.refresh(RevsetLoadKind::Snapshot);
     }
 
     // Show output if there is any, or if the command failed (so failures are
@@ -613,7 +731,6 @@ fn suspend_and_run(
             retry,
         );
     }
-    result.success
 }
 
 /// Point everything that holds config-derived state at `config`. The repo
@@ -697,25 +814,39 @@ fn update_revset(app: &mut App, revset_str: String) {
     app.request_revset_load(Some(revset_str), RevsetLoadKind::NoSnapshot);
 }
 
-/// Suspend the TUI, run `$EDITOR` with `args`, and re-init the terminal
-/// afterward. Re-init failure is fatal: the TUI cannot continue. The
-/// event reader thread is the caller's responsibility (stop before, spawn
-/// after). Returns the editor's exit status, or the spawn error.
-fn run_editor_suspended(
-    terminal: &mut kojutsu::terminal::Term,
-    args: &[&std::ffi::OsStr],
-) -> std::io::Result<std::process::ExitStatus> {
+/// Run `$EDITOR` with `args`. The caller hands it the terminal.
+fn run_editor(args: &[&std::ffi::OsStr]) -> std::io::Result<std::process::ExitStatus> {
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
-    let _ = kojutsu::terminal::restore();
-    let status = std::process::Command::new(&editor).args(args).status();
-    *terminal = match kojutsu::terminal::init() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("fatal: failed to re-init terminal: {e}");
-            std::process::exit(1);
-        }
-    };
-    status
+    std::process::Command::new(&editor).args(args).status()
+}
+
+/// Open `path` in `$EDITOR` at `line`.
+fn open_in_editor(path: &std::path::Path, line: usize) {
+    let plus_line = format!("+{line}");
+    let _ = run_editor(&[std::ffi::OsStr::new(&plus_line), path.as_os_str()]);
+}
+
+/// A temp file holding `content`, named after `path`'s file name and
+/// extension so the editor highlights it the same way.
+fn temp_file_like(path: &str, content: &[u8]) -> std::io::Result<tempfile::NamedTempFile> {
+    use std::io::Write;
+
+    let path = std::path::Path::new(path);
+    let stem = path
+        .file_stem()
+        .map(|s| format!("{}.", s.to_string_lossy()))
+        .unwrap_or_default();
+    let suffix = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let mut file = tempfile::Builder::new()
+        .prefix(&stem)
+        .suffix(&suffix)
+        .tempfile()?;
+    file.write_all(content)?;
+    file.flush()?;
+    Ok(file)
 }
 
 /// Outcome of editing content in `$EDITOR`.
@@ -731,84 +862,32 @@ enum EditOutcome {
     Failed(String),
 }
 
-fn edit_revset_in_editor(app: &mut App, terminal: &mut kojutsu::terminal::Term) {
-    use std::io::Write;
-
-    let revset_text = app.revset_input_text();
-    let mut tmpfile = match tempfile::NamedTempFile::new() {
-        Ok(f) => f,
-        Err(e) => {
-            app.mode = AppMode::command_output(
-                "revset editor".to_string(),
-                None,
-                format!("failed to create temp file: {e}").into_bytes(),
-                false,
-                vec![],
-            );
-            return;
-        }
-    };
-    let _ = writeln!(tmpfile, "{revset_text}");
-    let path = tmpfile.path().to_path_buf();
-
-    let report_error = |app: &mut App, msg: String| {
-        app.mode = AppMode::command_output(
-            "revset editor".to_string(),
-            None,
-            msg.into_bytes(),
-            false,
-            vec![],
-        );
-    };
-    match run_editor_suspended(terminal, &[path.as_os_str()]) {
-        Ok(s) if s.success() => match std::fs::read_to_string(&path) {
-            Ok(content) => {
-                let new_revset = content.trim().to_string();
-                if !new_revset.is_empty() {
-                    update_revset(app, new_revset);
-                }
-            }
-            Err(e) => report_error(app, format!("failed to read temp file: {e}")),
-        },
-        // Non-zero exit: user cancelled, nothing to do.
-        Ok(_) => {}
-        Err(e) => report_error(app, format!("failed to run editor: {e}")),
-    }
-}
-
-/// Suspend the TUI, open `content` in $EDITOR (temp file suffixed like
-/// `path` for syntax highlighting), and report what happened.
-fn edit_content_in_editor(
-    content: &str,
-    path: &str,
-    terminal: &mut kojutsu::terminal::Term,
-) -> EditOutcome {
-    use std::io::Write;
-
-    let suffix = std::path::Path::new(path)
-        .extension()
-        .map(|e| format!(".{}", e.to_string_lossy()))
-        .unwrap_or_default();
-    let staged = (|| -> std::io::Result<tempfile::NamedTempFile> {
-        let mut tmpfile = tempfile::Builder::new().suffix(&suffix).tempfile()?;
-        tmpfile.write_all(content.as_bytes())?;
-        tmpfile.flush()?;
-        Ok(tmpfile)
-    })();
-    let tmpfile = match staged {
+/// Open `content` in `$EDITOR` (in a temp file named like `path`) and
+/// report what happened. The caller hands it the terminal.
+fn edit_in_editor(content: &str, path: &str) -> EditOutcome {
+    let file = match temp_file_like(path, content.as_bytes()) {
         Ok(f) => f,
         Err(e) => return EditOutcome::Failed(format!("temp file: {e}")),
     };
-    let tmp_path = tmpfile.path().to_path_buf();
-
-    match run_editor_suspended(terminal, &[tmp_path.as_os_str()]) {
-        Ok(s) if s.success() => match std::fs::read_to_string(&tmp_path) {
+    match run_editor(&[file.path().as_os_str()]) {
+        Ok(s) if s.success() => match std::fs::read_to_string(file.path()) {
             Ok(edited) if edited != content => EditOutcome::Edited(edited),
             Ok(_) => EditOutcome::Unchanged,
             Err(e) => EditOutcome::Failed(format!("read: {e}")),
         },
         Ok(_) => EditOutcome::Cancelled,
         Err(e) => EditOutcome::Failed(format!("run editor: {e}")),
+    }
+}
+
+/// Tell the user why an edit made no change.
+fn report_unapplied_edit(app: &mut App, outcome: EditOutcome) {
+    match outcome {
+        EditOutcome::Failed(e) => app.set_error(format!("editor: {e}")),
+        EditOutcome::Unchanged | EditOutcome::Cancelled => {
+            app.set_status("edit cancelled - no changes")
+        }
+        EditOutcome::Edited(_) => {}
     }
 }
 
@@ -896,48 +975,6 @@ fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
     }
 }
 
-/// Spawn a background thread to run a non-interactive jj command.
-///
-/// Sets `app.mode` to `CommandRunning` immediately so the UI shows progress,
-/// then sends `AppEvent::JjDone` when the child exits (or is cancelled via
-/// Esc, which kills the child process group).
-fn run_jj_command(
-    app: &mut App,
-    repo_path: &std::path::Path,
-    cmd: JJCommand,
-    label: Option<&'static str>,
-    event_tx: &mpsc::Sender<AppEvent>,
-    for_lua: bool,
-) {
-    let jump = cmd.jump_target();
-    let command = cmd.display();
-    let command_parts = cmd.display_parts();
-    let (kill_main, kill_bg) = kojutsu::jj_command::KillHandle::pair();
-
-    app.mode = AppMode::CommandRunning(kojutsu::app::CommandRunningState::new(
-        command,
-        command_parts,
-        kill_main,
-    ));
-
-    let repo_path = repo_path.to_path_buf();
-    let event_tx = event_tx.clone();
-    std::thread::spawn(move || {
-        let result = cmd.run_cancellable(&repo_path, &kill_bg, |chunk| {
-            let _ = event_tx.send(AppEvent::JjOutput {
-                chunk: chunk.to_vec(),
-            });
-        });
-        let _ = event_tx.send(AppEvent::JjDone {
-            result: Box::new(result),
-            cmd: Box::new(cmd),
-            jump,
-            label,
-            for_lua,
-        });
-    });
-}
-
 /// A jj command yielded by a suspended Lua thread finished: log it, dismiss
 /// the running overlay, and resume the thread with the result table.
 fn resume_lua_jj(
@@ -960,31 +997,6 @@ fn resume_lua_jj(
         kojutsu::lua::ResumeResult::DispatchAction { action, flags } => {
             Action::DeferredDispatch { action, flags }
         }
-    }
-}
-
-/// Run post-hooks for a command that ran while the TUI was suspended.
-/// If a hook yields a jj command, start it for the suspended thread.
-fn run_post_hooks_after_suspend(
-    app: &mut App,
-    lua_engine: &kojutsu::lua::LuaEngine,
-    label: &'static str,
-    repo_path: &std::path::Path,
-    event_tx: &mpsc::Sender<AppEvent>,
-) {
-    let (success, output) = extract_command_result(app);
-    let outcome = lua_engine.run_post_hooks(
-        label,
-        app,
-        kojutsu::lua::CommandOutcome {
-            success,
-            cancelled: false,
-            code: None,
-            output: &output,
-        },
-    );
-    if let kojutsu::lua::HookOutcome::Suspended(Action::RunJjForLua(cmd)) = outcome {
-        run_jj_command(app, repo_path, cmd, None, event_tx, true);
     }
 }
 
@@ -1028,7 +1040,7 @@ fn finish_jj_command(
         // The command already snapshotted the working copy when it started
         // (unless run with --ignore-working-copy, where skipping is wanted),
         // so skip the redundant re-scan.
-        refresh_app(app, RevsetLoadKind::NoSnapshot);
+        app.refresh(RevsetLoadKind::NoSnapshot);
     }
 
     if let Some(lbl) = label {
@@ -1084,62 +1096,6 @@ fn init_tracing() {
 }
 
 /// Find the nearest ancestor directory containing a `.jj/` workspace.
-fn open_file_in_editor(
-    repo_path: &std::path::Path,
-    file_path: &str,
-    line: usize,
-    terminal: &mut kojutsu::terminal::Term,
-) {
-    let full_path = repo_path.join(file_path);
-    let plus_line = format!("+{line}");
-    let _ = run_editor_suspended(
-        terminal,
-        &[std::ffi::OsStr::new(&plus_line), full_path.as_os_str()],
-    );
-}
-
-fn open_revision_in_editor(
-    repo_path: &std::path::Path,
-    commit_id: &kojutsu::types::CommitId,
-    file_path: &kojutsu::types::RepoPath,
-    line: usize,
-    terminal: &mut kojutsu::terminal::Term,
-) {
-    // Extract file extension for the temp file name.
-    let ext = file_path.as_str().rsplit('.').next().unwrap_or("txt");
-    let name = file_path.as_str().rsplit('/').next().unwrap_or("file");
-
-    let content = (|| -> color_eyre::Result<Vec<u8>> {
-        let _ = JjRepo::snapshot(repo_path);
-        let jj = JjRepo::open(repo_path)?;
-        jj.get_file_at_commit(commit_id, file_path)
-    })();
-
-    match content {
-        Ok(bytes) => {
-            let mut tmpfile = match tempfile::Builder::new()
-                .prefix(name)
-                .suffix(&format!(".{ext}"))
-                .tempfile()
-            {
-                Ok(f) => f,
-                Err(_) => return,
-            };
-            use std::io::Write;
-            let _ = tmpfile.write_all(&bytes);
-            let _ = tmpfile.flush();
-            let plus_line = format!("+{line}");
-            let _ = run_editor_suspended(
-                terminal,
-                &[std::ffi::OsStr::new(&plus_line), tmpfile.path().as_os_str()],
-            );
-        }
-        Err(e) => {
-            tracing::warn!("failed to get file at revision: {e}");
-        }
-    }
-}
-
 /// Matches jj CLI behavior (`cli_util.rs::find_workspace_dir`).
 fn find_workspace_dir(cwd: &std::path::Path) -> &std::path::Path {
     cwd.ancestors()

@@ -69,12 +69,6 @@ pub enum Action {
     EditRevsetInEditor,
     /// Suspend TUI and open $EDITOR on a working copy file at a line.
     EditWorkingCopyFile { path: String, line: usize },
-    /// Suspend TUI, export file at a revision to a temp file, open in $EDITOR.
-    EditFileAtRevision {
-        commit_id: crate::types::CommitId,
-        path: crate::types::RepoPath,
-        line: usize,
-    },
     /// Suspend TUI, edit a whole conflicted file's assembled resolution
     /// (picks applied, unpicked hunks as markers) in $EDITOR; apply via
     /// `jj resolve` if changed. Whole-file counterpart to `EditConflictHunk`.

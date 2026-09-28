@@ -64,12 +64,17 @@ impl RebuildScope {
 pub struct DeferredWork {
     pub rebuild: RebuildScope,
     pub scroll: bool,
+    /// A file whose content arrived and is ready to open in `$EDITOR`.
+    pub file_view: Option<FileView>,
 }
 
 impl DeferredWork {
     pub fn merge(&mut self, other: Self) {
         self.rebuild.merge(other.rebuild);
         self.scroll |= other.scroll;
+        if other.file_view.is_some() {
+            self.file_view = other.file_view;
+        }
     }
 }
 
@@ -289,6 +294,9 @@ pub struct App {
     pub(crate) unfolded_files: HashSet<FileFoldKey>,
     /// Repo requests waiting to be sent to the background service.
     pending_repo_requests: Vec<RepoRequest>,
+    /// The file at a revision the user asked to view, while its content
+    /// loads. A newer request replaces it.
+    pending_file_view: Option<FileViewRequest>,
     /// Global toggles that persist across commands.
     pub toggles: CommandFlags,
     /// Which diff format to display (git vs color-words).
@@ -442,6 +450,7 @@ impl App {
             unfolded_commits: HashSet::new(),
             unfolded_files: HashSet::new(),
             pending_repo_requests: Vec::new(),
+            pending_file_view: None,
             toggles: CommandFlags::empty(),
             diff_format: DiffFormat::ColorWords,
             status_message: None,
@@ -677,12 +686,27 @@ impl App {
         self.switch_view(ActiveView::Interdiff);
     }
 
-    /// Enter the annotate (blame) view for a file at a specific commit.
+    /// Load a commit's file list, to pick a file to annotate from.
     pub fn request_file_list(&mut self, commit_id: CommitId) {
         self.pending_repo_requests
             .push(RepoRequest::FileList { commit_id });
     }
 
+    /// Load a file's content at a commit, to open it read-only in `$EDITOR`
+    /// at `line` once it arrives.
+    pub fn request_file_view(&mut self, commit_id: CommitId, path: RepoPath, line: usize) {
+        self.pending_repo_requests.push(RepoRequest::FileContent {
+            commit_id: commit_id.clone(),
+            path: path.clone(),
+        });
+        self.pending_file_view = Some(FileViewRequest {
+            commit_id,
+            path,
+            line,
+        });
+    }
+
+    /// Enter the annotate (blame) view for a file at a specific commit.
     pub fn enter_annotate_view(&mut self, commit_id: CommitId, path: crate::types::RepoPath) {
         self.annotate.clear();
         self.request_annotation(commit_id, path);

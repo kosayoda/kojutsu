@@ -848,11 +848,8 @@ pub fn dispatch_action_after_hooks(
             if let Some((path, line)) = extract_file_and_line(app)
                 && let Some(cid) = extract_commit_id(app)
             {
-                return Action::EditFileAtRevision {
-                    commit_id: cid,
-                    path,
-                    line,
-                };
+                app.request_file_view(cid, path, line);
+                return Action::None;
             }
             app.set_error("select a file to edit");
             Action::None
