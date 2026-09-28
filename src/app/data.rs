@@ -561,36 +561,21 @@ impl App {
     }
 
     /// Process a repo result immediately (convenience wrapper).
-    /// Every owner whose file tree is waiting on `target`. Usually one, but
-    /// a commit's own changes can be listed by the DAG and the evolog alike.
-    fn owners_of(&self, target: &DiffTarget) -> SmallVec<FileOwner> {
-        let mut owners = SmallVec::new();
-        if let DiffTarget::Commit(commit_id) = target
-            && let Some(idx) = self.entry_by_commit_id(commit_id)
-        {
-            owners.push(FileOwner::Dag(idx));
-        }
-        owners.extend(
-            self.evolog
-                .entries
-                .iter()
-                .enumerate()
-                .filter(|(_, e)| {
-                    self.evolog
-                        .files
-                        .get(&e.commit_id)
-                        .is_some_and(|t| t.target() == target)
-                })
-                .map(|(i, _)| FileOwner::EvoLog(EvoLogIdx::new(i))),
-        );
-        if self
-            .interdiff
-            .as_ref()
-            .is_some_and(|i| i.files.target() == target)
-        {
-            owners.push(FileOwner::Interdiff);
-        }
-        owners
+    /// The owner whose file tree is waiting on `target`, if any still is.
+    /// Each kind of target belongs to one view, and a tree is keyed by the
+    /// target it was created for, so a result for a stale one finds nothing.
+    fn owner_of(&self, target: &DiffTarget) -> Option<FileOwner> {
+        let owner = match target {
+            DiffTarget::Commit(commit_id) => FileOwner::Dag(self.entry_by_commit_id(commit_id)?),
+            DiffTarget::Evolution { commit, .. } => FileOwner::EvoLog(EvoLogIdx::new(
+                self.evolog
+                    .entries
+                    .iter()
+                    .position(|e| e.commit_id == *commit)?,
+            )),
+            DiffTarget::Interdiff { .. } => FileOwner::Interdiff,
+        };
+        (self.file_tree(owner)?.target() == target).then_some(owner)
     }
 
     /// Queue the rebuild of an owner's rows, if they are on screen.
@@ -613,10 +598,9 @@ impl App {
         result: Result<DiffSummary, RepoError>,
         deferred: &mut DeferredWork,
     ) {
-        let owners = self.owners_of(target);
-        if owners.is_empty() {
+        let Some(owner) = self.owner_of(target) else {
             return;
-        }
+        };
         match &result {
             Ok(_) => {
                 self.clear_info_status();
@@ -626,30 +610,29 @@ impl App {
                 self.show_error_overlay(format!("load files for {target}"), error.clone())
             }
         }
-        for owner in owners {
-            let Some(tree) = self.file_tree_mut(owner) else {
-                continue;
-            };
-            tree.set_summary(result.clone());
-            let file_count = tree.files().map_or(0, <[_]>::len);
-            if let FileOwner::Dag(idx) = owner
-                && result.is_ok()
-            {
-                self.nodes[idx].commit.is_empty = file_count == 0;
-                // The file list is the first point this commit's changes
-                // are known, so it's also where a line selection made
-                // before a rewrite gets re-checked against them.
-                self.drop_blocked_line_selection(idx);
-            }
-            // Files unfolded before a refresh or rewrite stay unfolded:
-            // request what they show again.
-            for file_idx in (0..file_count).map(FileIdx::new) {
-                if self.is_file_unfolded(owner, file_idx) {
-                    self.request_file_contents(owner, file_idx);
-                }
-            }
-            self.owner_changed(owner, deferred);
+        let loaded = result.is_ok();
+        let Some(tree) = self.file_tree_mut(owner) else {
+            return;
+        };
+        tree.set_summary(result);
+        let file_count = tree.files().map_or(0, <[_]>::len);
+        if let FileOwner::Dag(idx) = owner
+            && loaded
+        {
+            self.nodes[idx].commit.is_empty = file_count == 0;
+            // The file list is the first point this commit's changes
+            // are known, so it's also where a line selection made
+            // before a rewrite gets re-checked against them.
+            self.drop_blocked_line_selection(idx);
         }
+        // Files unfolded before a refresh or rewrite stay unfolded: request
+        // what they show again.
+        for file_idx in (0..file_count).map(FileIdx::new) {
+            if self.is_file_unfolded(owner, file_idx) {
+                self.request_file_contents(owner, file_idx);
+            }
+        }
+        self.owner_changed(owner, deferred);
     }
 
     fn apply_file_diff(
@@ -659,10 +642,9 @@ impl App {
         result: Result<DiffResult, RepoError>,
         deferred: &mut DeferredWork,
     ) {
-        let owners = self.owners_of(target);
-        if owners.is_empty() {
+        let Some(owner) = self.owner_of(target) else {
             return;
-        }
+        };
         match &result {
             Ok(_) => {
                 self.clear_info_status();
@@ -670,12 +652,10 @@ impl App {
             }
             Err(error) => self.show_error_overlay(format!("load diff for {path}"), error.clone()),
         }
-        for owner in owners {
-            if let Some(tree) = self.file_tree_mut(owner) {
-                tree.set_diff(path, result.clone());
-                self.owner_changed(owner, deferred);
-            }
+        if let Some(tree) = self.file_tree_mut(owner) {
+            tree.set_diff(path, result);
         }
+        self.owner_changed(owner, deferred);
     }
 
     pub fn handle_repo_result(&mut self, result: RepoResult) {
@@ -882,7 +862,7 @@ mod repo_result_tests {
         (
             app,
             DiffTarget::Evolution {
-                predecessor,
+                predecessors: vec![predecessor],
                 commit,
             },
         )
@@ -938,23 +918,30 @@ mod repo_result_tests {
         ));
     }
 
-    /// The first step of an evolog has no predecessor: it is where the change
-    /// was created, so unfolding it lists the commit's own changes.
+    /// A step's diff is taken against all of its predecessors, as jj's is:
+    /// a squash has several, and the step that created the change has none.
     #[test]
-    fn an_evolog_step_without_a_predecessor_lists_the_commits_changes() {
-        let mut app = App::for_test();
-        let commit = CommitId::new("abc123");
-        app.evolog
-            .entries
-            .push(EvoLogEntry::for_test(commit.clone(), Vec::new()));
-        app.toggle_evolog_fold(EvoLogIdx::new(0));
+    fn an_evolog_step_diffs_against_all_its_predecessors() {
+        for predecessors in [
+            Vec::new(),
+            vec![CommitId::new("def456"), CommitId::new("0ab789")],
+        ] {
+            let mut app = App::for_test();
+            let commit = CommitId::new("abc123");
+            app.evolog
+                .entries
+                .push(EvoLogEntry::for_test(commit.clone(), predecessors.clone()));
+            app.toggle_evolog_fold(EvoLogIdx::new(0));
 
-        assert!(matches!(
-            app.take_repo_requests().as_slice(),
-            [RepoRequest::DiffSummary {
-                target: DiffTarget::Commit(c)
-            }] if *c == commit
-        ));
+            let expected = DiffTarget::Evolution {
+                predecessors,
+                commit,
+            };
+            assert!(matches!(
+                app.take_repo_requests().as_slice(),
+                [RepoRequest::DiffSummary { target }] if *target == expected
+            ));
+        }
     }
 
     /// A result for a target nobody is waiting on any more (the evolog moved
@@ -964,7 +951,7 @@ mod repo_result_tests {
         let (mut app, _) = app_with_evolog_step();
         app.handle_repo_result(RepoResult::DiffSummary {
             target: DiffTarget::Evolution {
-                predecessor: CommitId::new("0ld"),
+                predecessors: vec![CommitId::new("0ld")],
                 commit: CommitId::new("abc123"),
             },
             result: Err(failure()),

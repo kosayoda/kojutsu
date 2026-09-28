@@ -860,14 +860,9 @@ impl App {
             return;
         };
         let commit_id = entry.commit_id.clone();
-        // A step with no predecessor is where the change was created: it
-        // shows the commit's own changes, as `jj evolog -p` does.
-        let target = match entry.predecessor_ids.first() {
-            Some(predecessor) => DiffTarget::Evolution {
-                predecessor: predecessor.clone(),
-                commit: commit_id.clone(),
-            },
-            None => DiffTarget::Commit(commit_id.clone()),
+        let target = DiffTarget::Evolution {
+            predecessors: entry.predecessor_ids.clone(),
+            commit: commit_id.clone(),
         };
         let unfolded = toggle_membership(&mut self.evolog.unfolded, commit_id.clone());
         if unfolded {

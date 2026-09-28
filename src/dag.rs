@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use compact_str::format_compact;
+use itertools::Itertools as _;
 use jiff::Timestamp;
 
 use crate::types::{
@@ -149,9 +150,12 @@ pub struct LineStats {
 pub enum DiffTarget {
     /// A commit against its parents: the commit's own changes.
     Commit(CommitId),
-    /// One evolution step: a predecessor's tree against its successor's.
+    /// One evolution step, as `jj evolog -p` shows it: the predecessors
+    /// rebased onto the commit's parents, against the commit. With no
+    /// predecessors (the step that created the change) that is the commit's
+    /// own changes.
     Evolution {
-        predecessor: CommitId,
+        predecessors: Vec<CommitId>,
         commit: CommitId,
     },
     /// `from` rebased onto `to`'s parents, against `to`: how the change
@@ -174,16 +178,15 @@ impl std::fmt::Display for DiffTarget {
         match self {
             Self::Commit(commit) => write!(f, "{commit}"),
             Self::Evolution {
-                predecessor,
+                predecessors,
                 commit,
-            } => write!(f, "{predecessor} → {commit}"),
+            } => write!(f, "{} → {commit}", predecessors.iter().join(", ")),
             Self::Interdiff { from, to } => write!(f, "interdiff {from} → {to}"),
         }
     }
 }
 
 /// The changed files between a `DiffTarget`'s trees, with line totals.
-#[derive(Clone)]
 pub struct DiffSummary {
     pub files: Vec<FileChange>,
     pub stats: LineStats,

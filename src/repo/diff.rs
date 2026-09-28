@@ -18,6 +18,7 @@ use jj_lib::merge::{Diff, Merge, MergedTreeValue};
 use jj_lib::merged_tree::MergedTree;
 use jj_lib::repo::Repo;
 use jj_lib::repo_path::{RepoPath as JjRepoPath, RepoPathBuf};
+use jj_lib::rewrite::rebase_to_dest_parent;
 use jj_lib::store::Store;
 use pollster::FutureExt as _;
 
@@ -226,36 +227,34 @@ impl JjRepo {
                 })
             }
             DiffTarget::Evolution {
-                predecessor,
+                predecessors,
                 commit,
-            } => Ok(TreePair {
-                before: self.load_commit(predecessor)?.tree(),
-                after: self.load_commit(commit)?.tree(),
-            }),
-            DiffTarget::Interdiff { from, to } => {
-                let from = self.load_commit(from)?;
-                let to = self.load_commit(to)?;
-                let merge_input = Merge::from_removes_adds(
-                    [(from.parent_tree(repo).block_on()?, String::new())],
-                    [
-                        (to.parent_tree(repo).block_on()?, String::new()),
-                        (from.tree(), String::new()),
-                    ],
-                );
-                let before = MergedTree::merge(merge_input)
-                    .block_on()
-                    .map_err(|e| color_eyre::eyre::eyre!("tree merge failed: {e}"))?;
-                Ok(TreePair {
-                    before,
-                    after: to.tree(),
-                })
-            }
+            } => self.rebased_pair(predecessors, commit),
+            DiffTarget::Interdiff { from, to } => self.rebased_pair(std::slice::from_ref(from), to),
         }
     }
 
+    /// `sources` rebased onto `destination`'s parents, against `destination`:
+    /// the comparison `jj evolog -p` and `jj interdiff` both make, so what
+    /// the parents brought in doesn't show as a change.
+    fn rebased_pair(&self, sources: &[UiCommitId], destination: &UiCommitId) -> Result<TreePair> {
+        let sources = sources
+            .iter()
+            .map(|id| self.load_commit(id))
+            .collect::<Result<Vec<_>>>()?;
+        let destination = self.load_commit(destination)?;
+        let before = rebase_to_dest_parent(self.repo.as_ref(), &sources, &destination)
+            .block_on()
+            .wrap_err("failed to rebase onto the destination's parents")?;
+        Ok(TreePair {
+            before,
+            after: destination.tree(),
+        })
+    }
+
     /// Rename and copy records for a target. Only a commit's own changes
-    /// carry them; the other targets compare trees that aren't parent and
-    /// child, so their files are listed as plain adds and deletes.
+    /// carry them; like jj, the rebased comparisons list their files as
+    /// plain adds and deletes.
     fn copy_records(&self, target: &DiffTarget) -> Result<jj_lib::copies::CopyRecords> {
         let mut copy_records = jj_lib::copies::CopyRecords::default();
         let DiffTarget::Commit(commit_id) = target else {
