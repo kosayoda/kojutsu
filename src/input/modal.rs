@@ -4,9 +4,70 @@ use tui_input::backend::crossterm::EventHandler;
 use crate::app::{App, AppMode};
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap;
-use crate::types::{PendingCommand, Str};
+use crate::types::{PromptStep, Str, TextPrompt};
 
 use super::Action;
+
+/// Carry a prompt step forward with its submitted text.
+fn submit_step(
+    app: &mut App,
+    lua: &crate::lua::LuaEngine,
+    step: PromptStep,
+    text: String,
+) -> Action {
+    match step {
+        PromptStep::LuaResume => {
+            match lua.resume_suspended(app, crate::lua::ResumeValue::Text(text)) {
+                crate::lua::ResumeResult::Action(a) => a,
+                crate::lua::ResumeResult::DispatchAction { action, flags } => {
+                    Action::DeferredDispatch { action, flags }
+                }
+            }
+        }
+        PromptStep::Revset => {
+            app.revset.active_preset = None;
+            Action::UpdateRevset(text)
+        }
+        PromptStep::WorkspaceAddPath { flags } => {
+            app.mode = AppMode::text_input(
+                "workspace name (enter for default): ",
+                "",
+                PromptStep::WorkspaceAddName { path: text, flags },
+            );
+            Action::None
+        }
+        PromptStep::WorkspaceAddName { path, flags } => {
+            let name = (!text.is_empty()).then(|| crate::types::WorkspaceName::new(text));
+            if app.active_view != crate::app::ActiveView::Dag {
+                app.switch_view(crate::app::ActiveView::Dag);
+            }
+            app.mode = AppMode::CommitSelect {
+                restore_cursor: app.cursor,
+                pending: crate::types::PendingCommitSelect::WorkspaceAdd { path, name },
+                flags,
+                origin: None,
+            };
+            Action::None
+        }
+        PromptStep::RunCommand { change_ids, flags } => {
+            submit_run_command(app, change_ids, flags, text)
+        }
+        PromptStep::RunJobs {
+            change_ids,
+            argv,
+            flags,
+        } => submit_run_jobs(app, change_ids, argv, flags, text),
+        PromptStep::RawCommand => match shlex::split(&text) {
+            Some(args) if !args.is_empty() => Action::run(JJCommand {
+                kind: JJCommandKind::Raw {
+                    args: args.into_iter().map(Str::from).collect(),
+                },
+                flags: keymap::CommandFlags::empty(),
+            }),
+            _ => Action::None,
+        },
+    }
+}
 
 pub(super) fn handle_text_input(
     app: &mut App,
@@ -15,72 +76,16 @@ pub(super) fn handle_text_input(
 ) -> Action {
     match key.code {
         KeyCode::Enter => {
-            let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::TextInput {
+            let AppMode::TextInput {
                 input, on_submit, ..
-            } = mode
-            {
-                let text = input.to_string();
-                match on_submit {
-                    PendingCommand::LuaResume => {
-                        match lua.resume_suspended(app, crate::lua::ResumeValue::Text(text)) {
-                            crate::lua::ResumeResult::Action(a) => a,
-                            crate::lua::ResumeResult::DispatchAction { action, flags } => {
-                                Action::DeferredDispatch { action, flags }
-                            }
-                        }
-                    }
-                    PendingCommand::Revset => {
-                        app.revset.active_preset = None;
-                        Action::UpdateRevset(text)
-                    }
-                    PendingCommand::WorkspaceAddPath { flags } => {
-                        app.mode = AppMode::text_input(
-                            "workspace name (enter for default): ",
-                            "",
-                            PendingCommand::WorkspaceAddName { path: text, flags },
-                        );
-                        Action::None
-                    }
-                    PendingCommand::WorkspaceAddName { path, flags } => {
-                        let name = if text.is_empty() {
-                            None
-                        } else {
-                            Some(crate::types::WorkspaceName::new(text))
-                        };
-                        if app.active_view != crate::app::ActiveView::Dag {
-                            app.switch_view(crate::app::ActiveView::Dag);
-                        }
-                        let restore_cursor = app.cursor;
-                        app.mode = AppMode::CommitSelect {
-                            restore_cursor,
-                            pending: crate::types::PendingCommitSelect::WorkspaceAdd { path, name },
-                            flags,
-                            origin: None,
-                        };
-                        Action::None
-                    }
-                    PendingCommand::RunCommand { change_ids, flags } => {
-                        submit_run_command(app, change_ids, flags, text)
-                    }
-                    PendingCommand::RunJobs {
-                        change_ids,
-                        argv,
-                        flags,
-                    } => submit_run_jobs(app, change_ids, argv, flags, text),
-                    PendingCommand::RawCommand => {
-                        match PendingCommand::RawCommand.into_jj_command(text) {
-                            Some(jj_cmd) => Action::run(jj_cmd),
-                            None => Action::None,
-                        }
-                    }
-                    cmd => match cmd.into_jj_command(text) {
-                        Some(jj_cmd) => Action::run(jj_cmd),
-                        None => Action::None,
-                    },
-                }
-            } else {
-                Action::None
+            } = std::mem::replace(&mut app.mode, AppMode::Normal)
+            else {
+                unreachable!("text input keys are handled in text input mode");
+            };
+            let text = input.to_string();
+            match on_submit {
+                TextPrompt::Command(prompt) => Action::run(prompt.into_command(text)),
+                TextPrompt::Step(step) => submit_step(app, lua, step, text),
             }
         }
         KeyCode::Esc => {
@@ -97,7 +102,7 @@ pub(super) fn handle_text_input(
             if let AppMode::TextInput {
                 input, on_submit, ..
             } = &mut app.mode
-                && matches!(on_submit, PendingCommand::RawCommand)
+                && matches!(on_submit, TextPrompt::Step(PromptStep::RawCommand))
             {
                 let text = input.to_string();
                 let repo_path = std::path::PathBuf::from(&app.repo_root);
@@ -152,9 +157,6 @@ pub(super) fn handle_text_input(
     }
 }
 
-/// A `jj run` command line has been chosen (typed or picked from the list):
-/// record it in history, then dispatch directly for a single revision or
-/// chain into the `--jobs` prompt for several.
 /// The free-input entry for the run picker; also the single source of the
 /// `run:` prompt and its submit handler.
 pub(in crate::input) fn run_custom_entry(
@@ -163,7 +165,7 @@ pub(in crate::input) fn run_custom_entry(
 ) -> crate::app::CustomEntry {
     crate::app::CustomEntry {
         prompt: "run: ".into(),
-        on_submit: PendingCommand::RunCommand { change_ids, flags },
+        on_submit: PromptStep::RunCommand { change_ids, flags }.into(),
     }
 }
 
@@ -187,7 +189,7 @@ fn run_jobs_input(
     AppMode::text_input(
         "jobs (empty = jj default): ",
         prefill,
-        PendingCommand::RunJobs {
+        PromptStep::RunJobs {
             change_ids,
             argv,
             flags,
@@ -195,6 +197,9 @@ fn run_jobs_input(
     )
 }
 
+/// A `jj run` command line has been chosen (typed or picked from the list):
+/// record it in history, then dispatch directly for a single revision or
+/// chain into the `--jobs` prompt for several.
 pub(in crate::input) fn submit_run_command(
     app: &mut App,
     change_ids: crate::types::SmallVec<crate::types::RevisionArg>,

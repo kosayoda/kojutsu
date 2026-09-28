@@ -10,9 +10,9 @@ use compact_str::CompactString;
 
 use crate::keymap::{CommandFlags, TrieNode};
 use crate::types::{
-    BookmarkName, CommitId, FollowUpOption, OperationId, PendingCommand, PendingCommitSelect,
-    PendingSelection, RemoteName, RepoPath, RevisionArg, SearchScopes, Str, TagName,
-    TargetOperation, VisualRange, WorkspaceName,
+    BookmarkName, CommitId, FollowUpOption, OperationId, PendingCommitSelect, PendingSelection,
+    RemoteName, RepoPath, RevisionArg, SearchScopes, Str, TagName, TargetOperation, TextPrompt,
+    VisualRange, WorkspaceName,
 };
 
 use super::{FileTree, Loadable};
@@ -954,7 +954,7 @@ pub struct CustomEntry {
     /// Prompt for the text input (e.g. `"run: "`).
     pub prompt: String,
     /// Submit handler for the text input.
-    pub on_submit: PendingCommand,
+    pub on_submit: TextPrompt,
 }
 
 impl SelectFromListState {
@@ -1013,7 +1013,7 @@ pub enum AppMode {
     TextInput {
         prompt: String,
         input: Input,
-        on_submit: PendingCommand,
+        on_submit: TextPrompt,
         origin: Option<Invocation>,
     },
     /// Live search input at the bottom bar.
@@ -1072,12 +1072,12 @@ impl AppMode {
     pub fn text_input(
         prompt: impl Into<String>,
         prefill: impl Into<String>,
-        on_submit: PendingCommand,
+        on_submit: impl Into<TextPrompt>,
     ) -> Self {
         AppMode::TextInput {
             prompt: prompt.into(),
             input: Input::new(prefill.into()),
-            on_submit,
+            on_submit: on_submit.into(),
             origin: None,
         }
     }

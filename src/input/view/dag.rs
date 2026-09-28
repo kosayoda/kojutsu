@@ -4,9 +4,9 @@ use crate::app::{App, AppMode};
 use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{
-    ArrangeDirection, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
-    PendingSelection, RebaseKind, RebaseSource, RebaseTarget, RemoteCommand, RevisionArg,
-    SelectionKind, SmallVec, SplitKind, SquashKind, Str, TargetOperation,
+    ArrangeDirection, CommandPrompt, FollowUpAction, FollowUpOption, MessageMode, PendingSelection,
+    RebaseKind, RebaseSource, RebaseTarget, RemoteCommand, RevisionArg, SelectionKind, SmallVec,
+    SplitKind, SquashKind, Str, TargetOperation,
 };
 
 use crate::input::Action;
@@ -246,7 +246,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             app.mode = AppMode::text_input(
                 "commit message: ",
                 "",
-                PendingCommand::Commit {
+                CommandPrompt::Commit {
                     flags,
                     selection: build_change_selection(app),
                 },
@@ -385,7 +385,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             app.mode = AppMode::text_input(
                 "create bookmark: ",
                 "",
-                PendingCommand::BookmarkCreate { change_id, flags },
+                CommandPrompt::BookmarkCreate { change_id, flags },
             );
             Action::None
         }
@@ -528,7 +528,7 @@ fn enter_describe_input(app: &mut App, flags: CommandFlags) -> Action {
     app.mode = AppMode::text_input(
         "describe: ",
         prefill,
-        PendingCommand::Describe {
+        CommandPrompt::Describe {
             change_ids: ids,
             flags,
         },

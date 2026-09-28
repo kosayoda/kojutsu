@@ -2,9 +2,9 @@ use strum::IntoEnumIterator;
 
 use crate::keymap::CommandFlags;
 use crate::types::{
-    BookmarkName, ChangeSelection, CommitId, MessageMode, PendingCommand, PendingCommitSelect,
-    ReadyCommand, RebaseKind, RebaseSource, RebaseTarget, RepoPath, RevisionArg, SmallVec,
-    SmallVec1, SplitTarget, SquashTarget, Str, TagName, TargetOperation, WorkspaceName,
+    ChangeSelection, CommandPrompt, CommitId, MessageMode, PendingCommitSelect, ReadyCommand,
+    RebaseKind, RebaseSource, RebaseTarget, RepoPath, RevisionArg, SmallVec, SmallVec1,
+    SplitTarget, SquashTarget, Str, TargetOperation, TextPrompt,
 };
 
 use super::{JJCommand, JJCommandKind};
@@ -19,7 +19,7 @@ pub enum FollowUpAction {
     Execute(JJCommand),
     TextInput {
         prompt: String,
-        pending: PendingCommand,
+        pending: TextPrompt,
     },
     WidenRevset {
         change_id: String,
@@ -85,97 +85,6 @@ impl PendingCommitSelect {
                 },
                 flags,
             },
-        }
-    }
-}
-
-impl PendingCommand {
-    pub fn into_jj_command(self, text: String) -> Option<JJCommand> {
-        match self {
-            PendingCommand::Describe { change_ids, flags } => Some(JJCommand {
-                kind: JJCommandKind::Describe {
-                    change_ids,
-                    message: text,
-                },
-                flags,
-            }),
-            PendingCommand::SquashWithMessage { builder, flags } => {
-                Some(builder.build(text, flags))
-            }
-            // Multi-step inputs resolved in the text-input handler, not here.
-            PendingCommand::Revset
-            | PendingCommand::WorkspaceAddPath { .. }
-            | PendingCommand::WorkspaceAddName { .. }
-            | PendingCommand::RunCommand { .. }
-            | PendingCommand::RunJobs { .. } => None,
-            PendingCommand::BookmarkCreate { change_id, flags } => Some(JJCommand {
-                kind: JJCommandKind::BookmarkCreate {
-                    name: BookmarkName::new(text),
-                    change_id,
-                },
-                flags,
-            }),
-            PendingCommand::BookmarkSet { change_id, flags } => Some(JJCommand {
-                kind: JJCommandKind::BookmarkSet {
-                    name: BookmarkName::new(text),
-                    change_id,
-                },
-                flags,
-            }),
-            PendingCommand::BookmarkSetByName { name, flags } => Some(JJCommand {
-                kind: JJCommandKind::BookmarkSet {
-                    name,
-                    change_id: RevisionArg::new(text),
-                },
-                flags,
-            }),
-            PendingCommand::BookmarkRename { old_name, flags } => Some(JJCommand {
-                kind: JJCommandKind::BookmarkRename {
-                    old_name,
-                    new_name: BookmarkName::new(text),
-                },
-                flags,
-            }),
-            PendingCommand::TagSet { change_id, flags } => Some(JJCommand {
-                kind: JJCommandKind::TagSet {
-                    name: TagName::new(text),
-                    change_id,
-                },
-                flags,
-            }),
-            PendingCommand::TagSetByName { name, flags } => Some(JJCommand {
-                kind: JJCommandKind::TagSet {
-                    name,
-                    change_id: RevisionArg::new(text),
-                },
-                flags,
-            }),
-            PendingCommand::Commit { flags, selection } => Some(JJCommand {
-                kind: JJCommandKind::Commit {
-                    message: Some(text),
-                    selection,
-                },
-                flags,
-            }),
-            PendingCommand::WorkspaceRename { flags } => Some(JJCommand {
-                kind: JJCommandKind::WorkspaceRename {
-                    new_name: WorkspaceName::new(text),
-                },
-                flags,
-            }),
-            PendingCommand::RawCommand => {
-                let args = match shlex::split(&text) {
-                    Some(args) if !args.is_empty() => args,
-                    _ => return None,
-                };
-                Some(JJCommand {
-                    kind: JJCommandKind::Raw {
-                        args: args.into_iter().map(Str::from).collect(),
-                    },
-                    flags: CommandFlags::empty(),
-                })
-            }
-            PendingCommand::LuaResume => None,
         }
     }
 }
@@ -362,7 +271,7 @@ fn squash_follow_up(
             label: "with message",
             action: FollowUpAction::TextInput {
                 prompt: "squash message: ".to_string(),
-                pending: PendingCommand::SquashWithMessage { builder, flags },
+                pending: CommandPrompt::SquashWithMessage { builder, flags }.into(),
             },
         },
         FollowUpOption {

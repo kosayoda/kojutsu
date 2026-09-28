@@ -312,7 +312,7 @@ pub(super) fn resolve_selection(
             app.mode = AppMode::text_input(
                 "rename to: ",
                 name.clone(),
-                crate::types::PendingCommand::BookmarkRename {
+                crate::types::CommandPrompt::BookmarkRename {
                     old_name: BookmarkName::new(name),
                     flags,
                 },
@@ -349,7 +349,7 @@ pub(super) fn resolve_selection(
             // The item format is "value  description": extract just the value.
             let value = selected.split_whitespace().next().unwrap_or(&selected);
             let new_text = crate::jj_command::replace_current_token(&input, value, true);
-            app.mode = AppMode::text_input(":", new_text, crate::types::PendingCommand::RawCommand);
+            app.mode = AppMode::text_input(":", new_text, crate::types::PromptStep::RawCommand);
             Action::None
         }
         PendingSelection::RunCommand { change_ids, flags } => {

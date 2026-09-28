@@ -696,7 +696,7 @@ impl LuaEngine {
                     Some(crate::app::AppMode::text_input(
                         &prompt,
                         &default,
-                        crate::types::PendingCommand::LuaResume,
+                        crate::types::PromptStep::LuaResume,
                     )),
                     Action::None,
                 )

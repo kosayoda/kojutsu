@@ -9,7 +9,7 @@ use crate::app::{ActiveView, App, AppMode};
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{
-    CommitId, PendingCommand, PendingSelection, RemoteCommand, SmallVec, Str, TargetOperation,
+    CommandPrompt, CommitId, PendingSelection, RemoteCommand, SmallVec, Str, TargetOperation,
 };
 
 use super::Action;
@@ -177,7 +177,7 @@ pub(super) fn bookmark_set(app: &mut App, flags: CommandFlags) -> Action {
             app.mode = AppMode::text_input(
                 format!("set {name} to (change id): "),
                 "",
-                PendingCommand::BookmarkSetByName { name, flags },
+                CommandPrompt::BookmarkSetByName { name, flags },
             );
         }
         _ => {
@@ -187,7 +187,7 @@ pub(super) fn bookmark_set(app: &mut App, flags: CommandFlags) -> Action {
             app.mode = AppMode::text_input(
                 "set bookmark: ",
                 "",
-                PendingCommand::BookmarkSet { change_id, flags },
+                CommandPrompt::BookmarkSet { change_id, flags },
             );
         }
     }
@@ -355,7 +355,7 @@ pub(super) fn tag_set(app: &mut App, flags: CommandFlags) -> Action {
             app.mode = AppMode::text_input(
                 format!("set {name} to (change id): "),
                 "",
-                PendingCommand::TagSetByName { name, flags },
+                CommandPrompt::TagSetByName { name, flags },
             );
         }
         _ => {
@@ -363,7 +363,7 @@ pub(super) fn tag_set(app: &mut App, flags: CommandFlags) -> Action {
                 return nothing_here(app, AppAction::TagSet);
             };
             app.mode =
-                AppMode::text_input("set tag: ", "", PendingCommand::TagSet { change_id, flags });
+                AppMode::text_input("set tag: ", "", CommandPrompt::TagSet { change_id, flags });
         }
     }
     Action::None

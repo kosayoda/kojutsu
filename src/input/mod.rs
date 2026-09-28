@@ -526,6 +526,26 @@ mod hook_attribution_tests {
         assert_eq!(hook(&retried), Some(AppAction::Abandon));
     }
 
+    /// A typed command line is parsed into jj's arguments; an empty one
+    /// runs nothing.
+    #[test]
+    fn a_raw_command_prompt_runs_what_was_typed() {
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        press(&mut app, KeyCode::Char(':'));
+        for c in "log -r @".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        let ran = press(&mut app, KeyCode::Enter);
+        assert!(matches!(
+            ran,
+            Action::RunJj { cmd: JJCommand { kind: JJCommandKind::Raw { args }, .. }, .. }
+                if args.iter().map(|a| a.as_str()).eq(["log", "-r", "@"])
+        ));
+
+        press(&mut app, KeyCode::Char(':'));
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+    }
+
     /// Keys pressed in between belong to nobody's chain: a retry of a
     /// command no action ran is not handed the last key's hooks.
     #[test]

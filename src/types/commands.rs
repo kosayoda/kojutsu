@@ -113,78 +113,171 @@ impl PendingCommitSelect {
     }
 }
 
-/// What to do when a TextInput is submitted.
-pub enum PendingCommand {
+/// What a text prompt does with the text once it is submitted.
+pub enum TextPrompt {
+    /// The text completes a jj command.
+    Command(CommandPrompt),
+    /// The text feeds a step that isn't a jj command yet.
+    Step(PromptStep),
+}
+
+impl From<CommandPrompt> for TextPrompt {
+    fn from(prompt: CommandPrompt) -> Self {
+        Self::Command(prompt)
+    }
+}
+
+impl From<PromptStep> for TextPrompt {
+    fn from(step: PromptStep) -> Self {
+        Self::Step(step)
+    }
+}
+
+/// A jj command waiting on one piece of text.
+pub enum CommandPrompt {
+    /// Text is the description.
     Describe {
         change_ids: SmallVec<RevisionArg>,
         flags: CommandFlags,
     },
+    /// Text is the squashed commit's message.
     SquashWithMessage {
         builder: ReadyCommand,
         flags: CommandFlags,
     },
-    /// The text is a revset expression to evaluate.
-    Revset,
-    /// Create a bookmark with the given name.
+    /// Text is the new bookmark's name.
     BookmarkCreate {
         change_id: RevisionArg,
         flags: CommandFlags,
     },
-    /// Set (create or update) a bookmark.
+    /// Text is the name of the bookmark to create or move there.
     BookmarkSet {
         change_id: RevisionArg,
         flags: CommandFlags,
     },
-    /// Set bookmark to a change ID (name already known, text is change ID).
+    /// Text is the change to point the named bookmark at.
     BookmarkSetByName {
         name: BookmarkName,
         flags: CommandFlags,
     },
-    /// Rename a bookmark (old name already selected, text is new name).
+    /// Text is the bookmark's new name.
     BookmarkRename {
         old_name: BookmarkName,
         flags: CommandFlags,
     },
-    /// Commit with inline message (text is the message).
+    /// Text is the commit message.
     Commit {
         flags: CommandFlags,
         selection: ChangeSelection,
     },
-    /// Set (create or update) a tag.
+    /// Text is the name of the tag to create or move there.
     TagSet {
         change_id: RevisionArg,
         flags: CommandFlags,
     },
-    /// Set tag to a change ID (name already known, text is change ID).
-    TagSetByName {
-        name: TagName,
-        flags: CommandFlags,
-    },
-    /// Workspace add step 1: collecting path. Text = path.
-    WorkspaceAddPath {
-        flags: CommandFlags,
-    },
-    /// Workspace add step 2: path collected, collecting name. Text = name.
-    WorkspaceAddName {
-        path: String,
-        flags: CommandFlags,
-    },
-    /// Rename current workspace. Text = new name.
-    WorkspaceRename {
-        flags: CommandFlags,
-    },
-    /// Run step 1: collecting the command to run over revisions. Text = command line.
+    /// Text is the change to point the named tag at.
+    TagSetByName { name: TagName, flags: CommandFlags },
+    /// Text is the current workspace's new name.
+    WorkspaceRename { flags: CommandFlags },
+}
+
+impl CommandPrompt {
+    /// The command, completed with the submitted text.
+    pub fn into_command(self, text: String) -> crate::jj_command::JJCommand {
+        use crate::jj_command::{JJCommand, JJCommandKind};
+        let (kind, flags) = match self {
+            Self::Describe { change_ids, flags } => (
+                JJCommandKind::Describe {
+                    change_ids,
+                    message: text,
+                },
+                flags,
+            ),
+            Self::SquashWithMessage { builder, flags } => return builder.build(text, flags),
+            Self::BookmarkCreate { change_id, flags } => (
+                JJCommandKind::BookmarkCreate {
+                    name: BookmarkName::new(text),
+                    change_id,
+                },
+                flags,
+            ),
+            Self::BookmarkSet { change_id, flags } => (
+                JJCommandKind::BookmarkSet {
+                    name: BookmarkName::new(text),
+                    change_id,
+                },
+                flags,
+            ),
+            Self::BookmarkSetByName { name, flags } => (
+                JJCommandKind::BookmarkSet {
+                    name,
+                    change_id: RevisionArg::new(text),
+                },
+                flags,
+            ),
+            Self::BookmarkRename { old_name, flags } => (
+                JJCommandKind::BookmarkRename {
+                    old_name,
+                    new_name: BookmarkName::new(text),
+                },
+                flags,
+            ),
+            Self::Commit { flags, selection } => (
+                JJCommandKind::Commit {
+                    message: Some(text),
+                    selection,
+                },
+                flags,
+            ),
+            Self::TagSet { change_id, flags } => (
+                JJCommandKind::TagSet {
+                    name: TagName::new(text),
+                    change_id,
+                },
+                flags,
+            ),
+            Self::TagSetByName { name, flags } => (
+                JJCommandKind::TagSet {
+                    name,
+                    change_id: RevisionArg::new(text),
+                },
+                flags,
+            ),
+            Self::WorkspaceRename { flags } => (
+                JJCommandKind::WorkspaceRename {
+                    new_name: WorkspaceName::new(text),
+                },
+                flags,
+            ),
+        };
+        JJCommand { kind, flags }
+    }
+}
+
+/// A prompt whose text isn't a jj command's last piece: it sets the revset,
+/// resumes a plugin, is parsed as a command line, or leads to the next
+/// prompt in a sequence.
+pub enum PromptStep {
+    /// Text is a revset expression to show.
+    Revset,
+    /// Workspace add, step 1: text is the path.
+    WorkspaceAddPath { flags: CommandFlags },
+    /// Workspace add, step 2: text is the name (empty for jj's default).
+    WorkspaceAddName { path: String, flags: CommandFlags },
+    /// Run, step 1: text is the command line to run over the revisions.
     RunCommand {
         change_ids: SmallVec<RevisionArg>,
         flags: CommandFlags,
     },
-    /// Run step 2: command collected, collecting `--jobs`. Text = job count (empty = jj default).
+    /// Run, step 2: text is the job count (empty for jj's default).
     RunJobs {
         change_ids: SmallVec<RevisionArg>,
         argv: Vec<Str>,
         flags: CommandFlags,
     },
+    /// Text is a jj command line typed in full.
     RawCommand,
+    /// Text resumes the plugin thread waiting on it.
     LuaResume,
 }
 

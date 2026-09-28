@@ -12,8 +12,8 @@ use crate::repo_service::RevsetLoadKind;
 use crate::types::ChangeSelection;
 use crate::types::FileOwner;
 use crate::types::{
-    CommitId, DisplayRow, FollowUpAction, FollowUpOption, PendingCommand, PendingSelection,
-    RemoteCommand, SelectionKind, TargetOperation,
+    CommandPrompt, CommitId, DisplayRow, FollowUpAction, FollowUpOption, PendingSelection,
+    PromptStep, RemoteCommand, SelectionKind, TargetOperation,
 };
 
 use super::bookmark::PendingSelectionKind;
@@ -626,7 +626,7 @@ fn perform(
         }
         AppAction::EditRevset => {
             let prefill = app.revset_input_text().to_string();
-            app.mode = AppMode::text_input("revset: ", prefill, PendingCommand::Revset);
+            app.mode = AppMode::text_input("revset: ", prefill, PromptStep::Revset);
             Action::None
         }
         AppAction::EditRevsetInEditor => Action::EditRevsetInEditor,
@@ -672,7 +672,7 @@ fn perform(
             app.mode = AppMode::text_input(
                 "workspace path: ",
                 "",
-                PendingCommand::WorkspaceAddPath { flags },
+                PromptStep::WorkspaceAddPath { flags },
             );
             Action::None
         }
@@ -685,7 +685,7 @@ fn perform(
             app.mode = AppMode::text_input(
                 "rename workspace to: ",
                 "",
-                PendingCommand::WorkspaceRename { flags },
+                CommandPrompt::WorkspaceRename { flags },
             );
             Action::None
         }
@@ -874,7 +874,7 @@ fn perform(
             Action::None
         }
         AppAction::CommandMode => {
-            app.mode = AppMode::text_input(":", "", PendingCommand::RawCommand);
+            app.mode = AppMode::text_input(":", "", PromptStep::RawCommand);
             Action::None
         }
         AppAction::FileList => {
