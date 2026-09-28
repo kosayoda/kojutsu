@@ -1,27 +1,27 @@
-use super::id::{BookmarkName, CommitId, RevisionArg, SmallVec, Str, TagName, WorkspaceName};
+use super::id::{
+    BookmarkName, CommitId, RemoteName, RevisionArg, SmallVec, Str, TagName, WorkspaceName,
+};
 use super::operations::{ChangeSelection, RebaseSource, SplitKind, SquashKind, SquashTarget};
 use crate::keymap::CommandFlags;
 
 /// What to do after selecting an item from a list.
 pub enum PendingSelection {
-    /// Delete a bookmark on the selected commit.
+    /// Delete the chosen bookmarks.
     BookmarkDelete {
-        change_id: RevisionArg,
         flags: CommandFlags,
     },
-    /// Forget a bookmark on the selected commit.
+    /// Forget the chosen bookmarks.
     BookmarkForget {
-        change_id: RevisionArg,
         flags: CommandFlags,
     },
-    /// Move a bookmark to a target commit (enters TargetSelect after selection).
+    /// Move the chosen bookmark from `source` to a target commit (enters
+    /// TargetSelect after selection).
     BookmarkMove {
-        change_id: RevisionArg,
+        source: RevisionArg,
         flags: CommandFlags,
     },
-    /// Rename a bookmark (enters TextInput after selection).
+    /// Rename the chosen bookmark (enters TextInput after selection).
     BookmarkRename {
-        change_id: RevisionArg,
         flags: CommandFlags,
     },
     /// Forget a workspace (text is the workspace name from the list).
@@ -54,19 +54,9 @@ pub enum PendingSelection {
     FileListAnnotate {
         commit_id: CommitId,
     },
-    /// Select a remote for git fetch.
-    GitRemoteForFetch {
-        all_remotes: bool,
-        flags: CommandFlags,
-    },
-    /// Select a remote for git push.
-    GitRemoteForPush {
-        all: bool,
-        flags: CommandFlags,
-    },
-    /// Select a remote for git push bookmark (bookmarks already chosen).
-    GitRemoteForPushBookmark {
-        bookmarks: SmallVec<BookmarkName>,
+    /// Select the remote a git command talks to.
+    GitRemote {
+        command: RemoteCommand,
         flags: CommandFlags,
     },
     /// Pick a `jj run` command from presets and history; the list's custom
@@ -81,6 +71,30 @@ pub enum PendingSelection {
     LuaResume {
         multi: bool,
     },
+}
+
+/// A git command that talks to a remote, waiting to learn which one.
+pub enum RemoteCommand {
+    Fetch { all_remotes: bool },
+    Push { all: bool },
+    PushBookmark { bookmarks: SmallVec<BookmarkName> },
+}
+
+impl RemoteCommand {
+    /// The command, against `remote` (`None` for jj's default).
+    pub fn to_kind(self, remote: Option<RemoteName>) -> crate::jj_command::JJCommandKind {
+        use crate::jj_command::JJCommandKind;
+        match self {
+            Self::Fetch { all_remotes } => JJCommandKind::GitFetch {
+                all_remotes,
+                remote,
+            },
+            Self::Push { all } => JJCommandKind::GitPush { all, remote },
+            Self::PushBookmark { bookmarks } => {
+                JJCommandKind::GitPushBookmark { bookmarks, remote }
+            }
+        }
+    }
 }
 
 /// What to do after selecting a single commit in CommitSelect mode.

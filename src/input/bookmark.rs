@@ -2,33 +2,9 @@ use crate::app::{App, AppMode};
 use crate::dag::BookmarkRef;
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::CommandFlags;
-use crate::types::{
-    BookmarkName, FollowUpAction, FollowUpOption, PendingCommand, PendingSelection, RevisionArg,
-    SmallVec, TagName,
-};
+use crate::types::{BookmarkName, FollowUpAction, FollowUpOption, SmallVec};
 
 use super::Action;
-
-/// Show a select-from-list for remote bookmarks, or a status message if empty.
-pub(super) fn enter_remote_bookmark_select(
-    app: &mut App,
-    bookmarks: Vec<String>,
-    empty_msg: &str,
-    title: &str,
-    on_select: PendingSelection,
-) -> Action {
-    if bookmarks.is_empty() {
-        app.set_status(empty_msg);
-        return Action::None;
-    }
-    app.mode = AppMode::select_from_list(title, bookmarks, true, on_select, true);
-    Action::None
-}
-
-pub(super) enum BookmarkTextAction {
-    Create,
-    Set,
-}
 
 #[derive(Clone, Copy)]
 pub(super) enum PendingSelectionKind {
@@ -45,19 +21,6 @@ impl PendingSelectionKind {
             Self::Forget => "forget bookmark",
             Self::Move => "move bookmark",
             Self::Rename => "rename bookmark",
-        }
-    }
-
-    pub(super) fn to_pending(
-        self,
-        change_id: RevisionArg,
-        flags: CommandFlags,
-    ) -> PendingSelection {
-        match self {
-            Self::Delete => PendingSelection::BookmarkDelete { change_id, flags },
-            Self::Forget => PendingSelection::BookmarkForget { change_id, flags },
-            Self::Move => PendingSelection::BookmarkMove { change_id, flags },
-            Self::Rename => PendingSelection::BookmarkRename { change_id, flags },
         }
     }
 
@@ -111,71 +74,6 @@ pub(super) fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Acti
         };
         Action::None
     }
-}
-
-pub(super) fn enter_bookmark_text_input(
-    app: &mut App,
-    flags: CommandFlags,
-    prompt: &str,
-    action: BookmarkTextAction,
-) -> Action {
-    let Some(change_id) = app.selected_change_id() else {
-        return Action::None;
-    };
-
-    let on_submit = match action {
-        BookmarkTextAction::Create => PendingCommand::BookmarkCreate { change_id, flags },
-        BookmarkTextAction::Set => PendingCommand::BookmarkSet { change_id, flags },
-    };
-
-    app.mode = AppMode::text_input(prompt, "", on_submit);
-    Action::None
-}
-
-pub(super) fn enter_bookmark_select(
-    app: &mut App,
-    lua: &crate::lua::LuaEngine,
-    flags: CommandFlags,
-    kind: PendingSelectionKind,
-) -> Action {
-    let Some(change_id) = app.selected_change_id() else {
-        return Action::None;
-    };
-    let bookmarks = app.selected_bookmarks().unwrap_or(&[]);
-    if bookmarks.is_empty() {
-        app.set_status("no bookmarks on this commit");
-        return Action::None;
-    }
-
-    let on_select = kind.to_pending(change_id, flags);
-    let items: Vec<String> = bookmarks.iter().map(|b| b.name.to_string()).collect();
-
-    if items.len() == 1 {
-        return super::list::resolve_selection(app, lua, on_select, items.into());
-    }
-
-    app.mode = AppMode::select_from_list(kind.title(), items, kind.is_multi(), on_select, false);
-    Action::None
-}
-
-pub(super) fn enter_tag_delete(app: &mut App, flags: CommandFlags) -> Action {
-    let tags = app.selected_tags().unwrap_or(&[]);
-    if tags.is_empty() {
-        app.set_status("no tags on this commit");
-        return Action::None;
-    }
-    let items: Vec<String> = tags.iter().map(|t| t.to_string()).collect();
-    if items.len() == 1 {
-        return Action::run(JJCommand {
-            kind: JJCommandKind::TagDelete {
-                names: items.into_iter().map(TagName::new).collect(),
-            },
-            flags,
-        });
-    }
-    let on_select = PendingSelection::TagDelete { flags };
-    app.mode = AppMode::select_from_list("delete tag", items, true, on_select, false);
-    Action::None
 }
 
 /// Parse `"name@remote"` display strings into `BookmarkRef` values.

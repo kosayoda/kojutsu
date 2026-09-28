@@ -769,6 +769,143 @@ impl App {
         self.annotate.lines.loaded()?.get(line_idx.raw())
     }
 
+    /// The revisions an action acts on, in whichever view: the DAG's
+    /// selected commits (or the cursor's), or the commit of the bookmark,
+    /// tag, workspace, evolog step or annotated line under the cursor.
+    pub fn target_revisions(&self) -> SmallVec<RevisionArg> {
+        match self.active_view {
+            ActiveView::Dag => self.selected_change_ids(),
+            _ => self.target_revision().into_iter().collect(),
+        }
+    }
+
+    /// The single revision an action acts on, as for
+    /// [`target_revisions`](Self::target_revisions). `None` in the DAG while
+    /// several commits are explicitly selected: a one-commit action there
+    /// would silently pick one of them.
+    pub fn target_revision(&self) -> Option<RevisionArg> {
+        let commit_revision = |id: &CommitId| RevisionArg::new(id.as_str());
+        match self.active_view {
+            ActiveView::Dag => {
+                let explicit_commits = self.selection_active()
+                    && self.selection_kind() == crate::types::SelectionKind::Commit;
+                (!explicit_commits)
+                    .then(|| self.selected_change_id())
+                    .flatten()
+            }
+            ActiveView::Bookmarks => self.selected_bookmark_entry()?.revision.clone(),
+            ActiveView::Tags => self.selected_tag_entry()?.revision.clone(),
+            ActiveView::Evolog => Some(commit_revision(&self.selected_evolog_entry()?.commit_id)),
+            ActiveView::Workspaces => self
+                .selected_workspace_entry()?
+                .commit_id
+                .as_ref()
+                .map(commit_revision),
+            ActiveView::Annotate => {
+                Some(commit_revision(&self.selected_annotate_line()?.commit_id))
+            }
+            ActiveView::Operations | ActiveView::CommandLog | ActiveView::Interdiff => None,
+        }
+    }
+
+    /// The commit under the cursor outside the DAG, with its change ID for
+    /// widening the revset to it if the DAG doesn't show it.
+    pub fn target_commit(&self) -> Option<(CommitId, Option<crate::dag::ShortId>)> {
+        match self.active_view {
+            ActiveView::Bookmarks => {
+                if let Some((_, target)) = self.selected_remote_target() {
+                    let summary = &target.summary;
+                    return Some((summary.commit_id.clone(), Some(summary.change_id.clone())));
+                }
+                let entry = self.selected_bookmark_entry()?;
+                Some((entry.commit_id.clone()?, entry.change_id.clone()))
+            }
+            ActiveView::Tags => {
+                let entry = self.selected_tag_entry()?;
+                Some((entry.commit_id.clone()?, entry.change_id.clone()))
+            }
+            ActiveView::Workspaces => {
+                let entry = self.selected_workspace_entry()?;
+                Some((entry.commit_id.clone()?, entry.change_id.clone()))
+            }
+            ActiveView::Evolog => {
+                let entry = self.selected_evolog_entry()?;
+                Some((entry.commit_id.clone(), Some(entry.change_id.clone())))
+            }
+            ActiveView::Annotate => {
+                let line = self.selected_annotate_line()?;
+                Some((line.commit_id.clone(), Some(line.change_id.clone())))
+            }
+            ActiveView::Dag
+            | ActiveView::Operations
+            | ActiveView::CommandLog
+            | ActiveView::Interdiff => None,
+        }
+    }
+
+    /// The bookmarks an action acts on: the DAG commit's, or the one under
+    /// the cursor in the bookmark view.
+    pub fn target_bookmarks(&self) -> SmallVec<crate::types::BookmarkName> {
+        match self.active_view {
+            ActiveView::Dag => self
+                .selected_bookmarks()
+                .unwrap_or_default()
+                .iter()
+                .map(|b| b.name.clone())
+                .collect(),
+            ActiveView::Bookmarks => self
+                .selected_bookmark_entry()
+                .map(|e| e.name.clone())
+                .into_iter()
+                .collect(),
+            _ => SmallVec::new(),
+        }
+    }
+
+    /// The tags an action acts on: the DAG commit's, or the one under the
+    /// cursor in the tag view.
+    pub fn target_tags(&self) -> SmallVec<crate::types::TagName> {
+        match self.active_view {
+            ActiveView::Dag => self
+                .selected_tags()
+                .unwrap_or_default()
+                .iter()
+                .cloned()
+                .collect(),
+            ActiveView::Tags => self
+                .selected_tag_entry()
+                .map(|e| e.name.clone())
+                .into_iter()
+                .collect(),
+            _ => SmallVec::new(),
+        }
+    }
+
+    /// The workspaces an action acts on: the other workspaces on the DAG
+    /// commit, or the one under the cursor in the workspace view.
+    pub fn target_workspaces(&self) -> SmallVec<crate::types::WorkspaceName> {
+        match self.active_view {
+            ActiveView::Dag => self
+                .selected_entry_idx()
+                .map(|idx| {
+                    self.nodes[idx]
+                        .commit
+                        .workspaces
+                        .iter()
+                        .filter(|ws| !ws.is_current)
+                        .map(|ws| ws.name.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            ActiveView::Workspaces => self
+                .selected_workspace_entry()
+                .map(|e| e.name.clone())
+                .into_iter()
+                .collect(),
+            _ => SmallVec::new(),
+        }
+    }
+
     const EXPAND_COUNT: usize = 10;
 
     pub fn expand_ancestors(&mut self, entry_idx: crate::idx::EntryIdx) {

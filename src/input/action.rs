@@ -13,8 +13,10 @@ use crate::types::ChangeSelection;
 use crate::types::FileOwner;
 use crate::types::{
     CommitId, DisplayRow, FollowUpAction, FollowUpOption, PendingCommand, PendingSelection,
-    SelectionKind, TargetOperation, WorkspaceName,
+    RemoteCommand, SelectionKind, TargetOperation,
 };
+
+use super::bookmark::PendingSelectionKind;
 
 use super::Action;
 
@@ -674,41 +676,7 @@ fn perform(
             );
             Action::None
         }
-        AppAction::WorkspaceForget => {
-            let entry_idx = app.selected_entry_idx();
-            let workspaces: Vec<WorkspaceName> = entry_idx
-                .map(|idx| {
-                    app.nodes[idx]
-                        .commit
-                        .workspaces
-                        .iter()
-                        .filter(|ws| !ws.is_current)
-                        .map(|ws| ws.name.clone())
-                        .collect()
-                })
-                .unwrap_or_default();
-            if workspaces.len() == 1 {
-                Action::run(JJCommand {
-                    kind: JJCommandKind::WorkspaceForget {
-                        names: workspaces.into(),
-                    },
-                    flags,
-                })
-            } else if workspaces.len() > 1 {
-                let items: Vec<String> = workspaces.iter().map(|w| w.to_string()).collect();
-                app.mode = AppMode::select_from_list(
-                    "forget workspace",
-                    items,
-                    true,
-                    PendingSelection::WorkspaceForget { flags },
-                    false,
-                );
-                Action::None
-            } else {
-                app.set_error("no other workspace on this commit");
-                Action::None
-            }
-        }
+        AppAction::WorkspaceForget => super::target::workspace_forget(app, flags),
         AppAction::WorkspaceList => Action::run(JJCommand {
             kind: JJCommandKind::WorkspaceList,
             flags,
@@ -749,8 +717,6 @@ fn perform(
         | AppAction::Describe
         | AppAction::DescribeInEditor
         | AppAction::Diffedit
-        | AppAction::Edit
-        | AppAction::New
         | AppAction::NewInsertAfter
         | AppAction::NewInsertBefore
         | AppAction::Squash
@@ -769,35 +735,56 @@ fn perform(
         | AppAction::SplitAfter
         | AppAction::SplitBefore
         | AppAction::BookmarkCreate
-        | AppAction::BookmarkSet
-        | AppAction::BookmarkDelete
-        | AppAction::BookmarkForget
-        | AppAction::BookmarkMove
-        | AppAction::BookmarkRename
         | AppAction::BookmarkAdvance
-        | AppAction::BookmarkTrack
-        | AppAction::BookmarkUntrack
-        | AppAction::TagSet
-        | AppAction::TagDelete
         | AppAction::Undo
         | AppAction::Redo
-        | AppAction::GitFetch
-        | AppAction::GitFetchAllRemotes
         | AppAction::GitPush
         | AppAction::GitPushAll
         | AppAction::GitPushChange
-        | AppAction::GitPushBookmark
         | AppAction::GitExport
         | AppAction::GitImport
         | AppAction::Duplicate
         | AppAction::DuplicateOnto
         | AppAction::Parallelize
         | AppAction::SimplifyParents
-        | AppAction::Interdiff
         | AppAction::Revert
         | AppAction::Run
         | AppAction::ArrangeUp
-        | AppAction::ArrangeDown => super::view::dag::dispatch(app, lua, action, flags),
+        | AppAction::ArrangeDown => super::view::dag::dispatch(app, action, flags),
+        // Actions on whatever the cursor is on, in any view.
+        AppAction::Edit => super::target::edit(app, flags),
+        AppAction::New => super::target::new(app, flags),
+        AppAction::JumpToCommit => super::target::jump_to_commit(app, flags),
+        AppAction::Interdiff => super::target::interdiff(app, flags),
+        AppAction::BookmarkDelete => {
+            super::target::bookmark(app, lua, flags, PendingSelectionKind::Delete)
+        }
+        AppAction::BookmarkForget => {
+            super::target::bookmark(app, lua, flags, PendingSelectionKind::Forget)
+        }
+        AppAction::BookmarkMove => {
+            super::target::bookmark(app, lua, flags, PendingSelectionKind::Move)
+        }
+        AppAction::BookmarkRename => {
+            super::target::bookmark(app, lua, flags, PendingSelectionKind::Rename)
+        }
+        AppAction::BookmarkSet => super::target::bookmark_set(app, flags),
+        AppAction::BookmarkTrack => super::target::bookmark_track(app, flags, true),
+        AppAction::BookmarkUntrack => super::target::bookmark_track(app, flags, false),
+        AppAction::GitPushBookmark => super::target::git_push_bookmark(app, flags),
+        AppAction::GitFetchBookmark => super::target::git_fetch_bookmark(app, flags),
+        AppAction::GitFetch => super::target::with_remote(
+            app,
+            "fetch from remote",
+            RemoteCommand::Fetch { all_remotes: false },
+            flags,
+        ),
+        AppAction::GitFetchAllRemotes => Action::run(JJCommand {
+            kind: RemoteCommand::Fetch { all_remotes: true }.to_kind(None),
+            flags,
+        }),
+        AppAction::TagDelete => super::target::tag_delete(app, flags),
+        AppAction::TagSet => super::target::tag_set(app, flags),
         AppAction::SwitchToDagView => {
             app.switch_view(crate::app::ActiveView::Dag);
             Action::None
@@ -806,30 +793,11 @@ fn perform(
             app.switch_view(crate::app::ActiveView::Bookmarks);
             Action::None
         }
-        // Bookmark view actions
-        AppAction::BookmarkViewDelete
-        | AppAction::BookmarkViewTrack
-        | AppAction::BookmarkViewUntrack
-        | AppAction::BookmarkViewPush
-        | AppAction::BookmarkViewJumpToCommit
-        | AppAction::BookmarkViewEdit
-        | AppAction::BookmarkViewRename
-        | AppAction::BookmarkViewMove
-        | AppAction::BookmarkViewForget
-        | AppAction::BookmarkViewSet
-        | AppAction::BookmarkViewFetchDefault
-        | AppAction::BookmarkViewFetchBookmark
-        | AppAction::BookmarkViewFetchAllRemotes
-        | AppAction::BookmarkViewInterdiff => super::view::bookmark::dispatch(app, action, flags),
         // Tag view actions
         AppAction::SwitchToTagView => {
             app.switch_view(crate::app::ActiveView::Tags);
             Action::None
         }
-        AppAction::TagViewDelete
-        | AppAction::TagViewSet
-        | AppAction::TagViewJumpToCommit
-        | AppAction::TagViewEdit => super::view::tag::dispatch(app, action, flags),
         // Operations view actions
         AppAction::SwitchToOpLogView => {
             app.switch_view(crate::app::ActiveView::Operations);
@@ -856,11 +824,7 @@ fn perform(
             app.enter_jump(keymap);
             Action::None
         }
-        AppAction::EvoLogEdit
-        | AppAction::EvoLogNew
-        | AppAction::EvoLogInterdiff
-        | AppAction::EvoLogRestore => super::view::evolog::dispatch(app, action, flags),
-        AppAction::WorkspaceViewForget => super::view::workspace::dispatch(app, action, flags),
+        AppAction::EvoLogRestore => super::view::evolog::dispatch(app, action, flags),
         AppAction::FileAnnotate => {
             if let Some((path, _)) = extract_file_and_line(app) {
                 if let Some(cid) = extract_commit_id(app) {
@@ -874,7 +838,7 @@ fn perform(
             Action::None
         }
         AppAction::AnnotateTimeTravel
-        | AppAction::ToggleAnnotateSeparator
+        | AppAction::ToggleSeparators
         | AppAction::AnnotateForward => super::view::annotate::dispatch(app, action, flags),
         AppAction::EditFileWorkingCopy => {
             if let Some((path, line)) = extract_file_and_line(app) {
@@ -909,10 +873,6 @@ fn perform(
             app.set_error("select a file to edit");
             Action::None
         }
-        AppAction::AnnotateGoToCommit => super::view::annotate::dispatch(app, action, flags),
-        AppAction::WorkspaceViewJumpToCommit => {
-            super::view::workspace::dispatch(app, action, flags)
-        }
         AppAction::CommandMode => {
             app.mode = AppMode::text_input(":", "", PendingCommand::RawCommand);
             Action::None
@@ -929,20 +889,14 @@ fn perform(
     }
 }
 
-/// Try to jump to a commit in the DAG view. If the commit is in the current
-/// revset, switches to DAG and moves the cursor. Otherwise offers to widen
-/// the revset. If there's no commit at all, shows an error.
+/// Show a commit in the DAG: switch to it and move the cursor there, or
+/// offer to widen the revset if it isn't shown.
 pub(super) fn jump_to_commit_in_dag(
     app: &mut App,
-    commit_id: Option<&CommitId>,
+    commit_id: &CommitId,
     change_id: Option<&crate::dag::ShortId>,
-    missing_msg: &str,
 ) {
-    let Some(cid) = commit_id else {
-        app.set_error(missing_msg);
-        return;
-    };
-    if let Some(idx) = app.entry_by_commit_id(cid) {
+    if let Some(idx) = app.entry_by_commit_id(commit_id) {
         app.switch_view(crate::app::ActiveView::Dag);
         if let Some(row) = app.row_of_commit(idx) {
             app.set_cursor(row);
@@ -951,12 +905,11 @@ pub(super) fn jump_to_commit_in_dag(
         // Use change ID if available, otherwise fall back to commit ID.
         let id_for_revset = change_id
             .map(|c| c.display().to_string())
-            .unwrap_or_else(|| cid.as_str().into());
+            .unwrap_or_else(|| commit_id.as_str().into());
         offer_widen_revset(app, &id_for_revset);
     }
 }
 
-/// Show a FollowUp prompt offering to widen the revset to include a commit.
 /// Whether the current cursor row has a file context (for help panel greying).
 pub fn has_file_context(app: &App) -> bool {
     extract_file_and_line(app).is_some()
@@ -1026,6 +979,7 @@ fn extract_commit_id(app: &App) -> Option<CommitId> {
     }
 }
 
+/// Show a FollowUp prompt offering to widen the revset to include a commit.
 fn offer_widen_revset(app: &mut App, id: &str) {
     app.mode = AppMode::FollowUp {
         prompt: "commit not in current revset".into(),

@@ -7,7 +7,8 @@ use crate::app::{App, AppMode};
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap;
 use crate::types::{
-    BookmarkName, PendingSelection, RemoteName, SmallVec, TagName, TargetOperation, WorkspaceName,
+    BookmarkName, PendingSelection, RemoteCommand, RemoteName, SmallVec, TagName, TargetOperation,
+    WorkspaceName,
 };
 
 use super::{Action, PAGE_SIZE};
@@ -221,14 +222,14 @@ pub(super) fn resolve_selection(
     names: SmallVec<String>,
 ) -> Action {
     match on_select {
-        PendingSelection::BookmarkDelete { flags, .. } => {
+        PendingSelection::BookmarkDelete { flags } => {
             let names = names.into_iter().map(BookmarkName::new).collect();
             Action::run(JJCommand {
                 kind: JJCommandKind::BookmarkDelete { names },
                 flags,
             })
         }
-        PendingSelection::BookmarkForget { flags, .. } => {
+        PendingSelection::BookmarkForget { flags } => {
             let names = names.into_iter().map(BookmarkName::new).collect();
             Action::run(JJCommand {
                 kind: JJCommandKind::BookmarkForget { names },
@@ -254,50 +255,18 @@ pub(super) fn resolve_selection(
             },
             flags,
         }),
-        PendingSelection::GitPushBookmark { flags } => {
-            let bookmarks: SmallVec<BookmarkName> =
-                names.into_iter().map(BookmarkName::new).collect();
-            if app.views.remotes.len() > 1 {
-                let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
-                app.mode = AppMode::select_from_list(
-                    "push bookmark to remote",
-                    items,
-                    false,
-                    PendingSelection::GitRemoteForPushBookmark { bookmarks, flags },
-                    false,
-                );
-                Action::None
-            } else {
-                Action::run(JJCommand {
-                    kind: JJCommandKind::GitPushBookmark {
-                        bookmarks,
-                        remote: None,
-                    },
-                    flags,
-                })
-            }
-        }
-        PendingSelection::GitRemoteForFetch { all_remotes, flags } => {
+        PendingSelection::GitPushBookmark { flags } => super::target::with_remote(
+            app,
+            "push bookmark to remote",
+            RemoteCommand::PushBookmark {
+                bookmarks: names.into_iter().map(BookmarkName::new).collect(),
+            },
+            flags,
+        ),
+        PendingSelection::GitRemote { command, flags } => {
             let remote = names.into_iter().next().map(RemoteName::new);
             Action::run(JJCommand {
-                kind: JJCommandKind::GitFetch {
-                    all_remotes,
-                    remote,
-                },
-                flags,
-            })
-        }
-        PendingSelection::GitRemoteForPush { all, flags } => {
-            let remote = names.into_iter().next().map(RemoteName::new);
-            Action::run(JJCommand {
-                kind: JJCommandKind::GitPush { all, remote },
-                flags,
-            })
-        }
-        PendingSelection::GitRemoteForPushBookmark { bookmarks, flags } => {
-            let remote = names.into_iter().next().map(RemoteName::new);
-            Action::run(JJCommand {
-                kind: JJCommandKind::GitPushBookmark { bookmarks, remote },
+                kind: command.to_kind(remote),
                 flags,
             })
         }
@@ -319,13 +288,15 @@ pub(super) fn resolve_selection(
             }
         }
         // Single-item operations: take the first name.
-        PendingSelection::BookmarkMove {
-            change_id, flags, ..
-        } => {
+        PendingSelection::BookmarkMove { source, flags } => {
             let name = BookmarkName::new(names.into_iter().next().unwrap_or_default());
+            // The target is picked in the DAG, wherever the bookmark was.
+            if app.active_view != crate::app::ActiveView::Dag {
+                app.switch_view(crate::app::ActiveView::Dag);
+            }
             app.mode = AppMode::TargetSelect {
                 prompt: "move bookmark",
-                source: change_id,
+                source,
                 restore_cursor: app.cursor,
                 operation: TargetOperation::BookmarkMove {
                     bookmark_name: name,
@@ -336,7 +307,7 @@ pub(super) fn resolve_selection(
             };
             Action::None
         }
-        PendingSelection::BookmarkRename { flags, .. } => {
+        PendingSelection::BookmarkRename { flags } => {
             let name = names.into_iter().next().unwrap_or_default();
             app.mode = AppMode::text_input(
                 "rename to: ",

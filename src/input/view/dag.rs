@@ -4,17 +4,15 @@ use crate::app::{App, AppMode};
 use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{
-    ArrangeDirection, BookmarkName, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
-    PendingSelection, RebaseKind, RebaseSource, RebaseTarget, RevisionArg, SelectionKind, SmallVec,
-    SplitKind, SquashKind, Str, TargetOperation,
+    ArrangeDirection, FollowUpAction, FollowUpOption, MessageMode, PendingCommand,
+    PendingSelection, RebaseKind, RebaseSource, RebaseTarget, RemoteCommand, RevisionArg,
+    SelectionKind, SmallVec, SplitKind, SquashKind, Str, TargetOperation,
 };
 
 use crate::input::Action;
 use crate::input::action::{build_change_selection, enter_target_select};
-use crate::input::bookmark::{
-    BookmarkTextAction, PendingSelectionKind, enter_bookmark_advance, enter_bookmark_select,
-    enter_bookmark_text_input, enter_remote_bookmark_select, enter_tag_delete,
-};
+use crate::input::bookmark::enter_bookmark_advance;
+use crate::input::target::with_remote;
 
 /// Shown when a per-hunk conflict action fires off a conflict hunk row.
 pub(in crate::input) const ERR_NOT_ON_HUNK: &str = "per-hunk only: use on a conflict hunk row";
@@ -23,12 +21,7 @@ pub(in crate::input) const ERR_NOT_ON_HUNK: &str = "per-hunk only: use on a conf
 pub(in crate::input) const ERR_SIDE_DELETED: &str =
     "that side deleted the file: use C,o / C,t to take it whole-file";
 
-pub(in crate::input) fn dispatch(
-    app: &mut App,
-    lua: &crate::lua::LuaEngine,
-    action: AppAction,
-    flags: CommandFlags,
-) -> Action {
+pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
     match action {
         AppAction::Abandon => make_multi_command(app, |ids| JJCommand {
             kind: JJCommandKind::Abandon { change_ids: ids },
@@ -272,17 +265,6 @@ pub(in crate::input) fn dispatch(
             },
             flags,
         }),
-        AppAction::Edit => make_command(app, |id| JJCommand {
-            kind: JJCommandKind::Edit { change_id: id },
-            flags,
-        }),
-        AppAction::New => make_multi_command(app, |ids| JJCommand {
-            kind: JJCommandKind::New {
-                change_ids: ids,
-                insert: None,
-            },
-            flags,
-        }),
         AppAction::NewInsertAfter => make_command(app, |id| JJCommand {
             kind: JJCommandKind::New {
                 change_ids: smallvec![id],
@@ -397,67 +379,17 @@ pub(in crate::input) fn dispatch(
         }
 
         AppAction::BookmarkCreate => {
-            enter_bookmark_text_input(app, flags, "create bookmark: ", BookmarkTextAction::Create)
-        }
-        AppAction::BookmarkSet => {
-            enter_bookmark_text_input(app, flags, "set bookmark: ", BookmarkTextAction::Set)
-        }
-        AppAction::BookmarkDelete => {
-            enter_bookmark_select(app, lua, flags, PendingSelectionKind::Delete)
-        }
-        AppAction::BookmarkForget => {
-            enter_bookmark_select(app, lua, flags, PendingSelectionKind::Forget)
-        }
-        AppAction::BookmarkMove => {
-            enter_bookmark_select(app, lua, flags, PendingSelectionKind::Move)
-        }
-        AppAction::BookmarkRename => {
-            enter_bookmark_select(app, lua, flags, PendingSelectionKind::Rename)
-        }
-        AppAction::BookmarkAdvance => enter_bookmark_advance(app, flags),
-        AppAction::BookmarkTrack => {
-            let bookmarks: Vec<String> = app
-                .views
-                .remote_bookmarks
-                .iter()
-                .filter(|rb| !rb.is_tracked)
-                .map(|rb| format!("{}@{}", rb.name, rb.remote))
-                .collect();
-            enter_remote_bookmark_select(
-                app,
-                bookmarks,
-                "no untracked remote bookmarks",
-                "track bookmark",
-                PendingSelection::BookmarkTrack { flags },
-            )
-        }
-        AppAction::BookmarkUntrack => {
-            let bookmarks: Vec<String> = app
-                .views
-                .remote_bookmarks
-                .iter()
-                .filter(|rb| rb.is_tracked)
-                .map(|rb| format!("{}@{}", rb.name, rb.remote))
-                .collect();
-            enter_remote_bookmark_select(
-                app,
-                bookmarks,
-                "no tracked remote bookmarks",
-                "untrack bookmark",
-                PendingSelection::BookmarkUntrack { flags },
-            )
-        }
-
-        AppAction::TagSet => {
             let Some(change_id) = app.selected_change_id() else {
                 return Action::None;
             };
-            app.mode =
-                AppMode::text_input("set tag: ", "", PendingCommand::TagSet { change_id, flags });
+            app.mode = AppMode::text_input(
+                "create bookmark: ",
+                "",
+                PendingCommand::BookmarkCreate { change_id, flags },
+            );
             Action::None
         }
-        AppAction::TagDelete => enter_tag_delete(app, flags),
-
+        AppAction::BookmarkAdvance => enter_bookmark_advance(app, flags),
         AppAction::Undo => Action::run(JJCommand {
             kind: JJCommandKind::Undo,
             flags,
@@ -467,79 +399,18 @@ pub(in crate::input) fn dispatch(
             flags,
         }),
 
-        AppAction::GitFetch => {
-            if app.views.remotes.len() > 1 {
-                let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
-                app.mode = AppMode::select_from_list(
-                    "fetch from remote",
-                    items,
-                    false,
-                    PendingSelection::GitRemoteForFetch {
-                        all_remotes: false,
-                        flags,
-                    },
-                    false,
-                );
-                Action::None
-            } else {
-                Action::run(JJCommand {
-                    kind: JJCommandKind::GitFetch {
-                        all_remotes: false,
-                        remote: None,
-                    },
-                    flags,
-                })
-            }
-        }
-        AppAction::GitFetchAllRemotes => Action::run(JJCommand {
-            kind: JJCommandKind::GitFetch {
-                all_remotes: true,
-                remote: None,
-            },
+        AppAction::GitPush => with_remote(
+            app,
+            "push to remote",
+            RemoteCommand::Push { all: false },
             flags,
-        }),
-        AppAction::GitPush => {
-            if app.views.remotes.len() > 1 {
-                let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
-                app.mode = AppMode::select_from_list(
-                    "push to remote",
-                    items,
-                    false,
-                    PendingSelection::GitRemoteForPush { all: false, flags },
-                    false,
-                );
-                Action::None
-            } else {
-                Action::run(JJCommand {
-                    kind: JJCommandKind::GitPush {
-                        all: false,
-                        remote: None,
-                    },
-                    flags,
-                })
-            }
-        }
-        AppAction::GitPushAll => {
-            if app.views.remotes.len() > 1 {
-                let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
-                app.mode = AppMode::select_from_list(
-                    "push all to remote",
-                    items,
-                    false,
-                    PendingSelection::GitRemoteForPush { all: true, flags },
-                    false,
-                );
-                Action::None
-            } else {
-                Action::run(JJCommand {
-                    kind: JJCommandKind::GitPush {
-                        all: true,
-                        remote: None,
-                    },
-                    flags,
-                })
-            }
-        }
+        ),
+        AppAction::GitPushAll => with_remote(
+            app,
+            "push all to remote",
+            RemoteCommand::Push { all: true },
+            flags,
+        ),
         AppAction::GitPushChange => {
             let Some(change_id) = app.selected_change_id() else {
                 return Action::None;
@@ -551,47 +422,6 @@ pub(in crate::input) fn dispatch(
                 },
                 flags,
             })
-        }
-        AppAction::GitPushBookmark => {
-            let bookmarks = app.selected_bookmarks().unwrap_or(&[]);
-            if bookmarks.is_empty() {
-                app.set_error("no bookmarks on this commit");
-                return Action::None;
-            }
-            let items: Vec<String> = bookmarks.iter().map(|b| b.name.to_string()).collect();
-            if items.len() == 1 {
-                let bookmark_names: SmallVec<BookmarkName> =
-                    bookmarks.iter().map(|b| b.name.clone()).collect();
-                if app.views.remotes.len() > 1 {
-                    let remote_items = app.views.remotes.iter().map(|r| r.to_string()).collect();
-                    app.mode = AppMode::select_from_list(
-                        "push bookmark to remote",
-                        remote_items,
-                        true,
-                        PendingSelection::GitRemoteForPushBookmark {
-                            bookmarks: bookmark_names,
-                            flags,
-                        },
-                        false,
-                    );
-                    return Action::None;
-                }
-                return Action::run(JJCommand {
-                    kind: JJCommandKind::GitPushBookmark {
-                        bookmarks: bookmark_names,
-                        remote: None,
-                    },
-                    flags,
-                });
-            }
-            app.mode = AppMode::select_from_list(
-                "push bookmark",
-                items,
-                true,
-                PendingSelection::GitPushBookmark { flags },
-                false,
-            );
-            Action::None
         }
         AppAction::GitExport => Action::run(JJCommand {
             kind: JJCommandKind::GitExport,
@@ -627,13 +457,12 @@ pub(in crate::input) fn dispatch(
         }),
         AppAction::ArrangeUp => arrange(app, flags, crate::types::ArrangeDirection::Up),
         AppAction::ArrangeDown => arrange(app, flags, crate::types::ArrangeDirection::Down),
-        AppAction::Interdiff => enter_target_select(app, TargetOperation::Interdiff, flags),
         AppAction::Revert => {
             let sources = app.selected_change_ids();
             enter_target_select(app, TargetOperation::Revert { sources }, flags)
         }
 
-        _ => Action::None,
+        other => unreachable!("{other:?} is not routed to this view"),
     }
 }
 

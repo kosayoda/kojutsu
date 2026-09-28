@@ -272,7 +272,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind2(
             ";",
             "s",
-            ToggleAnnotateSeparator,
+            ToggleSeparators,
             "toggle separator lines",
             G,
             all(),
@@ -513,51 +513,31 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     // Bookmark view
     let bookmark = || views(&[Bookmarks]);
     specs.extend([
-        bind("d", BookmarkViewDelete, "delete", C, bookmark()),
-        bind("t", BookmarkViewTrack, "track", C, bookmark()),
-        bind("shift-u", BookmarkViewUntrack, "untrack", C, bookmark()),
-        bind("p", BookmarkViewPush, "push", C, bookmark()),
-        bind(
-            "enter",
-            BookmarkViewJumpToCommit,
-            "jump / pick",
-            C,
-            bookmark(),
-        ),
-        bind("e", BookmarkViewEdit, "edit (checkout)", C, bookmark()),
-        bind("r", BookmarkViewRename, "rename", C, bookmark()),
-        bind("m", BookmarkViewMove, "move\u{2026}", C, bookmark()),
+        bind("d", BookmarkDelete, "delete", C, bookmark()),
+        bind("t", BookmarkTrack, "track", C, bookmark()),
+        bind("shift-u", BookmarkUntrack, "untrack", C, bookmark()),
+        bind("p", GitPushBookmark, "push", C, bookmark()),
+        bind("enter", JumpToCommit, "jump / pick", C, bookmark()),
+        bind("e", Edit, "edit (checkout)", C, bookmark()),
+        bind("r", BookmarkRename, "rename", C, bookmark()),
+        bind("m", BookmarkMove, "move\u{2026}", C, bookmark()),
         prefix("f", "fetch", C, bookmark()),
-        bind2("f", "f", BookmarkViewFetchDefault, "fetch", C, bookmark()),
-        bind2(
-            "f",
-            "b",
-            BookmarkViewFetchBookmark,
-            "bookmark",
-            C,
-            bookmark(),
-        ),
-        bind2(
-            "f",
-            "a",
-            BookmarkViewFetchAllRemotes,
-            "all remotes",
-            C,
-            bookmark(),
-        ),
-        bind("s", BookmarkViewSet, "set\u{2026}", C, bookmark()),
-        bind("shift-f", BookmarkViewForget, "forget", C, bookmark()),
-        bind("i", BookmarkViewInterdiff, "interdiff", C, bookmark()),
+        bind2("f", "f", GitFetch, "fetch", C, bookmark()),
+        bind2("f", "b", GitFetchBookmark, "bookmark", C, bookmark()),
+        bind2("f", "a", GitFetchAllRemotes, "all remotes", C, bookmark()),
+        bind("s", BookmarkSet, "set\u{2026}", C, bookmark()),
+        bind("shift-f", BookmarkForget, "forget", C, bookmark()),
+        bind("i", AppAction::Interdiff, "interdiff", C, bookmark()),
     ]);
     specs.extend(undo_redo(bookmark));
 
     // Tag view
     let tag = || views(&[Tags]);
     specs.extend([
-        bind("d", TagViewDelete, "delete", C, tag()),
-        bind("s", TagViewSet, "set\u{2026}", C, tag()),
-        bind("e", TagViewEdit, "edit (checkout)", C, tag()),
-        bind("enter", TagViewJumpToCommit, "jump to commit", C, tag()),
+        bind("d", TagDelete, "delete", C, tag()),
+        bind("s", TagSet, "set\u{2026}", C, tag()),
+        bind("e", Edit, "edit (checkout)", C, tag()),
+        bind("enter", JumpToCommit, "jump to commit", C, tag()),
     ]);
     specs.extend(undo_redo(tag));
 
@@ -575,15 +555,9 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     let workspace = || views(&[Workspaces]);
     specs.extend([
         bind("a", WorkspaceAdd, "add", C, workspace()),
-        bind("f", WorkspaceViewForget, "forget", C, workspace()),
+        bind("f", WorkspaceForget, "forget", C, workspace()),
         bind("r", WorkspaceRename, "rename", C, workspace()),
-        bind(
-            "enter",
-            WorkspaceViewJumpToCommit,
-            "jump to commit",
-            C,
-            workspace(),
-        ),
+        bind("enter", JumpToCommit, "jump to commit", C, workspace()),
     ]);
     specs.extend(undo_redo(workspace));
 
@@ -591,10 +565,10 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     let evo = || views(&[Evolog]);
     specs.extend([
         bind("ctrl-e", SwitchToEvoLogView, "evolog", C, evo()),
-        bind("d", EvoLogInterdiff, "interdiff vs current", C, evo()),
+        bind("d", AppAction::Interdiff, "interdiff vs current", C, evo()),
         bind("r", EvoLogRestore, "restore from", C, evo()),
-        bind("e", EvoLogEdit, "edit (checkout)", C, evo()),
-        bind("n", EvoLogNew, "new from", C, evo()),
+        bind("e", Edit, "edit (checkout)", C, evo()),
+        bind("n", New, "new from", C, evo()),
     ]);
     specs.extend(file_prefix_bindings(evo));
 
@@ -607,7 +581,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     // Annotate view
     let ann = || views(&[Annotate]);
     specs.extend([
-        bind("enter", AnnotateGoToCommit, "go to commit", C, ann()),
+        bind("enter", JumpToCommit, "go to commit", C, ann()),
         bind("b", AnnotateTimeTravel, "blame at this commit", C, ann()),
         bind("f", AnnotateForward, "forward (undo blame)", C, ann()),
         prefix("e", "edit", C, ann()),

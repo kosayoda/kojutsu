@@ -2,7 +2,6 @@ use crate::app::App;
 use crate::keymap::{AppAction, CommandFlags};
 
 use crate::input::Action;
-use crate::input::action::jump_to_commit_in_dag;
 
 pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, _flags: CommandFlags) -> Action {
     match action {
@@ -26,7 +25,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, _flags: Comma
             }
             Action::None
         }
-        AppAction::ToggleAnnotateSeparator => {
+        AppAction::ToggleSeparators => {
             match app.active_view {
                 crate::app::ActiveView::Annotate => {
                     app.annotate.show_commit_separators = !app.annotate.show_commit_separators;
@@ -57,19 +56,6 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, _flags: Comma
             }
             Action::None
         }
-        AppAction::AnnotateGoToCommit => {
-            if let Some(line) = app.selected_annotate_line() {
-                let commit_id = line.commit_id.clone();
-                let change_id = line.change_id.clone();
-                jump_to_commit_in_dag(
-                    app,
-                    Some(&commit_id),
-                    Some(&change_id),
-                    "annotate line has no commit",
-                );
-            }
-            Action::None
-        }
-        _ => Action::None,
+        other => unreachable!("{other:?} is not routed to this view"),
     }
 }

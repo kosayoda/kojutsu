@@ -2,6 +2,7 @@ mod action;
 mod bookmark;
 mod list;
 mod modal;
+mod target;
 mod view;
 
 pub use view::dag::{complete_hunk_edit, staged_resolution};

@@ -59,6 +59,6 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 flags,
             })
         }
-        _ => Action::None,
+        other => unreachable!("{other:?} is not routed to this view"),
     }
 }
