@@ -18,15 +18,14 @@ use itertools::Itertools;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::dag::{
-    DiffLine, DiffLineKind, DiffToken, DiffTokenKind, FileStatus, LineStats, ShortId,
-};
+use crate::dag::{DiffToken, DiffTokenKind, LineStats, ShortId};
 use crate::theme::{Config, Theme};
 use crate::types::SearchScopes;
 
 use super::search::{SearchRender, gutter_span, push_searchable};
 use super::spans::push_short_id;
 
+#[derive(Default)]
 pub(super) struct RenderFlags {
     pub is_source: bool,
     pub is_selected: bool,
@@ -62,26 +61,6 @@ pub(super) fn push_line_stats(
     }
 }
 
-pub(super) fn file_status_display(
-    status: FileStatus,
-    theme: &Theme,
-) -> (&'static str, ratatui::style::Color) {
-    match status {
-        FileStatus::Added => ("A", theme.added),
-        FileStatus::Modified => ("M", theme.change_id),
-        FileStatus::Deleted => ("D", theme.error),
-        FileStatus::Renamed | FileStatus::Copied => (
-            if matches!(status, FileStatus::Renamed) {
-                "R"
-            } else {
-                "C"
-            },
-            theme.accent,
-        ),
-        FileStatus::Error => ("E", theme.error),
-    }
-}
-
 pub(super) fn push_graph_node_spans(
     spans: &mut Vec<Span<'static>>,
     node: &str,
@@ -110,47 +89,6 @@ pub(super) fn push_graph_node_spans(
             ));
         }
     }
-}
-
-pub(super) fn render_simple_diff_line(
-    diff_line: Option<&DiffLine>,
-    diff_underline: bool,
-    search: Option<&SearchRender<'_>>,
-    theme: &Theme,
-    tab_str: &str,
-) -> Vec<Line<'static>> {
-    let Some(diff_line) = diff_line else {
-        return vec![Line::raw("")];
-    };
-    let (mut base_style, prefix) = match diff_line.kind {
-        DiffLineKind::Added => (Style::default().fg(theme.added), "+"),
-        DiffLineKind::Removed => (Style::default().fg(theme.error), "-"),
-        DiffLineKind::Context => (Style::default().fg(theme.muted), " "),
-        DiffLineKind::Header => (
-            Style::default()
-                .fg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-            "@",
-        ),
-    };
-    if diff_line.conflict_region {
-        base_style = base_style.add_modifier(Modifier::DIM);
-    }
-    let mut spans = vec![
-        gutter_span(search, theme),
-        Span::styled(format!("    {prefix} "), base_style),
-    ];
-    push_diff_tokens(
-        &mut spans,
-        &diff_line.content,
-        &diff_line.tokens,
-        base_style,
-        diff_underline,
-        search,
-        theme,
-        tab_str,
-    );
-    vec![Line::from(spans)]
 }
 
 pub(super) fn render_simple_graph_link(

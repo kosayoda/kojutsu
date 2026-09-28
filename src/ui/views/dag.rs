@@ -282,8 +282,9 @@ pub(crate) fn render_file_line(
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
+    // Conflicts get their own marker: `C` already means copied.
     let (marker, color) = if file.has_conflict {
-        ("C", theme.error)
+        ("!", theme.error)
     } else {
         match file.status {
             FileStatus::Added => ("A", theme.added),

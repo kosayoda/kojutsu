@@ -15,7 +15,7 @@ use crate::idx::EntryIdx;
 use crate::theme::Config;
 use crate::types::FileOwner;
 use crate::types::RevisionArg;
-use crate::types::{ConflictHunkRef, DisplayRow, SearchScopes};
+use crate::types::{ConflictHunkRef, DisplayRow, FileSelectionState, SearchScopes};
 
 pub(super) fn expand_tabs(s: &str, tab_spaces: &str) -> String {
     if s.contains('\t') {
@@ -222,45 +222,50 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     ));
                     vec![Line::from(spans)]
                 }
-                DisplayRow::FileChange {
-                    owner: FileOwner::Dag(entry_idx),
-                    file_idx,
-                } => {
-                    let files = app.nodes[*entry_idx]
-                        .files
-                        .files()
+                DisplayRow::FileChange { owner, file_idx } => {
+                    let file = app
+                        .file(*owner, *file_idx)
                         .expect("visible file row must be loaded");
-                    let file = &files[file_idx.raw()];
-                    let is_unfolded = app.is_file_unfolded(FileOwner::Dag(*entry_idx), *file_idx);
-                    let sel_state = app.file_selection_state(*entry_idx, *file_idx);
-                    let in_visual = app.is_in_visual_file_range(*entry_idx, *file_idx);
+                    // Selections and visual ranges feed commit-scoped
+                    // commands, so only the DAG's files take part.
+                    let (sel_state, in_visual) = match owner {
+                        FileOwner::Dag(entry_idx) => (
+                            app.file_selection_state(*entry_idx, *file_idx),
+                            app.is_in_visual_file_range(*entry_idx, *file_idx),
+                        ),
+                        FileOwner::EvoLog(_) | FileOwner::Interdiff => {
+                            (FileSelectionState::None, false)
+                        }
+                    };
                     render_file_line(
                         file,
-                        is_unfolded,
+                        app.is_file_unfolded(*owner, *file_idx),
                         sel_state,
                         in_visual,
                         row_search.as_ref(),
                         theme,
                     )
                 }
-                DisplayRow::DiffLine {
-                    owner: FileOwner::Dag(entry_idx),
+                row @ DisplayRow::DiffLine {
+                    owner,
                     file_idx,
                     line_idx,
                 } => {
-                    let diff_lines = app
-                        .diff_lines(FileOwner::Dag(*entry_idx), *file_idx)
+                    let diff_line = app
+                        .row_diff_line(*row)
                         .expect("visible diff row must be loaded");
-                    let diff_line = &diff_lines[line_idx.raw()];
-                    let flags = RenderFlags {
-                        is_source: false,
-                        is_selected: app.is_line_selected(*entry_idx, *file_idx, *line_idx),
-                        in_visual: app.is_in_visual_range(
-                            *entry_idx,
-                            *file_idx,
-                            *line_idx,
-                            RowIdx::new(row_idx),
-                        ),
+                    let flags = match owner {
+                        FileOwner::Dag(entry_idx) => RenderFlags {
+                            is_source: false,
+                            is_selected: app.is_line_selected(*entry_idx, *file_idx, *line_idx),
+                            in_visual: app.is_in_visual_range(
+                                *entry_idx,
+                                *file_idx,
+                                *line_idx,
+                                RowIdx::new(row_idx),
+                            ),
+                        },
+                        FileOwner::EvoLog(_) | FileOwner::Interdiff => RenderFlags::default(),
                     };
                     render_diff_line(
                         diff_line,
@@ -490,41 +495,6 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     spans.push(Span::styled(to, Style::default().fg(theme.change_id)));
                     vec![Line::from(spans)]
                 }
-                DisplayRow::FileChange { owner, file_idx } => {
-                    if let Some(file) = app.file(*owner, *file_idx) {
-                        let (status_str, status_color) = file_status_display(file.status, theme);
-                        let is_unfolded = app.is_file_unfolded(*owner, *file_idx);
-                        let fold_char = if is_unfolded { "\u{25be}" } else { "\u{25b8}" };
-                        let mut spans = vec![
-                            gutter_span(row_search.as_ref(), theme),
-                            Span::styled(
-                                format!("  {fold_char} "),
-                                Style::default().fg(theme.muted),
-                            ),
-                            Span::styled(
-                                format!("{status_str} "),
-                                Style::default().fg(status_color),
-                            ),
-                            Span::styled(
-                                file.path.as_str().to_string(),
-                                Style::default().fg(theme.text),
-                            ),
-                        ];
-                        if file.stats.added > 0 || file.stats.removed > 0 {
-                            push_line_stats(&mut spans, file.stats, false, theme);
-                        }
-                        vec![Line::from(spans)]
-                    } else {
-                        vec![Line::raw("")]
-                    }
-                }
-                row @ DisplayRow::DiffLine { .. } => render_simple_diff_line(
-                    app.row_diff_line(*row),
-                    app.diff_underline,
-                    row_search.as_ref(),
-                    theme,
-                    &tab_spaces,
-                ),
                 DisplayRow::AnnotateLine { line_idx } => {
                     let lines_data = app.annotate.lines.loaded();
                     let line = lines_data.and_then(|lines| lines.get(line_idx.raw()));
