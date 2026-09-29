@@ -6,196 +6,161 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 
 use super::spans::push_short_id;
 use crate::app::{App, StatusLevel};
+use crate::dag::ShortId;
 use crate::theme::Theme;
-use crate::types::GLOBAL_TOGGLES;
+use crate::types::{ActiveView, GLOBAL_TOGGLES};
 
 /// Minimum separator between repo and revset when on a single line.
-pub(super) const HEADER_SEP: &str = "  ";
+const HEADER_SEP: &str = "  ";
 
-pub(super) fn draw_header(
-    frame: &mut Frame,
-    area: Rect,
-    app: &App,
-    theme: &Theme,
-    single_line: bool,
-) {
-    let show_ws_filter = app.active_view == crate::types::ActiveView::Operations
-        && !app.op_log.workspace_filter.is_empty();
-    let workspace_filter_line: Option<Line> = if !show_ws_filter {
-        None
-    } else {
-        let mut names: Vec<&str> = app
-            .op_log
-            .workspace_filter
-            .iter()
-            .map(|s| s.as_str())
-            .collect();
-        names.sort_unstable();
-        Some(Line::from(vec![
-            Span::styled("workspace: ", Style::default().fg(theme.muted)),
-            Span::styled(
-                names.join(", "),
-                Style::default()
-                    .fg(theme.workspace)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]))
+/// The header's lines for the current view. The layout sizes the header
+/// from the number of lines, so what is drawn and the space it gets can't
+/// disagree.
+pub(super) fn header_lines<'a>(app: &'a App, theme: &Theme, width: u16) -> Vec<Line<'a>> {
+    let muted = Style::default().fg(theme.muted);
+    let repo = [
+        Span::styled("repository: ", muted),
+        Span::styled(app.repo_root.as_str(), Style::default().fg(theme.text)),
+    ];
+    let revset_label = match app
+        .revset
+        .active_preset
+        .and_then(|i| app.config.revsets.presets.get(i))
+    {
+        Some(preset) => format!("revset ({}): ", preset.name),
+        None => "revset: ".to_string(),
     };
+    let revset = [
+        Span::styled(revset_label, muted),
+        Span::styled(
+            app.revset.current.as_str(),
+            Style::default().fg(theme.accent),
+        ),
+    ];
 
-    let mut header = if single_line {
-        // Single-line: "repository: <path>  revset: <revset>"
-        vec![Line::from(vec![
-            Span::styled("repository: ", Style::default().fg(theme.muted)),
-            Span::styled(&app.repo_root, Style::default().fg(theme.text)),
-            Span::raw(HEADER_SEP),
-            Span::styled(
-                if let Some(preset) = app
-                    .revset
-                    .active_preset
-                    .and_then(|i| app.config.revsets.presets.get(i))
-                {
-                    format!("revset ({}): ", preset.name)
-                } else {
-                    "revset: ".to_string()
-                },
-                Style::default().fg(theme.muted),
-            ),
-            Span::styled(&app.revset.current, Style::default().fg(theme.accent)),
-        ])]
-    } else {
-        vec![
-            Line::from(vec![
-                Span::styled("repository: ", Style::default().fg(theme.muted)),
-                Span::styled(&app.repo_root, Style::default().fg(theme.text)),
-            ]),
-            Line::from(vec![
-                Span::styled(
-                    if let Some(preset) = app
-                        .revset
-                        .active_preset
-                        .and_then(|i| app.config.revsets.presets.get(i))
-                    {
-                        format!("revset ({}): ", preset.name)
-                    } else {
-                        "revset: ".to_string()
-                    },
-                    Style::default().fg(theme.muted),
-                ),
-                Span::styled(&app.revset.current, Style::default().fg(theme.accent)),
-            ]),
-        ]
-    };
-    if let Some(line) = workspace_filter_line {
-        header.push(line);
+    let spans_width = |spans: &[Span]| spans.iter().map(Span::width).sum::<usize>();
+    let mut header =
+        if spans_width(&repo) + HEADER_SEP.len() + spans_width(&revset) <= width as usize {
+            let mut spans = repo.to_vec();
+            spans.push(Span::raw(HEADER_SEP));
+            spans.extend(revset);
+            vec![Line::from(spans)]
+        } else {
+            vec![Line::from(repo.to_vec()), Line::from(revset.to_vec())]
+        };
+
+    match app.active_view {
+        ActiveView::Operations if !app.op_log.workspace_filter.is_empty() => {
+            header.push(workspace_filter_line(app, theme));
+        }
+        ActiveView::Annotate => header.extend(annotate_header_lines(app, theme)),
+        _ => {}
     }
-    if app.active_view == crate::types::ActiveView::Annotate {
-        let mut spans = Vec::new();
-        if let Some(target) = &app.annotate.target {
-            spans.push(Span::styled("annotate: ", Style::default().fg(theme.muted)));
+    header
+}
+
+fn workspace_filter_line(app: &App, theme: &Theme) -> Line<'static> {
+    let mut names: Vec<&str> = app
+        .op_log
+        .workspace_filter
+        .iter()
+        .map(|s| s.as_str())
+        .collect();
+    names.sort_unstable();
+    Line::from(vec![
+        Span::styled("workspace: ", Style::default().fg(theme.muted)),
+        Span::styled(
+            names.join(", "),
+            Style::default()
+                .fg(theme.workspace)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])
+}
+
+/// The annotated file and its commit, then a breadcrumb trail when the
+/// user has walked back through history.
+fn annotate_header_lines(app: &App, theme: &Theme) -> Vec<Line<'static>> {
+    let muted = Style::default().fg(theme.muted);
+    let mut lines = Vec::new();
+    let Some(target) = &app.annotate.target else {
+        return lines;
+    };
+
+    let mut spans = vec![
+        Span::styled("annotate: ", muted),
+        Span::styled(
+            target.path.as_str().to_string(),
+            Style::default().fg(theme.text),
+        ),
+    ];
+    if let Some(info) = app.annotate.commit_info.get(&target.commit_id) {
+        spans.push(Span::raw("  "));
+        push_short_id(&mut spans, &info.change_id, theme.change_id, theme);
+        spans.push(Span::raw("  "));
+        push_short_id(&mut spans, &info.commit_id, theme.commit_id, theme);
+        spans.push(Span::styled(
+            format!("  {} <{}>", info.author_name, info.author_email),
+            muted,
+        ));
+        spans.push(Span::styled(format!("  {}", info.author_date), muted));
+        if let Some(first_line) = info.description_lines.first() {
+            spans.push(Span::raw("  "));
             spans.push(Span::styled(
-                target.path.as_str().to_string(),
+                first_line.clone(),
                 Style::default().fg(theme.text),
             ));
         }
-        if let Some(cid) = app.annotate.target.as_ref().map(|t| &t.commit_id) {
-            if let Some(info) = app.annotate.commit_info.get(cid) {
-                spans.push(Span::styled("  ", Style::default()));
-                push_short_id(&mut spans, &info.change_id, theme.change_id, theme);
-                spans.push(Span::styled("  ", Style::default()));
-                push_short_id(&mut spans, &info.commit_id, theme.commit_id, theme);
-                spans.push(Span::styled(
-                    format!("  {} <{}>", info.author_name, info.author_email),
-                    Style::default().fg(theme.muted),
-                ));
-                spans.push(Span::styled(
-                    format!("  {}", info.author_date),
-                    Style::default().fg(theme.muted),
-                ));
-                if let Some(first_line) = info.description_lines.first() {
-                    spans.push(Span::styled("  ", Style::default()));
-                    spans.push(Span::styled(
-                        first_line.clone(),
-                        Style::default().fg(theme.text),
-                    ));
-                }
-                let depth = app.annotate.history.len();
-                if depth > 0 {
-                    spans.push(Span::styled(
-                        format!("  [depth {depth}]"),
-                        Style::default().fg(theme.muted),
-                    ));
-                }
-            } else {
-                // Data not yet loaded: show raw commit ID
-                spans.push(Span::styled(" @ ", Style::default().fg(theme.muted)));
-                spans.push(Span::styled(
-                    cid.as_str().get(..12).unwrap_or(cid.as_str()).to_string(),
-                    Style::default().fg(theme.commit_id),
-                ));
-            }
+        let depth = app.annotate.history.len();
+        if depth > 0 {
+            spans.push(Span::styled(format!("  [depth {depth}]"), muted));
         }
-        if !spans.is_empty() {
-            header.push(Line::from(spans));
-        }
-
-        // Breadcrumb line: only when history is non-empty.
-        if !app.annotate.history.is_empty() {
-            let mut crumbs = Vec::new();
-            let muted = Style::default().fg(theme.muted);
-
-            for (i, (hist_cid, _)) in app.annotate.history.iter().enumerate() {
-                if i > 0 {
-                    crumbs.push(Span::styled(" → ", muted));
-                }
-                if let Some(info) = app.annotate.commit_info.get(hist_cid) {
-                    let id = &info.change_id;
-                    let (p, s) = id.split();
-                    let (p, s) = (p.to_string(), s.to_string());
-                    crumbs.push(Span::styled(
-                        p,
-                        Style::default()
-                            .fg(theme.change_id)
-                            .add_modifier(Modifier::BOLD),
-                    ));
-                    if !s.is_empty() {
-                        crumbs.push(Span::styled(s, muted));
-                    }
-                } else {
-                    crumbs.push(Span::styled(
-                        hist_cid
-                            .as_str()
-                            .get(..8)
-                            .unwrap_or(hist_cid.as_str())
-                            .to_string(),
-                        muted,
-                    ));
-                }
-            }
-
-            // Current commit
-            crumbs.push(Span::styled(" → ", muted));
-            if let Some(cid) = app.annotate.target.as_ref().map(|t| &t.commit_id)
-                && let Some(info) = app.annotate.commit_info.get(cid)
-            {
-                let id = &info.change_id;
-                let (p, s) = id.split();
-                let (p, s) = (p.to_string(), s.to_string());
-                crumbs.push(Span::styled(
-                    p,
-                    Style::default()
-                        .fg(theme.change_id)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                if !s.is_empty() {
-                    crumbs.push(Span::styled(s, muted));
-                }
-            }
-            crumbs.push(Span::styled(" (current)", muted));
-
-            header.push(Line::from(crumbs));
-        }
+    } else {
+        // Not loaded yet: fall back to the raw commit id.
+        let cid = target.commit_id.as_str();
+        spans.push(Span::styled(" @ ", muted));
+        spans.push(Span::styled(
+            cid.get(..12).unwrap_or(cid).to_string(),
+            Style::default().fg(theme.commit_id),
+        ));
     }
-    frame.render_widget(Paragraph::new(header), area);
+    lines.push(Line::from(spans));
+
+    if !app.annotate.history.is_empty() {
+        let mut crumbs = Vec::new();
+        for (hist_cid, _) in &app.annotate.history {
+            match app.annotate.commit_info.get(hist_cid) {
+                Some(info) => push_crumb(&mut crumbs, &info.change_id, theme),
+                None => {
+                    let cid = hist_cid.as_str();
+                    crumbs.push(Span::styled(cid.get(..8).unwrap_or(cid).to_string(), muted));
+                }
+            }
+            crumbs.push(Span::styled(" → ", muted));
+        }
+        if let Some(info) = app.annotate.commit_info.get(&target.commit_id) {
+            push_crumb(&mut crumbs, &info.change_id, theme);
+        }
+        crumbs.push(Span::styled(" (current)", muted));
+        lines.push(Line::from(crumbs));
+    }
+    lines
+}
+
+fn push_crumb(spans: &mut Vec<Span<'static>>, change_id: &ShortId, theme: &Theme) {
+    let (prefix, rest) = change_id.split();
+    spans.push(Span::styled(
+        prefix.to_string(),
+        Style::default()
+            .fg(theme.change_id)
+            .add_modifier(Modifier::BOLD),
+    ));
+    if !rest.is_empty() {
+        spans.push(Span::styled(
+            rest.to_string(),
+            Style::default().fg(theme.muted),
+        ));
+    }
 }
 
 pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {

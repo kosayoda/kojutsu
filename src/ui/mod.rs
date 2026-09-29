@@ -7,6 +7,7 @@ mod views;
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::widgets::Paragraph;
 
 use crate::app::{App, AppMode, TargetMode};
 use crate::keymap::{self, Keymaps};
@@ -24,26 +25,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
     let config: std::rc::Rc<Config> = app.config.clone();
     let config = &*config;
     let theme = &config.theme;
-    // Use a single-line header if both repo and revset fit on one line.
-    let single_line_len = "repository: ".len()
-        + app.repo_root.len()
-        + layout::HEADER_SEP.len()
-        + "revset: ".len()
-        + app.revset.current.len();
-    let single_line = single_line_len <= frame.area().width as usize;
-    let base_height: u16 = if single_line { 1 } else { 2 };
-    let show_ws_filter = app.active_view == crate::types::ActiveView::Operations
-        && !app.op_log.workspace_filter.is_empty();
-    let annotate_header_lines: u16 = if app.active_view == crate::types::ActiveView::Annotate {
-        if app.annotate.history.is_empty() {
-            1
-        } else {
-            2
-        }
-    } else {
-        0
-    };
-    let header_height = base_height + if show_ws_filter { 1 } else { 0 } + annotate_header_lines;
+    let header = layout::header_lines(app, theme, frame.area().width);
+    let header_height = header.len() as u16;
 
     let [header_area, main_area, status_area] = Layout::vertical([
         Constraint::Length(header_height),
@@ -52,9 +35,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
     ])
     .areas(frame.area());
 
+    frame.render_widget(Paragraph::new(header), header_area);
     app.last_header_height = header_height;
     app.last_list_height = main_area.height;
-    layout::draw_header(frame, header_area, app, theme, single_line);
     list::draw_list(frame, main_area, app, config);
     layout::draw_status_bar(frame, status_area, app, theme);
 
