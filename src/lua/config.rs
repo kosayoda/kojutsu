@@ -1,6 +1,6 @@
 use mlua::{Lua, LuaSerdeExt as _};
 
-use crate::theme::Config;
+use crate::config::Config;
 
 /// Publish `config` as `kojutsu.config` for `init.lua` to read and override.
 ///
@@ -29,7 +29,7 @@ pub(super) fn read(lua: &Lua) -> Result<Config, String> {
 #[cfg(test)]
 mod tests {
     use super::{publish, read};
-    use crate::theme::Config;
+    use crate::config::Config;
     use ratatui::style::Color;
 
     /// Run `source` against a published config and return what it resolves to.

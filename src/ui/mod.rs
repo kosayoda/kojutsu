@@ -10,8 +10,8 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::widgets::Paragraph;
 
 use crate::app::{App, AppMode, TargetMode};
+use crate::config::Config;
 use crate::keymap::{self, Keymaps};
-use crate::theme::Config;
 
 /// Height of the status bar area at the bottom of the screen. Overlays
 /// render over the main list plus this area, so input handlers that need

@@ -11,7 +11,7 @@ use crate::idx::RowIdx;
 use std::collections::{HashMap, HashSet};
 
 use crate::app::{App, AppMode, TargetMode};
-use crate::theme::Config;
+use crate::config::Config;
 use crate::types::{
     ActiveView, ConflictHunkRef, DisplayRow, FileOwner, FileSelectionState, RevisionArg,
 };

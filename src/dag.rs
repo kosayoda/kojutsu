@@ -393,8 +393,8 @@ impl CommitInfo {
         self.workspaces.iter().any(|ws| ws.is_current)
     }
 
-    pub fn glyph(&self) -> crate::theme::Glyph {
-        use crate::theme::Glyph;
+    pub fn glyph(&self) -> crate::config::Glyph {
+        use crate::config::Glyph;
         if self.is_working_copy() {
             Glyph::WorkingCopy
         } else if self.has_conflict {

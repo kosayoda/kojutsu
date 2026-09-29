@@ -272,7 +272,7 @@ pub struct App {
     pub revset: RevsetConfig,
     /// The loaded configuration. Held by handle rather than borrowed so it
     /// can be swapped wholesale when the config is reloaded.
-    pub config: Rc<crate::theme::Config>,
+    pub config: Rc<crate::config::Config>,
     /// Previously run `jj run` commands, most recent first (persisted).
     pub run_history: Vec<String>,
     /// jj's `run.jobs` setting, as of the last repo load.
@@ -333,7 +333,7 @@ pub struct DagState {
 #[cfg(test)]
 mod reload_tests {
     use super::{App, Rc, SearchScopes};
-    use crate::theme::{Config, DefaultSearchScopes, Preset, RevsetsConfig};
+    use crate::config::{Config, DefaultSearchScopes, Preset, RevsetsConfig};
 
     fn with_presets(count: usize) -> Rc<Config> {
         Rc::new(Config {
@@ -412,7 +412,7 @@ impl std::fmt::Debug for App {
 }
 
 impl App {
-    pub fn new(revset: String, repo_root: String, config: Rc<crate::theme::Config>) -> Self {
+    pub fn new(revset: String, repo_root: String, config: Rc<crate::config::Config>) -> Self {
         let default_search_scopes = config.default_search_scopes.to_flags();
         let mut app = Self {
             active_view: ActiveView::Dag,
@@ -467,7 +467,7 @@ impl App {
         Self::new(
             String::new(),
             String::new(),
-            Rc::new(crate::theme::Config::default()),
+            Rc::new(crate::config::Config::default()),
         )
     }
 
@@ -1725,7 +1725,7 @@ impl App {
     /// service; send
     /// [`RepoRequest::set_diff_size_limit`](RepoRequest::set_diff_size_limit)
     /// alongside this.
-    pub fn apply_reloaded_config(&mut self, config: Rc<crate::theme::Config>) {
+    pub fn apply_reloaded_config(&mut self, config: Rc<crate::config::Config>) {
         self.config = config;
         self.revset.active_preset = self
             .revset

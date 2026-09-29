@@ -5,8 +5,8 @@ use crate::app::App;
 use crate::conflict::{ConflictHunkKind, ConflictPick, ConflictTermKind};
 use crate::dag::{CommitInfo, DiffLine, DiffLineKind, FileChange, FileStatus, LineStats};
 use crate::idx::{ConflictLineIdx, ConflictTermIdx};
-use crate::theme::{Config, Theme};
 use crate::types::{ConflictHunkRef, FileSelectionState, SearchScopes};
+use crate::{config::Config, theme::Theme};
 
 use super::{
     RenderFlags, RowContext, SelectionMark, push_diff_tokens, push_graph_node_spans,
@@ -36,10 +36,10 @@ pub(crate) fn render_commit_item(
         theme.error
     } else {
         match c.glyph() {
-            crate::theme::Glyph::WorkingCopy => theme.added,
-            crate::theme::Glyph::Conflict => theme.error,
-            crate::theme::Glyph::Immutable | crate::theme::Glyph::Merge => theme.accent,
-            crate::theme::Glyph::Normal => theme.accent,
+            crate::config::Glyph::WorkingCopy => theme.added,
+            crate::config::Glyph::Conflict => theme.error,
+            crate::config::Glyph::Immutable | crate::config::Glyph::Merge => theme.accent,
+            crate::config::Glyph::Normal => theme.accent,
         }
     };
 

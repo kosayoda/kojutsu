@@ -23,8 +23,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::dag::{DiffToken, DiffTokenKind, LineStats, ShortId};
-use crate::theme::{Config, Theme};
 use crate::types::SearchScopes;
+use crate::{config::Config, theme::Theme};
 
 use super::search::{SearchRender, gutter_span, push_searchable};
 use super::spans::push_short_id;

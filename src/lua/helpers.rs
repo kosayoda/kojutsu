@@ -353,7 +353,7 @@ pub(super) fn short_source(raw: &str) -> String {
         .strip_prefix("[string \"")
         .and_then(|s| s.strip_suffix("\"]"))
         .unwrap_or(raw);
-    crate::theme::kojutsu_config_dir()
+    crate::config::kojutsu_config_dir()
         .and_then(|d| {
             let prefix = format!("{}/", d.display());
             unwrapped.strip_prefix(&prefix).map(str::to_string)

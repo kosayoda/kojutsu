@@ -1,7 +1,7 @@
 use renderdag::{Ancestor, BoxDrawingRenderer, GraphRowRenderer, Renderer};
 
+use crate::config::GlyphChars;
 use crate::dag::{DagEntry, Edge, EdgeKind};
-use crate::theme::GlyphChars;
 
 /// Sentinel characters used to identify line roles in the renderer output.
 /// We pass these as a 3-line "message" to the renderer, then identify which

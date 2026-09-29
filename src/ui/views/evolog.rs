@@ -2,8 +2,8 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::app::Drawn;
+use crate::config::Config;
 use crate::history::EvoLogEntry;
-use crate::theme::Config;
 use crate::types::SearchScopes;
 
 use super::push_graph_node_spans;

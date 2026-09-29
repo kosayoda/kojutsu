@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use tui_input::Input;
 
@@ -608,7 +609,7 @@ impl Default for PersistedState {
 /// line's revset if one was given (no preset), else the remembered preset,
 /// or the first one if none is remembered or it is gone, else jj's default.
 pub fn initial_revset(
-    presets: &[crate::theme::Preset],
+    presets: &[crate::config::Preset],
     requested: Option<String>,
     remembered: Option<usize>,
 ) -> (Option<String>, Option<usize>) {
@@ -621,8 +622,17 @@ pub fn initial_revset(
     (preset.map(|i| presets[i].revset.clone()), preset)
 }
 
+/// Path for user-wide persistent state (`~/.local/state/kojutsu/state.json`).
+fn state_path() -> Option<PathBuf> {
+    Some(
+        dirs::state_dir()
+            .or_else(dirs::data_dir)?
+            .join("kojutsu/state.json"),
+    )
+}
+
 pub fn load_persisted_state() -> PersistedState {
-    let Some(path) = crate::theme::state_path() else {
+    let Some(path) = state_path() else {
         return PersistedState::default();
     };
     match std::fs::read_to_string(&path) {
@@ -632,7 +642,7 @@ pub fn load_persisted_state() -> PersistedState {
 }
 
 pub fn save_persisted_state(state: &PersistedState) {
-    let Some(path) = crate::theme::state_path() else {
+    let Some(path) = state_path() else {
         return;
     };
     if let Some(parent) = path.parent() {
@@ -812,8 +822,8 @@ impl LogEntry for EvoLogEntry {
 }
 
 /// Draw a log's graph with the configured glyphs.
-pub fn draw_log<T: LogEntry>(entries: Vec<T>, glyphs: &crate::theme::GlyphChars) -> Vec<Drawn<T>> {
-    use crate::theme::Glyph;
+pub fn draw_log<T: LogEntry>(entries: Vec<T>, glyphs: &crate::config::GlyphChars) -> Vec<Drawn<T>> {
+    use crate::config::Glyph;
     let nodes: Vec<crate::graph::LogNode<'_>> = entries
         .iter()
         .map(|entry| crate::graph::LogNode {
@@ -1216,8 +1226,8 @@ mod annotate_cache_tests {
 #[cfg(test)]
 mod draw_log_tests {
     use super::draw_log;
+    use crate::config::GlyphChars;
     use crate::history::EvoLogEntry;
-    use crate::theme::GlyphChars;
     use crate::types::CommitId;
 
     /// The logs draw with the configured glyphs, as the DAG does, rather
@@ -1242,7 +1252,7 @@ mod draw_log_tests {
 #[cfg(test)]
 mod initial_revset_tests {
     use super::initial_revset;
-    use crate::theme::Preset;
+    use crate::config::Preset;
 
     fn presets() -> Vec<Preset> {
         ["mine", "all"]

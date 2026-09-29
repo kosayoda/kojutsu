@@ -53,7 +53,7 @@ fn common_requirement(registry: &ActionRegistry, children: &[(Node, TrieNode)]) 
 pub fn help_entries(
     keymap: &Keymap,
     registry: &ActionRegistry,
-    presets: &[crate::theme::Preset],
+    presets: &[crate::config::Preset],
 ) -> Vec<(HelpGroup, Vec<HelpEntry>)> {
     let mut action_keys: Vec<(ActionId, Vec<String>, String, HelpGroup)> = Vec::new();
     let mut prefix_entries: Vec<HelpEntry> = Vec::new();

@@ -226,7 +226,7 @@ fn main() -> Result<()> {
         app.enter_annotate_view(commit_id, path);
     }
 
-    if let Some(path) = kojutsu::theme::superseded_toml_config() {
+    if let Some(path) = kojutsu::config::superseded_toml_config() {
         let msg = format!(
             "{} is no longer read - its settings now live in init.lua \
              (see --print-default-config)",
@@ -749,7 +749,7 @@ fn adopt_hook(app: &mut App, hook: Option<AppAction>) {
 fn install_config(
     app: &mut App,
     repo_requests: &RepoRequestHandle,
-    config: std::rc::Rc<kojutsu::theme::Config>,
+    config: std::rc::Rc<kojutsu::config::Config>,
 ) {
     repo_requests.send(kojutsu::repo_service::RepoRequest::SetDiffSizeLimit {
         bytes: config.diff.max_file_size_bytes(),

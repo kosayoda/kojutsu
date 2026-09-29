@@ -374,7 +374,7 @@ impl LuaEngine {
         &mut self,
         registry: &mut ActionRegistry,
         default_specs: &[BindingSpec],
-        config: &mut crate::theme::Config,
+        config: &mut crate::config::Config,
         config_dir: &std::path::Path,
     ) {
         let init_path = config_dir.join("init.lua");
@@ -509,7 +509,7 @@ impl LuaEngine {
     fn publish_registration_api(
         &self,
         shared: &Shared,
-        config: &crate::theme::Config,
+        config: &crate::config::Config,
     ) -> mlua::Result<()> {
         let lua = &self.lua;
         let kojutsu: mlua::Table = lua.globals().get("kojutsu")?;

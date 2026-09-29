@@ -1,8 +1,8 @@
 use std::path::Path;
 use std::rc::Rc;
 
+use crate::config::Config;
 use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
-use crate::theme::Config;
 
 use super::LuaEngine;
 
@@ -17,7 +17,7 @@ impl LuaRuntime {
     /// Load from the user's config directory, or built-in defaults when the
     /// platform has none.
     pub fn load(repo_path: &Path) -> Self {
-        match crate::theme::kojutsu_config_dir() {
+        match crate::config::kojutsu_config_dir() {
             Some(dir) => Self::load_from(&dir, repo_path),
             None => Self::load_from(Path::new(""), repo_path),
         }
@@ -27,7 +27,7 @@ impl LuaRuntime {
     /// set and registered before the error, reported via
     /// [`Self::init_error`].
     pub fn load_from(config_dir: &Path, repo_path: &Path) -> Self {
-        let mut config = crate::theme::Config::default();
+        let mut config = crate::config::Config::default();
         let mut registry = ActionRegistry::new();
         let default_specs = default_bindings();
         let mut engine = LuaEngine::new(
@@ -381,7 +381,7 @@ mod tests {
 
     /// Run the first registered command and report what it left the config
     /// table as.
-    fn run_command(runtime: &LuaRuntime) -> Option<Result<crate::theme::Config, String>> {
+    fn run_command(runtime: &LuaRuntime) -> Option<Result<crate::config::Config, String>> {
         let mut app = crate::app::App::for_test();
         runtime
             .engine
@@ -441,6 +441,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
         assert_eq!(runtime.init_error(), None);
-        assert_eq!(*runtime.config, crate::theme::Config::default());
+        assert_eq!(*runtime.config, crate::config::Config::default());
     }
 }

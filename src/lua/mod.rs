@@ -351,7 +351,7 @@ impl LuaEngine {
         repo_path: &Path,
         registry: &mut ActionRegistry,
         default_specs: &[BindingSpec],
-        config: &mut crate::theme::Config,
+        config: &mut crate::config::Config,
         config_dir: &Path,
     ) -> Self {
         let mut engine = Self::without_config(repo_path);
@@ -871,8 +871,8 @@ impl LuaEngine {
     /// it left cannot be read at all.
     pub fn take_config_change(
         &self,
-        current: &crate::theme::Config,
-    ) -> Option<Result<crate::theme::Config, String>> {
+        current: &crate::config::Config,
+    ) -> Option<Result<crate::config::Config, String>> {
         if !self.lua_ran.replace(false) {
             return None;
         }
@@ -1077,7 +1077,7 @@ mod command_log_tests {
         let mut app = App::new(
             String::new(),
             String::new(),
-            std::rc::Rc::new(crate::theme::Config::default()),
+            std::rc::Rc::new(crate::config::Config::default()),
         );
         engine.flush_logs(&mut app);
         app.command_log
@@ -1117,7 +1117,7 @@ mod command_log_tests {
         let mut app = App::new(
             String::new(),
             String::new(),
-            std::rc::Rc::new(crate::theme::Config::default()),
+            std::rc::Rc::new(crate::config::Config::default()),
         );
         engine.flush_logs(&mut app);
         let entry = app.command_log.entries.first().expect("one entry");
@@ -1206,9 +1206,9 @@ mod api_surface_tests {
     /// author's LSP; one removed there and left here is a lie.
     #[test]
     fn the_config_classes_match_the_config_struct() {
-        let mut config = crate::theme::Config::default();
+        let mut config = crate::config::Config::default();
         // Presets default to empty, so seed one to reach KojutsuPreset.
-        config.revsets.presets.push(crate::theme::Preset {
+        config.revsets.presets.push(crate::config::Preset {
             name: String::new(),
             revset: String::new(),
         });
