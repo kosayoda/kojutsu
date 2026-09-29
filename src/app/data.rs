@@ -4,6 +4,7 @@ use super::{App, DeferredWork, JumpTarget, Loadable};
 use crate::dag::{DagEntry, DiffResult, DiffSummary, DiffTarget, EdgeKind};
 use crate::idx::{DiffLineIdx, EntryIdx, EvoLogIdx, FileIdx, RowIdx};
 use crate::repo_service::{RepoError, RepoRequest, RepoResult, RevsetLoadKind};
+use crate::types::ActiveView;
 use crate::types::{ChangeId, CommitId, DisplayRow, FileOwner, RepoPath, SmallVec};
 
 /// Cursor position captured before a refresh, keyed by stable IDs so it can
@@ -297,6 +298,7 @@ impl App {
             RepoResult::Revset { revset, result } => match result {
                 Ok(data) => {
                     self.clear_info_status();
+                    self.run_jobs = data.run_jobs;
                     self.revset.current = data.revset.into();
                     self.revset.draft = None;
                     self.revset.pending = None;
@@ -305,7 +307,7 @@ impl App {
                     self.op_log.limit = super::OP_LOG_BATCH_SIZE;
                     self.op_log.details.clear();
                     self.op_log.unfolded.clear();
-                    if self.active_view == super::ActiveView::Operations {
+                    if self.active_view == ActiveView::Operations {
                         self.pending_repo_requests.push(RepoRequest::Operations {
                             limit: self.op_log.limit,
                         });
@@ -435,7 +437,7 @@ impl App {
                     self.op_log.entries = super::draw_log(entries, &self.config.glyphs);
                     self.op_log.loaded = true;
                     self.op_log.has_more = has_more;
-                    if self.active_view == super::ActiveView::Operations {
+                    if self.active_view == ActiveView::Operations {
                         deferred.rebuild.set_full();
                     }
                 }
@@ -453,7 +455,7 @@ impl App {
                     self.op_log
                         .details
                         .insert(op_id, super::Loadable::Loaded(lines));
-                    if self.active_view == super::ActiveView::Operations {
+                    if self.active_view == ActiveView::Operations {
                         deferred.rebuild.set_full();
                         deferred.scroll = true;
                     }
@@ -499,7 +501,7 @@ impl App {
                 Ok(entries) => {
                     self.evolog.entries = super::draw_log(entries, &self.config.glyphs);
                     self.evolog.loaded = true;
-                    if self.active_view == super::ActiveView::Evolog {
+                    if self.active_view == ActiveView::Evolog {
                         deferred.rebuild.set_full();
                     }
                 }
@@ -527,7 +529,7 @@ impl App {
                     );
                     self.annotate.lines = Loadable::Loaded(annotate_result.lines);
                     self.annotate.commit_info = annotate_result.commit_info;
-                    if self.active_view == super::ActiveView::Annotate {
+                    if self.active_view == ActiveView::Annotate {
                         deferred.rebuild.set_full();
                     }
                 }
@@ -607,10 +609,10 @@ impl App {
     fn owner_changed(&self, owner: FileOwner, deferred: &mut DeferredWork) {
         match owner {
             FileOwner::Dag(idx) => deferred.rebuild.add_entry(idx),
-            FileOwner::EvoLog(_) if self.active_view == super::ActiveView::Evolog => {
+            FileOwner::EvoLog(_) if self.active_view == ActiveView::Evolog => {
                 deferred.rebuild.set_full();
             }
-            FileOwner::Interdiff if self.active_view == super::ActiveView::Interdiff => {
+            FileOwner::Interdiff if self.active_view == ActiveView::Interdiff => {
                 deferred.rebuild.set_full();
             }
             FileOwner::EvoLog(_) | FileOwner::Interdiff => {}
@@ -1068,6 +1070,7 @@ mod repo_result_tests {
                 bookmark_details: Default::default(),
                 workspace_entries: Vec::new(),
                 warnings: warnings.iter().map(|w| (*w).to_string()).collect(),
+                run_jobs: None,
                 done: true,
             })),
         });

@@ -79,8 +79,9 @@ impl DeferredWork {
 }
 
 use crate::conflict::{ConflictPick, ConflictTermKind};
-use crate::dag::{DiffLine, DiffTarget, FileChange};
+use crate::dag::{DiffFormat, DiffLine, DiffTarget, FileChange};
 use crate::idx::{ConflictHunkIdx, EntryIdx, FileIdx, IndexVec, RowIdx};
+use crate::types::ActiveView;
 use crate::types::SmallVec;
 
 use crate::keymap::CommandFlags;
@@ -147,13 +148,6 @@ pub struct DagNode {
     /// Lazily loaded conflict hunks, parallel to the files (for conflicted
     /// files).
     conflict_hunks: Vec<Loadable<Vec<crate::conflict::ConflictHunkKind>>>,
-}
-
-/// Which diff format to display.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum DiffFormat {
-    Git,
-    ColorWords,
 }
 
 impl std::fmt::Debug for DagNode {
@@ -285,6 +279,8 @@ pub struct App {
     pub config: Rc<crate::theme::Config>,
     /// Previously run `jj run` commands, most recent first (persisted).
     pub run_history: Vec<String>,
+    /// jj's `run.jobs` setting, as of the last repo load.
+    pub run_jobs: Option<usize>,
     pub repo_root: String,
     /// Current interaction mode.
     pub mode: AppMode,
@@ -442,6 +438,7 @@ impl App {
             },
             config,
             run_history: Vec::new(),
+            run_jobs: None,
             repo_root,
             mode: AppMode::Normal,
             unfolded_commits: HashSet::new(),

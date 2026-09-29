@@ -32,9 +32,9 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
         + app.revset.current.len();
     let single_line = single_line_len <= frame.area().width as usize;
     let base_height: u16 = if single_line { 1 } else { 2 };
-    let show_ws_filter = app.active_view == crate::app::ActiveView::Operations
+    let show_ws_filter = app.active_view == crate::types::ActiveView::Operations
         && !app.op_log.workspace_filter.is_empty();
-    let annotate_header_lines: u16 = if app.active_view == crate::app::ActiveView::Annotate {
+    let annotate_header_lines: u16 = if app.active_view == crate::types::ActiveView::Annotate {
         if app.annotate.history.is_empty() {
             1
         } else {

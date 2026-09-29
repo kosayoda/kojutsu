@@ -4,7 +4,8 @@ use crate::keymap::{BindTarget, BindingSpec, Scope};
 
 /// Valid `scope` option values: `all` plus every view name.
 pub(super) fn scope_names() -> impl Iterator<Item = String> {
-    std::iter::once("all".to_string()).chain(crate::app::ActiveView::iter().map(|v| v.to_string()))
+    std::iter::once("all".to_string())
+        .chain(crate::types::ActiveView::iter().map(|v| v.to_string()))
 }
 
 /// Valid `selection` option values: `all` plus every selection kind.
@@ -421,7 +422,7 @@ pub(super) fn parse_scope(s: &str) -> crate::keymap::Scope {
     if s == "all" {
         return crate::keymap::Scope::All;
     }
-    match s.parse::<crate::app::ActiveView>() {
+    match s.parse::<crate::types::ActiveView>() {
         Ok(view) => crate::keymap::Scope::Views(smallvec::smallvec![view]),
         Err(_) => {
             let valid: Vec<String> = scope_names().collect();

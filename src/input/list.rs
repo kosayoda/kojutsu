@@ -291,8 +291,8 @@ pub(super) fn resolve_selection(
         PendingSelection::BookmarkMove { source, flags } => {
             let name = BookmarkName::new(names.into_iter().next().unwrap_or_default());
             // The target is picked in the DAG, wherever the bookmark was.
-            if app.active_view != crate::app::ActiveView::Dag {
-                app.switch_view(crate::app::ActiveView::Dag);
+            if app.active_view != crate::types::ActiveView::Dag {
+                app.switch_view(crate::types::ActiveView::Dag);
             }
             app.mode = AppMode::TargetSelect {
                 prompt: "move bookmark",
@@ -473,7 +473,7 @@ mod list_navigation_tests {
         handle_select_from_list(
             app,
             &lua,
-            keymaps.for_view(crate::app::ActiveView::Dag),
+            keymaps.for_view(crate::types::ActiveView::Dag),
             event,
         );
     }

@@ -11,9 +11,7 @@ use kojutsu::input::{self, Action, Completion};
 use kojutsu::jj_command::{JJCommand, JJCommandResult, TerminalUse};
 use kojutsu::keymap::AppAction;
 use kojutsu::repo::JjRepo;
-use kojutsu::repo_service::{
-    CancellationToken, RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind,
-};
+use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind};
 use kojutsu::terminal::{TerminalEvents, spawn_terminal_events};
 use kojutsu::types::JumpTarget;
 use kojutsu::ui;
@@ -917,7 +915,7 @@ fn report_unapplied_edit(app: &mut App, outcome: EditOutcome) {
 fn debug_print_prefixes(jj: &JjRepo, entries: &mut [kojutsu::dag::DagEntry]) -> Result<()> {
     let commit_ids: Vec<_> = entries.iter().map(|e| e.commit.graph_id.clone()).collect();
     let updates: std::collections::HashMap<_, _> = jj
-        .compute_prefix_lengths(&commit_ids, &CancellationToken::new())?
+        .compute_prefix_lengths(&commit_ids, &kojutsu::repo::CancellationToken::new())?
         .into_iter()
         .collect();
 
@@ -1050,12 +1048,12 @@ fn finish_jj_command(
         let switch_to_dag = match &jump {
             Some(JumpTarget::WorkingCopy | JumpTarget::Prefix(_)) => true,
             Some(JumpTarget::Bookmark(_)) => false,
-            None => app.active_view == kojutsu::app::ActiveView::Evolog,
+            None => app.active_view == kojutsu::types::ActiveView::Evolog,
         };
         app.jump_after_refresh = jump;
         app.clear_selection();
-        if switch_to_dag && app.active_view != kojutsu::app::ActiveView::Dag {
-            app.switch_view(kojutsu::app::ActiveView::Dag);
+        if switch_to_dag && app.active_view != kojutsu::types::ActiveView::Dag {
+            app.switch_view(kojutsu::types::ActiveView::Dag);
         }
         // The command already snapshotted the working copy when it started
         // (unless run with --ignore-working-copy, where skipping is wanted),

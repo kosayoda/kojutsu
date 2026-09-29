@@ -59,7 +59,7 @@ mod tests {
     /// Total bindings visible in the DAG view's help.
     fn binding_count(runtime: &LuaRuntime) -> usize {
         crate::keymap::help_entries(
-            runtime.keymaps.for_view(crate::app::ActiveView::Dag),
+            runtime.keymaps.for_view(crate::types::ActiveView::Dag),
             &runtime.keymaps.registry,
             &runtime.config.revsets.presets,
         )

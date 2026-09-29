@@ -602,7 +602,7 @@ impl App {
                     return None;
                 }
                 let fi = node.files.file_idx(&vr.path)?;
-                let diff_lines = node.files.diff_lines(fi, super::DiffFormat::Git)?;
+                let diff_lines = node.files.diff_lines(fi, crate::dag::DiffFormat::Git)?;
                 let lines: Vec<_> = diff_lines
                     .iter()
                     .enumerate()

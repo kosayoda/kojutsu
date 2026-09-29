@@ -599,6 +599,13 @@ pub enum DiffLineKind {
     Header,
 }
 
+/// Which diff format to display.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DiffFormat {
+    Git,
+    ColorWords,
+}
+
 /// Both diff formats for a single file, computed at load time.
 #[derive(Clone)]
 pub struct DiffResult {
@@ -609,10 +616,10 @@ pub struct DiffResult {
 }
 
 impl DiffResult {
-    pub fn lines(&self, format: crate::app::DiffFormat) -> &Vec<DiffLine> {
+    pub fn lines(&self, format: DiffFormat) -> &Vec<DiffLine> {
         match format {
-            crate::app::DiffFormat::Git => &self.git,
-            crate::app::DiffFormat::ColorWords => &self.color_words,
+            DiffFormat::Git => &self.git,
+            DiffFormat::ColorWords => &self.color_words,
         }
     }
 }

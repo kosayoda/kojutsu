@@ -392,8 +392,8 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
 #[cfg(test)]
 mod scroll_delta_tests {
     use super::{PAGE_SIZE, scroll_delta};
-    use crate::app::ActiveView;
     use crate::keymap::{ActionRegistry, AppAction, Keymaps, default_bindings, try_parse_key};
+    use crate::types::ActiveView;
 
     fn delta(keymaps: &Keymaps, key: &str) -> Option<i16> {
         let node = try_parse_key(key).expect("parsable key");

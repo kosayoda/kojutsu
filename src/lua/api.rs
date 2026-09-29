@@ -64,7 +64,7 @@ impl LuaEngine {
         })?;
 
         let switch_view_fn = self.lua.create_function(|lua, view: String| {
-            let av: crate::app::ActiveView = view
+            let av: crate::types::ActiveView = view
                 .parse()
                 .map_err(|_| mlua::Error::external(format!("unknown view `{view}`")))?;
             lua_state!(lua)

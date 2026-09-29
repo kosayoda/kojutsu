@@ -450,8 +450,8 @@ fn perform(
         }
         AppAction::ToggleGitDiff => {
             app.diff_format = match app.diff_format {
-                crate::app::DiffFormat::Git => crate::app::DiffFormat::ColorWords,
-                crate::app::DiffFormat::ColorWords => crate::app::DiffFormat::Git,
+                crate::dag::DiffFormat::Git => crate::dag::DiffFormat::ColorWords,
+                crate::dag::DiffFormat::ColorWords => crate::dag::DiffFormat::Git,
             };
             app.rebuild_rows();
             Action::None
@@ -786,21 +786,21 @@ fn perform(
         AppAction::TagDelete => super::target::tag_delete(app, flags),
         AppAction::TagSet => super::target::tag_set(app, flags),
         AppAction::SwitchToDagView => {
-            app.switch_view(crate::app::ActiveView::Dag);
+            app.switch_view(crate::types::ActiveView::Dag);
             Action::None
         }
         AppAction::SwitchToBookmarkView => {
-            app.switch_view(crate::app::ActiveView::Bookmarks);
+            app.switch_view(crate::types::ActiveView::Bookmarks);
             Action::None
         }
         // Tag view actions
         AppAction::SwitchToTagView => {
-            app.switch_view(crate::app::ActiveView::Tags);
+            app.switch_view(crate::types::ActiveView::Tags);
             Action::None
         }
         // Operations view actions
         AppAction::SwitchToOpLogView => {
-            app.switch_view(crate::app::ActiveView::Operations);
+            app.switch_view(crate::types::ActiveView::Operations);
             Action::None
         }
         AppAction::OpLogFilterWorkspace
@@ -809,15 +809,15 @@ fn perform(
         | AppAction::OpLogAbandon => super::view::oplog::dispatch(app, action, flags),
         // Workspace view actions
         AppAction::SwitchToWorkspaceView => {
-            app.switch_view(crate::app::ActiveView::Workspaces);
+            app.switch_view(crate::types::ActiveView::Workspaces);
             Action::None
         }
         AppAction::SwitchToEvoLogView => {
-            app.switch_view(crate::app::ActiveView::Evolog);
+            app.switch_view(crate::types::ActiveView::Evolog);
             Action::None
         }
         AppAction::SwitchToCommandLogView => {
-            app.switch_view(crate::app::ActiveView::CommandLog);
+            app.switch_view(crate::types::ActiveView::CommandLog);
             Action::None
         }
         AppAction::Jump => {
@@ -897,7 +897,7 @@ pub(super) fn jump_to_commit_in_dag(
     change_id: Option<&crate::dag::ShortId>,
 ) {
     if let Some(idx) = app.entry_by_commit_id(commit_id) {
-        app.switch_view(crate::app::ActiveView::Dag);
+        app.switch_view(crate::types::ActiveView::Dag);
         if let Some(row) = app.row_of_commit(idx) {
             app.set_cursor(row);
         }
@@ -1004,7 +1004,7 @@ pub(super) fn execute_follow_up(app: &mut App, action: FollowUpAction) -> Action
         FollowUpAction::WidenRevset { change_id } => {
             let new_revset = format!("({}) | {}", app.revset.current, change_id);
             app.jump_after_refresh = Some(crate::types::JumpTarget::Prefix(change_id));
-            app.switch_view(crate::app::ActiveView::Dag);
+            app.switch_view(crate::types::ActiveView::Dag);
             app.revset.active_preset = None;
             Action::UpdateRevset(new_revset)
         }

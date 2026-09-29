@@ -66,7 +66,7 @@ pub struct SearchScopeSpec {
     pub label: &'static str,
 }
 
-use crate::app::ActiveView;
+use crate::types::ActiveView;
 
 /// The scopes a view can actually search, i.e. the ones it offers as
 /// toggles. Defaults are intersected with this so a view can never start out
@@ -188,7 +188,7 @@ impl SearchState {
 #[cfg(test)]
 mod scope_tests {
     use super::{SearchScopes, available_scopes, scope_specs_for_view};
-    use crate::app::ActiveView;
+    use crate::types::ActiveView;
     use strum::IntoEnumIterator as _;
 
     /// A scope a view starts with but can't display or toggle is an invisible

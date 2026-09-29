@@ -118,7 +118,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     };
 
     let annotate_highlight_commit: Option<crate::types::CommitId> =
-        if app.active_view == crate::app::ActiveView::Annotate {
+        if app.active_view == crate::types::ActiveView::Annotate {
             app.selected_annotate_line()
                 .map(|line| line.commit_id.clone())
         } else {
@@ -726,7 +726,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         })
         .collect();
 
-    let highlight = if app.active_view == crate::app::ActiveView::Annotate {
+    let highlight = if app.active_view == crate::types::ActiveView::Annotate {
         Style::default()
     } else {
         Style::default()

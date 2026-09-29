@@ -4,6 +4,7 @@ mod id;
 mod operations;
 mod search;
 mod selection;
+mod view;
 
 pub use crate::jj_command::{FollowUpAction, FollowUpOption};
 pub use commands::*;
@@ -12,3 +13,4 @@ pub use id::*;
 pub use operations::*;
 pub use search::*;
 pub use selection::*;
+pub use view::*;

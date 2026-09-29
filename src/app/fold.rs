@@ -1,4 +1,4 @@
-use super::{ActiveView, App, FileTree, Loadable, toggle_membership};
+use super::{App, FileTree, Loadable, toggle_membership};
 use crate::dag::DiffTarget;
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, CommandLogIdx, ConflictHunkIdx,
@@ -6,6 +6,7 @@ use crate::idx::{
     FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, RowIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
+use crate::types::ActiveView;
 use crate::types::{DisplayRow, FileOwner, SmallVec};
 
 /// Restore cursor position after a row rebuild. Finds all fallback keys in a

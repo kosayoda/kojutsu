@@ -240,10 +240,9 @@ impl JjRepo {
             })
     }
 
-    /// Read the `run.jobs` config for a workspace, if set to a usable value.
-    pub fn read_run_jobs(workspace_path: &Path) -> Option<usize> {
-        let config = config::load(workspace_path).ok()?;
-        let jobs = config.get::<i64>("run.jobs").ok()?;
+    /// jj's `run.jobs` setting, if set to a usable value.
+    pub fn run_jobs(&self) -> Option<usize> {
+        let jobs = self.settings.get::<i64>("run.jobs").ok()?;
         usize::try_from(jobs).ok().filter(|&n| n > 0)
     }
 
@@ -301,6 +300,27 @@ impl JjRepo {
                     format!("invalid ID prefix disambiguation revset `{revset_str}`")
                 })?;
         Ok(ctx.disambiguate_within(expression))
+    }
+}
+
+/// A token that background threads check to bail out early when their
+/// work is no longer needed (e.g. a new revset was requested).
+#[derive(Clone, Default)]
+pub struct CancellationToken(Arc<std::sync::atomic::AtomicBool>);
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Signal all holders of this token to stop.
+    pub fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Check whether cancellation has been requested.
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 

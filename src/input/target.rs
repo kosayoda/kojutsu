@@ -5,9 +5,10 @@
 
 use smallvec::smallvec;
 
-use crate::app::{ActiveView, App, AppMode};
+use crate::app::{App, AppMode};
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
+use crate::types::ActiveView;
 use crate::types::{
     CommandPrompt, CommitId, PendingSelection, RemoteCommand, SmallVec, Str, TargetOperation,
 };
@@ -399,12 +400,13 @@ pub(super) fn workspace_forget(app: &mut App, flags: CommandFlags) -> Action {
 mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use crate::app::{ActiveView, App, BookmarkKind, BookmarkViewEntry, TagViewEntry, draw_log};
+    use crate::app::{App, BookmarkKind, BookmarkViewEntry, TagViewEntry, draw_log};
     use crate::history::EvoLogEntry;
     use crate::input::{Action, handle_key};
     use crate::jj_command::JJCommandKind;
     use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
     use crate::lua::LuaEngine;
+    use crate::types::ActiveView;
     use crate::types::{BookmarkName, CommitId, RevisionArg, TagName};
 
     const COMMIT: &str = "7bbaa2cb";

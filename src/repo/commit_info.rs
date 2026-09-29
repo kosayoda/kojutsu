@@ -13,6 +13,7 @@ use jj_lib::commit::Commit;
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::RefName;
 use jj_lib::repo::{ReadonlyRepo, Repo};
+use pollster::FutureExt as _;
 
 /// Pre-built lookup tables passed to `extract_commit_info` for each commit.
 pub(super) struct CommitContext<'a> {
@@ -145,7 +146,7 @@ impl JjRepo {
     pub fn compute_prefix_lengths(
         &self,
         commit_ids: &[UiCommitId],
-        cancel: &crate::repo_service::CancellationToken,
+        cancel: &super::CancellationToken,
     ) -> Result<Vec<(UiCommitId, PrefixLengthUpdate)>> {
         let repo = self.repo.as_ref();
         let id_prefix_index = self.id_prefix_index()?;
@@ -184,12 +185,42 @@ impl JjRepo {
         Ok(results)
     }
 
+    /// Call `on_empty` for each of `commit_ids` that changes nothing, as
+    /// it is found. Each check is a tree diff, so the token is checked
+    /// before every one.
+    pub fn find_empty_commits(
+        repo: &Arc<ReadonlyRepo>,
+        commit_ids: &[UiCommitId],
+        cancel: &super::CancellationToken,
+        mut on_empty: impl FnMut(&UiCommitId),
+    ) {
+        for id in commit_ids {
+            if cancel.is_cancelled() {
+                return;
+            }
+            let Some(backend_id) = BackendCommitId::try_from_hex(id.as_str()) else {
+                continue;
+            };
+            let Ok(commit) = repo.store().get_commit(&backend_id) else {
+                continue;
+            };
+            if commit
+                .is_empty(repo.as_ref())
+                .block_on()
+                .inspect_err(|e| tracing::warn!("is_empty check failed: {e}"))
+                .unwrap_or(false)
+            {
+                on_empty(id);
+            }
+        }
+    }
+
     /// Batch-compute divergence and hidden status for a set of commits.
     /// Called in a background thread after the initial revset load.
     pub fn compute_divergence_info(
         repo: &Arc<ReadonlyRepo>,
         commit_ids: &[UiCommitId],
-        cancel: &crate::repo_service::CancellationToken,
+        cancel: &super::CancellationToken,
     ) -> Vec<(UiCommitId, DivergenceInfo)> {
         let mut results = Vec::new();
         for (i, id) in commit_ids.iter().enumerate() {

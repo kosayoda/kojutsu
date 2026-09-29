@@ -19,7 +19,7 @@ pub(super) fn draw_header(
     theme: &Theme,
     single_line: bool,
 ) {
-    let show_ws_filter = app.active_view == crate::app::ActiveView::Operations
+    let show_ws_filter = app.active_view == crate::types::ActiveView::Operations
         && !app.op_log.workspace_filter.is_empty();
     let workspace_filter_line: Option<Line> = if !show_ws_filter {
         None
@@ -88,7 +88,7 @@ pub(super) fn draw_header(
     if let Some(line) = workspace_filter_line {
         header.push(line);
     }
-    if app.active_view == crate::app::ActiveView::Annotate {
+    if app.active_view == crate::types::ActiveView::Annotate {
         let mut spans = Vec::new();
         if let Some(target) = &app.annotate.target {
             spans.push(Span::styled("annotate: ", Style::default().fg(theme.muted)));
@@ -226,17 +226,19 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
     }
 
     let view_title: std::borrow::Cow<'static, str> = match app.active_view {
-        crate::app::ActiveView::Dag => " Log ".into(),
-        crate::app::ActiveView::Bookmarks => {
+        crate::types::ActiveView::Dag => " Log ".into(),
+        crate::types::ActiveView::Bookmarks => {
             format!(" Bookmarks ({}) ", app.views.bookmark_entries.len()).into()
         }
-        crate::app::ActiveView::Tags => format!(" Tags ({}) ", app.views.tag_entries.len()).into(),
-        crate::app::ActiveView::Operations => " Operations ".into(),
-        crate::app::ActiveView::Evolog => " Evolog ".into(),
-        crate::app::ActiveView::Workspaces => " Workspaces ".into(),
-        crate::app::ActiveView::CommandLog => " Command Log ".into(),
-        crate::app::ActiveView::Interdiff => " Interdiff ".into(),
-        crate::app::ActiveView::Annotate => " Annotate ".into(),
+        crate::types::ActiveView::Tags => {
+            format!(" Tags ({}) ", app.views.tag_entries.len()).into()
+        }
+        crate::types::ActiveView::Operations => " Operations ".into(),
+        crate::types::ActiveView::Evolog => " Evolog ".into(),
+        crate::types::ActiveView::Workspaces => " Workspaces ".into(),
+        crate::types::ActiveView::CommandLog => " Command Log ".into(),
+        crate::types::ActiveView::Interdiff => " Interdiff ".into(),
+        crate::types::ActiveView::Annotate => " Annotate ".into(),
     };
 
     let mut wc_spans: Vec<Span> = Vec::new();

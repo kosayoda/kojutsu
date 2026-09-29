@@ -1,6 +1,7 @@
 use super::App;
 use crate::dag::DiffLineKind;
 use crate::idx::{EntryIdx, RowIdx};
+use crate::types::ActiveView;
 use crate::types::FileOwner;
 use crate::types::{DisplayRow, NavDirection};
 
@@ -310,7 +311,7 @@ impl App {
             return false;
         };
         match self.active_view {
-            crate::app::ActiveView::Dag => {
+            crate::types::ActiveView::Dag => {
                 let commit_level = self.is_commit_level_jump();
                 if commit_level {
                     matches!(row, DisplayRow::CommitNode { .. })
@@ -321,23 +322,23 @@ impl App {
                     )
                 }
             }
-            crate::app::ActiveView::Bookmarks => matches!(row, DisplayRow::BookmarkItem { .. }),
-            crate::app::ActiveView::Tags => matches!(row, DisplayRow::TagItem { .. }),
-            crate::app::ActiveView::Operations => matches!(row, DisplayRow::OpLogItem { .. }),
-            crate::app::ActiveView::Workspaces => matches!(row, DisplayRow::WorkspaceItem { .. }),
-            crate::app::ActiveView::Evolog => {
+            crate::types::ActiveView::Bookmarks => matches!(row, DisplayRow::BookmarkItem { .. }),
+            crate::types::ActiveView::Tags => matches!(row, DisplayRow::TagItem { .. }),
+            crate::types::ActiveView::Operations => matches!(row, DisplayRow::OpLogItem { .. }),
+            crate::types::ActiveView::Workspaces => matches!(row, DisplayRow::WorkspaceItem { .. }),
+            crate::types::ActiveView::Evolog => {
                 matches!(
                     row,
                     DisplayRow::EvoLogItem { .. } | DisplayRow::FileChange { .. }
                 )
             }
-            crate::app::ActiveView::CommandLog => {
+            crate::types::ActiveView::CommandLog => {
                 matches!(row, DisplayRow::CommandLogItem { .. })
             }
-            crate::app::ActiveView::Interdiff => {
+            crate::types::ActiveView::Interdiff => {
                 matches!(row, DisplayRow::FileChange { .. })
             }
-            crate::app::ActiveView::Annotate => {
+            crate::types::ActiveView::Annotate => {
                 // Jump between commit boundaries in annotate view.
                 if j == 0 {
                     return true;
@@ -452,7 +453,7 @@ impl App {
     /// Returns whether it was found.
     pub fn jump_to_bookmark(&mut self, name: &crate::types::BookmarkName) -> bool {
         // If in the bookmark view, find the entry by name.
-        if self.active_view == super::ActiveView::Bookmarks {
+        if self.active_view == ActiveView::Bookmarks {
             for (idx, entry) in self.views.bookmark_entries.iter().enumerate() {
                 if entry.name == *name
                     && let Some(pos) = self.rows.iter().position(|r| {

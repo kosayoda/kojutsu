@@ -38,8 +38,8 @@ fn submit_step(
         }
         PromptStep::WorkspaceAddName { path, flags } => {
             let name = (!text.is_empty()).then(|| crate::types::WorkspaceName::new(text));
-            if app.active_view != crate::app::ActiveView::Dag {
-                app.switch_view(crate::app::ActiveView::Dag);
+            if app.active_view != crate::types::ActiveView::Dag {
+                app.switch_view(crate::types::ActiveView::Dag);
             }
             app.mode = AppMode::CommitSelect {
                 restore_cursor: app.cursor,
@@ -226,9 +226,7 @@ pub(in crate::input) fn submit_run_command(
             flags,
         });
     }
-    let prefill = crate::repo::JjRepo::read_run_jobs(std::path::Path::new(&app.repo_root))
-        .map(|n| n.to_string())
-        .unwrap_or_default();
+    let prefill = app.run_jobs.map(|n| n.to_string()).unwrap_or_default();
     app.mode = run_jobs_input(change_ids, argv, flags, prefill);
     Action::None
 }

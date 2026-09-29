@@ -1,5 +1,7 @@
-use super::{DiffFormat, Loadable};
-use crate::dag::{DiffLine, DiffResult, DiffSummary, DiffTarget, FileChange, LineStats};
+use super::Loadable;
+use crate::dag::{
+    DiffFormat, DiffLine, DiffResult, DiffSummary, DiffTarget, FileChange, LineStats,
+};
 use crate::idx::FileIdx;
 use crate::repo_service::{RepoError, RepoRequest};
 use crate::types::RepoPath;

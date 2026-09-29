@@ -6,7 +6,7 @@ use keymap_parser::Node;
 use super::bindings::{BindTarget, BindingSpec, Scope};
 use super::registry::{ActionId, ActionRegistry};
 use super::{CommandFlags, HelpGroup};
-use crate::app::ActiveView;
+use crate::types::ActiveView;
 
 #[derive(Clone)]
 pub enum TrieNode {

@@ -5,11 +5,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use jj_lib::repo::Repo as _;
-use pollster::FutureExt as _;
-
 use crate::dag::{DagEntry, DiffSummary, DiffTarget, DivergenceInfo, PrefixLengthUpdate};
-use crate::repo::{JjRepo, SnapshotError};
+use crate::repo::{CancellationToken, JjRepo, SnapshotError};
 use crate::types::{BookmarkName, CommitId, OperationId, RemoteName, RepoPath, TagName};
 
 pub struct RepoService;
@@ -160,6 +157,8 @@ pub struct RevsetData {
     pub workspace_entries: Vec<crate::dag::WorkspaceInfo>,
     /// Non-fatal warnings from revset evaluation (e.g. immutable() failed).
     pub warnings: Vec<String>,
+    /// jj's `run.jobs` setting, the default offered for `jj run --jobs`.
+    pub run_jobs: Option<usize>,
     /// Whether this is the complete revset. When `false`, the remaining
     /// entries follow as [`RepoResult::RevsetChunk`]s.
     pub done: bool,
@@ -285,27 +284,6 @@ impl RepoResponseHandle {
                 }
             }
         })
-    }
-}
-
-/// A token that background threads check to bail out early when their
-/// work is no longer needed (e.g. a new revset was requested).
-#[derive(Clone, Default)]
-pub struct CancellationToken(Arc<std::sync::atomic::AtomicBool>);
-
-impl CancellationToken {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Signal all holders of this token to stop.
-    fn cancel(&self) {
-        self.0.store(true, Ordering::Relaxed);
-    }
-
-    /// Check whether cancellation has been requested.
-    pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
     }
 }
 
@@ -760,6 +738,7 @@ fn stream_revset(
                 bookmark_details,
                 workspace_entries,
                 warnings: warnings.to_vec(),
+                run_jobs: repo.run_jobs(),
                 done,
             })),
         })
@@ -805,28 +784,11 @@ fn stream_revset(
         let tx = tx.clone();
         let cancel = cancel.clone();
         spawn_background(tx.clone(), move || {
-            for id in &empty_ids {
-                // is_empty involves tree diffs (I/O), so check every iteration.
-                if cancel.is_cancelled() {
-                    return;
-                }
-                let Some(backend_id) = jj_lib::backend::CommitId::try_from_hex(id.as_str()) else {
-                    continue;
-                };
-                let Ok(commit) = inner.store().get_commit(&backend_id) else {
-                    continue;
-                };
-                if commit
-                    .is_empty(inner.as_ref())
-                    .block_on()
-                    .inspect_err(|e| tracing::warn!("is_empty check failed: {e}"))
-                    .unwrap_or(false)
-                {
-                    let _ = tx.send(RepoResult::CommitEmpty {
-                        commit_id: id.clone(),
-                    });
-                }
-            }
+            JjRepo::find_empty_commits(&inner, &empty_ids, &cancel, |id| {
+                let _ = tx.send(RepoResult::CommitEmpty {
+                    commit_id: id.clone(),
+                });
+            });
         });
     }
 

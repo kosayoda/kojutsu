@@ -4,7 +4,7 @@ use smallvec::SmallVec;
 
 use super::registry::ActionId;
 use super::{AppAction, CommandFlags, HelpGroup, parse_key};
-use crate::app::ActiveView;
+use crate::types::ActiveView;
 
 pub struct BindingSpec {
     pub keys: SmallVec<[Node; 3]>,
