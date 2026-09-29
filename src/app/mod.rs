@@ -649,7 +649,7 @@ impl App {
 
         self.active_view = view;
         // Trigger lazy load of operation log data.
-        if view == ActiveView::Operations && !self.op_log.loaded {
+        if view == ActiveView::Operations && self.op_log.load_state.begin() {
             self.pending_repo_requests.push(RepoRequest::Operations {
                 limit: self.op_log.limit,
             });
@@ -664,9 +664,11 @@ impl App {
                 .or_else(|| self.selected_evolog_entry().map(|e| e.commit_id.clone()));
             if let Some(commit_id) = commit_id {
                 let changed = self.evolog.commit_id.as_ref() != Some(&commit_id);
-                if changed || !self.evolog.loaded {
+                if changed {
                     self.evolog.clear();
                     self.evolog.commit_id = Some(commit_id.clone());
+                }
+                if self.evolog.load_state.begin() {
                     self.pending_repo_requests
                         .push(RepoRequest::EvolutionLog { commit_id });
                 }
@@ -963,7 +965,7 @@ impl App {
 
     pub fn request_op_log_load_more(&mut self) {
         self.op_log.limit += OP_LOG_BATCH_SIZE;
-        self.op_log.loaded = false;
+        self.op_log.load_state = Loadable::Loading;
         self.pending_repo_requests.push(RepoRequest::Operations {
             limit: self.op_log.limit,
         });
@@ -1780,6 +1782,28 @@ fn toggle_membership<T: Eq + std::hash::Hash>(set: &mut HashSet<T>, key: T) -> b
     let member = !set.contains(&key);
     set_membership(set, key, member);
     member
+}
+
+#[cfg(test)]
+mod log_load_tests {
+    use super::*;
+
+    /// Entering the op log while it is still loading doesn't ask again.
+    #[test]
+    fn reentering_a_loading_op_log_requests_it_once() {
+        let mut app = App::for_test();
+        app.switch_view(ActiveView::Operations);
+        app.switch_view(ActiveView::Dag);
+        app.switch_view(ActiveView::Operations);
+        let requests = app.take_repo_requests();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| matches!(r, RepoRequest::Operations { .. }))
+                .count(),
+            1
+        );
+    }
 }
 
 #[cfg(test)]

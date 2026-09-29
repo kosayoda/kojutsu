@@ -308,11 +308,12 @@ impl App {
                     self.revset.draft = None;
                     self.revset.pending = None;
                     // Invalidate op log; re-request if currently viewing.
-                    self.op_log.loaded = false;
+                    self.op_log.load_state = Loadable::NotRequested;
                     self.op_log.limit = super::OP_LOG_BATCH_SIZE;
                     self.op_log.details.clear();
                     self.op_log.unfolded.clear();
-                    if self.active_view == ActiveView::Operations {
+                    if self.active_view == ActiveView::Operations && self.op_log.load_state.begin()
+                    {
                         self.pending_repo_requests.push(RepoRequest::Operations {
                             limit: self.op_log.limit,
                         });
@@ -440,14 +441,14 @@ impl App {
                 _ if limit != self.op_log.limit => {}
                 Ok((entries, has_more)) => {
                     self.op_log.entries = super::draw_log(entries, &self.config.glyphs);
-                    self.op_log.loaded = true;
+                    self.op_log.load_state = Loadable::Loaded(());
                     self.op_log.has_more = has_more;
                     if self.active_view == ActiveView::Operations {
                         deferred.rebuild.set_full();
                     }
                 }
                 Err(error) => {
-                    self.op_log.loaded = false;
+                    self.op_log.load_state = Loadable::Failed(error.clone());
                     self.op_log.entries.clear();
                     self.op_log.details.clear();
                     self.op_log.unfolded.clear();
@@ -505,13 +506,14 @@ impl App {
                 _ if self.evolog.commit_id.as_ref() != Some(&commit_id) => {}
                 Ok(entries) => {
                     self.evolog.entries = super::draw_log(entries, &self.config.glyphs);
-                    self.evolog.loaded = true;
+                    self.evolog.load_state = Loadable::Loaded(());
                     if self.active_view == ActiveView::Evolog {
                         deferred.rebuild.set_full();
                     }
                 }
                 Err(error) => {
                     self.evolog.clear();
+                    self.evolog.load_state = Loadable::Failed(error.clone());
                     let msg = format!("failed to load evolog: {error}");
                     self.log_background_error(msg);
                 }

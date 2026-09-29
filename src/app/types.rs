@@ -113,7 +113,9 @@ pub struct RevsetConfig {
 /// State for the operation log view.
 pub struct OpLogState {
     pub entries: Vec<Drawn<OpLogEntry>>,
-    pub loaded: bool,
+    /// Whether `entries` is current, loading or failed. Entries stay shown
+    /// while more are loaded.
+    pub load_state: Loadable<()>,
     pub has_more: bool,
     pub limit: usize,
     pub workspace_filter: HashSet<WorkspaceName>,
@@ -131,7 +133,7 @@ impl OpLogState {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
-            loaded: false,
+            load_state: Loadable::NotRequested,
             has_more: false,
             limit: super::OP_LOG_BATCH_SIZE,
             workspace_filter: HashSet::from([WorkspaceName::new("default")]),
@@ -144,7 +146,8 @@ impl OpLogState {
 /// State for the evolution log view.
 pub struct EvoLogState {
     pub entries: Vec<Drawn<EvoLogEntry>>,
-    pub loaded: bool,
+    /// Whether `entries` is current for `commit_id`, loading or failed.
+    pub load_state: Loadable<()>,
     pub commit_id: Option<CommitId>,
     pub unfolded: HashSet<CommitId>,
     /// Each unfolded step's changed files, keyed by the step's commit.
@@ -162,7 +165,7 @@ impl EvoLogState {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
-            loaded: false,
+            load_state: Loadable::NotRequested,
             commit_id: None,
             unfolded: HashSet::new(),
             files: HashMap::new(),
@@ -172,7 +175,7 @@ impl EvoLogState {
 
     pub fn clear(&mut self) {
         self.entries.clear();
-        self.loaded = false;
+        self.load_state = Loadable::NotRequested;
         self.unfolded.clear();
         self.files.clear();
         self.unfolded_files.clear();
