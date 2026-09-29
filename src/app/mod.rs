@@ -1715,9 +1715,6 @@ impl App {
         self.views.show_bookmark_separators = state.bookmark_separators;
         self.diff_underline = state.diff_underline;
         self.run_history = state.run_history.clone();
-        self.revset.active_preset = state
-            .active_preset
-            .filter(|&i| i < self.config.revsets.presets.len());
         for (i, &bits) in state.view_search_scopes.iter().enumerate() {
             if let Some(scopes) = SearchScopes::from_bits(bits)
                 && !scopes.is_empty()

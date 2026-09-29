@@ -604,6 +604,23 @@ impl Default for PersistedState {
     }
 }
 
+/// The revset to open with, and the preset it came from: the command
+/// line's revset if one was given (no preset), else the remembered preset,
+/// or the first one if none is remembered or it is gone, else jj's default.
+pub fn initial_revset(
+    presets: &[crate::theme::Preset],
+    requested: Option<String>,
+    remembered: Option<usize>,
+) -> (Option<String>, Option<usize>) {
+    if requested.is_some() {
+        return (requested, None);
+    }
+    let preset = remembered
+        .filter(|&i| i < presets.len())
+        .or((!presets.is_empty()).then_some(0));
+    (preset.map(|i| presets[i].revset.clone()), preset)
+}
+
 pub fn load_persisted_state() -> PersistedState {
     let Some(path) = crate::theme::state_path() else {
         return PersistedState::default();
@@ -1214,5 +1231,53 @@ mod draw_log_tests {
         let drawn = draw_log(vec![current, older], &glyphs);
         assert!(drawn[0].graph.node.contains('W'));
         assert!(drawn[1].graph.node.contains('N'));
+    }
+}
+
+#[cfg(test)]
+mod initial_revset_tests {
+    use super::initial_revset;
+    use crate::theme::Preset;
+
+    fn presets() -> Vec<Preset> {
+        ["mine", "all"]
+            .iter()
+            .map(|name| Preset {
+                name: (*name).into(),
+                revset: format!("{name}()"),
+            })
+            .collect()
+    }
+
+    /// A revset asked for on the command line is shown as itself, not as
+    /// whatever preset was last active.
+    #[test]
+    fn a_command_line_revset_belongs_to_no_preset() {
+        assert_eq!(
+            initial_revset(&presets(), Some("@".into()), Some(1)),
+            (Some("@".into()), None)
+        );
+    }
+
+    #[test]
+    fn the_remembered_preset_opens() {
+        assert_eq!(
+            initial_revset(&presets(), None, Some(1)),
+            (Some("all()".into()), Some(1))
+        );
+    }
+
+    /// A remembered preset the config no longer has falls back to the first.
+    #[test]
+    fn a_vanished_preset_falls_back_to_the_first() {
+        assert_eq!(
+            initial_revset(&presets(), None, Some(7)),
+            (Some("mine()".into()), Some(0))
+        );
+    }
+
+    #[test]
+    fn without_presets_jj_decides() {
+        assert_eq!(initial_revset(&[], None, Some(0)), (None, None));
     }
 }
