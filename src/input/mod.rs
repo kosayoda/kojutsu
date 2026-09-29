@@ -149,7 +149,7 @@ pub fn handle_key(
     // A key in a prompt continues the chain an action started: whatever
     // prompt or command it leads to belongs to that action too.
     let origin = app.mode.origin().cloned();
-    let action = handle_key_in_mode(app, keymaps, lua, key, &node);
+    let action = app.as_user_input(|app| handle_key_in_mode(app, keymaps, lua, key, &node));
     if let Some(origin) = &origin {
         app.mode.adopt_origin(origin);
     }

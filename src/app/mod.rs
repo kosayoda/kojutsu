@@ -1,3 +1,4 @@
+mod cursor;
 mod data;
 mod file_tree;
 mod fold;
@@ -305,8 +306,6 @@ pub struct App {
     pub visual: VisualState,
     /// Active search state. Search remains active after closing the input.
     pub search: Option<SearchState>,
-    /// Where to jump the cursor after the next DAG refresh.
-    pub jump_after_refresh: Option<JumpTarget>,
     pub last_repeatable: Option<(crate::keymap::AppAction, CommandFlags)>,
 }
 
@@ -318,6 +317,8 @@ pub struct DagState {
     pub commit_index: HashMap<CommitId, EntryIdx>,
     /// In-progress revset stream state (present while chunks are arriving).
     stream: Option<data::DagStreamState>,
+    /// Where the cursor goes once the DAG has loaded.
+    pending_cursor: Option<cursor::CursorTarget>,
     /// Per-commit fold state, keyed by change id (stable across mutations).
     pub unfolded_commits: HashSet<ChangeId>,
     /// Per-file fold state, keyed by (change id, path) (stable across mutations).
@@ -454,7 +455,6 @@ impl App {
             selection: SelectionContext::new(),
             visual: VisualState::new(),
             search: None,
-            jump_after_refresh: None,
             last_repeatable: None,
         };
         app.rebuild_rows();
@@ -981,7 +981,7 @@ impl App {
             )
         };
 
-        self.jump_after_refresh = Some(JumpTarget::Prefix(change_str));
+        self.set_jump_target(JumpTarget::Prefix(change_str));
         // Pure revset change: no filesystem interaction, no snapshot needed.
         self.request_revset_load(Some(new_revset), RevsetLoadKind::NoSnapshot);
     }

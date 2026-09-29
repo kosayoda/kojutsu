@@ -368,11 +368,7 @@ impl Session {
             }
 
             // Apply deferred work once for the whole batch.
-            self.app.apply_rebuild(deferred.rebuild);
-            if deferred.scroll {
-                self.app.scroll_to_show_children();
-            }
-            if let Some(view) = deferred.file_view {
+            if let Some(view) = self.app.apply_deferred(deferred) {
                 self.view_file(view);
             }
 
@@ -713,7 +709,9 @@ fn finish_foreground_command(
     );
 
     if result.success {
-        app.jump_after_refresh = cmd.jump_target();
+        if let Some(jump) = cmd.jump_target() {
+            app.set_jump_target(jump);
+        }
         app.clear_selection();
         // The user may have edited files while the terminal was suspended
         // (e.g. in $EDITOR), so re-scan the working copy.
@@ -1068,7 +1066,9 @@ fn finish_jj_command(
             Some(JumpTarget::Bookmark(_)) => false,
             None => app.active_view == kojutsu::types::ActiveView::Evolog,
         };
-        app.jump_after_refresh = jump;
+        if let Some(jump) = jump {
+            app.set_jump_target(jump);
+        }
         app.clear_selection();
         if switch_to_dag && app.active_view != kojutsu::types::ActiveView::Dag {
             app.switch_view(kojutsu::types::ActiveView::Dag);

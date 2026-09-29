@@ -792,49 +792,53 @@ impl LuaEngine {
             std::mem::take(&mut lua_state!(self.lua).borrow_mut().pending_actions);
         let mut breaking = Action::None;
         for action in pending {
-            match action {
-                PendingAction::Refresh => {
-                    // The reload path only; a plugin wanting a working-copy
-                    // re-scan can dispatch the builtin `refresh` action.
-                    app.refresh(crate::repo_service::RevsetLoadKind::NoSnapshot);
-                }
-                PendingAction::SetRevset(revset) => {
-                    app.request_revset_load(
-                        Some(revset),
-                        crate::repo_service::RevsetLoadKind::NoSnapshot,
-                    );
-                }
-                PendingAction::SwitchView(view) => {
-                    app.switch_view(view);
-                }
-                PendingAction::JumpTo(change_id) => {
-                    if let Some(commit_id) = app.commit_id_for_change(&change_id)
-                        && let Some(idx) = app.entry_by_commit_id(&commit_id)
-                        && let Some(row) = app.row_of_commit(idx)
-                    {
-                        app.set_cursor(row);
+            // A plugin moving the cursor overrides a pending target the
+            // same way the user moving it does.
+            app.as_user_input(|app| {
+                match action {
+                    PendingAction::Refresh => {
+                        // The reload path only; a plugin wanting a working-copy
+                        // re-scan can dispatch the builtin `refresh` action.
+                        app.refresh(crate::repo_service::RevsetLoadKind::NoSnapshot);
+                    }
+                    PendingAction::SetRevset(revset) => {
+                        app.request_revset_load(
+                            Some(revset),
+                            crate::repo_service::RevsetLoadKind::NoSnapshot,
+                        );
+                    }
+                    PendingAction::SwitchView(view) => {
+                        app.switch_view(view);
+                    }
+                    PendingAction::JumpTo(change_id) => {
+                        if let Some(commit_id) = app.commit_id_for_change(&change_id)
+                            && let Some(idx) = app.entry_by_commit_id(&commit_id)
+                            && let Some(row) = app.row_of_commit(idx)
+                        {
+                            app.set_cursor(row);
+                        }
+                    }
+                    PendingAction::Interactive(args) => {
+                        let cmd = JJCommand {
+                            kind: JJCommandKind::Raw {
+                                args: args.into_iter().map(Into::into).collect(),
+                            },
+                            flags,
+                        };
+                        self.set_breaking(app, &mut breaking, Action::run(cmd), allow_breaking);
+                    }
+                    // The dispatched action skips its own pre-hooks (same as a
+                    // pre-hook resumption) so hooks can't recurse into themselves.
+                    PendingAction::Dispatch(action) => {
+                        self.set_breaking(
+                            app,
+                            &mut breaking,
+                            Action::DeferredDispatch { action, flags },
+                            allow_breaking,
+                        );
                     }
                 }
-                PendingAction::Interactive(args) => {
-                    let cmd = JJCommand {
-                        kind: JJCommandKind::Raw {
-                            args: args.into_iter().map(Into::into).collect(),
-                        },
-                        flags,
-                    };
-                    self.set_breaking(app, &mut breaking, Action::run(cmd), allow_breaking);
-                }
-                // The dispatched action skips its own pre-hooks (same as a
-                // pre-hook resumption) so hooks can't recurse into themselves.
-                PendingAction::Dispatch(action) => {
-                    self.set_breaking(
-                        app,
-                        &mut breaking,
-                        Action::DeferredDispatch { action, flags },
-                        allow_breaking,
-                    );
-                }
-            }
+            });
         }
         breaking
     }

@@ -1,19 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use super::{App, DeferredWork, JumpTarget, Loadable};
+use super::{App, DeferredWork, Loadable};
 use crate::dag::{DagEntry, DiffResult, DiffSummary, DiffTarget, EdgeKind};
-use crate::idx::{DiffLineIdx, EntryIdx, EvoLogIdx, FileIdx, RowIdx};
+use crate::idx::{EntryIdx, EvoLogIdx, FileIdx};
 use crate::repo_service::{RepoError, RepoRequest, RepoResult, RevsetLoadKind};
 use crate::types::ActiveView;
-use crate::types::{ChangeId, CommitId, DisplayRow, FileOwner, RepoPath, SmallVec};
-
-/// Cursor position captured before a refresh, keyed by stable IDs so it can
-/// be restored once its commit reappears in the streamed DAG.
-struct CursorContext {
-    change_id: ChangeId,
-    file_path: Option<RepoPath>,
-    diff_line_idx: Option<DiffLineIdx>,
-}
+use crate::types::{ChangeId, CommitId, FileOwner, RepoPath, SmallVec};
 
 /// State of an in-progress streamed revset load.
 pub(super) struct DagStreamState {
@@ -22,8 +14,6 @@ pub(super) struct DagStreamState {
     /// The pre-refresh nodes, whose loaded data is restored as their
     /// commits reappear.
     old_nodes: HashMap<CommitId, super::DagNode>,
-    /// Cursor context to restore once its commit arrives.
-    cursor_restore: Option<CursorContext>,
     /// Direct-edge child entries waiting for their parent commit to arrive
     /// in a later chunk.
     pending_parents: HashMap<CommitId, Vec<EntryIdx>>,
@@ -52,39 +42,16 @@ impl App {
     }
 
     /// Replace the DAG with the first chunk of a (possibly streamed) revset
-    /// load. Cached data, fold state, and the cursor position carry over via
-    /// [`DagStreamState`] as their commits reappear in later chunks.
+    /// load. Cached data and fold state carry over via [`DagStreamState`] as
+    /// their commits reappear in later chunks; the cursor via its anchor.
     fn apply_entries(&mut self, entries: Vec<DagEntry>, done: bool) {
-        // Capture cursor context using stable ChangeId for restore after rebuild.
-        let cursor_restore = self.selected_entry_idx().map(|entry_idx| {
-            let change_id = self.change_id(entry_idx);
-            let row = self.rows.get(self.cursor.raw());
-            let file_path = row.and_then(|r| match r {
-                DisplayRow::FileChange {
-                    owner: FileOwner::Dag(ei),
-                    file_idx,
-                }
-                | DisplayRow::DiffLine {
-                    owner: FileOwner::Dag(ei),
-                    file_idx,
-                    ..
-                } if *ei == entry_idx => self.dag.nodes[entry_idx]
-                    .files
-                    .files()
-                    .and_then(|f| f.get(file_idx.raw()))
-                    .map(|f| f.path.clone()),
-                _ => None,
-            });
-            let diff_line_idx = row.and_then(|r| match r {
-                DisplayRow::DiffLine { line_idx, .. } => Some(*line_idx),
-                _ => None,
-            });
-            CursorContext {
-                change_id,
-                file_path,
-                diff_line_idx,
-            }
-        });
+        self.anchor_dag_cursor();
+        // The rows point into the nodes being replaced, so they would
+        // restore the cursor onto whichever commit now has the old index.
+        // The anchor restores it instead.
+        if self.active_view == ActiveView::Dag {
+            self.rows.clear();
+        }
 
         let old_nodes: HashMap<CommitId, super::DagNode> = std::mem::take(&mut self.dag.nodes)
             .into_vec()
@@ -98,7 +65,6 @@ impl App {
         self.dag.stream = Some(DagStreamState {
             renderer: crate::graph::DagGraphRenderer::new(),
             old_nodes,
-            cursor_restore,
             pending_parents: HashMap::new(),
         });
         self.append_entries(entries, done);
@@ -205,94 +171,11 @@ impl App {
             self.set_status(format!("loading… {} commits", self.dag.nodes.len()));
         }
 
-        // Restore the cursor once its commit has arrived.
-        if let Some(ctx) = stream.cursor_restore.take()
-            && !self.try_restore_cursor(&ctx)
-            && !done
-        {
-            stream.cursor_restore = Some(ctx);
-        }
-
-        // Apply the post-refresh jump target once it can be found; give up
-        // when the stream completes.
-        if let Some(target) = self.jump_after_refresh.take() {
-            let found = match &target {
-                JumpTarget::WorkingCopy => self.jump_to_working_copy(),
-                JumpTarget::Bookmark(name) => self.jump_to_bookmark(name),
-                JumpTarget::Prefix(prefix) => self.jump_to_change_id(prefix),
-            };
-            if !found {
-                if done {
-                    self.set_status("jump target not in current revset");
-                } else {
-                    self.jump_after_refresh = Some(target);
-                }
-            }
-        }
-
         if !done {
             self.dag.stream = Some(stream);
         }
 
         self.refresh_search_matches();
-    }
-
-    /// Restore the cursor to the pre-refresh position captured in `ctx`,
-    /// with fallback chain: DiffLine → FileChange → CommitNode.
-    /// Returns whether the commit was found.
-    fn try_restore_cursor(&mut self, ctx: &CursorContext) -> bool {
-        let Some((entry_idx, _)) = self
-            .dag
-            .nodes
-            .iter_enumerated()
-            .find(|(_, node)| node.commit.unique_change_id() == ctx.change_id)
-        else {
-            return false;
-        };
-
-        let find_row = |pred: &dyn Fn(&DisplayRow) -> bool| self.rows.iter().position(pred);
-
-        let restored = ctx
-            .diff_line_idx
-            .and_then(|li| {
-                let fp = ctx.file_path.as_ref()?;
-                find_row(&|r| match r {
-                    DisplayRow::DiffLine {
-                        owner: FileOwner::Dag(ei),
-                        file_idx,
-                        line_idx,
-                    } if *ei == entry_idx && *line_idx == li => self.dag.nodes[entry_idx]
-                        .files
-                        .files()
-                        .and_then(|f| f.get(file_idx.raw()))
-                        .is_some_and(|f| f.path == *fp),
-                    _ => false,
-                })
-            })
-            .or_else(|| {
-                let fp = ctx.file_path.as_ref()?;
-                find_row(&|r| match r {
-                    DisplayRow::FileChange {
-                        owner: FileOwner::Dag(ei),
-                        file_idx,
-                    } if *ei == entry_idx => self.dag.nodes[entry_idx]
-                        .files
-                        .files()
-                        .and_then(|f| f.get(file_idx.raw()))
-                        .is_some_and(|f| f.path == *fp),
-                    _ => false,
-                })
-            })
-            .or_else(|| {
-                find_row(
-                    &|r| matches!(r, DisplayRow::CommitNode { entry_idx: ei } if *ei == entry_idx),
-                )
-            });
-
-        if let Some(row_idx) = restored {
-            self.cursor = RowIdx::new(row_idx);
-        }
-        true
     }
 
     /// Process a repo result, deferring `rebuild_rows` and `scroll_to_show_children`.
@@ -350,7 +233,7 @@ impl App {
                             ));
                         }
                     }
-                    // apply_entries does its own rebuild_rows (needed for cursor restoration).
+                    // apply_entries does its own rebuild_rows.
                     self.apply_entries(data.entries, data.done);
                 }
                 Err(error) => {
@@ -361,7 +244,7 @@ impl App {
                     self.show_error_overlay("revset error", error);
                 }
             },
-            // append_entries does its own rebuild_rows (cursor/jump restore).
+            // append_entries does its own rebuild_rows.
             RepoResult::RevsetChunk { entries, done } => {
                 self.append_entries(entries, done);
             }
@@ -694,10 +577,19 @@ impl App {
 
     pub fn handle_repo_result(&mut self, result: RepoResult) {
         let deferred = self.handle_repo_result_deferred(result);
+        self.apply_deferred(deferred);
+    }
+
+    /// Finish a batch of repo results: rebuild the rows they touched, then
+    /// move the cursor to its pending target now that the rows are there.
+    /// Returns a file that arrived to be opened.
+    pub fn apply_deferred(&mut self, deferred: DeferredWork) -> Option<super::FileView> {
         self.apply_rebuild(deferred.rebuild);
+        self.settle_pending_cursor();
         if deferred.scroll {
             self.scroll_to_show_children();
         }
+        deferred.file_view
     }
 
     /// Aggregate bookmark data from DAG nodes into a flat list for the bookmark view.
