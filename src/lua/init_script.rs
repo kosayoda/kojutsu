@@ -240,20 +240,25 @@ impl LuaEngine {
             .set_name(init_path.display().to_string())
             .exec();
 
-        // Read the config back even when the script failed partway: the
-        // assignments that did run are as good as any that ran on success.
-        let config_result = super::config::read(&self.lua);
-
-        if let Err(e) = exec_result {
-            self.init_error = Some(format!("{e}"));
-            return;
-        }
-        match config_result {
-            Ok(resolved) => *config = resolved,
-            Err(e) => {
-                self.init_error = Some(e);
-                return;
-            }
+        // A script that fails partway keeps what it did before the error:
+        // config it set and commands, bindings and hooks it registered. The
+        // error is still reported, and a reload throws away a runtime that
+        // carries one, keeping the running config instead.
+        let errors: Vec<String> = [
+            exec_result.err().map(|e| e.to_string()),
+            match super::config::read(&self.lua) {
+                Ok(resolved) => {
+                    *config = resolved;
+                    None
+                }
+                Err(e) => Some(e),
+            },
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        if !errors.is_empty() {
+            self.init_error = Some(errors.join("\n"));
         }
 
         let registrations = std::mem::take(&mut *reg_commands.borrow_mut());

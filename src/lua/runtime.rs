@@ -23,8 +23,9 @@ impl LuaRuntime {
         }
     }
 
-    /// Infallible: a broken `init.lua` yields a runtime carrying whatever
-    /// registered before the error, reported via [`Self::init_error`].
+    /// Infallible: a broken `init.lua` yields a runtime carrying whatever it
+    /// set and registered before the error, reported via
+    /// [`Self::init_error`].
     pub fn load_from(config_dir: &Path, repo_path: &Path) -> Self {
         let mut config = crate::theme::Config::default();
         let mut registry = ActionRegistry::new();
@@ -121,6 +122,26 @@ mod tests {
 
         assert_eq!(after.config.tab_width, 7);
         assert_eq!(binding_count(&after), binding_count(&before) - 1);
+    }
+
+    /// What ran before an error is kept, so a typo late in the file doesn't
+    /// throw away the config above it.
+    #[test]
+    fn a_broken_script_keeps_what_ran_before_the_error() {
+        let dir = config_dir_with(
+            r#"
+            kojutsu.config.tab_width = 2
+            kojutsu.bind { action = "abandon", key = "ctrl-y" }
+            error('boom')
+            kojutsu.config.tab_width = 7
+            "#,
+        );
+        let repo = std::path::Path::new(".");
+        let runtime = LuaRuntime::load_from(dir.path(), repo);
+        assert!(runtime.init_error().is_some_and(|e| e.contains("boom")));
+        assert_eq!(runtime.config.tab_width, 2);
+        let clean = LuaRuntime::load_from(config_dir_with("").path(), repo);
+        assert_eq!(binding_count(&runtime), binding_count(&clean) + 1);
     }
 
     /// The caller keeps the running runtime when this is set, so it has to be
