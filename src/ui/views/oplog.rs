@@ -1,15 +1,19 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::app::{OpDetailLine, OpLogEntry};
+use crate::app::Drawn;
+use crate::history::{OpDetailLine, OpLogEntry};
 use crate::theme::Theme;
 use crate::types::SearchScopes;
 
 use crate::ui::search::{SearchRender, gutter_span, push_searchable};
 use crate::ui::spans::{dot, push_short_id};
 
+/// Hex digits of an operation ID shown, as `jj op log` shows them.
+const OP_ID_DISPLAY_LEN: usize = 12;
+
 pub(crate) fn render_op_log_item(
-    entry: &OpLogEntry,
+    entry: &Drawn<OpLogEntry>,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
@@ -25,7 +29,7 @@ pub(crate) fn render_op_log_item(
     spans.push(Span::styled(entry.graph.node.clone(), graph_style));
 
     spans.push(Span::styled(
-        entry.id.to_string(),
+        entry.id.as_str()[..OP_ID_DISPLAY_LEN.min(entry.id.as_str().len())].to_string(),
         Style::default().fg(theme.commit_id),
     ));
 

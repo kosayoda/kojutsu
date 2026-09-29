@@ -1,7 +1,8 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::app::EvoLogEntry;
+use crate::app::Drawn;
+use crate::history::EvoLogEntry;
 use crate::theme::Config;
 use crate::types::SearchScopes;
 
@@ -10,7 +11,7 @@ use crate::ui::search::{SearchRender, contains_query, gutter_span, push_searchab
 use crate::ui::spans::{dot, push_highlighted_short_id, push_short_id};
 
 pub(crate) fn render_evolog_item(
-    entry: &EvoLogEntry,
+    entry: &Drawn<EvoLogEntry>,
     search: Option<&SearchRender<'_>>,
     config: &Config,
 ) -> Vec<Line<'static>> {

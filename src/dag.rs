@@ -144,6 +144,18 @@ pub struct LineStats {
     pub removed: u32,
 }
 
+/// A workspace and the commit it has checked out.
+pub struct WorkspaceInfo {
+    pub name: WorkspaceName,
+    /// Whole commit ID hex. Never rendered: it is the key the background
+    /// prefix-length pass is looked up by, so truncating it silently stops
+    /// this view's IDs from ever being shortened.
+    pub commit_id: Option<CommitId>,
+    pub change_id: Option<ShortId>,
+    pub description: Option<String>,
+    pub is_current: bool,
+}
+
 /// Two trees whose difference is shown as a list of changed files, each
 /// unfoldable to its diff.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

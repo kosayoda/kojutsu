@@ -432,7 +432,7 @@ impl App {
                 // Result for a superseded limit (load-more raced) - ignore.
                 _ if limit != self.op_log.limit => {}
                 Ok((entries, has_more)) => {
-                    self.op_log.entries = entries;
+                    self.op_log.entries = super::draw_log(entries, &self.config.glyphs);
                     self.op_log.loaded = true;
                     self.op_log.has_more = has_more;
                     if self.active_view == super::ActiveView::Operations {
@@ -497,7 +497,7 @@ impl App {
                 // The evolog target changed while this result was in flight.
                 _ if self.evolog.commit_id.as_ref() != Some(&commit_id) => {}
                 Ok(entries) => {
-                    self.evolog.entries = entries;
+                    self.evolog.entries = super::draw_log(entries, &self.config.glyphs);
                     self.evolog.loaded = true;
                     if self.active_view == super::ActiveView::Evolog {
                         deferred.rebuild.set_full();
@@ -863,8 +863,9 @@ impl App {
 
 #[cfg(test)]
 mod repo_result_tests {
-    use super::super::{App, EvoLogEntry, FileTree, Loadable};
+    use super::super::{App, FileTree, Loadable, draw_log};
     use crate::dag::{DiffSummary, DiffTarget, FileChange, LineStats};
+    use crate::history::EvoLogEntry;
     use crate::idx::{EvoLogIdx, FileIdx};
     use crate::repo_service::{RepoError, RepoErrorKind, RepoRequest, RepoResult};
     use crate::types::{CommitId, FileOwner, RepoPath};
@@ -879,10 +880,13 @@ mod repo_result_tests {
         let mut app = App::for_test();
         let commit = CommitId::new("abc123");
         let predecessor = CommitId::new("def456");
-        app.evolog.entries.push(EvoLogEntry::for_test(
-            commit.clone(),
-            vec![predecessor.clone()],
-        ));
+        app.evolog.entries = draw_log(
+            vec![EvoLogEntry::for_test(
+                commit.clone(),
+                vec![predecessor.clone()],
+            )],
+            &app.config.glyphs,
+        );
         app.toggle_evolog_fold(EvoLogIdx::new(0));
         (
             app,
@@ -953,9 +957,10 @@ mod repo_result_tests {
         ] {
             let mut app = App::for_test();
             let commit = CommitId::new("abc123");
-            app.evolog
-                .entries
-                .push(EvoLogEntry::for_test(commit.clone(), predecessors.clone()));
+            app.evolog.entries = draw_log(
+                vec![EvoLogEntry::for_test(commit.clone(), predecessors.clone())],
+                &app.config.glyphs,
+            );
             app.toggle_evolog_fold(EvoLogIdx::new(0));
 
             let expected = DiffTarget::Evolution {
@@ -1018,13 +1023,13 @@ mod repo_result_tests {
     /// placeholder width forever.
     #[test]
     fn a_workspace_entry_is_shortened_by_its_whole_commit_id() {
-        use crate::app::WorkspaceViewEntry;
+        use crate::dag::WorkspaceInfo;
         use crate::dag::{PrefixLengthUpdate, ShortId};
         use crate::types::WorkspaceName;
 
         let commit_id = CommitId::new("7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654");
         let mut app = App::for_test();
-        app.views.workspace_entries.push(WorkspaceViewEntry {
+        app.views.workspace_entries.push(WorkspaceInfo {
             name: WorkspaceName::new("default"),
             commit_id: Some(commit_id.clone()),
             change_id: Some(ShortId::new("uunnomkxrqvlypszwlwkvvqnstvzoxrs")),

@@ -10,7 +10,7 @@ use crate::dag::ShortId;
 use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, TagName, WorkspaceName};
 
 impl JjRepo {
-    pub fn workspace_entries(&self) -> Vec<crate::app::WorkspaceViewEntry> {
+    pub fn workspace_entries(&self) -> Vec<crate::dag::WorkspaceInfo> {
         let mut entries = Vec::new();
         for (ws_name, commit_id) in self.repo.view().wc_commit_ids() {
             let is_current = *ws_name == self.workspace_name;
@@ -26,7 +26,7 @@ impl JjRepo {
                     raw.lines().next().map(String::from)
                 }
             });
-            entries.push(crate::app::WorkspaceViewEntry {
+            entries.push(crate::dag::WorkspaceInfo {
                 name: WorkspaceName::new(ws_name.as_str()),
                 // Whole hex: nothing renders this, but the background prefix
                 // pass looks commits up by it.

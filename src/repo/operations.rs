@@ -1,5 +1,3 @@
-use std::borrow::Cow;
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use color_eyre::Result;
@@ -11,240 +9,105 @@ use jj_lib::repo::Repo;
 use pollster::FutureExt as _;
 
 use super::{JjRepo, parse_first_line_description};
-use crate::dag::{Edge, EdgeKind, ShortId};
+use crate::dag::ShortId;
+use crate::history::{
+    EvoLogEntry, OpDetailLine, OpDiffBookmark, OpDiffCommit, OpDiffWorkingCopy, OpLogEntry,
+};
 use crate::types::{CommitId as UiCommitId, OperationId, Str, WorkspaceName};
 
 impl JjRepo {
     /// Walk the operation log and return entries in reverse chronological order.
     /// Returns at most `limit` entries and a flag indicating whether more exist.
-    pub fn operation_log(&self, limit: usize) -> Result<(Vec<crate::app::OpLogEntry>, bool)> {
+    pub fn operation_log(&self, limit: usize) -> Result<(Vec<OpLogEntry>, bool)> {
         use futures::StreamExt as _;
 
-        // Load one extra to detect whether more exist, then truncate.
-        let fetch_limit = limit + 1;
         let current_op = self.repo.operation().clone();
-        let current_op_id = current_op.id().hex();
+        let current_op_id = current_op.id().clone();
         let stream = jj_lib::op_walk::walk_ancestors(&[current_op]);
 
-        // Collect raw data + edges for graph rendering.
-        struct RawOp {
-            full_id: String,
-            display_id: Str,
-            description: Str,
-            relative_time: Str,
-            workspace: Option<Str>,
-            user: Str,
-            args: Option<Str>,
-            is_snapshot: bool,
-            is_current: bool,
-            edges: Vec<Edge>,
-        }
-
-        let mut raw_entries = Vec::new();
+        let mut entries = Vec::new();
+        let mut has_more = false;
         let mut stream = std::pin::pin!(stream);
         while let Some(result) = stream.next().block_on() {
+            // Read one past the limit only to learn whether more exist.
+            if entries.len() == limit {
+                has_more = true;
+                break;
+            }
             let op = result.wrap_err("failed to read operation")?;
             let meta = op.metadata();
-            let id_hex = op.id().hex();
-            let is_current = id_hex == current_op_id;
-
-            let relative_time = millis_to_relative_time(meta.time.start.timestamp.0);
-
-            let workspace: Option<Str> = meta.workspace_name.as_ref().map(|ws| ws.as_str().into());
             let user: Str = if meta.hostname.is_empty() {
                 meta.username.as_str().into()
             } else {
                 format!("{}@{}", meta.username, meta.hostname).into()
             };
-            let display_id: Str = id_hex[..id_hex.len().min(12)].into();
-            let args: Option<Str> = meta.attributes.get("args").map(|s| s.as_str().into());
-
-            // Build edges from parent operation IDs.
-            let edges: Vec<Edge> = op
-                .parent_ids()
-                .iter()
-                .map(|pid| Edge {
-                    target: UiCommitId::new(pid.hex()),
-                    kind: EdgeKind::Direct,
-                })
-                .collect();
-
-            raw_entries.push(RawOp {
-                full_id: id_hex,
-                display_id,
+            entries.push(OpLogEntry {
+                id: OperationId::new(op.id().hex()),
+                parent_ids: op
+                    .parent_ids()
+                    .iter()
+                    .map(|id| OperationId::new(id.hex()))
+                    .collect(),
                 description: meta.description.as_str().into(),
-                relative_time,
-                workspace,
+                relative_time: crate::time::relative(meta.time.start.timestamp.0),
+                workspace: meta
+                    .workspace_name
+                    .as_ref()
+                    .map(|ws| WorkspaceName::new(ws.as_str())),
                 user,
-                args,
+                args: meta.attributes.get("args").map(|s| s.as_str().into()),
                 is_snapshot: meta.is_snapshot,
-                is_current,
-                edges,
+                is_current: *op.id() == current_op_id,
             });
-            if raw_entries.len() >= fetch_limit {
-                break;
-            }
         }
-
-        let has_more = raw_entries.len() > limit;
-        raw_entries.truncate(limit);
-
-        // Mark edges to ops outside the loaded set as Missing.
-        let loaded_ids: HashSet<String> = raw_entries.iter().map(|e| e.full_id.clone()).collect();
-        for entry in &mut raw_entries {
-            for edge in &mut entry.edges {
-                if !loaded_ids.contains(edge.target.as_str()) {
-                    edge.kind = EdgeKind::Missing;
-                }
-            }
-        }
-
-        // Render graph lines.
-        let graph_input: Vec<(&str, &[Edge], char)> = raw_entries
-            .iter()
-            .map(|e| {
-                let glyph = if e.is_current { '@' } else { '○' };
-                (e.full_id.as_str(), e.edges.as_slice(), glyph)
-            })
-            .collect();
-        let graph_lines = crate::graph::render_generic(&graph_input);
-
-        // Build final entries with graph lines attached.
-        let entries = raw_entries
-            .into_iter()
-            .zip(graph_lines)
-            .map(|(raw, graph)| crate::app::OpLogEntry {
-                id: OperationId::new(raw.display_id),
-                description: raw.description,
-                relative_time: raw.relative_time,
-                workspace: raw.workspace.map(WorkspaceName::new),
-                user: raw.user,
-                args: raw.args,
-                is_snapshot: raw.is_snapshot,
-                is_current: raw.is_current,
-                graph,
-            })
-            .collect();
-
         Ok((entries, has_more))
     }
 
     /// Load the evolution log (predecessor chain) for a commit.
-    pub fn evolution_log(&self, commit_id: &UiCommitId) -> Result<Vec<crate::app::EvoLogEntry>> {
+    pub fn evolution_log(&self, commit_id: &UiCommitId) -> Result<Vec<EvoLogEntry>> {
         let repo = self.repo.as_ref();
         let commit_id = super::parse_commit_id(commit_id.as_str())?;
-
-        // Build ID prefix context for disambiguation.
         let prefix_index = self.id_prefix_index()?;
 
-        struct RawEntry {
-            full_id: String,
-            change_id: ShortId,
-            description: Option<String>,
-            author: Str,
-            relative_time: Str,
-            op_description: Option<Str>,
-            is_current: bool,
-            predecessor_ids: Vec<UiCommitId>,
-            edges: Vec<Edge>,
-        }
-
-        let mut raw_entries = Vec::new();
-        let mut is_first = true;
-        let predecessor_entries: Vec<_> = jj_lib::evolution::walk_predecessors(repo, &[commit_id])
+        let steps: Vec<_> = jj_lib::evolution::walk_predecessors(repo, &[commit_id])
             .try_collect()
             .block_on()?;
-        for entry in predecessor_entries {
-            let commit = &entry.commit;
-
-            let change_id = Self::short_change_id(&prefix_index, repo, commit);
-
-            let description = parse_first_line_description(commit.description());
-
-            let sig = commit.author();
-            let author: Str = if sig.name.is_empty() {
-                sig.email.as_str().into()
-            } else {
-                sig.name.as_str().into()
-            };
-
-            let relative_time = millis_to_relative_time(sig.timestamp.timestamp.0);
-
-            let op_description: Option<Str> = entry
-                .operation
-                .as_ref()
-                .map(|op| op.metadata().description.as_str().into());
-
-            let full_id = commit.id().hex();
-            let pred_ids: Vec<UiCommitId> = entry
-                .predecessor_ids()
-                .iter()
-                .map(|pid| UiCommitId::new(pid.hex()))
-                .collect();
-            let edges: Vec<Edge> = pred_ids
-                .iter()
-                .map(|pid| Edge {
-                    target: pid.clone(),
-                    kind: EdgeKind::Direct,
-                })
-                .collect();
-
-            let is_current = is_first;
-            is_first = false;
-
-            raw_entries.push(RawEntry {
-                full_id,
-                change_id,
-                description,
-                author,
-                relative_time,
-                op_description,
-                is_current,
-                predecessor_ids: pred_ids,
-                edges,
-            });
-        }
-
-        let loaded_ids: HashSet<String> = raw_entries.iter().map(|e| e.full_id.clone()).collect();
-        for entry in &mut raw_entries {
-            for edge in &mut entry.edges {
-                if !loaded_ids.contains(edge.target.as_str()) {
-                    edge.kind = EdgeKind::Missing;
-                }
-            }
-        }
-
-        let graph_input: Vec<(&str, &[Edge], char)> = raw_entries
+        let entries = steps
             .iter()
-            .map(|e| {
-                let glyph = if e.is_current { '@' } else { '○' };
-                (e.full_id.as_str(), e.edges.as_slice(), glyph)
+            .enumerate()
+            .map(|(i, step)| {
+                let commit = &step.commit;
+                let sig = commit.author();
+                let author: Str = if sig.name.is_empty() {
+                    sig.email.as_str().into()
+                } else {
+                    sig.name.as_str().into()
+                };
+                EvoLogEntry {
+                    commit_id: UiCommitId::new(commit.id().hex()),
+                    change_id: Self::short_change_id(&prefix_index, repo, commit),
+                    description: parse_first_line_description(commit.description()),
+                    author,
+                    relative_time: crate::time::relative(sig.timestamp.timestamp.0),
+                    op_description: step
+                        .operation
+                        .as_ref()
+                        .map(|op| op.metadata().description.as_str().into()),
+                    // The walk starts at the commit asked about: its newest version.
+                    is_current: i == 0,
+                    predecessor_ids: step
+                        .predecessor_ids()
+                        .iter()
+                        .map(|id| UiCommitId::new(id.hex()))
+                        .collect(),
+                }
             })
             .collect();
-        let graph_lines = crate::graph::render_generic(&graph_input);
-
-        let entries = raw_entries
-            .into_iter()
-            .zip(graph_lines)
-            .map(|(raw, graph)| crate::app::EvoLogEntry {
-                commit_id: UiCommitId::new(raw.full_id),
-                change_id: raw.change_id,
-                description: raw.description,
-                author: raw.author,
-                relative_time: raw.relative_time,
-                op_description: raw.op_description,
-                is_current: raw.is_current,
-                predecessor_ids: raw.predecessor_ids,
-                graph,
-            })
-            .collect();
-
         Ok(entries)
     }
 
     /// Compute the diff between an operation and its parent.
-    pub fn op_diff(&self, op_id_hex: &str) -> Result<Vec<crate::app::OpDetailLine>> {
-        use crate::app::{OpDetailLine, OpDiffBookmark, OpDiffCommit, OpDiffWorkingCopy};
+    pub fn op_diff(&self, op_id_hex: &str) -> Result<Vec<OpDetailLine>> {
         use crate::dag::DiffKind;
 
         let op_store = self.repo.op_store();
@@ -455,87 +318,5 @@ impl JjRepo {
             }
         });
         (change_id, short_commit, desc)
-    }
-}
-
-/// Format a jj timestamp as an absolute date string (e.g. "2026-05-15 13:11:51 +02:00").
-pub(super) fn format_absolute_time(ts: &jj_lib::backend::Timestamp) -> String {
-    let secs = ts.timestamp.0 / 1000;
-    let nanos = ((ts.timestamp.0 % 1000) * 1_000_000) as u32;
-    let offset_secs = ts.tz_offset * 60;
-    match chrono::DateTime::from_timestamp(secs, nanos) {
-        Some(utc) => {
-            let offset = chrono::FixedOffset::east_opt(offset_secs)
-                .unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
-            utc.with_timezone(&offset)
-                .format("%Y-%m-%d %H:%M:%S %:z")
-                .to_string()
-        }
-        None => "unknown".to_string(),
-    }
-}
-
-pub fn millis_to_relative_time(millis: i64) -> Str {
-    let secs = millis / 1000;
-    let nanos = ((millis % 1000) * 1_000_000) as u32;
-    match chrono::DateTime::from_timestamp(secs, nanos) {
-        Some(dt) => format_relative_time(dt).into(),
-        None => "unknown".into(),
-    }
-}
-
-fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> Cow<'static, str> {
-    let now = chrono::Utc::now();
-    let duration = now.signed_duration_since(dt);
-
-    if duration.num_seconds() < 0 {
-        return "just now".into();
-    }
-
-    let secs = duration.num_seconds();
-    if secs < 60 {
-        return if secs == 1 {
-            "1 second ago".into()
-        } else {
-            format!("{secs} seconds ago").into()
-        };
-    }
-    let mins = duration.num_minutes();
-    if mins < 60 {
-        return if mins == 1 {
-            "1 minute ago".into()
-        } else {
-            format!("{mins} minutes ago").into()
-        };
-    }
-    let hours = duration.num_hours();
-    if hours < 24 {
-        return if hours == 1 {
-            "1 hour ago".into()
-        } else {
-            format!("{hours} hours ago").into()
-        };
-    }
-    let days = duration.num_days();
-    if days < 30 {
-        return if days == 1 {
-            "1 day ago".into()
-        } else {
-            format!("{days} days ago").into()
-        };
-    }
-    let months = days / 30;
-    if months < 12 {
-        return if months == 1 {
-            "1 month ago".into()
-        } else {
-            format!("{months} months ago").into()
-        };
-    }
-    let years = days / 365;
-    if years == 1 {
-        "1 year ago".into()
-    } else {
-        format!("{years} years ago").into()
     }
 }

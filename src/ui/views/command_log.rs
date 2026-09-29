@@ -26,7 +26,7 @@ pub(crate) fn render_command_log_item(
         Style::default().fg(theme.error)
     };
 
-    let relative_time = crate::repo::millis_to_relative_time(entry.timestamp.as_millisecond());
+    let relative_time = crate::time::relative(entry.timestamp.as_millisecond());
 
     let mut spans = vec![
         gutter_span(search, theme),

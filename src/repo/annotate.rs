@@ -9,7 +9,6 @@ use jj_lib::repo::Repo;
 use pollster::FutureExt as _;
 
 use super::JjRepo;
-use super::operations::{format_absolute_time, millis_to_relative_time};
 use crate::dag::ShortId;
 use crate::types::{CommitId as UiCommitId, RepoPath};
 
@@ -95,7 +94,7 @@ impl JjRepo {
                 } else {
                     author_sig.name.clone()
                 };
-                let relative_time = millis_to_relative_time(author_sig.timestamp.timestamp.0);
+                let relative_time = crate::time::relative(author_sig.timestamp.timestamp.0);
 
                 let ui_cid = UiCommitId::new(&commit_id_hex);
 
@@ -334,5 +333,22 @@ fn build_ansi_theme(
             item("markup.deleted", 1),
             item("markup.changed", 3),
         ],
+    }
+}
+
+/// Format a jj timestamp as an absolute date string (e.g. "2026-05-15 13:11:51 +02:00").
+fn format_absolute_time(ts: &jj_lib::backend::Timestamp) -> String {
+    let secs = ts.timestamp.0 / 1000;
+    let nanos = ((ts.timestamp.0 % 1000) * 1_000_000) as u32;
+    let offset_secs = ts.tz_offset * 60;
+    match chrono::DateTime::from_timestamp(secs, nanos) {
+        Some(utc) => {
+            let offset = chrono::FixedOffset::east_opt(offset_secs)
+                .unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
+            utc.with_timezone(&offset)
+                .format("%Y-%m-%d %H:%M:%S %:z")
+                .to_string()
+        }
+        None => "unknown".to_string(),
     }
 }

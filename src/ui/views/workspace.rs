@@ -1,7 +1,7 @@
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
-use crate::app::WorkspaceViewEntry;
+use crate::dag::WorkspaceInfo;
 use crate::theme::Theme;
 use crate::types::SearchScopes;
 
@@ -9,7 +9,7 @@ use super::push_ref_entry_suffix;
 use crate::ui::search::{SearchRender, gutter_span, push_searchable};
 
 pub(crate) fn render_workspace_item(
-    entry: &WorkspaceViewEntry,
+    entry: &WorkspaceInfo,
     search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {

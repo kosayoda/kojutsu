@@ -1279,17 +1279,17 @@ impl App {
         ))
     }
 
-    pub fn selected_op_log_entry(&self) -> Option<&OpLogEntry> {
+    pub fn selected_op_log_entry(&self) -> Option<&crate::history::OpLogEntry> {
         let op_log_idx = self.rows.get(self.cursor.raw())?.op_log_idx()?;
-        self.op_log.entries.get(op_log_idx.raw())
+        self.op_log.entries.get(op_log_idx.raw()).map(|d| &d.entry)
     }
 
-    pub fn selected_evolog_entry(&self) -> Option<&EvoLogEntry> {
+    pub fn selected_evolog_entry(&self) -> Option<&crate::history::EvoLogEntry> {
         let evolog_idx = self.rows.get(self.cursor.raw())?.evolog_idx()?;
-        self.evolog.entries.get(evolog_idx.raw())
+        self.evolog.entries.get(evolog_idx.raw()).map(|d| &d.entry)
     }
 
-    pub fn selected_workspace_entry(&self) -> Option<&WorkspaceViewEntry> {
+    pub fn selected_workspace_entry(&self) -> Option<&crate::dag::WorkspaceInfo> {
         let workspace_idx = self.rows.get(self.cursor.raw())?.workspace_idx()?;
         self.views.workspace_entries.get(workspace_idx.raw())
     }

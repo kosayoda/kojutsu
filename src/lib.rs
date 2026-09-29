@@ -3,6 +3,7 @@ pub mod conflict;
 pub mod dag;
 pub mod diff_tool;
 pub mod graph;
+pub mod history;
 pub mod idx;
 pub mod input;
 pub mod jj_command;
@@ -13,6 +14,7 @@ pub mod repo_service;
 pub mod selection;
 pub mod terminal;
 pub mod theme;
+pub mod time;
 pub mod types;
 pub mod ui;
 

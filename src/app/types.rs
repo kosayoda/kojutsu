@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 use compact_str::CompactString;
 
+use crate::dag::WorkspaceInfo;
+use crate::history::{EvoLogEntry, OpDetailLine, OpLogEntry};
 use crate::keymap::{CommandFlags, TrieNode};
 use crate::types::{
     BookmarkName, CommitId, FollowUpOption, OperationId, PendingCommitSelect, PendingSelection,
@@ -57,7 +59,7 @@ pub struct ViewData {
     /// Tags whose detail rows are collapsed (empty = all expanded).
     pub folded_tags: HashSet<TagName>,
     /// Aggregated workspace data for the workspace view.
-    pub workspace_entries: Vec<WorkspaceViewEntry>,
+    pub workspace_entries: Vec<WorkspaceInfo>,
     /// All remote bookmarks (tracked and untracked, including off-DAG).
     pub remote_bookmarks: Vec<crate::dag::RemoteBookmarkRef>,
     /// Available git remote names.
@@ -109,7 +111,7 @@ pub struct RevsetConfig {
 
 /// State for the operation log view.
 pub struct OpLogState {
-    pub entries: Vec<OpLogEntry>,
+    pub entries: Vec<Drawn<OpLogEntry>>,
     pub loaded: bool,
     pub has_more: bool,
     pub limit: usize,
@@ -140,7 +142,7 @@ impl OpLogState {
 
 /// State for the evolution log view.
 pub struct EvoLogState {
-    pub entries: Vec<EvoLogEntry>,
+    pub entries: Vec<Drawn<EvoLogEntry>>,
     pub loaded: bool,
     pub commit_id: Option<CommitId>,
     pub unfolded: HashSet<CommitId>,
@@ -792,101 +794,79 @@ pub struct TagViewEntry {
     pub is_deleted: bool,
 }
 
-pub struct OpDiffCommit {
-    pub change_id: crate::dag::ShortId,
-    pub commit_id: crate::dag::ShortId,
-    pub description: Option<String>,
-    pub kind: crate::dag::DiffKind,
-}
-
-pub struct OpDiffWorkingCopy {
-    pub workspace: WorkspaceName,
-    pub new_commit: Option<crate::dag::ShortId>,
-    pub old_commit: Option<crate::dag::ShortId>,
-}
-
-pub struct OpDiffBookmark {
-    pub name: Str,
-    pub new_target: Option<crate::dag::ShortId>,
-    pub old_target: Option<crate::dag::ShortId>,
-}
-
-pub enum OpDetailLine {
-    SectionHeader(Str),
-    Commit(OpDiffCommit),
-    WorkingCopy(OpDiffWorkingCopy),
-    Bookmark(OpDiffBookmark),
-}
-
-pub struct OpLogEntry {
-    /// Hex operation ID (truncated for display).
-    pub id: OperationId,
-    /// Human-readable operation description.
-    pub description: Str,
-    /// Relative time string (e.g. "5 hours ago").
-    pub relative_time: Str,
-    /// Workspace name that ran this operation.
-    pub workspace: Option<WorkspaceName>,
-    /// "user@host" who performed the operation.
-    pub user: Str,
-    /// The CLI args that produced this operation (from metadata tags).
-    pub args: Option<Str>,
-    /// Whether this is a pure working-copy snapshot.
-    pub is_snapshot: bool,
-    /// Whether this is the repo's current operation.
-    pub is_current: bool,
-    /// Pre-rendered graph lines.
+/// A log entry with its graph drawn. The repo supplies the entry; the
+/// app draws the graph, with the configured glyphs, once the whole log is
+/// known.
+pub struct Drawn<T> {
+    pub entry: T,
     pub graph: crate::graph::GraphLines,
 }
 
-pub struct EvoLogEntry {
-    /// Full hex commit ID.
-    pub commit_id: CommitId,
-    /// Short change ID with unique prefix length.
-    pub change_id: crate::dag::ShortId,
-    /// First line of commit description.
-    pub description: Option<String>,
-    /// Author name/email.
-    pub author: Str,
-    /// Relative time string (e.g. "5 hours ago").
-    pub relative_time: Str,
-    /// Description of the operation that produced this version.
-    pub op_description: Option<Str>,
-    /// Whether this is the newest (current) version.
-    pub is_current: bool,
-    /// Predecessor commit IDs (the version(s) this was rewritten from).
-    pub predecessor_ids: Vec<CommitId>,
-    /// Pre-rendered graph lines.
-    pub graph: crate::graph::GraphLines,
-}
+impl<T> std::ops::Deref for Drawn<T> {
+    type Target = T;
 
-#[cfg(test)]
-impl EvoLogEntry {
-    /// A step carrying only its identity and ancestry.
-    pub fn for_test(commit_id: CommitId, predecessor_ids: Vec<CommitId>) -> Self {
-        Self {
-            commit_id,
-            change_id: crate::dag::ShortId::new("zzzzzzzz"),
-            description: None,
-            author: Str::default(),
-            relative_time: Str::default(),
-            op_description: None,
-            is_current: false,
-            predecessor_ids,
-            graph: crate::graph::GraphLines::default(),
-        }
+    fn deref(&self) -> &T {
+        &self.entry
     }
 }
 
-pub struct WorkspaceViewEntry {
-    pub name: WorkspaceName,
-    /// Whole commit ID hex. Never rendered: it is the key the background
-    /// prefix-length pass is looked up by, so truncating it silently stops
-    /// this view's IDs from ever being shortened.
-    pub commit_id: Option<CommitId>,
-    pub change_id: Option<crate::dag::ShortId>,
-    pub description: Option<String>,
-    pub is_current: bool,
+/// An entry of a log the app draws as a graph.
+pub trait LogEntry {
+    fn log_id(&self) -> &str;
+    fn log_parents(&self) -> Vec<&str>;
+    /// Whether it is the newest entry: drawn with the working-copy glyph.
+    fn is_head(&self) -> bool;
+}
+
+impl LogEntry for OpLogEntry {
+    fn log_id(&self) -> &str {
+        self.id.as_str()
+    }
+
+    fn log_parents(&self) -> Vec<&str> {
+        self.parent_ids.iter().map(|id| id.as_str()).collect()
+    }
+
+    fn is_head(&self) -> bool {
+        self.is_current
+    }
+}
+
+impl LogEntry for EvoLogEntry {
+    fn log_id(&self) -> &str {
+        self.commit_id.as_str()
+    }
+
+    fn log_parents(&self) -> Vec<&str> {
+        self.predecessor_ids.iter().map(|id| id.as_str()).collect()
+    }
+
+    fn is_head(&self) -> bool {
+        self.is_current
+    }
+}
+
+/// Draw a log's graph with the configured glyphs.
+pub fn draw_log<T: LogEntry>(entries: Vec<T>, glyphs: &crate::theme::GlyphChars) -> Vec<Drawn<T>> {
+    use crate::theme::Glyph;
+    let nodes: Vec<crate::graph::LogNode<'_>> = entries
+        .iter()
+        .map(|entry| crate::graph::LogNode {
+            id: entry.log_id(),
+            parents: entry.log_parents(),
+            glyph: glyphs.char_for(if entry.is_head() {
+                Glyph::WorkingCopy
+            } else {
+                Glyph::Normal
+            }),
+        })
+        .collect();
+    let graphs = crate::graph::render_log(&nodes);
+    entries
+        .into_iter()
+        .zip(graphs)
+        .map(|(entry, graph)| Drawn { entry, graph })
+        .collect()
 }
 
 /// Active visual selection mode.
@@ -1260,5 +1240,31 @@ mod annotate_cache_tests {
         cache.insert(target("aaa", "a.rs"), result(MAX_CACHED_ANNOTATE_LINES * 2));
 
         assert!(cache.get(&target("aaa", "a.rs")).is_some());
+    }
+}
+
+#[cfg(test)]
+mod draw_log_tests {
+    use super::draw_log;
+    use crate::history::EvoLogEntry;
+    use crate::theme::GlyphChars;
+    use crate::types::CommitId;
+
+    /// The logs draw with the configured glyphs, as the DAG does, rather
+    /// than with fixed characters.
+    #[test]
+    fn a_log_draws_with_the_configured_glyphs() {
+        let mut current = EvoLogEntry::for_test(CommitId::new("b"), vec![CommitId::new("a")]);
+        current.is_current = true;
+        let older = EvoLogEntry::for_test(CommitId::new("a"), Vec::new());
+        let glyphs = GlyphChars {
+            working_copy: 'W',
+            normal: 'N',
+            ..GlyphChars::default()
+        };
+
+        let drawn = draw_log(vec![current, older], &glyphs);
+        assert!(drawn[0].graph.node.contains('W'));
+        assert!(drawn[1].graph.node.contains('N'));
     }
 }

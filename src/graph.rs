@@ -68,7 +68,15 @@ impl DagGraphRenderer {
                 EdgeKind::Missing => Ancestor::Anonymous,
             })
             .collect();
+        self.render_ancestors(id, parents, glyph)
+    }
 
+    fn render_ancestors(
+        &mut self,
+        id: &str,
+        parents: Vec<Ancestor<String>>,
+        glyph: char,
+    ) -> GraphLines {
         let message = format!("{NODE_SENTINEL}\n{CONT_SENTINEL}\n{REST_SENTINEL}");
         let row = self
             .inner
@@ -106,13 +114,35 @@ impl Default for DagGraphRenderer {
     }
 }
 
-/// Render graph lines for a list of entries with edges and a glyph per entry.
-///
-/// Generic over the entry type: callers provide ID, edges, and glyph for each.
-pub fn render_generic(entries: &[(&str, &[Edge], char)]) -> Vec<GraphLines> {
+/// One entry of a log drawn as a graph: its ID, the IDs of its parents, and
+/// its glyph.
+pub struct LogNode<'a> {
+    pub id: &'a str,
+    pub parents: Vec<&'a str>,
+    pub glyph: char,
+}
+
+/// Draw a log whose entries name their parents by ID, newest first.
+/// Parents outside the list (older than what was loaded) are drawn as
+/// missing rather than joined up.
+pub fn render_log(nodes: &[LogNode<'_>]) -> Vec<GraphLines> {
+    let loaded: std::collections::HashSet<&str> = nodes.iter().map(|n| n.id).collect();
     let mut renderer = DagGraphRenderer::new();
-    entries
+    nodes
         .iter()
-        .map(|(id, edges, glyph)| renderer.render_row(id, edges, *glyph))
+        .map(|node| {
+            let parents = node
+                .parents
+                .iter()
+                .map(|&parent| {
+                    if loaded.contains(parent) {
+                        Ancestor::Parent(parent.to_string())
+                    } else {
+                        Ancestor::Anonymous
+                    }
+                })
+                .collect();
+            renderer.render_ancestors(node.id, parents, node.glyph)
+        })
         .collect()
 }

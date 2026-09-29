@@ -157,7 +157,7 @@ pub struct RevsetData {
     pub all_tags: Vec<TagName>,
     pub tag_details: std::collections::HashMap<TagName, crate::dag::TagDetails>,
     pub bookmark_details: std::collections::HashMap<BookmarkName, crate::dag::BookmarkDetails>,
-    pub workspace_entries: Vec<crate::app::WorkspaceViewEntry>,
+    pub workspace_entries: Vec<crate::dag::WorkspaceInfo>,
     /// Non-fatal warnings from revset evaluation (e.g. immutable() failed).
     pub warnings: Vec<String>,
     /// Whether this is the complete revset. When `false`, the remaining
@@ -198,7 +198,7 @@ pub enum RepoResult {
     },
     Operations {
         limit: usize,
-        result: Result<(Vec<crate::app::OpLogEntry>, bool), RepoError>,
+        result: Result<(Vec<crate::history::OpLogEntry>, bool), RepoError>,
     },
     ConflictHunks {
         commit_id: CommitId,
@@ -207,11 +207,11 @@ pub enum RepoResult {
     },
     OpDiff {
         op_id: OperationId,
-        result: Result<Vec<crate::app::OpDetailLine>, RepoError>,
+        result: Result<Vec<crate::history::OpDetailLine>, RepoError>,
     },
     EvoLog {
         commit_id: CommitId,
-        result: Result<Vec<crate::app::EvoLogEntry>, RepoError>,
+        result: Result<Vec<crate::history::EvoLogEntry>, RepoError>,
     },
     Annotate {
         commit_id: CommitId,
