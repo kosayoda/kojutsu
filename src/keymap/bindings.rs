@@ -1,13 +1,12 @@
 use compact_str::CompactString;
-use keymap_parser::Node;
 use smallvec::SmallVec;
 
 use super::registry::ActionId;
-use super::{AppAction, CommandFlags, HelpGroup, parse_key};
+use super::{AppAction, CommandFlags, HelpGroup, Keys, parse_sequence};
 use crate::types::ActiveView;
 
 pub struct BindingSpec {
-    pub keys: SmallVec<[Node; 3]>,
+    pub keys: Keys,
     pub target: BindTarget,
     pub scope: Scope,
 }
@@ -34,15 +33,14 @@ pub enum Scope {
     Views(SmallVec<[ActiveView; 4]>),
 }
 
-fn bind(
-    key_str: &str,
-    action: AppAction,
-    desc: &str,
-    group: HelpGroup,
-    scope: Scope,
-) -> BindingSpec {
+/// The keys of a built-in binding, which are known to parse.
+fn keys(seq: &str) -> Keys {
+    parse_sequence(seq).expect("valid built-in key sequence")
+}
+
+fn bind(seq: &str, action: AppAction, desc: &str, group: HelpGroup, scope: Scope) -> BindingSpec {
     BindingSpec {
-        keys: smallvec::smallvec![parse_key(key_str)],
+        keys: keys(seq),
         target: BindTarget::Action {
             id: ActionId::Builtin(action),
             description: desc.into(),
@@ -52,48 +50,9 @@ fn bind(
     }
 }
 
-fn bind2(
-    key1: &str,
-    key2: &str,
-    action: AppAction,
-    desc: &str,
-    group: HelpGroup,
-    scope: Scope,
-) -> BindingSpec {
+fn prefix(seq: &str, label: &str, group: HelpGroup, scope: Scope) -> BindingSpec {
     BindingSpec {
-        keys: smallvec::smallvec![parse_key(key1), parse_key(key2)],
-        target: BindTarget::Action {
-            id: ActionId::Builtin(action),
-            description: desc.into(),
-            group,
-        },
-        scope,
-    }
-}
-
-fn bind3(
-    key1: &str,
-    key2: &str,
-    key3: &str,
-    action: AppAction,
-    desc: &str,
-    group: HelpGroup,
-    scope: Scope,
-) -> BindingSpec {
-    BindingSpec {
-        keys: smallvec::smallvec![parse_key(key1), parse_key(key2), parse_key(key3)],
-        target: BindTarget::Action {
-            id: ActionId::Builtin(action),
-            description: desc.into(),
-            group,
-        },
-        scope,
-    }
-}
-
-fn prefix(key_str: &str, label: &str, group: HelpGroup, scope: Scope) -> BindingSpec {
-    BindingSpec {
-        keys: smallvec::smallvec![parse_key(key_str)],
+        keys: keys(seq),
         target: BindTarget::Prefix {
             label: label.into(),
             group,
@@ -102,20 +61,9 @@ fn prefix(key_str: &str, label: &str, group: HelpGroup, scope: Scope) -> Binding
     }
 }
 
-fn prefix2(key1: &str, key2: &str, label: &str, group: HelpGroup, scope: Scope) -> BindingSpec {
+fn toggle(seq: &str, flag: CommandFlags, desc: &str, scope: Scope) -> BindingSpec {
     BindingSpec {
-        keys: smallvec::smallvec![parse_key(key1), parse_key(key2)],
-        target: BindTarget::Prefix {
-            label: label.into(),
-            group,
-        },
-        scope,
-    }
-}
-
-fn toggle2(key1: &str, key2: &str, flag: CommandFlags, desc: &str, scope: Scope) -> BindingSpec {
-    BindingSpec {
-        keys: smallvec::smallvec![parse_key(key1), parse_key(key2)],
+        keys: keys(seq),
         target: BindTarget::Toggle {
             flag,
             description: desc.into(),
@@ -129,8 +77,8 @@ fn undo_redo(mk: impl Fn() -> Scope) -> [BindingSpec; 3] {
     use HelpGroup::Commands as C;
     [
         prefix("u", "undo/redo", C, mk()),
-        bind2("u", "u", Undo, "undo", C, mk()),
-        bind2("u", "r", Redo, "redo", C, mk()),
+        bind("u u", Undo, "undo", C, mk()),
+        bind("u r", Redo, "redo", C, mk()),
     ]
 }
 
@@ -139,31 +87,19 @@ fn file_prefix_bindings(mk: impl Fn() -> Scope) -> [BindingSpec; 7] {
     use HelpGroup::Commands as C;
     [
         prefix("shift-f", super::FILE_PREFIX, C, mk()),
-        bind2("shift-f", "a", FileAnnotate, "annotate", C, mk()),
-        bind2("shift-f", "l", FileList, "file list", C, mk()),
-        prefix2("shift-f", "e", "edit", C, mk()),
-        bind3(
-            "shift-f",
-            "e",
-            "e",
-            EditFileWorkingCopy,
-            "working copy",
-            C,
-            mk(),
-        ),
-        bind3(
-            "shift-f",
-            "e",
-            "r",
+        bind("shift-f a", FileAnnotate, "annotate", C, mk()),
+        bind("shift-f l", FileList, "file list", C, mk()),
+        prefix("shift-f e", "edit", C, mk()),
+        bind("shift-f e e", EditFileWorkingCopy, "working copy", C, mk()),
+        bind(
+            "shift-f e r",
             EditFileAtRevision,
             "view at revision",
             C,
             mk(),
         ),
-        bind3(
-            "shift-f",
-            "e",
-            "c",
+        bind(
+            "shift-f e c",
             CheckoutAndEditFile,
             "checkout and edit",
             C,
@@ -247,41 +183,32 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind(":", CommandMode, "command mode", N, all()),
         // Command palette (`;` prefix)
         prefix(";", "command", G, all()),
-        bind2(";", "r", EditRevset, "edit revset", G, all()),
-        bind2(
-            ";",
-            "shift-r",
+        bind("; r", EditRevset, "edit revset", G, all()),
+        bind(
+            "; shift-r",
             EditRevsetInEditor,
             "edit revset in $EDITOR",
             G,
             all(),
         ),
-        bind2(";", "c", ReloadConfig, "reload init.lua", G, all()),
-        bind2(";", "d", ResetRevset, "default revset", G, all()),
-        bind2(";", "p", SelectPreset, "switch preset", G, all()),
-        bind2(";", "l", ToggleLineNumbers, "toggle line numbers", G, all()),
-        bind2(";", "g", ToggleGitDiff, "toggle diff style", G, all()),
-        bind2(
-            ";",
-            "u",
+        bind("; c", ReloadConfig, "reload init.lua", G, all()),
+        bind("; d", ResetRevset, "default revset", G, all()),
+        bind("; p", SelectPreset, "switch preset", G, all()),
+        bind("; l", ToggleLineNumbers, "toggle line numbers", G, all()),
+        bind("; g", ToggleGitDiff, "toggle diff style", G, all()),
+        bind(
+            "; u",
             ToggleDiffUnderline,
             "toggle diff underline",
             G,
             all(),
         ),
-        bind2(
-            ";",
-            "s",
-            ToggleSeparators,
-            "toggle separator lines",
-            G,
-            all(),
-        ),
-        bind2(";", "1", SwitchPreset1, "preset 1", G, all()),
-        bind2(";", "2", SwitchPreset2, "preset 2", G, all()),
-        bind2(";", "3", SwitchPreset3, "preset 3", G, all()),
-        bind2(";", "4", SwitchPreset4, "preset 4", G, all()),
-        bind2(";", "5", SwitchPreset5, "preset 5", G, all()),
+        bind("; s", ToggleSeparators, "toggle separator lines", G, all()),
+        bind("; 1", SwitchPreset1, "preset 1", G, all()),
+        bind("; 2", SwitchPreset2, "preset 2", G, all()),
+        bind("; 3", SwitchPreset3, "preset 3", G, all()),
+        bind("; 4", SwitchPreset4, "preset 4", G, all()),
+        bind("; 5", SwitchPreset5, "preset 5", G, all()),
     ]);
 
     // DAG view
@@ -293,24 +220,22 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("-", ExpandDescendants, "expand descendants", C, dag()),
         // Conflict prefix
         prefix("shift-c", super::CONFLICT_PREFIX, C, dag()),
-        bind2("shift-c", "o", ResolveOurs, "take ours", C, dag()),
-        bind2("shift-c", "t", ResolveTheirs, "take theirs", C, dag()),
-        bind2("shift-c", "b", ConflictPickBase, "take base", C, dag()),
-        bind2("shift-c", "u", ConflictUnpick, "unpick hunk", C, dag()),
-        bind2("shift-c", "a", ConflictApplyPicks, "apply picks", C, dag()),
-        bind2("shift-c", "e", ConflictEditHunk, "edit hunk", C, dag()),
-        bind2(
-            "shift-c",
-            "shift-e",
+        bind("shift-c o", ResolveOurs, "take ours", C, dag()),
+        bind("shift-c t", ResolveTheirs, "take theirs", C, dag()),
+        bind("shift-c b", ConflictPickBase, "take base", C, dag()),
+        bind("shift-c u", ConflictUnpick, "unpick hunk", C, dag()),
+        bind("shift-c a", ConflictApplyPicks, "apply picks", C, dag()),
+        bind("shift-c e", ConflictEditHunk, "edit hunk", C, dag()),
+        bind(
+            "shift-c shift-e",
             ConflictEditFile,
             "edit resolution",
             C,
             dag(),
         ),
-        bind2("shift-c", "m", ResolveMergeTool, "merge tool", C, dag()),
-        bind2(
-            "shift-c",
-            "r",
+        bind("shift-c m", ResolveMergeTool, "merge tool", C, dag()),
+        bind(
+            "shift-c r",
             ToggleConflictedRevset,
             "conflicted() revset",
             C,
@@ -319,182 +244,154 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         // Next/prev navigation prefixes
         prefix("]", "next", N, dag()),
         prefix("[", "prev", N, dag()),
-        bind2("]", "c", NextConflict, "next conflict", N, dag()),
-        bind2("[", "c", PrevConflict, "prev conflict", N, dag()),
+        bind("] c", NextConflict, "next conflict", N, dag()),
+        bind("[ c", PrevConflict, "prev conflict", N, dag()),
         // Fix
         bind("f", Fix, "fix", C, dag()),
         // Run prefix
         prefix("!", "run", C, dag()),
-        toggle2("!", "shift-c", CommandFlags::CLEAN, "clean", dag()),
-        toggle2(
-            "!",
-            "shift-d",
+        toggle("! shift-c", CommandFlags::CLEAN, "clean", dag()),
+        toggle(
+            "! shift-d",
             CommandFlags::RESTORE_DESCENDANTS,
             "restore descendants",
             dag(),
         ),
-        bind2("!", "!", Run, "run command\u{2026}", C, dag()),
+        bind("! !", Run, "run command\u{2026}", C, dag()),
         // File prefix (dag also has untrack)
-        bind2("shift-f", "u", FileUntrack, "untrack", C, dag()),
+        bind("shift-f u", FileUntrack, "untrack", C, dag()),
         // Bookmark prefix
         prefix("b", "bookmark", C, dag()),
-        toggle2(
-            "b",
-            "shift-b",
+        toggle(
+            "b shift-b",
             CommandFlags::ALLOW_BACKWARDS,
             "allow backwards",
             dag(),
         ),
-        bind2("b", "c", BookmarkCreate, "create", C, dag()),
-        bind2("b", "s", BookmarkSet, "set", C, dag()),
-        bind2("b", "d", BookmarkDelete, "delete", C, dag()),
-        bind2("b", "f", BookmarkForget, "forget", C, dag()),
-        bind2("b", "m", BookmarkMove, "move\u{2026}", C, dag()),
-        bind2("b", "r", BookmarkRename, "rename", C, dag()),
-        bind2("b", "a", BookmarkAdvance, "advance", C, dag()),
-        bind2("b", "t", BookmarkTrack, "track", C, dag()),
-        bind2("b", "u", BookmarkUntrack, "untrack", C, dag()),
+        bind("b c", BookmarkCreate, "create", C, dag()),
+        bind("b s", BookmarkSet, "set", C, dag()),
+        bind("b d", BookmarkDelete, "delete", C, dag()),
+        bind("b f", BookmarkForget, "forget", C, dag()),
+        bind("b m", BookmarkMove, "move\u{2026}", C, dag()),
+        bind("b r", BookmarkRename, "rename", C, dag()),
+        bind("b a", BookmarkAdvance, "advance", C, dag()),
+        bind("b t", BookmarkTrack, "track", C, dag()),
+        bind("b u", BookmarkUntrack, "untrack", C, dag()),
         // Tag prefix
         prefix("t", "tag", C, dag()),
-        toggle2(
-            "t",
-            "shift-b",
+        toggle(
+            "t shift-b",
             CommandFlags::ALLOW_BACKWARDS,
             "allow backwards",
             dag(),
         ),
-        bind2("t", "s", TagSet, "set", C, dag()),
-        bind2("t", "d", TagDelete, "delete", C, dag()),
+        bind("t s", TagSet, "set", C, dag()),
+        bind("t d", TagDelete, "delete", C, dag()),
         // Commit prefix
         prefix("c", "commit", C, dag()),
-        toggle2(
-            "c",
-            "shift-i",
-            CommandFlags::INTERACTIVE,
-            "interactive",
-            dag(),
-        ),
-        bind2("c", "c", Commit, "commit (in $EDITOR)", C, dag()),
-        bind2("c", "m", CommitWithMessage, "with message", C, dag()),
+        toggle("c shift-i", CommandFlags::INTERACTIVE, "interactive", dag()),
+        bind("c c", Commit, "commit (in $EDITOR)", C, dag()),
+        bind("c m", CommitWithMessage, "with message", C, dag()),
         // Describe prefix
         prefix("d", "describe", C, dag()),
-        bind2("d", "d", Describe, "describe", C, dag()),
-        bind2("d", "shift-d", DescribeInEditor, "in $EDITOR", C, dag()),
+        bind("d d", Describe, "describe", C, dag()),
+        bind("d shift-d", DescribeInEditor, "in $EDITOR", C, dag()),
         // Edit
         bind("e", Edit, "edit", C, dag()),
         // Git prefix
         prefix("g", "git", C, dag()),
-        toggle2(
-            "g",
-            "shift-d",
+        toggle(
+            "g shift-d",
             CommandFlags::DRY_RUN,
             "dry run (push only)",
             dag(),
         ),
-        prefix2("g", "f", "fetch", C, dag()),
-        bind3("g", "f", "f", GitFetch, "fetch", C, dag()),
-        bind3("g", "f", "a", GitFetchAllRemotes, "all remotes", C, dag()),
-        prefix2("g", "p", "push", C, dag()),
-        bind3("g", "p", "p", GitPush, "push", C, dag()),
-        bind3("g", "p", "a", GitPushAll, "all bookmarks", C, dag()),
-        bind3("g", "p", "c", GitPushChange, "change", C, dag()),
-        bind3("g", "p", "b", GitPushBookmark, "bookmark", C, dag()),
-        bind2("g", "e", GitExport, "export (jj -> git)", C, dag()),
-        bind2("g", "i", GitImport, "import (git -> jj)", C, dag()),
+        prefix("g f", "fetch", C, dag()),
+        bind("g f f", GitFetch, "fetch", C, dag()),
+        bind("g f a", GitFetchAllRemotes, "all remotes", C, dag()),
+        prefix("g p", "push", C, dag()),
+        bind("g p p", GitPush, "push", C, dag()),
+        bind("g p a", GitPushAll, "all bookmarks", C, dag()),
+        bind("g p c", GitPushChange, "change", C, dag()),
+        bind("g p b", GitPushBookmark, "bookmark", C, dag()),
+        bind("g e", GitExport, "export (jj -> git)", C, dag()),
+        bind("g i", GitImport, "import (git -> jj)", C, dag()),
         // New prefix
         prefix("n", "new", C, dag()),
-        toggle2("n", "shift-e", CommandFlags::NO_EDIT, "no-edit", dag()),
-        bind2("n", "n", New, "new", C, dag()),
-        bind2("n", "a", NewInsertAfter, "insert after", C, dag()),
-        bind2("n", "b", NewInsertBefore, "insert before", C, dag()),
+        toggle("n shift-e", CommandFlags::NO_EDIT, "no-edit", dag()),
+        bind("n n", New, "new", C, dag()),
+        bind("n a", NewInsertAfter, "insert after", C, dag()),
+        bind("n b", NewInsertBefore, "insert before", C, dag()),
         // Rebase prefix
         prefix("r", "rebase", C, dag()),
-        bind2("r", "r", RebaseRevision, "revision\u{2026}", C, dag()),
-        bind2("r", "s", RebaseSource, "source\u{2026}", C, dag()),
-        bind2("r", "b", RebaseBranch, "branch\u{2026}", C, dag()),
-        bind2("r", "k", ArrangeUp, "arrange up", C, dag()),
-        bind2("r", "j", ArrangeDown, "arrange down", C, dag()),
+        bind("r r", RebaseRevision, "revision\u{2026}", C, dag()),
+        bind("r s", RebaseSource, "source\u{2026}", C, dag()),
+        bind("r b", RebaseBranch, "branch\u{2026}", C, dag()),
+        bind("r k", ArrangeUp, "arrange up", C, dag()),
+        bind("r j", ArrangeDown, "arrange down", C, dag()),
         // Restore prefix
         prefix("shift-r", "restore", C, dag()),
-        toggle2(
-            "shift-r",
-            "shift-i",
+        toggle(
+            "shift-r shift-i",
             CommandFlags::INTERACTIVE,
             "interactive",
             dag(),
         ),
-        toggle2(
-            "shift-r",
-            "shift-d",
+        toggle(
+            "shift-r shift-d",
             CommandFlags::RESTORE_DESCENDANTS,
             "restore descendants",
             dag(),
         ),
-        bind2("shift-r", "shift-r", Restore, "changes-in", C, dag()),
-        bind2("shift-r", "f", RestoreFrom, "from\u{2026}", C, dag()),
-        bind2("shift-r", "t", RestoreInto, "into\u{2026}", C, dag()),
+        bind("shift-r shift-r", Restore, "changes-in", C, dag()),
+        bind("shift-r f", RestoreFrom, "from\u{2026}", C, dag()),
+        bind("shift-r t", RestoreInto, "into\u{2026}", C, dag()),
         // Split prefix
         prefix("shift-s", "split", C, dag()),
-        toggle2(
-            "shift-s",
-            "shift-i",
+        toggle(
+            "shift-s shift-i",
             CommandFlags::INTERACTIVE,
             "interactive",
             dag(),
         ),
-        toggle2(
-            "shift-s",
-            "shift-p",
-            CommandFlags::PARALLEL,
-            "parallel",
-            dag(),
-        ),
-        bind2("shift-s", "shift-s", Split, "split", C, dag()),
-        bind2("shift-s", "o", SplitOnto, "onto\u{2026}", C, dag()),
-        bind2("shift-s", "a", SplitAfter, "after\u{2026}", C, dag()),
-        bind2("shift-s", "b", SplitBefore, "before\u{2026}", C, dag()),
+        toggle("shift-s shift-p", CommandFlags::PARALLEL, "parallel", dag()),
+        bind("shift-s shift-s", Split, "split", C, dag()),
+        bind("shift-s o", SplitOnto, "onto\u{2026}", C, dag()),
+        bind("shift-s a", SplitAfter, "after\u{2026}", C, dag()),
+        bind("shift-s b", SplitBefore, "before\u{2026}", C, dag()),
         // Squash prefix
         prefix("s", "squash", C, dag()),
-        toggle2(
-            "s",
-            "shift-i",
-            CommandFlags::INTERACTIVE,
-            "interactive",
-            dag(),
-        ),
-        toggle2(
-            "s",
-            "shift-k",
+        toggle("s shift-i", CommandFlags::INTERACTIVE, "interactive", dag()),
+        toggle(
+            "s shift-k",
             CommandFlags::KEEP_EMPTIED,
             "keep emptied",
             dag(),
         ),
-        bind2("s", "s", Squash, "into parent", C, dag()),
-        bind2("s", "t", SquashInto, "into\u{2026}", C, dag()),
-        bind2("s", "o", SquashOnto, "onto\u{2026}", C, dag()),
-        bind2("s", "a", SquashAfter, "after\u{2026}", C, dag()),
-        bind2("s", "b", SquashBefore, "before\u{2026}", C, dag()),
+        bind("s s", Squash, "into parent", C, dag()),
+        bind("s t", SquashInto, "into\u{2026}", C, dag()),
+        bind("s o", SquashOnto, "onto\u{2026}", C, dag()),
+        bind("s a", SquashAfter, "after\u{2026}", C, dag()),
+        bind("s b", SquashBefore, "before\u{2026}", C, dag()),
         // Abandon prefix
         prefix("x", "abandon", C, dag()),
-        toggle2(
-            "x",
-            "shift-b",
+        toggle(
+            "x shift-b",
             CommandFlags::RETAIN_BOOKMARKS,
             "keep bookmarks",
             dag(),
         ),
-        toggle2(
-            "x",
-            "shift-d",
+        toggle(
+            "x shift-d",
             CommandFlags::RESTORE_DESCENDANTS,
             "restore descendants",
             dag(),
         ),
-        bind2("x", "x", Abandon, "abandon", C, dag()),
+        bind("x x", Abandon, "abandon", C, dag()),
         // Duplicate prefix
         prefix("y", "duplicate", C, dag()),
-        bind2("y", "y", Duplicate, "duplicate", C, dag()),
-        bind2("y", "t", DuplicateOnto, "onto\u{2026}", C, dag()),
+        bind("y y", Duplicate, "duplicate", C, dag()),
+        bind("y t", DuplicateOnto, "onto\u{2026}", C, dag()),
         // Direct bindings
         bind("i", AppAction::Interdiff, "interdiff\u{2026}", C, dag()),
         bind("p", Parallelize, "parallelize", C, dag()),
@@ -502,10 +399,10 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("z", Revert, "revert", C, dag()),
         // Workspace prefix
         prefix("w", "workspace", C, dag()),
-        bind2("w", "a", WorkspaceAdd, "add", C, dag()),
-        bind2("w", "f", WorkspaceForget, "forget", C, dag()),
-        bind2("w", "l", WorkspaceList, "list", C, dag()),
-        bind2("w", "r", WorkspaceRename, "rename", C, dag()),
+        bind("w a", WorkspaceAdd, "add", C, dag()),
+        bind("w f", WorkspaceForget, "forget", C, dag()),
+        bind("w l", WorkspaceList, "list", C, dag()),
+        bind("w r", WorkspaceRename, "rename", C, dag()),
     ]);
     specs.extend(undo_redo(dag));
     specs.extend(file_prefix_bindings(dag));
@@ -522,9 +419,9 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("r", BookmarkRename, "rename", C, bookmark()),
         bind("m", BookmarkMove, "move\u{2026}", C, bookmark()),
         prefix("f", "fetch", C, bookmark()),
-        bind2("f", "f", GitFetch, "fetch", C, bookmark()),
-        bind2("f", "b", GitFetchBookmark, "bookmark", C, bookmark()),
-        bind2("f", "a", GitFetchAllRemotes, "all remotes", C, bookmark()),
+        bind("f f", GitFetch, "fetch", C, bookmark()),
+        bind("f b", GitFetchBookmark, "bookmark", C, bookmark()),
+        bind("f a", GitFetchAllRemotes, "all remotes", C, bookmark()),
         bind("s", BookmarkSet, "set\u{2026}", C, bookmark()),
         bind("shift-f", BookmarkForget, "forget", C, bookmark()),
         bind("i", AppAction::Interdiff, "interdiff", C, bookmark()),
@@ -585,9 +482,9 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("b", AnnotateTimeTravel, "blame at this commit", C, ann()),
         bind("f", AnnotateForward, "forward (undo blame)", C, ann()),
         prefix("e", "edit", C, ann()),
-        bind2("e", "e", EditFileWorkingCopy, "working copy", C, ann()),
-        bind2("e", "r", EditFileAtRevision, "view at revision", C, ann()),
-        bind2("e", "c", CheckoutAndEditFile, "checkout and edit", C, ann()),
+        bind("e e", EditFileWorkingCopy, "working copy", C, ann()),
+        bind("e r", EditFileAtRevision, "view at revision", C, ann()),
+        bind("e c", CheckoutAndEditFile, "checkout and edit", C, ann()),
     ]);
 
     specs

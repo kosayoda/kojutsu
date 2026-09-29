@@ -2,7 +2,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use compact_str::CompactString;
-use smallvec::SmallVec;
 
 use crate::keymap::{
     ActionRegistry, AppAction, BindTarget, BindingSpec, HelpGroup, Scope, SelectionKindSet,
@@ -15,7 +14,7 @@ use super::{HookPhase, LuaCommand, LuaEngine, LuaHook};
 /// Where in the user's Lua a registration was made, as `file:line`.
 type Location = String;
 
-type Keys = SmallVec<[keymap_parser::Node; 3]>;
+use crate::keymap::Keys;
 
 /// A key or key sequence and the views it applies in.
 struct KeySpec {
@@ -148,16 +147,7 @@ fn key_spec(opts: &mlua::Table) -> Result<Option<KeySpec>, String> {
         (None, None) => return Ok(None),
         (Some(_), Some(_)) => return Err("give `key` or `seq`, not both".into()),
         (Some(key), None) => smallvec::smallvec![parse_key(&key)?],
-        (None, Some(seq)) => {
-            let keys = seq
-                .split_whitespace()
-                .map(parse_key)
-                .collect::<Result<Keys, _>>()?;
-            if keys.is_empty() {
-                return Err("`seq` is empty".into());
-            }
-            keys
-        }
+        (None, Some(seq)) => crate::keymap::parse_sequence(&seq)?,
     };
     Ok(Some(KeySpec {
         keys,

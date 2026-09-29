@@ -314,9 +314,19 @@ pub fn try_parse_key(key_str: &str) -> Option<Node> {
     Some(node)
 }
 
-/// Parse a key string known to be valid (the built-in binding tables).
-pub fn parse_key(key_str: &str) -> Node {
-    try_parse_key(key_str).expect("valid key string")
+/// The keys of one binding, pressed in order.
+pub type Keys = smallvec::SmallVec<[Node; 3]>;
+
+/// Parse a space-separated key sequence such as `"g p c"`.
+pub fn parse_sequence(seq: &str) -> Result<Keys, String> {
+    let keys = seq
+        .split_whitespace()
+        .map(|key| try_parse_key(key).ok_or_else(|| format!("invalid key `{key}`")))
+        .collect::<Result<Keys, _>>()?;
+    if keys.is_empty() {
+        return Err("empty key sequence".into());
+    }
+    Ok(keys)
 }
 
 pub fn toggle_hint(action: AppAction) -> Option<&'static str> {
