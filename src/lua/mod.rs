@@ -19,8 +19,8 @@ pub use helpers::generate_type_definitions;
 pub use runtime::LuaRuntime;
 
 /// A starter `init.lua`, printed by `--print-default-config`. Every value in
-/// it is a built-in default, which
-/// [`the_shipped_sample_is_exactly_the_defaults`](config::tests) checks.
+/// it is a built-in default, which the test
+/// `config::tests::the_shipped_sample_is_exactly_the_defaults` checks.
 pub const DEFAULT_INIT: &str = include_str!("default-init.lua");
 
 struct LuaCommand {

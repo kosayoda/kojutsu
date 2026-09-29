@@ -494,8 +494,8 @@ pub fn default_bindings() -> Vec<BindingSpec> {
 mod tests {
     use super::*;
 
-    /// `parse_key` panics on specs it cannot parse, so building the default
-    /// bindings exercises every key string.
+    /// `keys` panics on sequences it cannot parse, so building the default
+    /// bindings exercises every key sequence.
     #[test]
     fn default_bindings_build() {
         assert!(!default_bindings().is_empty());

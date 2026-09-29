@@ -1722,8 +1722,7 @@ impl App {
     /// active preset is re-clamped, since the new list may be shorter.
     ///
     /// Does not carry `diff.max_file_size_mib`, which lives in the repo
-    /// service; send
-    /// [`RepoRequest::set_diff_size_limit`](RepoRequest::set_diff_size_limit)
+    /// service; send [`crate::repo_service::RepoRequest::SetDiffSizeLimit`]
     /// alongside this.
     pub fn apply_reloaded_config(&mut self, config: Rc<crate::config::Config>) {
         self.config = config;

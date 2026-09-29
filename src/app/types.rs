@@ -750,7 +750,7 @@ pub struct BookmarkViewEntry {
     pub change_id: Option<crate::dag::ShortId>,
     pub short_commit_id: Option<crate::dag::ShortId>,
     /// The revision to hand `jj` for this row's commit. Carried rather than
-    /// rebuilt from `change_id`, which no longer knows about divergence.
+    /// rebuilt from `change_id`, which doesn't know about divergence.
     pub revision: Option<RevisionArg>,
     pub description: Option<String>,
     pub kind: BookmarkKind,
@@ -762,7 +762,7 @@ pub struct TagViewEntry {
     pub change_id: Option<crate::dag::ShortId>,
     pub short_commit_id: Option<crate::dag::ShortId>,
     /// The revision to hand `jj` for this row's commit. Carried rather than
-    /// rebuilt from `change_id`, which no longer knows about divergence.
+    /// rebuilt from `change_id`, which doesn't know about divergence.
     pub revision: Option<RevisionArg>,
     pub description: Option<String>,
     /// Whether the local tag has been deleted (only remote refs remain).

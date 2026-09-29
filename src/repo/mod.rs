@@ -47,12 +47,12 @@ impl std::fmt::Display for SnapshotError {
     }
 }
 
-/// Thin adapter around jj-lib. Owns the workspace and repo, converts
-/// jj-lib types into our domain types so nothing leaks out.
 /// Default max bytes of file content (per side) materialized for a diff.
 /// Overridable via `diff.max_file_size_mib` in the config file.
 const DEFAULT_DIFF_SIZE_LIMIT: usize = 64 * 1024 * 1024;
 
+/// Thin adapter around jj-lib. Owns the workspace and repo, converts
+/// jj-lib types into our domain types so nothing leaks out.
 pub struct JjRepo {
     pub(super) repo: Arc<ReadonlyRepo>,
     pub(super) settings: UserSettings,

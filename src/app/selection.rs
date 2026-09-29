@@ -461,7 +461,7 @@ impl App {
 /// Names the first change in `files` that no line selection can narrow, and
 /// how many others share the problem, or `None` when they all can be.
 /// Phrased as the subject of a sentence the caller completes, so the reason
-/// stays tied to [`FileChange::line_selection_blocker`] rather than being
+/// stays tied to [`crate::dag::FileChange::line_selection_blocker`] rather than being
 /// restated at each call site.
 fn line_selection_blocker(files: &[crate::dag::FileChange]) -> Option<String> {
     let mut blocked = files

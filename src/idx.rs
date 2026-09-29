@@ -37,15 +37,15 @@ macro_rules! define_idx {
 }
 
 define_idx!(
-    /// Index into `App::entries` / `App::graph` / `App::unfolded`.
+    /// Index into `DagState::nodes`.
     pub EntryIdx
 );
 define_idx!(
-    /// Index into the file list for a given commit (`App::file_cache[entry]`).
+    /// Index into the files of a `FileTree`.
     pub FileIdx
 );
 define_idx!(
-    /// Index into the diff lines for a given file (`App::diff_cache[(entry, file)]`).
+    /// Index into one file's diff lines.
     pub DiffLineIdx
 );
 define_idx!(
@@ -53,7 +53,7 @@ define_idx!(
     pub GraphLineIdx
 );
 define_idx!(
-    /// Index into `App::bookmark_entries`.
+    /// Index into `ViewData::bookmark_entries`.
     pub BookmarkIdx
 );
 define_idx!(
@@ -61,11 +61,11 @@ define_idx!(
     pub BookmarkDetailIdx
 );
 define_idx!(
-    /// Index into description continuation lines (skip(1) from full_description).
+    /// Index into a description's continuation lines (those after the first).
     pub DescriptionLineIdx
 );
 define_idx!(
-    /// Index into `App::tag_entries`.
+    /// Index into `ViewData::tag_entries`.
     pub TagIdx
 );
 define_idx!(
@@ -73,7 +73,7 @@ define_idx!(
     pub TagDetailIdx
 );
 define_idx!(
-    /// Index into `App::op_log_entries`.
+    /// Index into `OpLogState::entries`.
     pub OpLogIdx
 );
 define_idx!(
@@ -81,11 +81,11 @@ define_idx!(
     pub OpLogDetailIdx
 );
 define_idx!(
-    /// Index into `App::workspace_entries`.
+    /// Index into `ViewData::workspace_entries`.
     pub WorkspaceIdx
 );
 define_idx!(
-    /// Index into `App::evolog_entries`.
+    /// Index into `EvoLogState::entries`.
     pub EvoLogIdx
 );
 define_idx!(

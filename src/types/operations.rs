@@ -128,7 +128,7 @@ pub enum MessageMode {
 pub enum ChangeSelection {
     /// Include all changes (no filtering).
     All,
-    /// Include only these files (maps to [FILESETS] positional args).
+    /// Include only these files (maps to `[FILESETS]` positional args).
     Files(Vec<Str>),
     /// Line-level selection (maps to --interactive --tool with selection JSON).
     Lines(PathBuf),
