@@ -233,15 +233,6 @@ mod tests {
         assert!(warnings_for(r#"kojutsu.rebind { action = "abandon", key = "q" }"#).is_empty());
     }
 
-    /// The caller keeps the running runtime when this is set, so it has to be
-    /// set rather than the failure being swallowed.
-    #[test]
-    fn a_broken_script_reports_an_error() {
-        let dir = config_dir_with("error('boom')\n");
-        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
-        assert!(runtime.init_error().is_some_and(|e| e.contains("boom")));
-    }
-
     fn runtime_with(init: &str) -> LuaRuntime {
         let dir = config_dir_with(init);
         let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));

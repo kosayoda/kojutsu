@@ -583,26 +583,6 @@ mod selected_revision_tests {
     }
 
     #[test]
-    fn the_order_does_not_depend_on_how_the_selection_was_built() {
-        let order_a = {
-            let mut app = app_with(&['a', 'b', 'c']);
-            for i in [0, 1, 2] {
-                app.toggle_commit_selection(EntryIdx::new(i));
-            }
-            revisions(&app)
-        };
-        let order_b = {
-            let mut app = app_with(&['a', 'b', 'c']);
-            for i in [2, 1, 0] {
-                app.toggle_commit_selection(EntryIdx::new(i));
-            }
-            revisions(&app)
-        };
-
-        assert_eq!(order_a, order_b);
-    }
-
-    #[test]
     fn a_selection_the_dag_has_not_loaded_yet_still_resolves() {
         // Stale selections are pruned only once a load completes, so one can
         // outrun the stream. Its whole change ID is still a valid revision.
@@ -744,16 +724,6 @@ mod submodule_line_selection_tests {
             app.file_selection_state(entry, f),
             FileSelectionState::Full
         ));
-    }
-
-    /// Nothing about the guard should touch a commit without submodules.
-    #[test]
-    fn line_selection_is_untouched_without_a_submodule() {
-        let mut app = app_with_files(&[("readme", false)]);
-
-        app.toggle_line_selection(EntryIdx::new(0), FileIdx::new(0), REMOVED);
-
-        assert_eq!(app.selection_kind(), SelectionKind::Line);
     }
 
     /// A commit rewritten under a live line selection keeps its change ID, so

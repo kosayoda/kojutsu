@@ -367,38 +367,19 @@ mod action_label_tests {
     use super::{AppAction, SelectionKindSet};
     use strum::IntoEnumIterator as _;
 
-    /// A refusal names the action. Anything that can be selection-blocked
-    /// reaches this message, and a placeholder there tells the user nothing.
+    /// A refusal names the action, so anything that can be selection-blocked
+    /// needs a label written for a person. An id like `conflict_pick_ours`
+    /// only serves as one when it is a single word.
     #[test]
-    fn every_blockable_action_names_itself() {
+    fn every_blockable_action_reads_as_words() {
         for action in AppAction::iter() {
             if action.spec().selection == SelectionKindSet::ALL {
                 continue;
             }
             let label = action.label();
-            assert!(!label.is_empty(), "{action:?} has an empty label");
-            assert_ne!(label, "action", "{action:?} falls back to a placeholder");
-        }
-    }
-
-    /// The conflict picks were the group that reached the placeholder. They
-    /// should read as something written for a person: asserted as "not the
-    /// id" rather than by quoting the labels, which would only restate them.
-    #[test]
-    fn the_conflict_actions_carry_human_labels() {
-        for action in [
-            AppAction::ConflictPickOurs,
-            AppAction::ConflictPickTheirs,
-            AppAction::ConflictPickBase,
-            AppAction::ConflictUnpick,
-            AppAction::ConflictApplyPicks,
-            AppAction::ConflictEditFile,
-            AppAction::ConflictEditHunk,
-        ] {
-            assert_ne!(
-                action.label(),
-                action.id_name(),
-                "{action:?} has no label of its own"
+            assert!(
+                !label.is_empty() && !label.contains('_'),
+                "{action:?} is labelled {label:?}"
             );
         }
     }

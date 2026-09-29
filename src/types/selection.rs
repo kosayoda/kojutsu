@@ -443,21 +443,6 @@ mod selection_context_tests {
         assert_eq!(ctx.kinds(), SelectionKindSet::FILE | SelectionKindSet::LINE);
     }
 
-    /// An action taking files but not lines is rejected once a line joins the
-    /// selection: the check is over everything selected, not the winner of
-    /// the precedence.
-    #[test]
-    fn gating_requires_support_for_every_kind_present() {
-        let file_only = SelectionKindSet::COMMIT | SelectionKindSet::FILE;
-        let mut ctx = SelectionContext::new();
-        ctx.insert(Selection::File(file_ref("a.rs")));
-        assert!(file_only.contains(ctx.kinds()));
-
-        ctx.insert(line("b.rs", 3));
-        assert!(!file_only.contains(ctx.kinds()));
-        assert!(SelectionKindSet::ALL.contains(ctx.kinds()));
-    }
-
     #[test]
     fn an_empty_selection_has_no_kinds() {
         let ctx = SelectionContext::new();

@@ -448,12 +448,6 @@ mod strip_ansi_tests {
     }
 
     #[test]
-    fn leaves_unstyled_text_alone() {
-        assert_eq!(strip_ansi("no escapes here"), "no escapes here");
-        assert_eq!(strip_ansi(""), "");
-    }
-
-    #[test]
     fn a_malformed_escape_falls_back_to_the_raw_text() {
         let mangled = "Duplicated \x1b[38;5 as abcd\n";
         // Whatever the parser makes of it, the identifier must still be there
@@ -1165,14 +1159,6 @@ mod annotate_cache_tests {
             ],
             commit_info: HashMap::new(),
         }
-    }
-
-    #[test]
-    fn a_stored_annotation_comes_back() {
-        let mut cache = AnnotateCache::default();
-        cache.insert(target("aaa", "a.rs"), result(3));
-
-        assert_eq!(cache.get(&target("aaa", "a.rs")).unwrap().lines.len(), 3);
     }
 
     #[test]

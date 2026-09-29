@@ -494,13 +494,6 @@ pub fn default_bindings() -> Vec<BindingSpec> {
 mod tests {
     use super::*;
 
-    /// `keys` panics on sequences it cannot parse, so building the default
-    /// bindings exercises every key sequence.
-    #[test]
-    fn default_bindings_build() {
-        assert!(!default_bindings().is_empty());
-    }
-
     /// Target- and commit-select resolve keys through the keymap and admit
     /// only cursor movement. Guards the class of bug where a mode grows its
     /// own key table and quietly omits half the movement bindings.

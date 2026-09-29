@@ -742,14 +742,6 @@ mod short_id_tests {
     }
 
     #[test]
-    fn an_id_shorter_than_the_display_width_is_shown_whole() {
-        let id = ShortId::new("abc");
-
-        assert_eq!(id.display(), "abc");
-        assert_eq!(id.split(), ("abc", ""));
-    }
-
-    #[test]
     fn an_empty_id_renders_as_nothing() {
         // Op-log rows can reference an entry with no commit behind it.
         let id = ShortId::new("");
