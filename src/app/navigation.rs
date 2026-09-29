@@ -230,14 +230,14 @@ impl App {
 
     /// Row index of the first parent commit in the DAG (for J on commit rows).
     fn parent_commit_row(&self, entry_idx: EntryIdx) -> Option<RowIdx> {
-        let parent_idx = *self.nodes[entry_idx].parents.first()?;
+        let parent_idx = *self.dag.nodes[entry_idx].parents.first()?;
         self.row_of_commit(parent_idx)
     }
 
     /// Row index of the first child commit in the DAG (for K on commit rows).
     /// When multiple children exist, picks the one closest above the current row.
     fn child_commit_row(&self, entry_idx: EntryIdx) -> Option<RowIdx> {
-        let children = &self.nodes[entry_idx].children;
+        let children = &self.dag.nodes[entry_idx].children;
         match children.len() {
             0 => None,
             1 => self.row_of_commit(children[0]),
@@ -382,7 +382,7 @@ impl App {
             .iter()
             .position(|r| {
                 matches!(r, DisplayRow::CommitNode { entry_idx }
-                    if self.nodes[*entry_idx].commit.is_working_copy())
+                    if self.dag.nodes[*entry_idx].commit.is_working_copy())
             })
             .map(RowIdx::new)
     }
@@ -418,14 +418,14 @@ impl App {
                 // `shown_*` helpers are the same source the row builder uses,
                 // so this can't drift from what's actually on screen.
                 DisplayRow::CommitNode { entry_idx } => {
-                    self.nodes[*entry_idx].commit.has_conflict
+                    self.dag.nodes[*entry_idx].commit.has_conflict
                         && self.shown_files(*entry_idx).is_none()
                 }
                 DisplayRow::FileChange {
                     owner: FileOwner::Dag(entry_idx),
                     file_idx,
                 } => {
-                    self.nodes[*entry_idx]
+                    self.dag.nodes[*entry_idx]
                         .files
                         .files()
                         .and_then(|f| f.get(file_idx.raw()))
@@ -468,7 +468,7 @@ impl App {
             }
         }
         // In DAG view, find the commit with this bookmark.
-        for (idx, node) in self.nodes.iter_enumerated() {
+        for (idx, node) in self.dag.nodes.iter_enumerated() {
             if node.commit.bookmarks.iter().any(|b| b.name == *name)
                 && let Some(row) = self.row_of_commit(idx)
             {
@@ -484,7 +484,7 @@ impl App {
     /// Matched against the whole IDs, so a prefix of any length works, not
     /// just one short enough to fit the displayed form.
     pub fn jump_to_change_id(&mut self, prefix: &str) -> bool {
-        for (idx, node) in self.nodes.iter_enumerated() {
+        for (idx, node) in self.dag.nodes.iter_enumerated() {
             if (node.commit.change_id.full().starts_with(prefix)
                 || node.commit.graph_id.as_str().starts_with(prefix))
                 && let Some(row) = self.row_of_commit(idx)
@@ -571,7 +571,7 @@ mod jump_tests {
 
     fn app_with_one_commit() -> App {
         let mut app = App::for_test();
-        app.nodes.push(DagNode::new(
+        app.dag.nodes.push(DagNode::new(
             CommitInfo::for_test(CHANGE_ID, COMMIT_ID),
             GraphLines::default(),
             SmallVec::new(),

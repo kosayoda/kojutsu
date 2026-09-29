@@ -37,7 +37,7 @@ pub(super) fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Acti
     // Check if the selected commit is the working copy.
     let is_wc = app.selected_bookmarks().is_some_and(|_| {
         app.selected_entry_idx()
-            .is_some_and(|idx| app.nodes[idx].commit.is_working_copy())
+            .is_some_and(|idx| app.dag.nodes[idx].commit.is_working_copy())
     });
 
     if is_wc {

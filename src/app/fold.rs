@@ -249,9 +249,9 @@ impl App {
 
         let mut rows = std::mem::take(&mut self.rows);
         rows.clear();
-        for idx_raw in 0..self.nodes.len() {
+        for idx_raw in 0..self.dag.nodes.len() {
             let entry_idx = EntryIdx::new(idx_raw);
-            self.nodes[entry_idx].row = rows.len();
+            self.dag.nodes[entry_idx].row = rows.len();
             self.push_dag_entry_rows(entry_idx, &mut rows);
         }
         self.rows = rows;
@@ -270,7 +270,7 @@ impl App {
 
         if self.is_commit_unfolded(entry_idx) {
             // Description continuation lines (skip the first, already in CommitNode).
-            if let Some(full) = &self.nodes[entry_idx].commit.full_description {
+            if let Some(full) = &self.dag.nodes[entry_idx].commit.full_description {
                 for (i, _) in full.lines().skip(1).enumerate() {
                     rows.push(DisplayRow::DescriptionLine {
                         entry_idx,
@@ -283,7 +283,7 @@ impl App {
 
         // Extra graph lines (link/pad/term) are rendered as separate
         // GraphLink rows between commits.
-        for line_idx_raw in 0..self.nodes[entry_idx].graph.extra.len() {
+        for line_idx_raw in 0..self.dag.nodes[entry_idx].graph.extra.len() {
             rows.push(DisplayRow::GraphLink {
                 entry_idx,
                 line_idx: GraphLineIdx::new(line_idx_raw),
@@ -448,11 +448,11 @@ impl App {
             // DAG rows aren't displayed; they are rebuilt on view switch.
             return;
         }
-        let Some(node) = self.nodes.get(entry_idx) else {
+        let Some(node) = self.dag.nodes.get(entry_idx) else {
             return;
         };
         let start = node.row;
-        let end = match self.nodes.get(EntryIdx::new(entry_idx.raw() + 1)) {
+        let end = match self.dag.nodes.get(EntryIdx::new(entry_idx.raw() + 1)) {
             Some(next) => next.row,
             None => self.rows.len(),
         };
@@ -478,8 +478,8 @@ impl App {
 
         if delta != 0 {
             // Shift the row pointers of all following entries.
-            for idx_raw in (entry_idx.raw() + 1)..self.nodes.len() {
-                let node = &mut self.nodes[EntryIdx::new(idx_raw)];
+            for idx_raw in (entry_idx.raw() + 1)..self.dag.nodes.len() {
+                let node = &mut self.dag.nodes[EntryIdx::new(idx_raw)];
                 node.row = node.row.saturating_add_signed(delta);
             }
             if self.scroll >= end {
@@ -758,9 +758,9 @@ impl App {
 
     pub(crate) fn toggle_commit_fold(&mut self, entry_idx: EntryIdx) {
         let change_id = self.change_id(entry_idx);
-        let unfolded = toggle_membership(&mut self.unfolded_commits, change_id);
+        let unfolded = toggle_membership(&mut self.dag.unfolded_commits, change_id);
         if unfolded {
-            let request = self.nodes[entry_idx].files.request_summary();
+            let request = self.dag.nodes[entry_idx].files.request_summary();
             self.pending_repo_requests.extend(request);
         }
         self.rebuild_entry_rows(entry_idx);
@@ -851,7 +851,7 @@ impl App {
             .and_then(|tree| tree.request_diff(file_idx));
         self.pending_repo_requests.extend(request);
         if let FileOwner::Dag(entry_idx) = owner {
-            let request = self.nodes[entry_idx].request_conflict_hunks(file_idx);
+            let request = self.dag.nodes[entry_idx].request_conflict_hunks(file_idx);
             self.pending_repo_requests.extend(request);
         }
     }

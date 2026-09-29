@@ -13,8 +13,8 @@ impl App {
     /// Resolve entry + file indices to (change_id, file_path).
     /// Returns `None` if the file list isn't loaded yet.
     fn resolve_file(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<(ChangeId, RepoPath)> {
-        let change_id = self.nodes[entry_idx].commit.unique_change_id();
-        let files = self.nodes[entry_idx].files.files()?;
+        let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
+        let files = self.dag.nodes[entry_idx].files.files()?;
         Some((change_id, files[file_idx.raw()].path.clone()))
     }
 
@@ -22,6 +22,7 @@ impl App {
     /// it can be narrowed by a line selection.
     fn line_selection_blocker(&self, change_id: &ChangeId) -> Option<String> {
         let files = self
+            .dag
             .nodes
             .iter()
             .find(|node| node.commit.unique_change_id() == *change_id)
@@ -60,7 +61,7 @@ impl App {
         if self.selection_kind() != SelectionKind::Line {
             return;
         }
-        let change_id = self.nodes[entry_idx].commit.unique_change_id();
+        let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
         if !self.selection.any(|s| *s.change_id() == change_id) {
             return;
         }
@@ -121,7 +122,7 @@ impl App {
         if self.is_commit_unfolded(entry_idx) {
             self.toggle_commit_file_selection(entry_idx);
         } else {
-            let change_id = self.nodes[entry_idx].commit.unique_change_id();
+            let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
             self.selection.ensure_compatible(SelectionKind::Commit);
             self.selection.toggle(Selection::Commit(change_id));
         }
@@ -129,7 +130,7 @@ impl App {
 
     /// Check if a commit is in the explicit commit selection set.
     pub fn is_commit_selected(&self, entry_idx: EntryIdx) -> bool {
-        let change_id = self.nodes[entry_idx].commit.unique_change_id();
+        let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
         self.selection.contains(&Selection::Commit(change_id))
     }
 
@@ -158,6 +159,7 @@ impl App {
         // DAG order: the selection itself is a hash set, whose order would
         // otherwise vary between identical invocations.
         let mut revisions: SmallVec<RevisionArg> = self
+            .dag
             .nodes
             .iter()
             .filter(|n| pending.remove(&n.commit.unique_change_id()))
@@ -173,16 +175,16 @@ impl App {
 
     /// Toggle all files in an unfolded commit (select all / deselect all).
     fn toggle_commit_file_selection(&mut self, entry_idx: EntryIdx) {
-        if self.nodes[entry_idx].files.files().is_none() {
+        if self.dag.nodes[entry_idx].files.files().is_none() {
             return;
         }
 
-        let change_id = self.nodes[entry_idx].commit.unique_change_id();
+        let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
         self.clear_other_commits(&change_id);
         self.selection.ensure_compatible(SelectionKind::File);
 
         // Collect file paths upfront to avoid borrowing loaded file state across mutations.
-        let file_paths: Vec<RepoPath> = self.nodes[entry_idx]
+        let file_paths: Vec<RepoPath> = self.dag.nodes[entry_idx]
             .files
             .files()
             .into_iter()
@@ -486,7 +488,7 @@ mod change_id_key_tests {
 
     fn app_with_one_commit() -> App {
         let mut app = App::for_test();
-        app.nodes.push(DagNode::new(
+        app.dag.nodes.push(DagNode::new(
             CommitInfo::for_test(CHANGE_ID, COMMIT_ID),
             GraphLines::default(),
             SmallVec::new(),
@@ -505,7 +507,7 @@ mod change_id_key_tests {
         app.toggle_commit_selection(idx);
         assert!(app.is_commit_selected(idx));
 
-        app.nodes[idx].commit.change_id.set_prefix_len(12);
+        app.dag.nodes[idx].commit.change_id.set_prefix_len(12);
         assert!(app.is_commit_selected(idx));
     }
 
@@ -515,7 +517,7 @@ mod change_id_key_tests {
         // the same short prefix the cursor path and the UI use.
         let mut app = app_with_one_commit();
         let idx = EntryIdx::new(0);
-        app.nodes[idx].commit.change_id.set_prefix_len(2);
+        app.dag.nodes[idx].commit.change_id.set_prefix_len(2);
 
         app.toggle_commit_selection(idx);
 
@@ -549,7 +551,8 @@ mod selected_revision_tests {
         for &tag in tags {
             let mut commit = CommitInfo::for_test(&change_id(tag), &commit_id(tag));
             commit.change_id.set_prefix_len(2);
-            app.nodes
+            app.dag
+                .nodes
                 .push(DagNode::new(commit, GraphLines::default(), SmallVec::new()));
         }
         app.rebuild_rows();
@@ -672,13 +675,13 @@ mod submodule_line_selection_tests {
     /// A single commit whose files are `paths`, each with a two-line diff.
     fn app_with_files(paths: &[(&str, bool)]) -> App {
         let mut app = App::for_test();
-        app.nodes.push(DagNode::new(
+        app.dag.nodes.push(DagNode::new(
             CommitInfo::for_test(CHANGE_ID, COMMIT_ID),
             GraphLines::default(),
             SmallVec::new(),
         ));
         let idx = EntryIdx::new(0);
-        app.nodes[idx].files.set_summary(Ok(DiffSummary {
+        app.dag.nodes[idx].files.set_summary(Ok(DiffSummary {
             files: paths
                 .iter()
                 .map(|(path, is_submodule)| file(path, *is_submodule))
@@ -686,7 +689,7 @@ mod submodule_line_selection_tests {
             stats: LineStats::default(),
         }));
         for (path, _) in paths {
-            app.nodes[idx]
+            app.dag.nodes[idx]
                 .files
                 .set_diff(&RepoPath::new(*path), Ok(two_line_diff()));
         }
@@ -764,7 +767,7 @@ mod submodule_line_selection_tests {
         app.toggle_line_selection(entry, FileIdx::new(0), REMOVED);
         assert_eq!(app.selection_kind(), SelectionKind::Line);
 
-        app.nodes[entry].files.set_summary(Ok(DiffSummary {
+        app.dag.nodes[entry].files.set_summary(Ok(DiffSummary {
             files: vec![file("readme", false), file("sub", true)],
             stats: LineStats::default(),
         }));

@@ -155,8 +155,8 @@ impl App {
                     line_idx,
                 }) = self.rows.get(self.cursor.raw())
                 {
-                    let cid = self.nodes[*entry_idx].commit.unique_change_id();
-                    if let Some(file) = self.nodes[*entry_idx]
+                    let cid = self.dag.nodes[*entry_idx].commit.unique_change_id();
+                    if let Some(file) = self.dag.nodes[*entry_idx]
                         .files
                         .files()
                         .and_then(|f| f.get(file_idx.raw()))
@@ -449,8 +449,8 @@ impl App {
 
         // Check persistent line range.
         if let Some(PersistentVisualRange::Lines(vr)) = &self.visual.persistent {
-            let cid = self.nodes[entry_idx].commit.unique_change_id();
-            if let Some(files) = self.nodes[entry_idx].files.files()
+            let cid = self.dag.nodes[entry_idx].commit.unique_change_id();
+            if let Some(files) = self.dag.nodes[entry_idx].files.files()
                 && let Some(file) = files.get(file_idx.raw())
                 && cid == vr.change_id
                 && file.path == vr.path
@@ -562,8 +562,8 @@ impl App {
             {
                 if start_line.is_none() {
                     start_line = Some(*line_idx);
-                    change_id = Some(self.nodes[*entry_idx].commit.unique_change_id());
-                    path = self.nodes[*entry_idx]
+                    change_id = Some(self.dag.nodes[*entry_idx].commit.unique_change_id());
+                    path = self.dag.nodes[*entry_idx]
                         .files
                         .files()
                         .and_then(|files| files.get(file_idx.raw()))
@@ -594,6 +594,7 @@ impl App {
         let vr = vr.clone();
 
         let line_data: Vec<Selection> = self
+            .dag
             .nodes
             .iter()
             .filter_map(|node| {
@@ -720,7 +721,7 @@ impl App {
 
         self.selection.ensure_compatible(SelectionKind::Commit);
         let all_selected = range.iter().all(|idx| {
-            let cid = self.nodes[*idx].commit.unique_change_id();
+            let cid = self.dag.nodes[*idx].commit.unique_change_id();
             self.selection.contains(&Selection::Commit(cid))
         });
 
@@ -728,12 +729,12 @@ impl App {
         let range: Vec<EntryIdx> = range.clone();
         if all_selected {
             for idx in &range {
-                let cid = self.nodes[*idx].commit.unique_change_id();
+                let cid = self.dag.nodes[*idx].commit.unique_change_id();
                 self.selection.remove(&Selection::Commit(cid));
             }
         } else {
             for idx in &range {
-                let cid = self.nodes[*idx].commit.unique_change_id();
+                let cid = self.dag.nodes[*idx].commit.unique_change_id();
                 self.selection.insert(Selection::Commit(cid));
             }
         }
@@ -742,7 +743,7 @@ impl App {
     /// The next entry in display order (downward = toward parents).
     fn next_entry_down(&self, entry_idx: EntryIdx) -> Option<EntryIdx> {
         let next = entry_idx.raw() + 1;
-        if next < self.nodes.len() {
+        if next < self.dag.nodes.len() {
             Some(EntryIdx::new(next))
         } else {
             None
@@ -832,10 +833,10 @@ impl App {
         };
         let (entry_idx, lo, hi) = (*entry_idx, *lo, *hi);
 
-        let Some(files) = self.nodes[entry_idx].files.files() else {
+        let Some(files) = self.dag.nodes[entry_idx].files.files() else {
             return;
         };
-        let change_id = self.nodes[entry_idx].commit.unique_change_id();
+        let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
         let file_refs: Vec<FileRef> = files
             .iter()
             .enumerate()

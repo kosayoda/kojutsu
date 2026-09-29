@@ -83,7 +83,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     let is_marked = |entry_idx: EntryIdx| -> bool {
         target_marks.map_or_else(
             || app.is_commit_selected(entry_idx),
-            |marks| marks.contains(&app.nodes[entry_idx].commit.unique_prefix()),
+            |marks| marks.contains(&app.dag.nodes[entry_idx].commit.unique_prefix()),
         )
     };
 
@@ -137,7 +137,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
             });
             match row {
                 DisplayRow::CommitNode { entry_idx } => {
-                    let node = &app.nodes[*entry_idx];
+                    let node = &app.dag.nodes[*entry_idx];
                     let gl = &node.graph;
                     let graph_node = gl.node.as_str();
                     let graph_cont = gl.cont.as_str();
@@ -163,13 +163,13 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     entry_idx,
                     line_idx,
                 } => {
-                    let text = app.nodes[*entry_idx]
+                    let text = app.dag.nodes[*entry_idx]
                         .commit
                         .full_description
                         .as_ref()
                         .and_then(|d| d.lines().nth(line_idx.raw() + 1))
                         .unwrap_or("");
-                    let graph_cont = app.nodes[*entry_idx].graph.rest.as_str();
+                    let graph_cont = app.dag.nodes[*entry_idx].graph.rest.as_str();
                     let selected = is_marked(*entry_idx);
                     let in_visual = app.is_in_visual_commit_range(*entry_idx);
                     let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
@@ -197,7 +197,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     entry_idx,
                     line_idx,
                 } => {
-                    let graph_str = app.nodes[*entry_idx]
+                    let graph_str = app.dag.nodes[*entry_idx]
                         .graph
                         .extra
                         .get(line_idx.raw())

@@ -240,11 +240,8 @@ pub(crate) struct FileFoldKey {
 /// Application state. Pure data -- no I/O, no rendering.
 pub struct App {
     pub active_view: ActiveView,
-    pub nodes: IndexVec<EntryIdx, DagNode>,
-    /// Lookup from commit graph_id → entry index (needed at event boundary).
-    pub commit_index: HashMap<CommitId, EntryIdx>,
-    /// In-progress revset stream state (present while chunks are arriving).
-    stream: Option<data::DagStreamState>,
+    /// The DAG view's commits and what is unfolded or picked among them.
+    pub dag: DagState,
     /// Data for bookmark/tag/workspace views.
     pub views: ViewData,
     /// Operation log view state.
@@ -253,7 +250,6 @@ pub struct App {
     pub evolog: EvoLogState,
     /// Command log view state.
     pub command_log: CommandLogState,
-    /// Interdiff view state.
     /// The interdiff view's comparison, once one has been entered.
     pub interdiff: Option<Interdiff>,
     /// Annotate (blame) view state.
@@ -284,10 +280,6 @@ pub struct App {
     pub repo_root: String,
     /// Current interaction mode.
     pub mode: AppMode,
-    /// Per-commit fold state, keyed by change id (stable across mutations).
-    pub unfolded_commits: HashSet<ChangeId>,
-    /// Per-file fold state, keyed by (change id, path) (stable across mutations).
-    pub(crate) unfolded_files: HashSet<FileFoldKey>,
     /// Repo requests waiting to be sent to the background service.
     pending_repo_requests: Vec<RepoRequest>,
     /// The file at a revision the user asked to view, while its content
@@ -318,6 +310,20 @@ pub struct App {
     /// Where to jump the cursor after the next DAG refresh.
     pub jump_after_refresh: Option<JumpTarget>,
     pub last_repeatable: Option<(crate::keymap::AppAction, CommandFlags)>,
+}
+
+/// The DAG view's state.
+#[derive(Default)]
+pub struct DagState {
+    pub nodes: IndexVec<EntryIdx, DagNode>,
+    /// Lookup from commit graph_id → entry index (needed at event boundary).
+    pub commit_index: HashMap<CommitId, EntryIdx>,
+    /// In-progress revset stream state (present while chunks are arriving).
+    stream: Option<data::DagStreamState>,
+    /// Per-commit fold state, keyed by change id (stable across mutations).
+    pub unfolded_commits: HashSet<ChangeId>,
+    /// Per-file fold state, keyed by (change id, path) (stable across mutations).
+    pub(crate) unfolded_files: HashSet<FileFoldKey>,
     /// Per-hunk conflict UI state (picks, base-fold, gap-expansion),
     /// authoritative and persisted across reloads. Keyed by commit ID:
     /// identical ID means identical content and thus identical hunk
@@ -401,7 +407,7 @@ impl std::fmt::Debug for App {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("App")
             .field("active_view", &self.active_view)
-            .field("nodes_len", &self.nodes.len())
+            .field("nodes_len", &self.dag.nodes.len())
             .field("cursor", &self.cursor)
             .finish_non_exhaustive()
     }
@@ -412,9 +418,7 @@ impl App {
         let default_search_scopes = config.default_search_scopes.to_flags();
         let mut app = Self {
             active_view: ActiveView::Dag,
-            nodes: IndexVec::new(),
-            commit_index: HashMap::new(),
-            stream: None,
+            dag: DagState::default(),
             views: ViewData::new(),
             op_log: OpLogState::new(),
             evolog: EvoLogState::new(),
@@ -441,8 +445,6 @@ impl App {
             run_jobs: None,
             repo_root,
             mode: AppMode::Normal,
-            unfolded_commits: HashSet::new(),
-            unfolded_files: HashSet::new(),
             pending_repo_requests: Vec::new(),
             pending_file_view: None,
             toggles: CommandFlags::empty(),
@@ -457,7 +459,6 @@ impl App {
             search: None,
             jump_after_refresh: None,
             last_repeatable: None,
-            conflict_ui: HashMap::new(),
         };
         app.rebuild_rows();
         app
@@ -478,9 +479,10 @@ impl App {
     pub fn with_test_commit(change_id: &str, commit_id: &str) -> Self {
         let mut app = Self::for_test();
         let commit = crate::dag::CommitInfo::for_test(change_id, commit_id);
-        app.commit_index
+        app.dag
+            .commit_index
             .insert(commit.graph_id.clone(), EntryIdx::new(0));
-        app.nodes.push(DagNode::new(
+        app.dag.nodes.push(DagNode::new(
             commit,
             crate::graph::GraphLines::default(),
             SmallVec::new(),
@@ -612,17 +614,21 @@ impl App {
 
     /// Whether the working copy (`@`) is visible in the current entries.
     pub fn has_working_copy(&self) -> bool {
-        self.nodes.iter().any(|n| n.commit.is_working_copy())
+        self.dag.nodes.iter().any(|n| n.commit.is_working_copy())
     }
 
     /// Number of conflicted commits in the current entries.
     pub fn conflicted_commit_count(&self) -> usize {
-        self.nodes.iter().filter(|n| n.commit.has_conflict).count()
+        self.dag
+            .nodes
+            .iter()
+            .filter(|n| n.commit.has_conflict)
+            .count()
     }
 
     /// Row index of a commit's `CommitNode` in the display rows.
     pub fn row_of_commit(&self, entry_idx: EntryIdx) -> Option<RowIdx> {
-        Some(RowIdx::new(self.nodes.get(entry_idx)?.row))
+        Some(RowIdx::new(self.dag.nodes.get(entry_idx)?.row))
     }
 
     pub fn switch_view(&mut self, view: ActiveView) {
@@ -654,7 +660,7 @@ impl App {
             // the selected evolog entry (if switching from within evolog).
             let commit_id = self
                 .selected_entry_idx()
-                .map(|idx| self.nodes[idx].commit.graph_id.clone())
+                .map(|idx| self.dag.nodes[idx].commit.graph_id.clone())
                 .or_else(|| self.selected_evolog_entry().map(|e| e.commit_id.clone()));
             if let Some(commit_id) = commit_id {
                 let changed = self.evolog.commit_id.as_ref() != Some(&commit_id);
@@ -885,7 +891,7 @@ impl App {
             ActiveView::Dag => self
                 .selected_entry_idx()
                 .map(|idx| {
-                    self.nodes[idx]
+                    self.dag.nodes[idx]
                         .commit
                         .workspaces
                         .iter()
@@ -1039,7 +1045,8 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
     ) -> Option<&[crate::conflict::ConflictHunkKind]> {
-        self.nodes
+        self.dag
+            .nodes
             .get(entry_idx)?
             .conflict_hunks(file_idx)?
             .loaded()
@@ -1062,18 +1069,18 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
     ) -> Option<(CommitId, RepoPath)> {
-        let path = self.nodes[entry_idx]
+        let path = self.dag.nodes[entry_idx]
             .files
             .files()
             .and_then(|f| f.get(file_idx.raw()))
             .map(|f| f.path.clone())?;
-        Some((self.nodes[entry_idx].commit.graph_id.clone(), path))
+        Some((self.dag.nodes[entry_idx].commit.graph_id.clone(), path))
     }
 
     /// The stored UI state for a hunk, if it deviates from the default.
     fn hunk_ui(&self, hunk: ConflictHunkRef) -> Option<&HunkUiState> {
         let key = self.conflict_ui_key(hunk.entry_idx, hunk.file_idx)?;
-        self.conflict_ui.get(&key)?.get(&hunk.hunk_idx)
+        self.dag.conflict_ui.get(&key)?.get(&hunk.hunk_idx)
     }
 
     /// The current pick for a hunk (None = unpicked).
@@ -1118,7 +1125,7 @@ impl App {
             return;
         };
         {
-            let file_map = self.conflict_ui.entry(key.clone()).or_default();
+            let file_map = self.dag.conflict_ui.entry(key.clone()).or_default();
             let state = file_map.entry(hunk.hunk_idx).or_default();
             f(state);
             if *state != HunkUiState::default() {
@@ -1129,7 +1136,7 @@ impl App {
                 return;
             }
         }
-        self.conflict_ui.remove(&key);
+        self.dag.conflict_ui.remove(&key);
     }
 
     pub fn conflict_term(
@@ -1212,8 +1219,9 @@ impl App {
     /// Drop UI state for commits no longer present (rewritten commits get
     /// new IDs, so their state can never match again).
     pub(super) fn prune_conflict_ui(&mut self) {
-        let commit_index = &self.commit_index;
-        self.conflict_ui
+        let commit_index = &self.dag.commit_index;
+        self.dag
+            .conflict_ui
             .retain(|(commit_id, _), _| commit_index.contains_key(commit_id));
     }
 
@@ -1224,7 +1232,7 @@ impl App {
         file_idx: FileIdx,
     ) -> HashMap<ConflictHunkIdx, ConflictPick> {
         self.conflict_ui_key(entry_idx, file_idx)
-            .and_then(|key| self.conflict_ui.get(&key))
+            .and_then(|key| self.dag.conflict_ui.get(&key))
             .map(|m| {
                 m.iter()
                     .filter_map(|(&i, s)| s.pick.clone().map(|p| (i, p)))
@@ -1246,7 +1254,7 @@ impl App {
         if picks.is_empty() {
             return None;
         }
-        let path = self.nodes[entry_idx]
+        let path = self.dag.nodes[entry_idx]
             .files
             .files()
             .and_then(|f| f.get(file_idx.raw()))
@@ -1264,7 +1272,7 @@ impl App {
         file_idx: FileIdx,
     ) -> Option<(RepoPath, String)> {
         let hunks = self.conflict_hunks_loaded(entry_idx, file_idx)?;
-        let path = self.nodes[entry_idx]
+        let path = self.dag.nodes[entry_idx]
             .files
             .files()
             .and_then(|f| f.get(file_idx.raw()))
@@ -1299,38 +1307,38 @@ impl App {
     /// The revision to hand `jj` for the commit the cursor is on.
     pub fn selected_change_id(&self) -> Option<RevisionArg> {
         let entry_idx = self.selected_entry_idx()?;
-        Some(self.nodes[entry_idx].commit.unique_prefix())
+        Some(self.dag.nodes[entry_idx].commit.unique_prefix())
     }
 
     /// Whether the commit the cursor is on is a merge (multiple parents).
     pub fn selected_is_merge(&self) -> bool {
         self.selected_entry_idx()
-            .is_some_and(|idx| self.nodes[idx].commit.is_merge)
+            .is_some_and(|idx| self.dag.nodes[idx].commit.is_merge)
     }
 
     /// Get the bookmarks of the commit the cursor is on.
     pub fn selected_bookmarks(&self) -> Option<&[crate::dag::BookmarkInfo]> {
         let entry_idx = self.selected_entry_idx()?;
-        Some(&self.nodes[entry_idx].commit.bookmarks)
+        Some(&self.dag.nodes[entry_idx].commit.bookmarks)
     }
 
     /// Get the tags of the commit the cursor is on.
     pub fn selected_tags(&self) -> Option<&[crate::types::TagName]> {
         let entry_idx = self.selected_entry_idx()?;
-        Some(&self.nodes[entry_idx].commit.tags)
+        Some(&self.dag.nodes[entry_idx].commit.tags)
     }
 
     /// Get the description of the commit the cursor is on.
     pub fn selected_description(&self) -> Option<&str> {
         let entry_idx = self.selected_entry_idx()?;
-        self.nodes[entry_idx].commit.description.as_deref()
+        self.dag.nodes[entry_idx].commit.description.as_deref()
     }
 
     /// Get the file path under the cursor (if on a file or diff line row).
     pub fn selected_file_path(&self) -> Option<&crate::types::RepoPath> {
         let (entry_idx, file_idx) = self.rows.get(self.cursor.raw())?.dag_file()?;
         Some(
-            &self.nodes[entry_idx]
+            &self.dag.nodes[entry_idx]
                 .files
                 .files()?
                 .get(file_idx.raw())?
@@ -1341,39 +1349,40 @@ impl App {
     /// Whether the cursor is on a working copy commit.
     pub fn selected_is_working_copy(&self) -> bool {
         self.selected_entry_idx()
-            .is_some_and(|idx| self.nodes[idx].commit.is_working_copy())
+            .is_some_and(|idx| self.dag.nodes[idx].commit.is_working_copy())
     }
 
     /// Whether the cursor's commit has conflicts.
     pub fn selected_has_conflict(&self) -> bool {
         self.selected_entry_idx()
-            .is_some_and(|idx| self.nodes[idx].commit.has_conflict)
+            .is_some_and(|idx| self.dag.nodes[idx].commit.has_conflict)
     }
 
     /// Whether the cursor's commit is empty.
     pub fn selected_is_empty(&self) -> bool {
         self.selected_entry_idx()
-            .is_some_and(|idx| self.nodes[idx].commit.is_empty)
+            .is_some_and(|idx| self.dag.nodes[idx].commit.is_empty)
     }
 
     pub(crate) fn commit_id(&self, entry_idx: EntryIdx) -> &CommitId {
-        &self.nodes[entry_idx].commit.graph_id
+        &self.dag.nodes[entry_idx].commit.graph_id
     }
 
     /// Stable identity of a commit, for keying internal state.
     pub(crate) fn change_id(&self, entry_idx: EntryIdx) -> ChangeId {
-        self.nodes[entry_idx].commit.unique_change_id()
+        self.dag.nodes[entry_idx].commit.unique_change_id()
     }
 
     /// The revision to hand `jj` for a commit.
     pub(crate) fn revision(&self, entry_idx: EntryIdx) -> RevisionArg {
-        self.nodes[entry_idx].commit.unique_prefix()
+        self.dag.nodes[entry_idx].commit.unique_prefix()
     }
 
     /// Resolve a revision (short prefix or whole change ID) to its commit
     /// (graph) ID via the DAG nodes.
     pub fn commit_id_for_change(&self, revision: &RevisionArg) -> Option<CommitId> {
-        self.nodes
+        self.dag
+            .nodes
             .iter()
             .find(|n| {
                 n.commit.unique_prefix() == *revision
@@ -1383,13 +1392,15 @@ impl App {
     }
 
     pub fn is_commit_unfolded(&self, entry_idx: EntryIdx) -> bool {
-        self.unfolded_commits.contains(&self.change_id(entry_idx))
+        self.dag
+            .unfolded_commits
+            .contains(&self.change_id(entry_idx))
     }
 
     /// The file tree listing an owner's changed files.
     pub fn file_tree(&self, owner: FileOwner) -> Option<&FileTree> {
         match owner {
-            FileOwner::Dag(entry_idx) => self.nodes.get(entry_idx).map(|n| &n.files),
+            FileOwner::Dag(entry_idx) => self.dag.nodes.get(entry_idx).map(|n| &n.files),
             FileOwner::EvoLog(evolog_idx) => {
                 let entry = self.evolog.entries.get(evolog_idx.raw())?;
                 self.evolog.files.get(&entry.commit_id)
@@ -1400,7 +1411,7 @@ impl App {
 
     fn file_tree_mut(&mut self, owner: FileOwner) -> Option<&mut FileTree> {
         match owner {
-            FileOwner::Dag(entry_idx) => self.nodes.get_mut(entry_idx).map(|n| &mut n.files),
+            FileOwner::Dag(entry_idx) => self.dag.nodes.get_mut(entry_idx).map(|n| &mut n.files),
             FileOwner::EvoLog(evolog_idx) => {
                 let entry = self.evolog.entries.get(evolog_idx.raw())?;
                 self.evolog.files.get_mut(&entry.commit_id)
@@ -1427,7 +1438,7 @@ impl App {
             return false;
         };
         match owner {
-            FileOwner::Dag(entry_idx) => self.unfolded_files.contains(&FileFoldKey {
+            FileOwner::Dag(entry_idx) => self.dag.unfolded_files.contains(&FileFoldKey {
                 change_id: self.change_id(entry_idx),
                 path: path.clone(),
             }),
@@ -1455,7 +1466,7 @@ impl App {
                     change_id: self.change_id(entry_idx),
                     path,
                 };
-                set_membership(&mut self.unfolded_files, key, unfolded);
+                set_membership(&mut self.dag.unfolded_files, key, unfolded);
             }
             FileOwner::EvoLog(evolog_idx) => {
                 if let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) {
@@ -1478,7 +1489,7 @@ impl App {
     /// deepest-visible representation.
     pub fn shown_files(&self, entry_idx: EntryIdx) -> Option<&[FileChange]> {
         self.is_commit_unfolded(entry_idx)
-            .then(|| self.nodes[entry_idx].files.files())
+            .then(|| self.dag.nodes[entry_idx].files.files())
             .flatten()
     }
 
@@ -1732,7 +1743,7 @@ impl App {
 
     /// Look up the entry index for a commit by its graph_id.
     pub fn entry_by_commit_id(&self, commit_id: &CommitId) -> Option<EntryIdx> {
-        self.commit_index.get(commit_id).copied()
+        self.dag.commit_index.get(commit_id).copied()
     }
 
     /// Resolve a stable conflict-hunk address back to row indices. `None`
@@ -1746,7 +1757,7 @@ impl App {
         hunk_idx: crate::idx::ConflictHunkIdx,
     ) -> Option<ConflictHunkRef> {
         let entry_idx = self.entry_by_commit_id(commit_id)?;
-        let file_idx = self.nodes[entry_idx].files.file_idx(path)?;
+        let file_idx = self.dag.nodes[entry_idx].files.file_idx(path)?;
         Some(ConflictHunkRef {
             entry_idx,
             file_idx,

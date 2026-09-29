@@ -68,7 +68,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 app.set_error("cursor must be on a conflicted file");
                 return Action::None;
             };
-            let Some(file) = app.nodes[entry_idx]
+            let Some(file) = app.dag.nodes[entry_idx]
                 .files
                 .files()
                 .and_then(|f| f.get(file_idx.raw()))
@@ -143,7 +143,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 app.set_error(ERR_NOT_ON_HUNK);
                 return Action::None;
             };
-            let Some(path) = app.nodes[hunk.entry_idx]
+            let Some(path) = app.dag.nodes[hunk.entry_idx]
                 .files
                 .files()
                 .and_then(|f| f.get(hunk.file_idx.raw()))
@@ -197,7 +197,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 app.set_error("cursor must be on a conflicted file");
                 return Action::None;
             };
-            let Some(file) = app.nodes[entry_idx]
+            let Some(file) = app.dag.nodes[entry_idx]
                 .files
                 .files()
                 .and_then(|f| f.get(file_idx.raw()))
@@ -540,7 +540,7 @@ fn arrange(app: &mut App, flags: CommandFlags, direction: ArrangeDirection) -> A
     let Some(entry_idx) = app.selected_entry_idx() else {
         return Action::None;
     };
-    let node = &app.nodes[entry_idx];
+    let node = &app.dag.nodes[entry_idx];
     let change_id = node.commit.unique_prefix();
 
     let (neighbors, noun, kind) = match direction {
@@ -556,7 +556,7 @@ fn arrange(app: &mut App, flags: CommandFlags, direction: ArrangeDirection) -> A
         return Action::None;
     }
 
-    let target_id = app.nodes[neighbors[0]].commit.unique_prefix();
+    let target_id = app.dag.nodes[neighbors[0]].commit.unique_prefix();
     Action::run(JJCommand {
         kind: JJCommandKind::Rebase {
             change_ids: smallvec![change_id],

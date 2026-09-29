@@ -68,7 +68,7 @@ impl App {
                     owner: FileOwner::Dag(ei),
                     file_idx,
                     ..
-                } if *ei == entry_idx => self.nodes[entry_idx]
+                } if *ei == entry_idx => self.dag.nodes[entry_idx]
                     .files
                     .files()
                     .and_then(|f| f.get(file_idx.raw()))
@@ -86,16 +86,16 @@ impl App {
             }
         });
 
-        let old_nodes: HashMap<CommitId, super::DagNode> = std::mem::take(&mut self.nodes)
+        let old_nodes: HashMap<CommitId, super::DagNode> = std::mem::take(&mut self.dag.nodes)
             .into_vec()
             .into_iter()
             .map(|n| (n.commit.graph_id.clone(), n))
             .collect();
 
-        self.commit_index.clear();
+        self.dag.commit_index.clear();
         self.visual.mode = None;
         self.visual.persistent = None;
-        self.stream = Some(DagStreamState {
+        self.dag.stream = Some(DagStreamState {
             renderer: crate::graph::DagGraphRenderer::new(),
             old_nodes,
             cursor_restore,
@@ -110,19 +110,20 @@ impl App {
     pub(super) fn append_entries(&mut self, entries: Vec<DagEntry>, done: bool) {
         // A chunk without an active stream is stale (e.g. the stream was
         // finalized by an error), so ignore it.
-        let Some(mut stream) = self.stream.take() else {
+        let Some(mut stream) = self.dag.stream.take() else {
             return;
         };
 
-        let base = self.nodes.len();
+        let base = self.dag.nodes.len();
         for (i, entry) in entries.iter().enumerate() {
-            self.commit_index
+            self.dag
+                .commit_index
                 .insert(entry.commit.graph_id.clone(), EntryIdx::new(base + i));
         }
         let graph_lines = stream.renderer.render(&entries, &self.config.glyphs);
-        self.nodes.reserve(entries.len());
+        self.dag.nodes.reserve(entries.len());
         for (entry, graph) in entries.into_iter().zip(graph_lines) {
-            let idx = EntryIdx::new(self.nodes.len());
+            let idx = EntryIdx::new(self.dag.nodes.len());
             // Resolve direct parents against commits loaded so far; targets
             // arriving in later chunks are linked below as they appear.
             let mut parents = SmallVec::new();
@@ -131,7 +132,7 @@ impl App {
                 .iter()
                 .filter(|e| matches!(e.kind, EdgeKind::Direct))
             {
-                if let Some(&parent_idx) = self.commit_index.get(&edge.target) {
+                if let Some(&parent_idx) = self.dag.commit_index.get(&edge.target) {
                     parents.push(parent_idx);
                 } else {
                     stream
@@ -145,35 +146,35 @@ impl App {
             if let Some(old) = stream.old_nodes.remove(&node.commit.graph_id) {
                 node.restore(old);
             }
-            self.nodes.push(node);
+            self.dag.nodes.push(node);
         }
 
         // Second pass, once all of the chunk's nodes exist: fill children
         // (parents may point forward within the chunk) and link children
         // from earlier chunks that were waiting on these commits.
-        for idx_raw in base..self.nodes.len() {
+        for idx_raw in base..self.dag.nodes.len() {
             let idx = EntryIdx::new(idx_raw);
-            for parent_idx in self.nodes[idx].parents.clone() {
-                self.nodes[parent_idx].children.push(idx);
+            for parent_idx in self.dag.nodes[idx].parents.clone() {
+                self.dag.nodes[parent_idx].children.push(idx);
             }
             if let Some(waiting) = stream
                 .pending_parents
-                .remove(&self.nodes[idx].commit.graph_id)
+                .remove(&self.dag.nodes[idx].commit.graph_id)
             {
                 for child_idx in waiting {
-                    self.nodes[child_idx].parents.push(idx);
-                    self.nodes[idx].children.push(child_idx);
+                    self.dag.nodes[child_idx].parents.push(idx);
+                    self.dag.nodes[idx].children.push(child_idx);
                 }
             }
         }
 
         // Re-request data for new commits that are still unfolded but whose
         // cached file data didn't survive the refresh (happens after mutation).
-        for idx_raw in base..self.nodes.len() {
+        for idx_raw in base..self.dag.nodes.len() {
             let idx = EntryIdx::new(idx_raw);
-            let change_id = self.nodes[idx].commit.unique_change_id();
-            if self.unfolded_commits.contains(&change_id) {
-                let request = self.nodes[idx].files.request_summary();
+            let change_id = self.dag.nodes[idx].commit.unique_change_id();
+            if self.dag.unfolded_commits.contains(&change_id) {
+                let request = self.dag.nodes[idx].files.request_summary();
                 self.pending_repo_requests.extend(request);
             }
         }
@@ -185,20 +186,23 @@ impl App {
         if done {
             // Prune fold state for changes no longer in the DAG.
             let live_change_ids: HashSet<ChangeId> = self
+                .dag
                 .nodes
                 .iter()
                 .map(|n| n.commit.unique_change_id())
                 .collect();
-            self.unfolded_commits
+            self.dag
+                .unfolded_commits
                 .retain(|k| live_change_ids.contains(k));
-            self.unfolded_files
+            self.dag
+                .unfolded_files
                 .retain(|k| live_change_ids.contains(&k.change_id));
             self.selection
                 .retain(|s| live_change_ids.contains(s.change_id()));
             self.prune_conflict_ui();
             self.clear_info_status();
         } else {
-            self.set_status(format!("loading… {} commits", self.nodes.len()));
+            self.set_status(format!("loading… {} commits", self.dag.nodes.len()));
         }
 
         // Restore the cursor once its commit has arrived.
@@ -227,7 +231,7 @@ impl App {
         }
 
         if !done {
-            self.stream = Some(stream);
+            self.dag.stream = Some(stream);
         }
 
         self.refresh_search_matches();
@@ -238,6 +242,7 @@ impl App {
     /// Returns whether the commit was found.
     fn try_restore_cursor(&mut self, ctx: &CursorContext) -> bool {
         let Some((entry_idx, _)) = self
+            .dag
             .nodes
             .iter_enumerated()
             .find(|(_, node)| node.commit.unique_change_id() == ctx.change_id)
@@ -256,7 +261,7 @@ impl App {
                         owner: FileOwner::Dag(ei),
                         file_idx,
                         line_idx,
-                    } if *ei == entry_idx && *line_idx == li => self.nodes[entry_idx]
+                    } if *ei == entry_idx && *line_idx == li => self.dag.nodes[entry_idx]
                         .files
                         .files()
                         .and_then(|f| f.get(file_idx.raw()))
@@ -270,7 +275,7 @@ impl App {
                     DisplayRow::FileChange {
                         owner: FileOwner::Dag(ei),
                         file_idx,
-                    } if *ei == entry_idx => self.nodes[entry_idx]
+                    } if *ei == entry_idx => self.dag.nodes[entry_idx]
                         .files
                         .files()
                         .and_then(|f| f.get(file_idx.raw()))
@@ -374,20 +379,20 @@ impl App {
             }
             RepoResult::CommitEmpty { commit_id } => {
                 if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                    self.nodes[idx].commit.is_empty = true;
+                    self.dag.nodes[idx].commit.is_empty = true;
                 }
             }
             RepoResult::DivergenceInfo { updates } => {
                 for (commit_id, update) in updates {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                        self.nodes[idx].commit.divergence = Some(update);
+                        self.dag.nodes[idx].commit.divergence = Some(update);
                     }
                 }
             }
             RepoResult::PrefixLengths { updates } => {
                 for (commit_id, update) in updates {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id) {
-                        let commit = &mut self.nodes[idx].commit;
+                        let commit = &mut self.dag.nodes[idx].commit;
                         commit.change_id.set_prefix_len(update.change_prefix_len);
                         commit.commit_id.set_prefix_len(update.commit_prefix_len);
                     }
@@ -475,9 +480,9 @@ impl App {
             } => match result {
                 Ok(hunks) => {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id)
-                        && let Some(file_idx) = self.nodes[idx].files.file_idx(&path)
+                        && let Some(file_idx) = self.dag.nodes[idx].files.file_idx(&path)
                     {
-                        self.nodes[idx]
+                        self.dag.nodes[idx]
                             .set_conflict_hunks(file_idx, super::Loadable::Loaded(hunks));
                         deferred.rebuild.add_entry(idx);
                         deferred.scroll = true;
@@ -485,9 +490,9 @@ impl App {
                 }
                 Err(error) => {
                     if let Some(idx) = self.entry_by_commit_id(&commit_id)
-                        && let Some(file_idx) = self.nodes[idx].files.file_idx(&path)
+                        && let Some(file_idx) = self.dag.nodes[idx].files.file_idx(&path)
                     {
-                        self.nodes[idx]
+                        self.dag.nodes[idx]
                             .set_conflict_hunks(file_idx, super::Loadable::Failed(error.clone()));
                         deferred.rebuild.add_entry(idx);
                     }
@@ -646,7 +651,7 @@ impl App {
         if let FileOwner::Dag(idx) = owner
             && loaded
         {
-            self.nodes[idx].commit.is_empty = file_count == 0;
+            self.dag.nodes[idx].commit.is_empty = file_count == 0;
             // The file list is the first point this commit's changes
             // are known, so it's also where a line selection made
             // before a rewrite gets re-checked against them.
@@ -703,7 +708,7 @@ impl App {
         let mut seen: HS<(BookmarkName, Option<crate::types::RemoteName>)> = HS::new();
 
         // Local + remote bookmarks from DAG nodes in a single pass.
-        for node in self.nodes.iter() {
+        for node in self.dag.nodes.iter() {
             for bm in &node.commit.bookmarks {
                 if seen.insert((bm.name.clone(), None)) {
                     let kind = if bm.is_tracking {
@@ -793,7 +798,7 @@ impl App {
         let mut seen: HashSet<crate::types::TagName> = HashSet::new();
 
         // Tags on visible commits (have full commit info).
-        for node in self.nodes.iter() {
+        for node in self.dag.nodes.iter() {
             for tag in &node.commit.tags {
                 if seen.insert(tag.clone()) {
                     let is_deleted = self

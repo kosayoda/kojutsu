@@ -1046,14 +1046,14 @@ impl LuaEngine {
         ctx.set("is_empty", app.selected_is_empty())?;
         ctx.set("has_conflict", app.selected_has_conflict())?;
         if let Some(entry_idx) = app.selected_entry_idx() {
-            let commit = &app.nodes[entry_idx].commit;
+            let commit = &app.dag.nodes[entry_idx].commit;
             ctx.set("author_name", commit.author.name.as_str())?;
             ctx.set("author_email", commit.author.email.as_str())?;
             ctx.set("is_immutable", commit.is_immutable)?;
             ctx.set("is_merge", commit.is_merge)?;
             let parents = self.lua.create_table()?;
-            for (i, parent_idx) in app.nodes[entry_idx].parents.iter().enumerate() {
-                let parent_change = app.nodes[*parent_idx].commit.unique_change_id();
+            for (i, parent_idx) in app.dag.nodes[entry_idx].parents.iter().enumerate() {
+                let parent_change = app.dag.nodes[*parent_idx].commit.unique_change_id();
                 parents.raw_set(i + 1, parent_change.as_str())?;
             }
             ctx.set("parent_change_ids", parents)?;

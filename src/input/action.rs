@@ -516,7 +516,8 @@ fn perform(
                 // ours/theirs/base in n-way merges).
                 Some(row @ DisplayRow::ConflictTerm { term_idx, .. }) => {
                     let hunk = row.conflict_hunk().expect("ConflictTerm row has a hunk");
-                    app.nodes
+                    app.dag
+                        .nodes
                         .get(hunk.entry_idx)
                         .and_then(|n| n.conflict_hunks(hunk.file_idx))
                         .and_then(|l| l.loaded())
@@ -965,7 +966,9 @@ fn extract_file_and_line(app: &App) -> Option<(crate::types::RepoPath, usize)> {
 /// Extract the commit ID for the current cursor row.
 fn extract_commit_id(app: &App) -> Option<CommitId> {
     match app.rows.get(app.cursor.raw())? {
-        DisplayRow::CommitNode { entry_idx } => Some(app.nodes[*entry_idx].commit.graph_id.clone()),
+        DisplayRow::CommitNode { entry_idx } => {
+            Some(app.dag.nodes[*entry_idx].commit.graph_id.clone())
+        }
         DisplayRow::FileChange { owner, .. } | DisplayRow::DiffLine { owner, .. } => app
             .file_tree(*owner)
             .map(|tree| tree.target().after().clone()),
