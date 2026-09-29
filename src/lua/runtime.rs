@@ -333,6 +333,52 @@ mod tests {
         );
     }
 
+    /// A command reads the commit under the cursor from whichever view it
+    /// runs in, not only the DAG.
+    #[test]
+    fn a_command_sees_the_commit_under_the_cursor_in_any_view() {
+        use crate::app::{App, BookmarkKind, BookmarkViewEntry};
+        use crate::types::{ActiveView, BookmarkName, CommitId, RevisionArg};
+
+        let runtime = runtime_with(
+            r#"kojutsu.command("show", function(ctx)
+                kojutsu.ui.status(ctx.view .. " " .. tostring(ctx.change_id) .. " "
+                    .. tostring(ctx.commit_id) .. " " .. tostring(ctx.is_empty))
+            end, {})"#,
+        );
+        let status = |app: &mut App| {
+            runtime
+                .engine
+                .execute_command(0, app, crate::keymap::CommandFlags::empty());
+            runtime.engine.flush_logs(app);
+            app.status_message.take().map(|(msg, _)| msg)
+        };
+
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        assert_eq!(
+            status(&mut app).as_deref(),
+            Some("dag qpvuntsm 7bbaa2cb false")
+        );
+
+        app.views.bookmark_entries.push(BookmarkViewEntry {
+            name: BookmarkName::new("main"),
+            commit_id: Some(CommitId::new("7bbaa2cb")),
+            change_id: None,
+            short_commit_id: None,
+            revision: Some(RevisionArg::new("qpv")),
+            description: None,
+            kind: BookmarkKind::Local {
+                is_dirty: false,
+                is_conflicted: false,
+            },
+        });
+        app.switch_view(ActiveView::Bookmarks);
+        assert_eq!(
+            status(&mut app).as_deref(),
+            Some("bookmarks qpv 7bbaa2cb false")
+        );
+    }
+
     /// Run the first registered command and report what it left the config
     /// table as.
     fn run_command(runtime: &LuaRuntime) -> Option<Result<crate::theme::Config, String>> {

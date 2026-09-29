@@ -798,15 +798,20 @@ impl App {
     /// several commits are explicitly selected: a one-commit action there
     /// would silently pick one of them.
     pub fn target_revision(&self) -> Option<RevisionArg> {
+        let explicit_commits = self.active_view == ActiveView::Dag
+            && self.selection_active()
+            && self.selection_kind() == crate::types::SelectionKind::Commit;
+        (!explicit_commits)
+            .then(|| self.cursor_revision())
+            .flatten()
+    }
+
+    /// The revision of the commit under the cursor, in whichever view,
+    /// regardless of any selection.
+    pub fn cursor_revision(&self) -> Option<RevisionArg> {
         let commit_revision = |id: &CommitId| RevisionArg::new(id.as_str());
         match self.active_view {
-            ActiveView::Dag => {
-                let explicit_commits = self.selection_active()
-                    && self.selection_kind() == crate::types::SelectionKind::Commit;
-                (!explicit_commits)
-                    .then(|| self.selected_change_id())
-                    .flatten()
-            }
+            ActiveView::Dag => self.selected_change_id(),
             ActiveView::Bookmarks => self.selected_bookmark_entry()?.revision.clone(),
             ActiveView::Tags => self.selected_tag_entry()?.revision.clone(),
             ActiveView::Evolog => Some(commit_revision(&self.selected_evolog_entry()?.commit_id)),
@@ -819,6 +824,15 @@ impl App {
                 Some(commit_revision(&self.selected_annotate_line()?.commit_id))
             }
             ActiveView::Operations | ActiveView::CommandLog | ActiveView::Interdiff => None,
+        }
+    }
+
+    /// The DAG entry of the commit under the cursor, in whichever view, if
+    /// the DAG shows that commit.
+    pub fn target_entry_idx(&self) -> Option<EntryIdx> {
+        match self.active_view {
+            ActiveView::Dag => self.selected_entry_idx(),
+            _ => self.entry_by_commit_id(&self.target_commit()?.0),
         }
     }
 
@@ -1347,32 +1361,8 @@ impl App {
 
     /// Get the file path under the cursor (if on a file or diff line row).
     pub fn selected_file_path(&self) -> Option<&crate::types::RepoPath> {
-        let (entry_idx, file_idx) = self.rows.get(self.cursor.raw())?.dag_file()?;
-        Some(
-            &self.dag.nodes[entry_idx]
-                .files
-                .files()?
-                .get(file_idx.raw())?
-                .path,
-        )
-    }
-
-    /// Whether the cursor is on a working copy commit.
-    pub fn selected_is_working_copy(&self) -> bool {
-        self.selected_entry_idx()
-            .is_some_and(|idx| self.dag.nodes[idx].commit.is_working_copy())
-    }
-
-    /// Whether the cursor's commit has conflicts.
-    pub fn selected_has_conflict(&self) -> bool {
-        self.selected_entry_idx()
-            .is_some_and(|idx| self.dag.nodes[idx].commit.has_conflict)
-    }
-
-    /// Whether the cursor's commit is empty.
-    pub fn selected_is_empty(&self) -> bool {
-        self.selected_entry_idx()
-            .is_some_and(|idx| self.dag.nodes[idx].commit.is_empty)
+        let (owner, file_idx) = self.rows.get(self.cursor.raw())?.file()?;
+        Some(&self.file(owner, file_idx)?.path)
     }
 
     pub(crate) fn commit_id(&self, entry_idx: EntryIdx) -> &CommitId {

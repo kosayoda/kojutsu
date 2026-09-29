@@ -980,63 +980,72 @@ impl LuaEngine {
         }
     }
 
+    /// What a plugin is told about the cursor: the commit under it in
+    /// whichever view, described from the DAG when the DAG shows it.
     fn build_ctx_table(&self, app: &App) -> mlua::Result<mlua::Table> {
         let ctx = self.lua.create_table()?;
-        let change_id = app.selected_change_id();
-        let commit_id = change_id.as_ref().and_then(|cid| {
-            app.commit_id_for_change(cid)
-                .map(|id| CompactString::from(id.as_str()))
-        });
-        match &change_id {
-            Some(id) => ctx.set("change_id", id.as_str())?,
-            None => ctx.set("change_id", mlua::Value::Nil)?,
-        }
-        match &commit_id {
-            Some(id) => ctx.set("commit_id", id.as_str())?,
-            None => ctx.set("commit_id", mlua::Value::Nil)?,
-        }
-        let change_ids = app.selected_change_ids();
-        let ids_table = self.lua.create_table()?;
-        for (i, id) in change_ids.iter().enumerate() {
-            ids_table.raw_set(i + 1, id.as_str())?;
-        }
-        ctx.set("change_ids", ids_table)?;
-        if let Some(desc) = app.selected_description() {
-            ctx.set("description", desc.to_string())?;
-        }
-        if let Some(bookmarks) = app.selected_bookmarks() {
-            let bm_table = self.lua.create_table()?;
-            for (i, b) in bookmarks.iter().enumerate() {
-                bm_table.raw_set(i + 1, b.name.as_str())?;
+        let string_list = |items: &mut dyn Iterator<Item = &str>| -> mlua::Result<mlua::Table> {
+            let table = self.lua.create_table()?;
+            for (i, item) in items.enumerate() {
+                table.raw_set(i + 1, item)?;
             }
-            ctx.set("bookmarks", bm_table)?;
+            Ok(table)
+        };
+        let entry_idx = app.target_entry_idx();
+        let node = entry_idx.map(|idx| &app.dag.nodes[idx]);
+        let commit = node.map(|n| &n.commit);
+
+        if let Some(change_id) = app.cursor_revision() {
+            ctx.set("change_id", change_id.as_str())?;
         }
-        if let Some(tags) = app.selected_tags() {
-            let tag_table = self.lua.create_table()?;
-            for (i, t) in tags.iter().enumerate() {
-                tag_table.raw_set(i + 1, t.as_str())?;
-            }
-            ctx.set("tags", tag_table)?;
+        let commit_id = commit
+            .map(|c| c.graph_id.clone())
+            .or_else(|| app.target_commit().map(|(id, _)| id));
+        if let Some(commit_id) = &commit_id {
+            ctx.set("commit_id", commit_id.as_str())?;
         }
+        let change_ids = app.target_revisions();
+        ctx.set(
+            "change_ids",
+            string_list(&mut change_ids.iter().map(|id| id.as_str()))?,
+        )?;
         if let Some(path) = app.selected_file_path() {
             ctx.set("file_path", path.as_str())?;
         }
-        ctx.set("is_working_copy", app.selected_is_working_copy())?;
-        ctx.set("is_empty", app.selected_is_empty())?;
-        ctx.set("has_conflict", app.selected_has_conflict())?;
-        if let Some(entry_idx) = app.selected_entry_idx() {
-            let commit = &app.dag.nodes[entry_idx].commit;
+        if let Some(commit) = commit {
+            if let Some(desc) = &commit.description {
+                ctx.set("description", desc.as_str())?;
+            }
+            ctx.set(
+                "bookmarks",
+                string_list(&mut commit.bookmarks.iter().map(|b| b.name.as_str()))?,
+            )?;
+            ctx.set(
+                "tags",
+                string_list(&mut commit.tags.iter().map(|t| t.as_str()))?,
+            )?;
             ctx.set("author_name", commit.author.name.as_str())?;
             ctx.set("author_email", commit.author.email.as_str())?;
             ctx.set("is_immutable", commit.is_immutable)?;
             ctx.set("is_merge", commit.is_merge)?;
-            let parents = self.lua.create_table()?;
-            for (i, parent_idx) in app.dag.nodes[entry_idx].parents.iter().enumerate() {
-                let parent_change = app.dag.nodes[*parent_idx].commit.unique_change_id();
-                parents.raw_set(i + 1, parent_change.as_str())?;
-            }
-            ctx.set("parent_change_ids", parents)?;
         }
+        if let Some(node) = node {
+            let parents: Vec<crate::types::ChangeId> = node
+                .parents
+                .iter()
+                .map(|&idx| app.dag.nodes[idx].commit.unique_change_id())
+                .collect();
+            ctx.set(
+                "parent_change_ids",
+                string_list(&mut parents.iter().map(|id| id.as_str()))?,
+            )?;
+        }
+        ctx.set(
+            "is_working_copy",
+            commit.is_some_and(|c| c.is_working_copy()),
+        )?;
+        ctx.set("is_empty", commit.is_some_and(|c| c.is_empty))?;
+        ctx.set("has_conflict", commit.is_some_and(|c| c.has_conflict))?;
         ctx.set("view", app.active_view.to_string())?;
         ctx.set("revset", app.revset.current.as_str())?;
         ctx.set("repo_root", app.repo_root.as_str())?;
