@@ -227,6 +227,33 @@ mod resume_value_tests {
     }
 }
 
+/// How one run of a Lua thread ended.
+enum Step {
+    /// It yielded a request and is parked until that is answered; the
+    /// action is what the caller must do to answer it.
+    Parked(Action),
+    /// It returned `value`, and `requested` is what its queued requests
+    /// asked of the main loop.
+    Returned {
+        value: mlua::Value,
+        requested: Action,
+        kind: SuspendedKind,
+    },
+    /// It raised an error, already reported.
+    Failed,
+}
+
+/// Record that a pre-hook cancelled `action`.
+fn log_cancelled(app: &mut App, action: &str) {
+    app.push_command_log(
+        crate::app::CommandLogKind::Warning,
+        format!("plugin: pre-hook cancelled - {action}"),
+        None,
+        Vec::new(),
+        false,
+    );
+}
+
 enum SuspendedKind {
     Command(CommandFlags),
     PreHooks {
@@ -263,6 +290,20 @@ struct LuaState {
     pending_logs: Vec<String>,
     pending_status: Option<(String, crate::app::StatusLevel)>,
     log_groups: Vec<LogGroup>,
+}
+
+impl LuaState {
+    /// File the messages logged since the last collection under `header`.
+    fn collect_logs(&mut self, header: String, phase: LogPhase) {
+        let messages: Vec<String> = self.pending_logs.drain(..).collect();
+        if !messages.is_empty() {
+            self.log_groups.push(LogGroup {
+                header,
+                phase,
+                messages,
+            });
+        }
+    }
 }
 
 macro_rules! lua_state {
@@ -363,101 +404,47 @@ impl LuaEngine {
         self.suspended_thread.borrow().is_some()
     }
 
+    /// Run the pre-hooks matching `action`. They can cancel it by returning
+    /// `false`, or yield (to prompt or run a command), in which case the
+    /// action is dispatched when the parked thread finishes.
     pub fn run_pre_hooks(
         &self,
-        action_name: &str,
         action: AppAction,
         flags: CommandFlags,
         app: &mut App,
     ) -> HookOutcome {
-        let hooks_table = match self.collect_hook_functions(action_name, HookPhase::Pre) {
-            Some(t) => t,
-            None => return HookOutcome::Proceed,
+        let header = action.id_name().to_string();
+        let kind = SuspendedKind::PreHooks {
+            action,
+            flags,
+            header,
         };
-        self.lua_ran.set(true);
-        let ctx = match self.build_ctx_table(app) {
-            Ok(t) => t,
-            Err(e) => {
-                app.set_error(format!("plugin: {e}"));
-                return HookOutcome::Proceed;
-            }
-        };
-        let wrapper: mlua::Function = match (|| {
-            let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
-            kojutsu.get::<mlua::Function>("_run_pre_hooks")
-        })() {
-            Ok(f) => f,
-            Err(e) => {
-                app.set_error(format!("plugin: {e}"));
-                return HookOutcome::Proceed;
-            }
-        };
-        let thread = match self.lua.create_thread(wrapper) {
-            Ok(t) => t,
-            Err(e) => {
-                app.set_error(format!("plugin: {e}"));
-                return HookOutcome::Proceed;
-            }
-        };
-        match thread.resume::<mlua::Value>((hooks_table, ctx)) {
-            Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
-                self.collect_logs(action_name.to_string(), LogPhase::Pre);
-                let yield_action = self.handle_yield(
-                    thread,
-                    value,
-                    app,
-                    SuspendedKind::PreHooks {
-                        action,
-                        flags,
-                        header: action_name.to_string(),
-                    },
-                );
-                HookOutcome::Suspended(yield_action)
-            }
-            Ok(mlua::Value::Boolean(false)) => {
-                self.collect_logs(action_name.to_string(), LogPhase::Pre);
-                self.drain_pending_actions(app, flags, false);
-                app.push_command_log(
-                    crate::app::CommandLogKind::Warning,
-                    format!("plugin: pre-hook cancelled - {action_name}"),
-                    None,
-                    Vec::new(),
-                    false,
-                );
+        match self.run_hooks(action, HookPhase::Pre, kind, app, None) {
+            None => HookOutcome::Proceed,
+            Some(Step::Parked(yielded)) => HookOutcome::Suspended(yielded),
+            Some(Step::Returned {
+                value: mlua::Value::Boolean(false),
+                ..
+            }) => {
+                log_cancelled(app, action.id_name());
                 HookOutcome::Cancel
             }
-            Ok(_) => {
-                self.collect_logs(action_name.to_string(), LogPhase::Pre);
-                self.drain_pending_actions(app, flags, false);
-                HookOutcome::Proceed
-            }
-            Err(e) => {
-                self.collect_logs(action_name.to_string(), LogPhase::Pre);
-                app.set_error(format!("plugin: pre-hook error: {e}"));
-                HookOutcome::Proceed
-            }
+            Some(Step::Returned { .. } | Step::Failed) => HookOutcome::Proceed,
         }
     }
 
+    /// Run the post-hooks matching `action`, handing them how its command
+    /// went.
     pub fn run_post_hooks(
         &self,
-        action_name: &str,
+        action: AppAction,
         app: &mut App,
         outcome: CommandOutcome<'_>,
     ) -> HookOutcome {
-        let hooks_table = match self.collect_hook_functions(action_name, HookPhase::Post) {
-            Some(t) => t,
-            None => return HookOutcome::Proceed,
+        let kind = SuspendedKind::PostHooks {
+            header: action.id_name().to_string(),
         };
-        self.lua_ran.set(true);
-        let ctx = match self.build_ctx_table(app) {
-            Ok(t) => t,
-            Err(e) => {
-                app.set_error(format!("plugin: {e}"));
-                return HookOutcome::Proceed;
-            }
-        };
-        let result_table = match outcome_table(
+        let result = match outcome_table(
             &self.lua,
             outcome.success,
             outcome.cancelled,
@@ -470,47 +457,41 @@ impl LuaEngine {
                 return HookOutcome::Proceed;
             }
         };
-        let wrapper: mlua::Function = match (|| {
-            let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
-            kojutsu.get::<mlua::Function>("_run_post_hooks")
-        })() {
-            Ok(f) => f,
-            Err(e) => {
-                app.set_error(format!("plugin: {e}"));
-                return HookOutcome::Proceed;
-            }
-        };
-        let thread = match self.lua.create_thread(wrapper) {
-            Ok(t) => t,
-            Err(e) => {
-                app.set_error(format!("plugin: {e}"));
-                return HookOutcome::Proceed;
-            }
-        };
-        match thread.resume::<mlua::Value>((hooks_table, ctx, result_table)) {
-            Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
-                self.collect_logs(action_name.to_string(), LogPhase::Post);
-                let yield_action = self.handle_yield(
-                    thread,
-                    value,
-                    app,
-                    SuspendedKind::PostHooks {
-                        header: action_name.to_string(),
-                    },
-                );
-                HookOutcome::Suspended(yield_action)
-            }
-            Ok(_) => {
-                self.collect_logs(action_name.to_string(), LogPhase::Post);
-                self.drain_pending_actions(app, CommandFlags::empty(), false);
-                HookOutcome::Proceed
-            }
-            Err(e) => {
-                self.collect_logs(action_name.to_string(), LogPhase::Post);
-                app.set_error(format!("plugin: post-hook error: {e}"));
-                HookOutcome::Proceed
-            }
+        match self.run_hooks(action, HookPhase::Post, kind, app, Some(result)) {
+            Some(Step::Parked(yielded)) => HookOutcome::Suspended(yielded),
+            None | Some(Step::Returned { .. } | Step::Failed) => HookOutcome::Proceed,
         }
+    }
+
+    /// Run the hooks of `phase` matching `action` in one thread, or `None`
+    /// if there are none.
+    fn run_hooks(
+        &self,
+        action: AppAction,
+        phase: HookPhase,
+        kind: SuspendedKind,
+        app: &mut App,
+        result: Option<mlua::Table>,
+    ) -> Option<Step> {
+        let hooks = self.collect_hook_functions(action.id_name(), phase)?;
+        self.lua_ran.set(true);
+        let thread = (|| -> mlua::Result<(mlua::Thread, mlua::Table)> {
+            let kojutsu: mlua::Table = self.lua.globals().get("kojutsu")?;
+            let runner = kojutsu.get::<mlua::Function>("_run_hooks")?;
+            Ok((self.lua.create_thread(runner)?, self.build_ctx_table(app)?))
+        })();
+        let (thread, ctx) = match thread {
+            Ok(pair) => pair,
+            Err(e) => {
+                app.set_error(format!("plugin: {e}"));
+                return Some(Step::Failed);
+            }
+        };
+        let phase_name = match phase {
+            HookPhase::Pre => "pre",
+            HookPhase::Post => "post",
+        };
+        Some(self.step(thread, (hooks, phase_name, ctx, result), kind, app))
     }
 
     /// The name a command was registered under, for error messages.
@@ -520,56 +501,52 @@ impl LuaEngine {
 
     pub fn execute_command(&self, id: u16, app: &mut App, flags: CommandFlags) -> Action {
         let cmd = &self.commands[id as usize];
-        let cmd_name = cmd.name.clone();
-
         app.push_command_log(
             crate::app::CommandLogKind::Command,
-            format!("plugin: {cmd_name}"),
+            format!("plugin: {}", cmd.name),
             None,
             Vec::new(),
             true,
         );
 
         self.prepare_execution();
-
-        let func: mlua::Function = match self.lua.registry_value(&cmd.callback) {
-            Ok(f) => f,
-            Err(e) => {
-                app.set_error(format!("plugin: {e}"));
-                return Action::None;
-            }
-        };
         *self.current_header.borrow_mut() = cmd.source.clone();
-        let thread = match self.lua.create_thread(func) {
+        let thread = self
+            .lua
+            .registry_value::<mlua::Function>(&cmd.callback)
+            .and_then(|func| self.lua.create_thread(func));
+        let thread = match thread {
             Ok(t) => t,
             Err(e) => {
                 app.set_error(format!("plugin: {e}"));
                 return Action::None;
             }
         };
-
-        let ctx_arg = self
+        let ctx = self
             .build_ctx_table(app)
             .map(mlua::Value::Table)
             .unwrap_or(mlua::Value::Nil);
-        self.resume_and_handle(thread, ctx_arg, app, SuspendedKind::Command(flags))
+        match self.step(thread, ctx, SuspendedKind::Command(flags), app) {
+            Step::Parked(yielded) => yielded,
+            Step::Returned { requested, .. } => requested,
+            Step::Failed => Action::None,
+        }
     }
 
     pub fn resume_suspended(&self, app: &mut App, value: ResumeValue) -> ResumeResult {
-        let (thread_key, kind) = match self.suspended_thread.borrow_mut().take() {
-            Some(pair) => pair,
-            None => return ResumeResult::Action(Action::None),
+        let Some((thread_key, kind)) = self.suspended_thread.borrow_mut().take() else {
+            return ResumeResult::Action(Action::None);
         };
         self.lua_ran.set(true);
-        let thread: mlua::Thread = match self.lua.registry_value(&thread_key) {
+        let thread: mlua::Result<mlua::Thread> = self.lua.registry_value(&thread_key);
+        let _ = self.lua.remove_registry_value(thread_key);
+        let thread = match thread {
             Ok(t) => t,
             Err(e) => {
                 app.set_error(format!("plugin resume: {e}"));
                 return ResumeResult::Action(Action::None);
             }
         };
-        let _ = self.lua.remove_registry_value(thread_key);
-
         {
             let cell = lua_state!(self.lua);
             let mut state = cell.borrow_mut();
@@ -577,38 +554,23 @@ impl LuaEngine {
             state.pending_logs.clear();
         }
 
-        match thread.resume::<mlua::Value>(resume_value_to_lua(&self.lua, value)) {
-            Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
-                ResumeResult::Action(self.handle_yield(thread, value, app, kind))
-            }
-            Ok(value) => match kind {
-                SuspendedKind::Command(flags) => {
-                    self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
-                    ResumeResult::Action(self.drain_pending_actions(app, flags, true))
-                }
-                SuspendedKind::PreHooks {
-                    action,
-                    flags,
-                    header,
-                } => {
-                    self.collect_logs(header, LogPhase::Pre);
-                    self.drain_pending_actions(app, flags, false);
-                    if matches!(value, mlua::Value::Boolean(false)) {
-                        ResumeResult::Action(Action::None)
-                    } else {
-                        ResumeResult::DispatchAction { action, flags }
-                    }
-                }
-                SuspendedKind::PostHooks { header } => {
-                    self.collect_logs(header, LogPhase::Post);
-                    self.drain_pending_actions(app, CommandFlags::empty(), false);
+        let arg = resume_value_to_lua(&self.lua, value);
+        match self.step(thread, arg, kind, app) {
+            Step::Parked(yielded) => ResumeResult::Action(yielded),
+            Step::Returned {
+                value,
+                kind: SuspendedKind::PreHooks { action, flags, .. },
+                ..
+            } => {
+                if matches!(value, mlua::Value::Boolean(false)) {
+                    log_cancelled(app, action.id_name());
                     ResumeResult::Action(Action::None)
+                } else {
+                    ResumeResult::DispatchAction { action, flags }
                 }
-            },
-            Err(e) => {
-                app.set_error(format!("plugin: {e}"));
-                ResumeResult::Action(Action::None)
             }
+            Step::Returned { requested, .. } => ResumeResult::Action(requested),
+            Step::Failed => ResumeResult::Action(Action::None),
         }
     }
 
@@ -618,23 +580,44 @@ impl LuaEngine {
         }
     }
 
-    fn resume_and_handle(
+    /// Resume `thread` with `args` and settle how it ended. A yield parks it
+    /// until its request is answered; a return collects its logs and applies
+    /// the requests it queued; an error is reported. `kind` says whose
+    /// thread it is, which decides all three.
+    fn step(
         &self,
         thread: mlua::Thread,
-        arg: mlua::Value,
-        app: &mut App,
+        args: impl mlua::IntoLuaMulti,
         kind: SuspendedKind,
-    ) -> Action {
-        match thread.resume::<mlua::Value>(arg) {
+        app: &mut App,
+    ) -> Step {
+        let resumed = thread.resume::<mlua::Value>(args);
+        let (header, phase) = match &kind {
+            SuspendedKind::Command(_) => (self.current_header.borrow().clone(), LogPhase::Command),
+            SuspendedKind::PreHooks { header, .. } => (header.clone(), LogPhase::Pre),
+            SuspendedKind::PostHooks { header } => (header.clone(), LogPhase::Post),
+        };
+        self.collect_logs(header, phase);
+        match resumed {
             Ok(value) if thread.status() == mlua::ThreadStatus::Resumable => {
-                self.handle_yield(thread, value, app, kind)
+                Step::Parked(self.handle_yield(thread, value, app, kind))
             }
-            Ok(_) => {
-                if let SuspendedKind::Command(flags) = kind {
-                    self.collect_logs(self.current_header.borrow().clone(), LogPhase::Command);
-                    self.drain_pending_actions(app, flags, true)
-                } else {
-                    Action::None
+            Ok(value) => {
+                // Only a command may ask the main loop for more (a dispatch,
+                // an interactive jj): a hook doing so would recurse.
+                let requested = match kind {
+                    SuspendedKind::Command(flags) => self.drain_pending_actions(app, flags, true),
+                    SuspendedKind::PreHooks { flags, .. } => {
+                        self.drain_pending_actions(app, flags, false)
+                    }
+                    SuspendedKind::PostHooks { .. } => {
+                        self.drain_pending_actions(app, CommandFlags::empty(), false)
+                    }
+                };
+                Step::Returned {
+                    value,
+                    requested,
+                    kind,
                 }
             }
             Err(e) => {
@@ -646,7 +629,7 @@ impl LuaEngine {
                     e.to_string().into_bytes(),
                     false,
                 );
-                Action::None
+                Step::Failed
             }
         }
     }
@@ -878,17 +861,9 @@ impl LuaEngine {
     }
 
     fn collect_logs(&self, header: String, phase: LogPhase) {
-        let cell = lua_state!(self.lua);
-        let mut state = cell.borrow_mut();
-        let messages: Vec<String> = state.pending_logs.drain(..).collect();
-        if messages.is_empty() {
-            return;
-        }
-        state.log_groups.push(LogGroup {
-            header,
-            phase,
-            messages,
-        });
+        lua_state!(self.lua)
+            .borrow_mut()
+            .collect_logs(header, phase);
     }
 
     /// What `kojutsu.config` holds now, if user Lua has run since the last

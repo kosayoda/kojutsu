@@ -278,9 +278,7 @@ fn dispatch_action(
         };
     }
 
-    let id_name = action.id_name();
-
-    match lua.run_pre_hooks(id_name, action, flags, app) {
+    match lua.run_pre_hooks(action, flags, app) {
         crate::lua::HookOutcome::Cancel => {
             return Action::None;
         }

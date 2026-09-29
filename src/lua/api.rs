@@ -3,7 +3,7 @@ use std::cell::RefCell;
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap::CommandFlags;
 
-use super::{LogGroup, LogPhase, LuaEngine, LuaState, PendingAction, lua_state};
+use super::{LogPhase, LuaEngine, LuaState, PendingAction, lua_state};
 
 impl LuaEngine {
     pub(super) fn register_persistent_functions(&self) -> mlua::Result<()> {
@@ -139,22 +139,13 @@ impl LuaEngine {
 
         let collect_logs_fn =
             self.lua
-                .create_function(|lua, (header, phase_str): (String, String)| {
-                    let cell = lua_state!(lua);
-                    let mut state = cell.borrow_mut();
-                    let messages: Vec<String> = state.pending_logs.drain(..).collect();
-                    if !messages.is_empty() {
-                        let phase = match phase_str.as_str() {
-                            "pre" => LogPhase::Pre,
-                            "post" => LogPhase::Post,
-                            _ => LogPhase::Command,
-                        };
-                        state.log_groups.push(LogGroup {
-                            header,
-                            phase,
-                            messages,
-                        });
-                    }
+                .create_function(|lua, (header, phase): (String, String)| {
+                    let phase = match phase.as_str() {
+                        "pre" => LogPhase::Pre,
+                        "post" => LogPhase::Post,
+                        _ => LogPhase::Command,
+                    };
+                    lua_state!(lua).borrow_mut().collect_logs(header, phase);
                     Ok(())
                 })?;
 
@@ -192,28 +183,22 @@ impl LuaEngine {
             function kojutsu.ui.confirm(prompt)
                 return kojutsu.ui.choose(prompt or "confirm?", {"yes", "no"}) == "yes"
             end
-            function kojutsu._run_pre_hooks(hooks, ctx)
+            -- Run hooks in order, each under its own heading in the log. A
+            -- failing hook is logged and the rest still run; a pre-hook
+            -- returning false cancels the action. Post-hooks also get the
+            -- command's result.
+            function kojutsu._run_hooks(hooks, phase, ctx, result)
                 for _, entry in ipairs(hooks) do
-                    local ok, result = pcall(entry.fn, ctx)
-                    kojutsu._collect_logs(entry.source, "pre")
+                    local ok, returned = pcall(entry.fn, ctx, result)
+                    kojutsu._collect_logs(entry.source, phase)
                     if not ok then
-                        kojutsu.log("hook error: " .. tostring(result))
-                        kojutsu._collect_logs(entry.source, "pre")
-                    elseif result == false then
+                        kojutsu.log("hook error: " .. tostring(returned))
+                        kojutsu._collect_logs(entry.source, phase)
+                    elseif phase == "pre" and returned == false then
                         return false
                     end
                 end
                 return true
-            end
-            function kojutsu._run_post_hooks(hooks, ctx, result_table)
-                for _, entry in ipairs(hooks) do
-                    local ok, err = pcall(entry.fn, ctx, result_table)
-                    kojutsu._collect_logs(entry.source, "post")
-                    if not ok then
-                        kojutsu.log("hook error: " .. tostring(err))
-                        kojutsu._collect_logs(entry.source, "post")
-                    end
-                end
             end
         "#).exec()?;
 

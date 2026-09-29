@@ -613,7 +613,7 @@ impl Session {
     fn run_post_hooks_after_suspend(&mut self, hook: AppAction) -> ControlFlow<()> {
         let (success, output) = extract_command_result(&self.app);
         let outcome = self.runtime.engine.run_post_hooks(
-            hook.id_name(),
+            hook,
             &mut self.app,
             kojutsu::lua::CommandOutcome {
                 success,
@@ -1080,7 +1080,7 @@ fn finish_jj_command(
     if let Some(hook) = hook {
         let (success, output) = extract_command_result(app);
         let outcome = lua_engine.run_post_hooks(
-            hook.id_name(),
+            hook,
             app,
             kojutsu::lua::CommandOutcome {
                 success,

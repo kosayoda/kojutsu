@@ -242,6 +242,97 @@ mod tests {
         assert!(runtime.init_error().is_some_and(|e| e.contains("boom")));
     }
 
+    fn runtime_with(init: &str) -> LuaRuntime {
+        let dir = config_dir_with(init);
+        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        assert_eq!(runtime.init_error(), None);
+        assert!(
+            runtime.init_warnings().is_empty(),
+            "{:?}",
+            runtime.init_warnings()
+        );
+        runtime
+    }
+
+    fn pre_hooks(runtime: &LuaRuntime, app: &mut crate::app::App) -> crate::lua::HookOutcome {
+        runtime.engine.run_pre_hooks(
+            crate::keymap::AppAction::Abandon,
+            crate::keymap::CommandFlags::empty(),
+            app,
+        )
+    }
+
+    #[test]
+    fn a_pre_hook_returning_false_cancels_the_action() {
+        let runtime =
+            runtime_with(r#"kojutsu.hook("abandon", "pre", function() return false end)"#);
+        let mut app = crate::app::App::for_test();
+        assert!(matches!(
+            pre_hooks(&runtime, &mut app),
+            crate::lua::HookOutcome::Cancel
+        ));
+    }
+
+    /// A failing hook is reported and doesn't stop the action it hooks.
+    #[test]
+    fn a_failing_pre_hook_is_reported_and_the_action_proceeds() {
+        let runtime =
+            runtime_with(r#"kojutsu.hook("abandon", "pre", function() error("oops") end)"#);
+        let mut app = crate::app::App::for_test();
+        assert!(matches!(
+            pre_hooks(&runtime, &mut app),
+            crate::lua::HookOutcome::Proceed
+        ));
+        runtime.engine.flush_logs(&mut app);
+        assert!(
+            app.command_log
+                .entries
+                .iter()
+                .any(|e| String::from_utf8_lossy(&e.output).contains("oops"))
+        );
+    }
+
+    #[test]
+    fn a_post_hook_sees_the_commands_result() {
+        let runtime = runtime_with(
+            r#"kojutsu.hook("abandon", "post", function(ctx, result)
+                kojutsu.ui.status(result.status .. " " .. result.output)
+            end)"#,
+        );
+        let mut app = crate::app::App::for_test();
+        runtime.engine.run_post_hooks(
+            crate::keymap::AppAction::Abandon,
+            &mut app,
+            crate::lua::CommandOutcome {
+                success: true,
+                cancelled: false,
+                code: Some(0),
+                output: b"done",
+            },
+        );
+        runtime.engine.flush_logs(&mut app);
+        assert_eq!(
+            app.status_message.map(|(msg, _)| msg).as_deref(),
+            Some("ok done")
+        );
+    }
+
+    /// A command's runtime error lands in the command log like a hook's.
+    #[test]
+    fn a_failing_command_is_recorded_in_the_command_log() {
+        let runtime = runtime_with(r#"kojutsu.command("bad", function() error("kaput") end, {})"#);
+        let mut app = crate::app::App::for_test();
+        runtime
+            .engine
+            .execute_command(0, &mut app, crate::keymap::CommandFlags::empty());
+        assert!(
+            app.command_log
+                .entries
+                .iter()
+                .any(|e| String::from_utf8_lossy(&e.output).contains("kaput"))
+        );
+    }
+
     /// Run the first registered command and report what it left the config
     /// table as.
     fn run_command(runtime: &LuaRuntime) -> Option<Result<crate::theme::Config, String>> {
