@@ -126,7 +126,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Diff tool mode: apply selection and exit.
+    // Diff tool mode: apply the selection, which is used once, and exit.
     if let Some(selection_path) = &cli.apply_diff {
         let left = cli
             .diff_left
@@ -136,7 +136,9 @@ fn main() -> Result<()> {
             .diff_right
             .as_ref()
             .expect("right dir required for --apply-diff");
-        return kojutsu::diff_tool::apply(selection_path, left, right);
+        let result = kojutsu::diff_tool::apply(selection_path, left, right);
+        let _ = std::fs::remove_file(selection_path);
+        return result;
     }
 
     let repo_path = if cli.repository == std::path::Path::new(".") {

@@ -43,7 +43,7 @@ pub(super) fn build_change_selection(app: &App) -> ChangeSelection {
             let Some(selections) = app.explicit_selection() else {
                 return ChangeSelection::All;
             };
-            match crate::selection::serialize_selections(selections) {
+            match crate::diff_tool::write_selection(selections) {
                 Ok(path) => ChangeSelection::Lines(path),
                 Err(e) => {
                     tracing::warn!("failed to serialize line selections: {e}");

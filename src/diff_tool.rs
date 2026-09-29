@@ -1,35 +1,82 @@
 //! Diff tool mode: applies partial line-level selections to jj's diff directories.
 //!
-//! When invoked as `kojutsu --apply-diff <selection.json> <left_dir> <right_dir>`,
+//! The TUI writes the selection with [`write_selection`] and hands jj a diff
+//! editor command that runs this binary again. When invoked as `kojutsu --apply-diff <selection.json> <left_dir> <right_dir>`,
 //! this module reads the selection file and modifies `right_dir` in place so that
 //! only selected changes remain (unselected changes are reverted to the `left_dir`
 //! version).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::io::Write;
+use std::path::{Path, PathBuf};
 
 use color_eyre::Result;
 use color_eyre::eyre::Context;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
-/// Deserialized selection for a single file.
-#[derive(Deserialize)]
-#[serde(tag = "mode")]
+use crate::types::{FileRef, Selection};
+
+/// What to keep of one file's changes.
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(tag = "mode", rename_all = "lowercase")]
 enum FileSelection {
-    #[serde(rename = "full")]
+    /// All of them.
     Full,
-    #[serde(rename = "lines")]
+    /// Only these lines.
     Lines { selected: Vec<SelectedLine> },
 }
 
-/// A single selected diff line.
-#[derive(Deserialize)]
-struct SelectedLine {
-    kind: String,
-    old_line: Option<u32>,
-    new_line: Option<u32>,
+/// A selected diff line, by its number on the side it lives on.
+#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum SelectedLine {
+    Removed { old_line: u32 },
+    Added { new_line: u32 },
+}
+
+/// The file and line selections, keyed by path, in the form `apply` reads.
+fn selection_map(selections: &HashSet<Selection>) -> HashMap<&str, FileSelection> {
+    let mut file_map: HashMap<&str, FileSelection> = HashMap::new();
+    for sel in selections {
+        match sel {
+            Selection::Commit(_) => {}
+            Selection::File(FileRef { path, .. }) => {
+                file_map.insert(path.as_str(), FileSelection::Full);
+            }
+            Selection::Line {
+                file_ref: FileRef { path, .. },
+                old_line,
+                new_line,
+            } => {
+                let line = match (*old_line, *new_line) {
+                    (Some(old_line), None) => SelectedLine::Removed { old_line },
+                    (None, Some(new_line)) => SelectedLine::Added { new_line },
+                    _ => continue,
+                };
+                match file_map
+                    .entry(path.as_str())
+                    .or_insert_with(|| FileSelection::Lines { selected: vec![] })
+                {
+                    // A whole-file selection already covers the line.
+                    FileSelection::Full => {}
+                    FileSelection::Lines { selected } => selected.push(line),
+                }
+            }
+        }
+    }
+    file_map
+}
+
+/// Write the selections to a temporary JSON file for the diff tool and
+/// return its path. The diff tool removes the file once it has read it.
+pub fn write_selection(selections: &HashSet<Selection>) -> Result<PathBuf> {
+    let mut tmp = tempfile::NamedTempFile::new()?;
+    serde_json::to_writer_pretty(&mut tmp, &selection_map(selections))?;
+    tmp.flush()?;
+    let (_, path) = tmp.keep()?;
+    Ok(path)
 }
 
 /// Apply the selection to the diff directories.
@@ -169,14 +216,14 @@ fn apply_partial(left: &str, right: &str, selected: &[SelectedLine]) -> String {
                     new_line += 1;
                 }
                 DiffLineType::Added => {
-                    if is_selected(selected, "added", None, Some(new_line)) {
+                    if selected.contains(&SelectedLine::Added { new_line }) {
                         output.push_str(&text);
                     }
                     // If not selected, omit the added line.
                     new_line += 1;
                 }
                 DiffLineType::Removed => {
-                    if !is_selected(selected, "removed", Some(old_line), None) {
+                    if !selected.contains(&SelectedLine::Removed { old_line }) {
                         // Not selected for removal -- keep the line.
                         output.push_str(&text);
                     }
@@ -199,14 +246,52 @@ fn apply_partial(left: &str, right: &str, selected: &[SelectedLine]) -> String {
     output
 }
 
-/// Check if a line is in the selection list.
-fn is_selected(
-    selected: &[SelectedLine],
-    kind: &str,
-    old_line: Option<u32>,
-    new_line: Option<u32>,
-) -> bool {
-    selected
-        .iter()
-        .any(|s| s.kind == kind && s.old_line == old_line && s.new_line == new_line)
+#[cfg(test)]
+mod tests {
+    use std::collections::{HashMap, HashSet};
+
+    use super::{FileSelection, SelectedLine, apply_partial, selection_map};
+    use crate::types::{ChangeId, FileRef, RepoPath, Selection};
+
+    fn file_ref(path: &str) -> FileRef {
+        FileRef {
+            change_id: ChangeId::new("uunnomkxrqvlypszwlwkvvqnstvzoxrs"),
+            path: RepoPath::new(path),
+        }
+    }
+
+    /// What the TUI writes is what the diff tool reads back.
+    #[test]
+    fn the_selection_survives_the_trip_through_json() {
+        let selections = HashSet::from([
+            Selection::File(file_ref("whole")),
+            Selection::Line {
+                file_ref: file_ref("part"),
+                old_line: Some(3),
+                new_line: None,
+            },
+        ]);
+        let json = serde_json::to_string(&selection_map(&selections)).unwrap();
+        let read: HashMap<String, FileSelection> = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(read["whole"], FileSelection::Full);
+        assert_eq!(
+            read["part"],
+            FileSelection::Lines {
+                selected: vec![SelectedLine::Removed { old_line: 3 }]
+            }
+        );
+    }
+
+    #[test]
+    fn only_the_selected_lines_are_applied() {
+        let left = "a\nb\nc\n";
+        let right = "a\nB\nc\nd\n";
+        let selected = [
+            SelectedLine::Removed { old_line: 2 },
+            SelectedLine::Added { new_line: 4 },
+        ];
+        // `b` goes and `d` arrives; `B` wasn't picked, so it stays out.
+        assert_eq!(apply_partial(left, right, &selected), "a\nc\nd\n");
+    }
 }
