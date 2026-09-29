@@ -37,9 +37,9 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, _flags: Comma
                     app.set_status(format!("commit separators: {label}"));
                 }
                 crate::types::ActiveView::Bookmarks => {
-                    app.show_bookmark_separators = !app.show_bookmark_separators;
+                    app.views.show_bookmark_separators = !app.views.show_bookmark_separators;
                     app.rebuild_rows();
-                    let label = if app.show_bookmark_separators {
+                    let label = if app.views.show_bookmark_separators {
                         "on"
                     } else {
                         "off"

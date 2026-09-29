@@ -65,6 +65,8 @@ pub struct ViewData {
     pub remote_bookmarks: Vec<crate::dag::RemoteBookmarkRef>,
     /// Available git remote names.
     pub remotes: Vec<RemoteName>,
+    /// Whether to show separator lines between bookmark groups.
+    pub show_bookmark_separators: bool,
 }
 
 impl Default for ViewData {
@@ -86,6 +88,7 @@ impl ViewData {
             workspace_entries: Vec::new(),
             remote_bookmarks: Vec::new(),
             remotes: Vec::new(),
+            show_bookmark_separators: false,
         }
     }
 }

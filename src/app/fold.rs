@@ -63,7 +63,7 @@ impl App {
         let mut prev_rank: Option<u8> = None;
         for idx in 0..self.views.bookmark_entries.len() {
             let rank = self.views.bookmark_entries[idx].kind.rank();
-            if self.show_bookmark_separators && prev_rank.is_some_and(|r| r != rank) {
+            if self.views.show_bookmark_separators && prev_rank.is_some_and(|r| r != rank) {
                 self.rows.push(DisplayRow::BookmarkSeparator);
             }
             prev_rank = Some(rank);

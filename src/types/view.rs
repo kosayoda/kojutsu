@@ -36,6 +36,14 @@ impl ActiveView {
         self as usize
     }
 
+    /// Whether entering this view while it is already active reloads it.
+    /// These show something picked in the view they were entered from (the
+    /// evolution of a change, an interdiff, an annotation), so entering
+    /// again can mean showing something else.
+    pub fn reloads_on_reentry(self) -> bool {
+        matches!(self, Self::Evolog | Self::Interdiff | Self::Annotate)
+    }
+
     /// Which scopes a fresh search in this view starts with. Views with a
     /// reason to differ say so; the rest follow `configured`, which is where
     /// `default-search-scopes` from the config lands.

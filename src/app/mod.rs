@@ -298,8 +298,6 @@ pub struct App {
     pub show_line_numbers: bool,
     /// Whether to underline changed tokens in word-level diffs.
     pub diff_underline: bool,
-    /// Whether to show separator lines between bookmark groups.
-    pub show_bookmark_separators: bool,
     /// Current selection context: implicit commit under cursor, or explicit
     /// homogeneous file/line selection.
     pub selection: SelectionContext,
@@ -453,7 +451,6 @@ impl App {
             pre_overlay_mode: None,
             show_line_numbers: false,
             diff_underline: true,
-            show_bookmark_separators: false,
             selection: SelectionContext::new(),
             visual: VisualState::new(),
             search: None,
@@ -632,12 +629,7 @@ impl App {
     }
 
     pub fn switch_view(&mut self, view: ActiveView) {
-        // Allow evolog/interdiff → same (reload with different commit).
-        if self.active_view == view
-            && view != ActiveView::Evolog
-            && view != ActiveView::Interdiff
-            && view != ActiveView::Annotate
-        {
+        if self.active_view == view && !view.reloads_on_reentry() {
             return;
         }
         // Save current view state.
@@ -648,32 +640,7 @@ impl App {
         vs.h_scroll = self.h_scroll;
 
         self.active_view = view;
-        // Trigger lazy load of operation log data.
-        if view == ActiveView::Operations && self.op_log.load_state.begin() {
-            self.pending_repo_requests.push(RepoRequest::Operations {
-                limit: self.op_log.limit,
-            });
-        }
-        // Trigger lazy load of evolog data.
-        if view == ActiveView::Evolog {
-            // Get the commit ID from the DAG (if switching from DAG) or from
-            // the selected evolog entry (if switching from within evolog).
-            let commit_id = self
-                .selected_entry_idx()
-                .map(|idx| self.dag.nodes[idx].commit.graph_id.clone())
-                .or_else(|| self.selected_evolog_entry().map(|e| e.commit_id.clone()));
-            if let Some(commit_id) = commit_id {
-                let changed = self.evolog.commit_id.as_ref() != Some(&commit_id);
-                if changed {
-                    self.evolog.clear();
-                    self.evolog.commit_id = Some(commit_id.clone());
-                }
-                if self.evolog.load_state.begin() {
-                    self.pending_repo_requests
-                        .push(RepoRequest::EvolutionLog { commit_id });
-                }
-            }
-        }
+        self.on_enter(view);
         self.rebuild_rows();
 
         // Restore saved state for new view.
@@ -681,6 +648,48 @@ impl App {
         self.cursor = RowIdx::new(vs.cursor.raw().min(self.rows.len().saturating_sub(1)));
         self.scroll = vs.scroll_offset;
         self.h_scroll = vs.h_scroll;
+    }
+
+    /// Start whatever a view needs when it is entered. Runs before its rows
+    /// are built, so the rows are still those of the view being left.
+    fn on_enter(&mut self, view: ActiveView) {
+        match view {
+            ActiveView::Operations => {
+                if self.op_log.load_state.begin() {
+                    self.pending_repo_requests.push(RepoRequest::Operations {
+                        limit: self.op_log.limit,
+                    });
+                }
+            }
+            ActiveView::Evolog => self.load_evolog_under_cursor(),
+            ActiveView::Dag
+            | ActiveView::Bookmarks
+            | ActiveView::Tags
+            | ActiveView::Workspaces
+            | ActiveView::CommandLog
+            | ActiveView::Interdiff
+            | ActiveView::Annotate => {}
+        }
+    }
+
+    /// Load the evolution of the change under the cursor: a DAG commit, or
+    /// another version picked within the evolog itself.
+    fn load_evolog_under_cursor(&mut self) {
+        let commit_id = self
+            .selected_entry_idx()
+            .map(|idx| self.dag.nodes[idx].commit.graph_id.clone())
+            .or_else(|| self.selected_evolog_entry().map(|e| e.commit_id.clone()));
+        let Some(commit_id) = commit_id else {
+            return;
+        };
+        if self.evolog.commit_id.as_ref() != Some(&commit_id) {
+            self.evolog.clear();
+            self.evolog.commit_id = Some(commit_id.clone());
+        }
+        if self.evolog.load_state.begin() {
+            self.pending_repo_requests
+                .push(RepoRequest::EvolutionLog { commit_id });
+        }
     }
 
     /// Enter the interdiff view comparing two commits.
@@ -1684,7 +1693,7 @@ impl App {
             active_preset: self.revset.active_preset,
             git_diff: self.diff_format == DiffFormat::Git,
             annotate_separators: self.annotate.show_commit_separators,
-            bookmark_separators: self.show_bookmark_separators,
+            bookmark_separators: self.views.show_bookmark_separators,
             diff_underline: self.diff_underline,
             run_history: self.run_history.clone(),
         }
@@ -1703,7 +1712,7 @@ impl App {
             DiffFormat::ColorWords
         };
         self.annotate.show_commit_separators = state.annotate_separators;
-        self.show_bookmark_separators = state.bookmark_separators;
+        self.views.show_bookmark_separators = state.bookmark_separators;
         self.diff_underline = state.diff_underline;
         self.run_history = state.run_history.clone();
         self.revset.active_preset = state
