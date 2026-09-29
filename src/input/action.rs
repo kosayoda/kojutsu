@@ -62,7 +62,7 @@ pub(super) fn handle_normal_key(
     node: &keymap_parser::Node,
 ) -> Action {
     if node.key == keymap_parser::Key::Esc && app.search.is_some() {
-        app.clear_search();
+        app.finish_search();
         return Action::None;
     }
 

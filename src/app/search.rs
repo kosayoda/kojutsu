@@ -38,30 +38,19 @@ impl App {
         self.enter_overlay(AppMode::SearchInput);
     }
 
-    fn restore_mode(&mut self) {
-        self.exit_overlay();
-    }
-
+    /// End the search and put the cursor back where it started.
     pub fn cancel_search(&mut self) {
         if let Some(search) = &self.search {
             self.cursor = search.restore_cursor;
         }
-        self.search = None;
-        self.restore_mode();
+        self.finish_search();
     }
 
-    /// Clear the active search without restoring the cursor.
-    ///
-    /// Used from plain normal mode, where the current cursor position is the
-    /// user's intentional location after navigating matches.
-    pub fn clear_search(&mut self) {
+    /// End the search, leaving the cursor on the match it reached: Enter in
+    /// the query, or Esc once back in normal mode.
+    pub fn finish_search(&mut self) {
         self.search = None;
-        self.restore_mode();
-    }
-
-    pub fn confirm_search(&mut self) {
-        self.search = None;
-        self.restore_mode();
+        self.exit_overlay();
     }
 
     pub fn search_next(&mut self) {

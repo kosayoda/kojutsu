@@ -276,7 +276,7 @@ pub(super) fn handle_search_input(
             Action::None
         }
         KeyCode::Enter => {
-            app.confirm_search();
+            app.finish_search();
             Action::None
         }
         KeyCode::Tab => {

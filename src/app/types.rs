@@ -841,12 +841,13 @@ pub enum VisualMode {
         /// Row index where `v` was pressed.
         anchor: RowIdx,
     },
-    /// Visual selection of commits along a branch.
+    /// Visual selection of the commits between two entries in display
+    /// order.
     Commits {
         /// Entry where `v` was pressed.
         anchor: EntryIdx,
-        /// Ordered path from newest to oldest along Direct edges (inclusive).
-        path: Vec<EntryIdx>,
+        /// The end that moves with the cursor.
+        head: EntryIdx,
     },
     /// Visual selection of files within a single commit.
     Files {
@@ -860,7 +861,11 @@ pub enum VisualMode {
 /// Persistent visual range (survives exiting visual mode with `v`).
 pub enum PersistentVisualRange {
     Lines(VisualRange),
-    Commits(Vec<EntryIdx>),
+    /// The commits from `lo` to `hi` in display order.
+    Commits {
+        lo: EntryIdx,
+        hi: EntryIdx,
+    },
     /// A contiguous range of files within one commit.
     Files {
         entry_idx: EntryIdx,
