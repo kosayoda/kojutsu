@@ -242,6 +242,9 @@ fn main() -> Result<()> {
         app.set_error(msg);
     }
 
+    // Warnings first: an error that stopped the script matters more, so its
+    // status message is the one left showing.
+    report_init_warnings(&mut app, runtime.init_warnings());
     if let Some(err) = runtime.init_error() {
         app.push_command_log(
             kojutsu::app::CommandLogKind::Warning,
@@ -814,6 +817,28 @@ fn reload_config(
         true,
     );
     app.set_status("reloaded init.lua");
+    report_init_warnings(app, runtime.init_warnings());
+}
+
+/// Show what `init.lua` registered wrongly: one command-log entry listing
+/// every problem, and the count in the status line pointing at it.
+fn report_init_warnings(app: &mut App, warnings: &[String]) {
+    if warnings.is_empty() {
+        return;
+    }
+    let count = warnings.len();
+    let summary = format!(
+        "init.lua: {count} {}",
+        kojutsu::pluralize!(count, "problem", "problems")
+    );
+    app.push_command_log(
+        kojutsu::app::CommandLogKind::Warning,
+        summary.clone(),
+        None,
+        warnings.join("\n").into_bytes(),
+        false,
+    );
+    app.set_error(format!("{summary} (see the command log)"));
 }
 
 fn update_revset(app: &mut App, revset_str: String) {

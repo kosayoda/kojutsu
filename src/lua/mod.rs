@@ -294,6 +294,9 @@ pub struct LuaEngine {
     /// off the keystroke path and on the far rarer "a plugin just ran" path.
     lua_ran: Cell<bool>,
     pub init_error: Option<String>,
+    /// Problems with what `init.lua` registered, each naming where it was
+    /// registered. The registrations concerned were skipped.
+    pub init_warnings: Vec<String>,
     repo_path: PathBuf,
 }
 
@@ -337,6 +340,7 @@ impl LuaEngine {
             current_header: RefCell::new(String::new()),
             lua_ran: Cell::new(false),
             init_error: None,
+            init_warnings: Vec::new(),
             repo_path: repo_path.to_path_buf(),
         };
 

@@ -33,24 +33,6 @@ pub(super) fn shadows_default(
     })
 }
 
-pub(super) fn parse_keys(
-    key: Option<&String>,
-    seq: Option<&String>,
-) -> Option<smallvec::SmallVec<[keymap_parser::Node; 3]>> {
-    let parse = |k: &str| {
-        let node = crate::keymap::try_parse_key(k);
-        if node.is_none() {
-            tracing::warn!("invalid key `{k}`, skipping binding");
-        }
-        node
-    };
-    if let Some(k) = key {
-        Some(smallvec::smallvec![parse(k)?])
-    } else {
-        seq?.split_whitespace().map(parse).collect()
-    }
-}
-
 pub fn generate_type_definitions() -> String {
     use std::fmt::Write;
     let mut out = String::new();
@@ -364,6 +346,21 @@ pub fn generate_type_definitions() -> String {
     out
 }
 
+/// A Lua chunk's name as the user knows it: relative to the config
+/// directory, without the `[string "..."]` wrapping of a loaded chunk.
+pub(super) fn short_source(raw: &str) -> String {
+    let unwrapped = raw
+        .strip_prefix("[string \"")
+        .and_then(|s| s.strip_suffix("\"]"))
+        .unwrap_or(raw);
+    crate::theme::kojutsu_config_dir()
+        .and_then(|d| {
+            let prefix = format!("{}/", d.display());
+            unwrapped.strip_prefix(&prefix).map(str::to_string)
+        })
+        .unwrap_or_else(|| unwrapped.to_string())
+}
+
 pub(super) fn lua_source_info(lua: &mlua::Lua, func: &mlua::Function) -> String {
     let result: mlua::Result<String> = (|| {
         let debug: mlua::Table = lua.globals().get("debug")?;
@@ -371,17 +368,7 @@ pub(super) fn lua_source_info(lua: &mlua::Lua, func: &mlua::Function) -> String 
         let info: mlua::Table = getinfo.call::<mlua::Table>((func.clone(), "Sl"))?;
         let raw: String = info.get("short_src").unwrap_or_else(|_| "?".into());
         let line: i64 = info.get("linedefined").unwrap_or(0);
-        let unwrapped = raw
-            .strip_prefix("[string \"")
-            .and_then(|s| s.strip_suffix("\"]"))
-            .unwrap_or(&raw);
-        let source = crate::theme::kojutsu_config_dir()
-            .and_then(|d| {
-                let prefix = format!("{}/", d.display());
-                unwrapped.strip_prefix(&prefix).map(|s| s.to_string())
-            })
-            .unwrap_or_else(|| unwrapped.to_string());
-        Ok(format!("{source}:{line}"))
+        Ok(format!("{}:{line}", short_source(&raw)))
     })();
     result.unwrap_or_else(|_| "?".into())
 }
@@ -397,40 +384,18 @@ fn hook_matches(lua: &mlua::Lua, pattern: &str, action_name: &str) -> mlua::Resu
 }
 
 /// Evaluate a hook pattern against every action name once, at registration.
-/// Warns when the pattern matches nothing (likely a typo).
 pub(super) fn hook_action_set(
     lua: &mlua::Lua,
     pattern: &str,
 ) -> std::collections::HashSet<&'static str> {
-    let actions: std::collections::HashSet<&'static str> = crate::keymap::AppAction::iter()
+    crate::keymap::AppAction::iter()
         .map(crate::keymap::AppAction::id_name)
         .filter(|name| hook_matches(lua, pattern, name).unwrap_or(false))
-        .collect();
-    if actions.is_empty() {
-        tracing::warn!("kojutsu.hook: pattern `{pattern}` matches no actions");
-    }
-    actions
+        .collect()
 }
 
 pub(super) fn table_to_string_vec(table: &mlua::Table) -> Vec<String> {
     (1..=table.raw_len())
         .filter_map(|i| table.raw_get(i).ok())
         .collect()
-}
-
-pub(super) fn parse_scope(s: &str) -> crate::keymap::Scope {
-    if s == "all" {
-        return crate::keymap::Scope::All;
-    }
-    match s.parse::<crate::types::ActiveView>() {
-        Ok(view) => crate::keymap::Scope::Views(smallvec::smallvec![view]),
-        Err(_) => {
-            let valid: Vec<String> = scope_names().collect();
-            tracing::warn!(
-                "unknown scope `{s}`, defaulting to `all` (valid: {})",
-                valid.join(", ")
-            );
-            crate::keymap::Scope::All
-        }
-    }
 }

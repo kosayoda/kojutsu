@@ -51,6 +51,11 @@ impl LuaRuntime {
     pub fn init_error(&self) -> Option<&str> {
         self.engine.init_error.as_deref()
     }
+
+    /// Problems with what `init.lua` registered, as `file:line: message`.
+    pub fn init_warnings(&self) -> &[String] {
+        &self.engine.init_warnings
+    }
 }
 
 #[cfg(test)]
@@ -142,6 +147,90 @@ mod tests {
         assert_eq!(runtime.config.tab_width, 2);
         let clean = LuaRuntime::load_from(config_dir_with("").path(), repo);
         assert_eq!(binding_count(&runtime), binding_count(&clean) + 1);
+    }
+
+    fn warnings_for(init: &str) -> Vec<String> {
+        let dir = config_dir_with(init);
+        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        assert_eq!(runtime.init_error(), None, "warnings never stop the script");
+        runtime.init_warnings().to_vec()
+    }
+
+    /// A registration mistake is reported with where it was made, skipped,
+    /// and the rest of the file still loads.
+    #[test]
+    fn a_bad_registration_is_reported_and_the_rest_still_loads() {
+        let dir = config_dir_with(
+            r#"
+            kojutsu.bind { action = "bookmark_view_edit", key = "ctrl-y" }
+            kojutsu.bind { action = "abandon", key = "ctrl-g" }
+            "#,
+        );
+        let repo = std::path::Path::new(".");
+        let runtime = LuaRuntime::load_from(dir.path(), repo);
+        let clean = LuaRuntime::load_from(config_dir_with("").path(), repo);
+
+        assert_eq!(runtime.init_warnings().len(), 1);
+        let warning = &runtime.init_warnings()[0];
+        assert!(warning.contains("init.lua:2:"), "{warning}");
+        assert!(
+            warning.contains("unknown action `bookmark_view_edit`"),
+            "{warning}"
+        );
+        assert_eq!(binding_count(&runtime), binding_count(&clean) + 1);
+    }
+
+    #[test]
+    fn mistyped_and_invalid_options_are_named() {
+        let warnings = warnings_for(
+            r#"
+            kojutsu.bind { action = "abandon", key = { "ctrl-y" } }
+            kojutsu.bind { action = "abandon", key = "ctrl-shift-nope" }
+            kojutsu.bind { action = "abandon" }
+            kojutsu.prefix { key = "ctrl-p", label = "p", scope = "nowhere" }
+            kojutsu.command("c", function() end, { selection = "lines", key = "ctrl-l" })
+            kojutsu.hook("abandn", "pre", function() end)
+            kojutsu.hook("abandon", "during", function() end)
+            "#,
+        );
+        let expected = [
+            "`key` must be a string, not a table",
+            "invalid key `ctrl-shift-nope`",
+            "needs a `key` or `seq`",
+            "unknown scope `nowhere`",
+            "unknown selection `lines`",
+            "`abandn` matches no action",
+            "phase must be `pre` or `post`",
+        ];
+        assert_eq!(warnings.len(), expected.len(), "{warnings:#?}");
+        for (warning, expected) in warnings.iter().zip(expected) {
+            assert!(warning.contains(expected), "{warning} lacks {expected}");
+        }
+    }
+
+    /// A help group only decides where a key is listed, so a wrong one costs
+    /// the command nothing: it is listed under `commands` and still runs.
+    #[test]
+    fn an_unknown_group_keeps_the_command() {
+        let dir = config_dir_with(
+            r#"kojutsu.command("c", function() end, { group = "nope", key = "ctrl-l" })"#,
+        );
+        let repo = std::path::Path::new(".");
+        let runtime = LuaRuntime::load_from(dir.path(), repo);
+        let clean = LuaRuntime::load_from(config_dir_with("").path(), repo);
+        let warnings = runtime.init_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(warnings[0].contains("unknown group `nope`; listed under `commands`"));
+        assert_eq!(binding_count(&runtime), binding_count(&clean) + 1);
+    }
+
+    /// Overriding a default with `bind` is allowed but said out loud;
+    /// `rebind` is how to say it was meant.
+    #[test]
+    fn only_bind_warns_about_shadowing_a_default() {
+        let bind = warnings_for(r#"kojutsu.bind { action = "abandon", key = "q" }"#);
+        assert!(bind.iter().any(|w| w.contains("shadows a default binding")));
+        assert!(warnings_for(r#"kojutsu.rebind { action = "abandon", key = "q" }"#).is_empty());
     }
 
     /// The caller keeps the running runtime when this is set, so it has to be
