@@ -8,7 +8,11 @@ use crate::idx::{ConflictLineIdx, ConflictTermIdx};
 use crate::theme::{Config, Theme};
 use crate::types::{ConflictHunkRef, FileSelectionState, SearchScopes};
 
-use super::{RenderFlags, push_diff_tokens, push_graph_node_spans, push_line_stats};
+use super::{
+    RenderFlags, RowContext, SelectionMark, push_diff_tokens, push_graph_node_spans,
+    push_line_stats, selection_gutter, visual_bar,
+};
+use crate::idx::{DescriptionLineIdx, EntryIdx, GraphLineIdx};
 use crate::ui::search::{
     SearchRender, SearchRowState, contains_query, gutter_span, push_searchable, search_gutter,
 };
@@ -27,6 +31,8 @@ pub(crate) fn render_commit_item(
     let graph_color = if flags.is_source {
         theme.selection
     } else if c.has_conflict {
+        // Before the glyph: a conflicted working copy keeps the `@` glyph
+        // but is still coloured as a conflict.
         theme.error
     } else {
         match c.glyph() {
@@ -43,18 +49,14 @@ pub(crate) fn render_commit_item(
     let mut line1: Vec<Span<'static>> = Vec::new();
     line1.push(search_gutter(search_state, theme));
 
-    line1.push(if flags.in_visual {
-        Span::styled("│", Style::default().fg(theme.accent))
-    } else {
-        Span::raw(" ")
-    });
-    if flags.is_selected {
-        line1.push(Span::styled("▎", Style::default().fg(theme.selection)));
+    let mark = if flags.is_selected {
+        SelectionMark::Selected
     } else if flags.is_source {
-        line1.push(Span::styled("►", Style::default().fg(theme.selection)));
+        SelectionMark::Source
     } else {
-        line1.push(Span::raw(" "));
-    }
+        SelectionMark::None
+    };
+    line1.extend(selection_gutter(flags.in_visual, mark, theme));
 
     push_graph_node_spans(&mut line1, graph_node, graph_style, config);
 
@@ -70,9 +72,10 @@ pub(crate) fn render_commit_item(
     } else {
         c.change_id.display().to_string()
     };
-    if let Some(search) = search {
-        if search.scopes.contains(SearchScopes::CHANGE_ID)
-            && contains_query(&change_id_text, search.query_lower, search.case_sensitive)
+    match search {
+        Some(search)
+            if search.scopes.contains(SearchScopes::CHANGE_ID)
+                && contains_query(&change_id_text, search.query_lower, search.case_sensitive) =>
         {
             push_highlighted_short_id(
                 &mut line1,
@@ -83,7 +86,8 @@ pub(crate) fn render_commit_item(
                 search.case_sensitive,
                 theme,
             );
-        } else {
+        }
+        _ => {
             push_short_id(&mut line1, &c.change_id, change_color, theme);
             if let Some(suffix) = c.change_id_suffix() {
                 line1.push(Span::styled(
@@ -91,14 +95,6 @@ pub(crate) fn render_commit_item(
                     Style::default().fg(change_color),
                 ));
             }
-        }
-    } else {
-        push_short_id(&mut line1, &c.change_id, change_color, theme);
-        if let Some(suffix) = c.change_id_suffix() {
-            line1.push(Span::styled(
-                format!("/{suffix}"),
-                Style::default().fg(change_color),
-            ));
         }
     }
     if c.is_divergent() {
@@ -274,6 +270,71 @@ pub(crate) fn render_commit_item(
     vec![Line::from(line1), Line::from(line2)]
 }
 
+/// A continuation line of an unfolded commit's description.
+pub(in crate::ui) fn render_description_line(
+    ctx: &RowContext<'_>,
+    entry_idx: EntryIdx,
+    line_idx: DescriptionLineIdx,
+    search: Option<&SearchRender<'_>>,
+) -> Vec<Line<'static>> {
+    let theme = &ctx.config.theme;
+    let node = &ctx.app.dag.nodes[entry_idx];
+    let text = node
+        .commit
+        .full_description
+        .as_ref()
+        .and_then(|d| d.lines().nth(line_idx.raw() + 1))
+        .unwrap_or("");
+    let mut spans = vec![gutter_span(search, theme)];
+    spans.extend(commit_row_gutter(ctx, entry_idx));
+    spans.push(Span::styled(
+        node.graph.rest.clone(),
+        Style::default().fg(theme.muted),
+    ));
+    spans.push(Span::styled(
+        format!("  {text}"),
+        Style::default().fg(theme.muted),
+    ));
+    vec![Line::from(spans)]
+}
+
+/// A line of graph edges between two commits.
+pub(in crate::ui) fn render_graph_link(
+    ctx: &RowContext<'_>,
+    entry_idx: EntryIdx,
+    line_idx: GraphLineIdx,
+    search: Option<&SearchRender<'_>>,
+) -> Vec<Line<'static>> {
+    let theme = &ctx.config.theme;
+    let graph = ctx.app.dag.nodes[entry_idx]
+        .graph
+        .extra
+        .get(line_idx.raw())
+        .map_or("", String::as_str);
+    let mut spans = vec![gutter_span(search, theme)];
+    spans.extend(commit_row_gutter(ctx, entry_idx));
+    spans.push(Span::styled(
+        graph.to_string(),
+        Style::default().fg(theme.muted),
+    ));
+    vec![Line::from(spans)]
+}
+
+/// The selection gutter of the rows belonging to a commit, which carry its
+/// marks down the commit's full height.
+fn commit_row_gutter(ctx: &RowContext<'_>, entry_idx: EntryIdx) -> [Span<'static>; 2] {
+    let mark = if ctx.is_marked(entry_idx) {
+        SelectionMark::Selected
+    } else {
+        SelectionMark::None
+    };
+    selection_gutter(
+        ctx.app.is_in_visual_commit_range(entry_idx),
+        mark,
+        &ctx.config.theme,
+    )
+}
+
 pub(crate) fn render_file_line(
     file: &FileChange,
     is_unfolded: bool,
@@ -303,12 +364,7 @@ pub(crate) fn render_file_line(
         FileSelectionState::None => " ",
     };
 
-    let mut spans = vec![gutter_span(search, theme)];
-    spans.push(if in_visual {
-        Span::styled("│", Style::default().fg(theme.accent))
-    } else {
-        Span::raw(" ")
-    });
+    let mut spans = vec![gutter_span(search, theme), visual_bar(in_visual, theme)];
     spans.extend(vec![
         Span::styled(
             format!(" {select_char} "),
@@ -373,12 +429,13 @@ pub(crate) fn render_diff_line(
     tab_str: &str,
 ) -> Vec<Line<'static>> {
     let mut spans = vec![gutter_span(search, theme)];
-    let is_selectable = diff_line.is_selectable();
-    if is_selectable {
-        let bar = if flags.in_visual { "│" } else { " " };
-        let sel = if flags.is_selected { "▎" } else { " " };
-        spans.push(Span::styled(bar, Style::default().fg(theme.accent)));
-        spans.push(Span::styled(sel, Style::default().fg(theme.selection)));
+    if diff_line.is_selectable() {
+        let mark = if flags.is_selected {
+            SelectionMark::Selected
+        } else {
+            SelectionMark::None
+        };
+        spans.extend(selection_gutter(flags.in_visual, mark, theme));
     } else {
         spans.push(Span::raw("  "));
     }

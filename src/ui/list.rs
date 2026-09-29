@@ -11,11 +11,10 @@ use crate::idx::RowIdx;
 use std::collections::{HashMap, HashSet};
 
 use crate::app::{App, AppMode, TargetMode};
-use crate::idx::EntryIdx;
 use crate::theme::Config;
-use crate::types::FileOwner;
-use crate::types::RevisionArg;
-use crate::types::{ConflictHunkRef, DisplayRow, FileSelectionState, SearchScopes};
+use crate::types::{
+    ActiveView, ConflictHunkRef, DisplayRow, FileOwner, FileSelectionState, RevisionArg,
+};
 
 pub(super) fn expand_tabs(s: &str, tab_spaces: &str) -> String {
     if s.contains('\t') {
@@ -25,7 +24,7 @@ pub(super) fn expand_tabs(s: &str, tab_spaces: &str) -> String {
     }
 }
 
-fn pad_or_truncate(s: &str, width: usize) -> String {
+pub(super) fn pad_or_truncate(s: &str, width: usize) -> String {
     use unicode_width::UnicodeWidthChar;
     let display_width: usize = s.chars().map(|c| c.width().unwrap_or(0)).sum();
     if display_width > width {
@@ -69,7 +68,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         vis_end += 1;
     }
 
-    let (target_select_source, target_marks): (Option<&str>, Option<&HashSet<RevisionArg>>) =
+    let (target_source, target_marks): (Option<&str>, Option<&HashSet<RevisionArg>>) =
         match &app.mode {
             AppMode::TargetSelect {
                 source,
@@ -79,13 +78,6 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
             AppMode::TargetSelect { source, .. } => (Some(source.as_str()), None),
             _ => (None, None),
         };
-
-    let is_marked = |entry_idx: EntryIdx| -> bool {
-        target_marks.map_or_else(
-            || app.is_commit_selected(entry_idx),
-            |marks| marks.contains(&app.dag.nodes[entry_idx].commit.unique_prefix()),
-        )
-    };
 
     let search_case_sensitive = app
         .search
@@ -117,616 +109,86 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         _ => (HashMap::new(), 0),
     };
 
-    let annotate_highlight_commit: Option<crate::types::CommitId> =
-        if app.active_view == crate::types::ActiveView::Annotate {
-            app.selected_annotate_line()
-                .map(|line| line.commit_id.clone())
-        } else {
-            None
-        };
-
-    let max_w = area.width as usize;
-    let mut raw_items: Vec<Vec<Line>> = app.rows[vis_start..vis_end]
-        .iter()
-        .enumerate()
-        .map(|(win_idx, row)| -> Vec<Line<'static>> {
-            let row_idx = vis_start + win_idx;
-            let row_search = search_ctx.as_ref().map(|ctx| SearchRender {
+    let ctx = RowContext {
+        app,
+        config,
+        tab_spaces: &tab_spaces,
+        width: area.width as usize,
+        target_source,
+        target_marks,
+        annotate_highlight: (app.active_view == ActiveView::Annotate)
+            .then(|| {
+                app.selected_annotate_line()
+                    .map(|line| line.commit_id.clone())
+            })
+            .flatten(),
+    };
+    let mut rendered: Vec<RenderedRow> = (vis_start..vis_end)
+        .map(|row_idx| {
+            let search = search_ctx.as_ref().map(|s| SearchRender {
                 row_state: search_row_state(app, RowIdx::new(row_idx)),
-                ..*ctx
+                ..*s
             });
-            match row {
-                DisplayRow::CommitNode { entry_idx } => {
-                    let node = &app.dag.nodes[*entry_idx];
-                    let gl = &node.graph;
-                    let graph_node = gl.node.as_str();
-                    let graph_cont = gl.cont.as_str();
-                    let flags = RenderFlags {
-                        is_source: target_select_source
-                            .is_some_and(|src| src == node.commit.unique_prefix().as_str()),
-                        is_selected: is_marked(*entry_idx),
-                        in_visual: app.is_in_visual_commit_range(*entry_idx),
-                    };
-                    render_commit_item(
-                        graph_node,
-                        graph_cont,
-                        &node.commit,
-                        app.is_commit_unfolded(*entry_idx)
-                            .then(|| node.files.stats())
-                            .flatten(),
-                        &flags,
-                        row_search.as_ref(),
-                        config,
-                    )
-                }
-                DisplayRow::DescriptionLine {
-                    entry_idx,
-                    line_idx,
-                } => {
-                    let text = app.dag.nodes[*entry_idx]
-                        .commit
-                        .full_description
-                        .as_ref()
-                        .and_then(|d| d.lines().nth(line_idx.raw() + 1))
-                        .unwrap_or("");
-                    let graph_cont = app.dag.nodes[*entry_idx].graph.rest.as_str();
-                    let selected = is_marked(*entry_idx);
-                    let in_visual = app.is_in_visual_commit_range(*entry_idx);
-                    let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
-                    spans.push(if in_visual {
-                        Span::styled("│", Style::default().fg(theme.accent))
-                    } else {
-                        Span::raw(" ")
-                    });
-                    spans.push(if selected {
-                        Span::styled("▎", Style::default().fg(theme.selection))
-                    } else {
-                        Span::raw(" ")
-                    });
-                    spans.push(Span::styled(
-                        graph_cont.to_string(),
-                        Style::default().fg(theme.muted),
-                    ));
-                    spans.push(Span::styled(
-                        format!("  {text}"),
-                        Style::default().fg(theme.muted),
-                    ));
-                    vec![Line::from(spans)]
-                }
-                DisplayRow::GraphLink {
-                    entry_idx,
-                    line_idx,
-                } => {
-                    let graph_str = app.dag.nodes[*entry_idx]
-                        .graph
-                        .extra
-                        .get(line_idx.raw())
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
-                    let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
-                    let selected = is_marked(*entry_idx);
-                    let in_visual = app.is_in_visual_commit_range(*entry_idx);
-                    spans.push(if in_visual {
-                        Span::styled("│", Style::default().fg(theme.accent))
-                    } else {
-                        Span::raw(" ")
-                    });
-                    spans.push(if selected {
-                        Span::styled("▎", Style::default().fg(theme.selection))
-                    } else {
-                        Span::raw(" ")
-                    });
-                    spans.push(Span::styled(
-                        graph_str.to_string(),
-                        Style::default().fg(theme.muted),
-                    ));
-                    vec![Line::from(spans)]
-                }
-                DisplayRow::FileChange { owner, file_idx } => {
-                    let file = app
-                        .file(*owner, *file_idx)
-                        .expect("visible file row must be loaded");
-                    // Selections and visual ranges feed commit-scoped
-                    // commands, so only the DAG's files take part.
-                    let (sel_state, in_visual) = match owner {
-                        FileOwner::Dag(entry_idx) => (
-                            app.file_selection_state(*entry_idx, *file_idx),
-                            app.is_in_visual_file_range(*entry_idx, *file_idx),
-                        ),
-                        FileOwner::EvoLog(_) | FileOwner::Interdiff => {
-                            (FileSelectionState::None, false)
-                        }
-                    };
-                    render_file_line(
-                        file,
-                        app.is_file_unfolded(*owner, *file_idx),
-                        sel_state,
-                        in_visual,
-                        row_search.as_ref(),
-                        theme,
-                    )
-                }
-                row @ DisplayRow::DiffLine {
-                    owner,
-                    file_idx,
-                    line_idx,
-                } => {
-                    let diff_line = app
-                        .row_diff_line(*row)
-                        .expect("visible diff row must be loaded");
-                    let flags = match owner {
-                        FileOwner::Dag(entry_idx) => RenderFlags {
-                            is_source: false,
-                            is_selected: app.is_line_selected(*entry_idx, *file_idx, *line_idx),
-                            in_visual: app.is_in_visual_range(
-                                *entry_idx,
-                                *file_idx,
-                                *line_idx,
-                                RowIdx::new(row_idx),
-                            ),
-                        },
-                        FileOwner::EvoLog(_) | FileOwner::Interdiff => RenderFlags::default(),
-                    };
-                    render_diff_line(
-                        diff_line,
-                        app.show_line_numbers,
-                        app.diff_underline,
-                        &flags,
-                        row_search.as_ref(),
-                        theme,
-                        &tab_spaces,
-                    )
-                }
-                DisplayRow::BookmarkItem { bookmark_idx } => render_bookmark_item(
-                    &app.views.bookmark_entries[bookmark_idx.raw()],
-                    row_search.as_ref(),
-                    theme,
-                ),
-                DisplayRow::BookmarkConflictTarget {
-                    bookmark_idx,
-                    target_idx,
-                } => {
-                    let entry = &app.views.bookmark_entries[bookmark_idx.raw()];
-                    let target = app
-                        .views
-                        .bookmark_details
-                        .get(&entry.name)
-                        .and_then(|d| d.conflict_targets.get(target_idx.raw()));
-                    render_bookmark_conflict_target(target, theme)
-                }
-                DisplayRow::BookmarkRemoteTarget {
-                    bookmark_idx,
-                    target_idx,
-                } => {
-                    let entry = &app.views.bookmark_entries[bookmark_idx.raw()];
-                    let target = app
-                        .views
-                        .bookmark_details
-                        .get(&entry.name)
-                        .and_then(|d| d.remote_targets.get(target_idx.raw()));
-                    render_bookmark_remote_target(target, theme)
-                }
-                DisplayRow::BookmarkSeparator => vec![Line::from(Span::styled(
-                    "─".repeat(area.width as usize),
-                    Style::default().fg(theme.muted),
-                ))],
-                DisplayRow::TagItem { tag_idx } => {
-                    if let Some(entry) = app.views.tag_entries.get(tag_idx.raw()) {
-                        render_tag_item(entry, row_search.as_ref(), theme)
-                    } else {
-                        vec![Line::raw("")]
-                    }
-                }
-                DisplayRow::TagRemoteTarget {
-                    tag_idx,
-                    target_idx,
-                } => {
-                    let target = app
-                        .views
-                        .tag_entries
-                        .get(tag_idx.raw())
-                        .and_then(|entry| app.views.tag_details.get(&entry.name))
-                        .and_then(|d| d.remote_targets.get(target_idx.raw()));
-                    render_tag_remote_target(target, theme)
-                }
-                DisplayRow::OpLogItem { op_log_idx } => {
-                    if let Some(entry) = app.op_log.entries.get(op_log_idx.raw()) {
-                        render_op_log_item(entry, row_search.as_ref(), theme)
-                    } else {
-                        vec![Line::raw("")]
-                    }
-                }
-                DisplayRow::OpLogDetailLine {
-                    op_log_idx,
-                    line_idx,
-                } => {
-                    let detail = app
-                        .op_log
-                        .entries
-                        .get(op_log_idx.raw())
-                        .and_then(|entry| app.op_log.details.get(&entry.id))
-                        .and_then(|l| l.loaded())
-                        .and_then(|lines| lines.get(line_idx.raw()));
-                    render_op_detail_line(detail, theme)
-                }
-                DisplayRow::OpLogGraphLink {
-                    op_log_idx,
-                    line_idx,
-                } => render_simple_graph_link(
-                    app.op_log
-                        .entries
-                        .get(op_log_idx.raw())
-                        .and_then(|e| e.graph.extra.get(line_idx.raw())),
-                    row_search.as_ref(),
-                    theme,
-                ),
-                DisplayRow::OpLogLoadMore => vec![Line::from(vec![
-                    Span::styled("  [Tab] ", Style::default().fg(theme.accent)),
-                    Span::styled("Load more…", Style::default().fg(theme.muted)),
-                ])],
-                DisplayRow::EvoLogItem { evolog_idx } => {
-                    if let Some(entry) = app.evolog.entries.get(evolog_idx.raw()) {
-                        render_evolog_item(entry, row_search.as_ref(), config)
-                    } else {
-                        vec![Line::raw(""), Line::raw("")]
-                    }
-                }
-                DisplayRow::EvoLogGraphLink {
-                    evolog_idx,
-                    line_idx,
-                } => render_simple_graph_link(
-                    app.evolog
-                        .entries
-                        .get(evolog_idx.raw())
-                        .and_then(|e| e.graph.extra.get(line_idx.raw())),
-                    row_search.as_ref(),
-                    theme,
-                ),
-                DisplayRow::WorkspaceItem { workspace_idx } => {
-                    if let Some(entry) = app.views.workspace_entries.get(workspace_idx.raw()) {
-                        render_workspace_item(entry, row_search.as_ref(), theme)
-                    } else {
-                        vec![Line::raw("")]
-                    }
-                }
-                DisplayRow::CommandLogItem { log_idx } => {
-                    if let Some(entry) = app.command_log.entries.get(log_idx.raw()) {
-                        render_command_log_item(entry, row_search.as_ref(), theme)
-                    } else {
-                        vec![Line::raw("")]
-                    }
-                }
-                DisplayRow::CommandLogDetail { log_idx, line_idx } => {
-                    if let Some(entry) = app.command_log.entries.get(log_idx.raw()) {
-                        render_command_log_detail(entry, line_idx.raw(), theme)
-                    } else {
-                        vec![Line::raw("")]
-                    }
-                }
-                DisplayRow::ConflictHeader {
-                    entry_idx,
-                    file_idx,
-                    hunk_idx,
-                } => render_conflict_header(
-                    app,
-                    ConflictHunkRef {
-                        entry_idx: *entry_idx,
-                        file_idx: *file_idx,
-                        hunk_idx: *hunk_idx,
-                    },
-                    theme,
-                ),
-                DisplayRow::ConflictTerm {
-                    entry_idx,
-                    file_idx,
-                    hunk_idx,
-                    term_idx,
-                    line_idx,
-                } => render_conflict_term(
-                    app,
-                    ConflictHunkRef {
-                        entry_idx: *entry_idx,
-                        file_idx: *file_idx,
-                        hunk_idx: *hunk_idx,
-                    },
-                    *term_idx,
-                    *line_idx,
-                    app.diff_underline,
-                    row_search.as_ref(),
-                    theme,
-                    &tab_spaces,
-                ),
-                DisplayRow::ConflictContext {
-                    entry_idx,
-                    file_idx,
-                    hunk_idx,
-                    line_idx,
-                } => render_conflict_context(
-                    app,
-                    ConflictHunkRef {
-                        entry_idx: *entry_idx,
-                        file_idx: *file_idx,
-                        hunk_idx: *hunk_idx,
-                    },
-                    *line_idx,
-                    theme,
-                ),
-                DisplayRow::ConflictGap {
-                    entry_idx,
-                    file_idx,
-                    hunk_idx,
-                } => render_conflict_gap(
-                    app,
-                    ConflictHunkRef {
-                        entry_idx: *entry_idx,
-                        file_idx: *file_idx,
-                        hunk_idx: *hunk_idx,
-                    },
-                    theme,
-                ),
-                DisplayRow::ConflictEdited {
-                    entry_idx,
-                    file_idx,
-                    hunk_idx,
-                    line_idx,
-                } => render_conflict_edited(
-                    app,
-                    ConflictHunkRef {
-                        entry_idx: *entry_idx,
-                        file_idx: *file_idx,
-                        hunk_idx: *hunk_idx,
-                    },
-                    *line_idx,
-                    theme,
-                ),
-                DisplayRow::InterdiffHeader => {
-                    let (from, to) = app
-                        .interdiff
-                        .as_ref()
-                        .map(|i| (i.from_label.to_string(), i.to_label.to_string()))
-                        .unwrap_or_default();
-                    let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
-                    spans.push(Span::styled(
-                        "  interdiff: ",
-                        Style::default().fg(theme.muted),
-                    ));
-                    spans.push(Span::styled(from, Style::default().fg(theme.change_id)));
-                    spans.push(Span::styled(" \u{2192} ", Style::default().fg(theme.muted)));
-                    spans.push(Span::styled(to, Style::default().fg(theme.change_id)));
-                    vec![Line::from(spans)]
-                }
-                DisplayRow::AnnotateLine { line_idx } => {
-                    let lines_data = app.annotate.lines.loaded();
-                    let line = lines_data.and_then(|lines| lines.get(line_idx.raw()));
-                    if let Some(line) = line {
-                        let same_commit = annotate_highlight_commit
-                            .as_ref()
-                            .is_some_and(|c| *c == line.commit_id);
-                        let is_cursor = row_idx == app.cursor.raw();
-
-                        let prev_commit = if line_idx.raw() > 0 {
-                            lines_data
-                                .and_then(|l| l.get(line_idx.raw() - 1))
-                                .map(|l| &l.commit_id)
-                        } else {
-                            None
-                        };
-                        let is_boundary = prev_commit.is_some_and(|pc| *pc != line.commit_id);
-
-                        let mut spans = vec![];
-                        if is_cursor {
-                            spans.push(Span::styled("▌", Style::default().fg(theme.accent)));
-                            spans.push(Span::raw(" "));
-                        } else {
-                            spans.push(gutter_span(row_search.as_ref(), theme));
-                        }
-                        spans.push(Span::raw("  "));
-                        push_short_id(&mut spans, &line.change_id, theme.change_id, theme);
-                        spans.push(Span::raw(" "));
-                        spans.push(Span::styled(
-                            pad_or_truncate(&line.author, 15),
-                            Style::default().fg(theme.selection),
-                        ));
-                        spans.push(Span::raw(" "));
-                        spans.push(Span::styled(
-                            format!("{} ", pad_or_truncate(&line.relative_time, 15)),
-                            Style::default().fg(theme.muted),
-                        ));
-                        let gutter_end = spans.len();
-                        spans.push(Span::styled(
-                            format!("{:>5}: ", line.line_number),
-                            Style::default().fg(theme.muted),
-                        ));
-                        if line.syntax_tokens.is_empty() {
-                            let content = expand_tabs(&line.content, &tab_spaces);
-                            push_searchable(
-                                &mut spans,
-                                &content,
-                                SearchScopes::LINE,
-                                Style::default().fg(theme.text),
-                                row_search.as_ref(),
-                            );
-                        } else {
-                            push_tokens_with_search(
-                                &mut spans,
-                                &line.syntax_tokens,
-                                &tab_spaces,
-                                row_search.as_ref(),
-                            );
-                        }
-                        if is_cursor {
-                            let used: usize = spans.iter().map(|s| s.width()).sum();
-                            if used < max_w {
-                                spans
-                                    .push(Span::styled(" ".repeat(max_w - used), Style::default()));
-                            }
-                            for span in &mut spans {
-                                span.style = span.style.bg(theme.selection_bg_strong);
-                            }
-                        } else if same_commit {
-                            for span in &mut spans[..gutter_end] {
-                                span.style = span.style.bg(theme.selection_bg);
-                            }
-                        }
-                        let mut result = Vec::new();
-                        if is_boundary && app.annotate.show_commit_separators {
-                            result.push(Line::styled(
-                                "─".repeat(max_w),
-                                Style::default().fg(theme.muted),
-                            ));
-                        }
-                        result.push(Line::from(spans));
-                        result
-                    } else {
-                        vec![Line::raw("")]
-                    }
-                }
-                DisplayRow::AnnotateDetail {
-                    line_idx,
-                    detail_idx,
-                } => {
-                    let info = app
-                        .annotate
-                        .lines
-                        .loaded()
-                        .and_then(|l| l.get(line_idx.raw()))
-                        .and_then(|line| app.annotate.commit_info.get(&line.commit_id));
-                    if let Some(info) = info {
-                        let di = detail_idx.raw();
-                        let is_cursor = row_idx == app.cursor.raw();
-                        let mut spans = vec![gutter_span(row_search.as_ref(), theme)];
-                        let label_style = Style::default().fg(theme.muted);
-                        match di {
-                            0 => {
-                                spans.push(Span::styled("      Change:    ", label_style));
-                                push_short_id(&mut spans, &info.change_id, theme.change_id, theme);
-                            }
-                            1 => {
-                                spans.push(Span::styled("      Commit:    ", label_style));
-                                push_short_id(&mut spans, &info.commit_id, theme.commit_id, theme);
-                            }
-                            2 => {
-                                spans.push(Span::styled("      Author:    ", label_style));
-                                spans.push(Span::styled(
-                                    format!(
-                                        "{} <{}>  {}",
-                                        info.author_name, info.author_email, info.author_date
-                                    ),
-                                    Style::default().fg(theme.text),
-                                ));
-                            }
-                            3 => {
-                                spans.push(Span::styled("      Committer: ", label_style));
-                                spans.push(Span::styled(
-                                    format!(
-                                        "{} <{}>  {}",
-                                        info.committer_name,
-                                        info.committer_email,
-                                        info.committer_date
-                                    ),
-                                    Style::default().fg(theme.text),
-                                ));
-                            }
-                            _ => {
-                                let desc_line_idx = di - 4;
-                                let text = if info.description_lines.is_empty() {
-                                    "(no description set)"
-                                } else {
-                                    info.description_lines
-                                        .get(desc_line_idx)
-                                        .map(|s| s.as_str())
-                                        .unwrap_or("")
-                                };
-                                spans.push(Span::styled(
-                                    format!("      {text}"),
-                                    Style::default().fg(theme.text),
-                                ));
-                            }
-                        }
-                        if is_cursor {
-                            let used: usize = spans.iter().map(|s| s.width()).sum();
-                            if used < max_w {
-                                spans
-                                    .push(Span::styled(" ".repeat(max_w - used), Style::default()));
-                            }
-                            for span in &mut spans {
-                                span.style = span.style.bg(theme.selection_bg_strong);
-                            }
-                        }
-                        vec![Line::from(spans)]
-                    } else {
-                        vec![Line::raw("")]
-                    }
-                }
-            }
+            render_row(&ctx, row_idx, search.as_ref())
         })
         .collect();
 
-    if !jump_labels.is_empty() {
-        let label_style = Style::default()
-            .fg(theme.warning)
-            .add_modifier(Modifier::BOLD);
-        for (row_idx, label) in &jump_labels {
-            let Some(win_idx) = row_idx.raw().checked_sub(vis_start) else {
-                continue;
+    let label_style = Style::default()
+        .fg(theme.warning)
+        .add_modifier(Modifier::BOLD);
+    for (row_idx, label) in &jump_labels {
+        let Some(row) = row_idx
+            .raw()
+            .checked_sub(vis_start)
+            .and_then(|i| rendered.get_mut(i))
+        else {
+            continue;
+        };
+        if let Some(first_span) = row
+            .lines
+            .get_mut(row.label_line)
+            .and_then(|line| line.spans.first_mut())
+        {
+            let remaining = &label[jump_input_len..];
+            let display = if remaining.len() >= 2 {
+                remaining.to_string()
+            } else {
+                format!("{remaining} ")
             };
-            if let Some(lines) = raw_items.get_mut(win_idx) {
-                let target_line = if lines.len() > 1 {
-                    let first_is_separator = lines[0]
-                        .spans
-                        .first()
-                        .is_some_and(|s| s.content.starts_with('─'));
-                    if first_is_separator {
-                        lines.last_mut()
-                    } else {
-                        lines.first_mut()
-                    }
-                } else {
-                    lines.first_mut()
-                };
-                if let Some(target_line) = target_line
-                    && let Some(first_span) = target_line.spans.first_mut()
-                {
-                    let remaining = &label[jump_input_len..];
-                    let display = if remaining.len() >= 2 {
-                        remaining.to_string()
-                    } else {
-                        format!("{remaining} ")
-                    };
-                    *first_span = Span::styled(display, label_style);
-                }
-            }
+            *first_span = Span::styled(display, label_style);
         }
     }
 
-    let max_content_width: usize = raw_items
+    let max_w = area.width as usize;
+    let max_content_width: usize = rendered
         .iter()
-        .flat_map(|lines| lines.iter().map(line_width))
+        .flat_map(|row| row.lines.iter().map(line_width))
         .max()
         .unwrap_or(0);
-    if max_content_width > max_w {
-        app.h_scroll = app.h_scroll.min(max_content_width - max_w);
+    app.h_scroll = if max_content_width > max_w {
+        app.h_scroll.min(max_content_width - max_w)
     } else {
-        app.h_scroll = 0;
-    }
+        0
+    };
     let h_skip = app.h_scroll;
 
-    let items: Vec<ListItem> = raw_items
+    let items: Vec<ListItem> = rendered
         .into_iter()
-        .map(|lines| {
-            let trimmed: Vec<Line> = if h_skip > 0 {
-                lines
+        .map(|row| {
+            let lines: Vec<Line> = if h_skip > 0 {
+                row.lines
                     .into_iter()
                     .map(|line| trim_line(line, h_skip, max_w))
                     .collect()
             } else {
-                lines
+                row.lines
             };
-            ListItem::new(trimmed)
+            ListItem::new(lines)
         })
         .collect();
 
-    let highlight = if app.active_view == crate::types::ActiveView::Annotate {
+    // The annotate view paints its own cursor highlight across the width.
+    let highlight = if app.active_view == ActiveView::Annotate {
         Style::default()
     } else {
         Style::default()
@@ -742,4 +204,298 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     let mut list_state =
         ListState::default().with_selected(Some(app.cursor.raw().saturating_sub(vis_start)));
     frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+/// Render one row of whichever view is showing.
+fn render_row(
+    ctx: &RowContext<'_>,
+    row_idx: usize,
+    search: Option<&SearchRender<'_>>,
+) -> RenderedRow {
+    let app = ctx.app;
+    let theme = &ctx.config.theme;
+    let is_cursor = row_idx == app.cursor.raw();
+    let lines = match app.rows[row_idx] {
+        DisplayRow::CommitNode { entry_idx } => {
+            let node = &app.dag.nodes[entry_idx];
+            let flags = RenderFlags {
+                is_source: ctx
+                    .target_source
+                    .is_some_and(|src| src == node.commit.unique_prefix().as_str()),
+                is_selected: ctx.is_marked(entry_idx),
+                in_visual: app.is_in_visual_commit_range(entry_idx),
+            };
+            render_commit_item(
+                &node.graph.node,
+                &node.graph.cont,
+                &node.commit,
+                app.is_commit_unfolded(entry_idx)
+                    .then(|| node.files.stats())
+                    .flatten(),
+                &flags,
+                search,
+                ctx.config,
+            )
+        }
+        DisplayRow::DescriptionLine {
+            entry_idx,
+            line_idx,
+        } => render_description_line(ctx, entry_idx, line_idx, search),
+        DisplayRow::GraphLink {
+            entry_idx,
+            line_idx,
+        } => render_graph_link(ctx, entry_idx, line_idx, search),
+        DisplayRow::FileChange { owner, file_idx } => {
+            let file = app
+                .file(owner, file_idx)
+                .expect("visible file row must be loaded");
+            // Selections and visual ranges feed commit-scoped commands, so
+            // only the DAG's files take part.
+            let (sel_state, in_visual) = match owner {
+                FileOwner::Dag(entry_idx) => (
+                    app.file_selection_state(entry_idx, file_idx),
+                    app.is_in_visual_file_range(entry_idx, file_idx),
+                ),
+                FileOwner::EvoLog(_) | FileOwner::Interdiff => (FileSelectionState::None, false),
+            };
+            render_file_line(
+                file,
+                app.is_file_unfolded(owner, file_idx),
+                sel_state,
+                in_visual,
+                search,
+                theme,
+            )
+        }
+        row @ DisplayRow::DiffLine {
+            owner,
+            file_idx,
+            line_idx,
+        } => {
+            let diff_line = app
+                .row_diff_line(row)
+                .expect("visible diff row must be loaded");
+            let flags = match owner {
+                FileOwner::Dag(entry_idx) => RenderFlags {
+                    is_source: false,
+                    is_selected: app.is_line_selected(entry_idx, file_idx, line_idx),
+                    in_visual: app.is_in_visual_range(
+                        entry_idx,
+                        file_idx,
+                        line_idx,
+                        RowIdx::new(row_idx),
+                    ),
+                },
+                FileOwner::EvoLog(_) | FileOwner::Interdiff => RenderFlags::default(),
+            };
+            render_diff_line(
+                diff_line,
+                app.show_line_numbers,
+                app.diff_underline,
+                &flags,
+                search,
+                theme,
+                ctx.tab_spaces,
+            )
+        }
+        DisplayRow::BookmarkItem { bookmark_idx } => render_bookmark_item(
+            &app.views.bookmark_entries[bookmark_idx.raw()],
+            search,
+            theme,
+        ),
+        DisplayRow::BookmarkConflictTarget {
+            bookmark_idx,
+            target_idx,
+        } => {
+            let entry = &app.views.bookmark_entries[bookmark_idx.raw()];
+            let target = app
+                .views
+                .bookmark_details
+                .get(&entry.name)
+                .and_then(|d| d.conflict_targets.get(target_idx.raw()));
+            render_bookmark_conflict_target(target, theme)
+        }
+        DisplayRow::BookmarkRemoteTarget {
+            bookmark_idx,
+            target_idx,
+        } => {
+            let entry = &app.views.bookmark_entries[bookmark_idx.raw()];
+            let target = app
+                .views
+                .bookmark_details
+                .get(&entry.name)
+                .and_then(|d| d.remote_targets.get(target_idx.raw()));
+            render_bookmark_remote_target(target, theme)
+        }
+        DisplayRow::BookmarkSeparator => vec![Line::from(Span::styled(
+            "─".repeat(ctx.width),
+            Style::default().fg(theme.muted),
+        ))],
+        DisplayRow::TagItem { tag_idx } => match app.views.tag_entries.get(tag_idx.raw()) {
+            Some(entry) => render_tag_item(entry, search, theme),
+            None => vec![Line::raw("")],
+        },
+        DisplayRow::TagRemoteTarget {
+            tag_idx,
+            target_idx,
+        } => {
+            let target = app
+                .views
+                .tag_entries
+                .get(tag_idx.raw())
+                .and_then(|entry| app.views.tag_details.get(&entry.name))
+                .and_then(|d| d.remote_targets.get(target_idx.raw()));
+            render_tag_remote_target(target, theme)
+        }
+        DisplayRow::OpLogItem { op_log_idx } => match app.op_log.entries.get(op_log_idx.raw()) {
+            Some(entry) => render_op_log_item(entry, search, theme),
+            None => vec![Line::raw("")],
+        },
+        DisplayRow::OpLogDetailLine {
+            op_log_idx,
+            line_idx,
+        } => {
+            let detail = app
+                .op_log
+                .entries
+                .get(op_log_idx.raw())
+                .and_then(|entry| app.op_log.details.get(&entry.id))
+                .and_then(|l| l.loaded())
+                .and_then(|lines| lines.get(line_idx.raw()));
+            render_op_detail_line(detail, theme)
+        }
+        DisplayRow::OpLogGraphLink {
+            op_log_idx,
+            line_idx,
+        } => render_simple_graph_link(
+            app.op_log
+                .entries
+                .get(op_log_idx.raw())
+                .and_then(|e| e.graph.extra.get(line_idx.raw())),
+            search,
+            theme,
+        ),
+        DisplayRow::OpLogLoadMore => vec![Line::from(vec![
+            Span::styled("  [Tab] ", Style::default().fg(theme.accent)),
+            Span::styled("Load more…", Style::default().fg(theme.muted)),
+        ])],
+        DisplayRow::EvoLogItem { evolog_idx } => match app.evolog.entries.get(evolog_idx.raw()) {
+            Some(entry) => render_evolog_item(entry, search, ctx.config),
+            None => vec![Line::raw(""), Line::raw("")],
+        },
+        DisplayRow::EvoLogGraphLink {
+            evolog_idx,
+            line_idx,
+        } => render_simple_graph_link(
+            app.evolog
+                .entries
+                .get(evolog_idx.raw())
+                .and_then(|e| e.graph.extra.get(line_idx.raw())),
+            search,
+            theme,
+        ),
+        DisplayRow::WorkspaceItem { workspace_idx } => {
+            match app.views.workspace_entries.get(workspace_idx.raw()) {
+                Some(entry) => render_workspace_item(entry, search, theme),
+                None => vec![Line::raw("")],
+            }
+        }
+        DisplayRow::CommandLogItem { log_idx } => {
+            match app.command_log.entries.get(log_idx.raw()) {
+                Some(entry) => render_command_log_item(entry, search, theme),
+                None => vec![Line::raw("")],
+            }
+        }
+        DisplayRow::CommandLogDetail { log_idx, line_idx } => {
+            match app.command_log.entries.get(log_idx.raw()) {
+                Some(entry) => render_command_log_detail(entry, line_idx.raw(), theme),
+                None => vec![Line::raw("")],
+            }
+        }
+        DisplayRow::ConflictHeader {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+        } => render_conflict_header(
+            app,
+            ConflictHunkRef {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            },
+            theme,
+        ),
+        DisplayRow::ConflictTerm {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+            term_idx,
+            line_idx,
+        } => render_conflict_term(
+            app,
+            ConflictHunkRef {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            },
+            term_idx,
+            line_idx,
+            app.diff_underline,
+            search,
+            theme,
+            ctx.tab_spaces,
+        ),
+        DisplayRow::ConflictContext {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+            line_idx,
+        } => render_conflict_context(
+            app,
+            ConflictHunkRef {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            },
+            line_idx,
+            theme,
+        ),
+        DisplayRow::ConflictGap {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+        } => render_conflict_gap(
+            app,
+            ConflictHunkRef {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            },
+            theme,
+        ),
+        DisplayRow::ConflictEdited {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+            line_idx,
+        } => render_conflict_edited(
+            app,
+            ConflictHunkRef {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+            },
+            line_idx,
+            theme,
+        ),
+        DisplayRow::InterdiffHeader => render_interdiff_header(ctx, search),
+        DisplayRow::AnnotateLine { line_idx } => {
+            return render_annotate_line(ctx, line_idx, is_cursor, search);
+        }
+        DisplayRow::AnnotateDetail {
+            line_idx,
+            detail_idx,
+        } => render_annotate_detail(ctx, line_idx, detail_idx, is_cursor, search),
+    };
+    lines.into()
 }
