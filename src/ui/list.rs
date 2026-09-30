@@ -8,13 +8,11 @@ use super::search::*;
 use super::spans::*;
 use super::views::*;
 use crate::idx::RowIdx;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use crate::app::{App, AppMode, TargetMode};
+use crate::app::{App, AppMode};
 use crate::config::Config;
-use crate::types::{
-    ActiveView, ConflictHunkRef, DisplayRow, FileOwner, FileSelectionState, RevisionArg,
-};
+use crate::types::{ActiveView, ConflictHunkRef, DisplayRow, FileOwner, FileSelectionState};
 
 pub(super) fn expand_tabs(s: &str, tab_spaces: &str) -> String {
     if s.contains('\t') {
@@ -68,17 +66,6 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         vis_end += 1;
     }
 
-    let (target_sources, target_marks): (&[RevisionArg], Option<&HashSet<RevisionArg>>) =
-        match &app.mode {
-            AppMode::TargetSelect {
-                sources,
-                target_mode: TargetMode::Multi { targets },
-                ..
-            } => (sources, Some(targets)),
-            AppMode::TargetSelect { sources, .. } => (sources, None),
-            _ => (&[], None),
-        };
-
     let search_case_sensitive = app
         .search
         .as_ref()
@@ -114,8 +101,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         config,
         tab_spaces: &tab_spaces,
         width: area.width as usize,
-        target_sources,
-        target_marks,
+        picks: app.mode.picks(),
         annotate_highlight: (app.active_view == ActiveView::Annotate)
             .then(|| {
                 app.selected_annotate_line()

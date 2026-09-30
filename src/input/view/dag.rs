@@ -613,7 +613,7 @@ pub(in crate::input) fn maybe_offer_apply(
     // Carry the content, not a temp file: declining the prompt must leave
     // nothing to clean up. The file is staged only when the option runs.
     app.mode = AppMode::FollowUp {
-        prompt: format!("all conflicts in {path} picked"),
+        prompt: crate::app::FollowUpPrompt::Text(format!("all conflicts in {path} picked")),
         options: vec![FollowUpOption {
             key: 'a',
             label: "apply resolution",
@@ -766,10 +766,10 @@ mod selection_owner_tests {
         let mut app = files_selected_in_b();
         press(&mut app, 's');
         press(&mut app, 't');
-        let AppMode::TargetSelect { sources, .. } = &app.mode else {
+        let AppMode::TargetSelect { picks, .. } = &app.mode else {
             panic!("expected target selection");
         };
-        assert_eq!(sources.as_slice(), [RevisionArg::new("bb")]);
+        assert_eq!(picks.sources.as_slice(), [RevisionArg::new("bb")]);
     }
 
     /// `jj commit` only takes the working copy's changes, so paths chosen
@@ -829,10 +829,10 @@ mod multi_source_tests {
     }
 
     fn sources(app: &App) -> Vec<&str> {
-        let AppMode::TargetSelect { sources, .. } = &app.mode else {
+        let AppMode::TargetSelect { picks, .. } = &app.mode else {
             panic!("expected target selection");
         };
-        sources.iter().map(RevisionArg::as_str).collect()
+        picks.sources.iter().map(RevisionArg::as_str).collect()
     }
 
     /// The prompt and the highlight read the commits the rebase will move,
@@ -875,5 +875,23 @@ mod multi_source_tests {
         };
         let ids: Vec<&str> = change_ids.iter().map(RevisionArg::as_str).collect();
         assert_eq!(ids, ["aa", "bb", "cc"]);
+    }
+
+    /// The follow-up asking how to rebase keeps what was picked, so the
+    /// DAG can go on marking it: the three sources, and the targets in the
+    /// order they were picked.
+    #[test]
+    fn the_follow_up_keeps_what_was_picked() {
+        let mut app = rebasing_three();
+        app.cursor = app.row_of_commit(EntryIdx::new(3)).unwrap();
+        press(&mut app, KeyCode::Char(' '));
+        press(&mut app, KeyCode::Enter);
+
+        assert!(matches!(app.mode, AppMode::FollowUp { .. }));
+        let picks = app.mode.picks().expect("the follow-up keeps the picks");
+        let sources: Vec<&str> = picks.sources.iter().map(RevisionArg::as_str).collect();
+        let targets: Vec<&str> = picks.targets.iter().map(RevisionArg::as_str).collect();
+        assert_eq!(sources, ["aa", "bb", "cc"]);
+        assert_eq!(targets, ["dd"]);
     }
 }

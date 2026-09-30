@@ -1,7 +1,6 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
-use crate::app::{App, AppMode, Invocation, SubmenuToggle, TargetMode};
+use crate::app::{App, AppMode, Invocation, SubmenuToggle};
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::jj_command::{JJCommand, JJCommandKind};
@@ -1040,7 +1039,7 @@ fn extract_commit_id(app: &App) -> Option<CommitId> {
 /// Show a FollowUp prompt offering to widen the revset to include a commit.
 fn offer_widen_revset(app: &mut App, id: &str) {
     app.mode = AppMode::FollowUp {
-        prompt: "commit not in current revset".into(),
+        prompt: crate::app::FollowUpPrompt::Text("commit not in current revset".into()),
         options: vec![FollowUpOption {
             key: 'w',
             label: "widen revset",
@@ -1106,21 +1105,14 @@ pub(super) fn enter_target_select(
     let Ok(sources) = SmallVec1::try_from_smallvec(sources) else {
         return Action::None;
     };
-    let restore_cursor = app.cursor;
-    let target_mode = if operation.multi_target() {
-        TargetMode::Multi {
-            targets: HashSet::new(),
-        }
-    } else {
-        TargetMode::Single
-    };
     app.mode = AppMode::TargetSelect {
-        prompt: operation.label(),
-        sources,
-        restore_cursor,
+        picks: crate::app::Picks {
+            sources,
+            targets: Vec::new(),
+        },
+        restore_cursor: app.cursor,
         operation,
         flags,
-        target_mode,
         origin: None,
     };
     Action::None

@@ -44,11 +44,9 @@ pub(in crate::ui) struct RowContext<'a> {
     pub tab_spaces: &'a str,
     /// Width of the list area.
     pub width: usize,
-    /// In target select: the commits the operation acts on.
-    pub target_sources: &'a [crate::types::RevisionArg],
-    /// In a multi-target select: the picked targets, which mark rows in
-    /// place of the selection.
-    pub target_marks: Option<&'a std::collections::HashSet<crate::types::RevisionArg>>,
+    /// In a target select or its follow-up: the sources, marked as such,
+    /// and the targets, which carry the mark in place of the selection.
+    pub picks: Option<&'a crate::app::Picks>,
     /// In the annotate view: the commit of the line under the cursor, whose
     /// other lines are highlighted.
     pub annotate_highlight: Option<crate::types::CommitId>,
@@ -57,17 +55,22 @@ pub(in crate::ui) struct RowContext<'a> {
 impl RowContext<'_> {
     /// Whether a DAG commit is one the target select acts on.
     pub fn is_source(&self, entry_idx: crate::idx::EntryIdx) -> bool {
-        let revision = self.app.dag.nodes[entry_idx].commit.unique_prefix();
-        self.target_sources.contains(&revision)
+        self.picks.is_some_and(|picks| {
+            let revision = self.app.dag.nodes[entry_idx].commit.unique_prefix();
+            picks.sources.contains(&revision)
+        })
     }
 
     /// Whether a DAG commit carries the selection mark: picked as a target
-    /// in a multi-target select, otherwise selected.
+    /// while targets are being picked, otherwise selected.
     pub fn is_marked(&self, entry_idx: crate::idx::EntryIdx) -> bool {
-        self.target_marks.map_or_else(
-            || self.app.is_commit_selected(entry_idx),
-            |marks| marks.contains(&self.app.dag.nodes[entry_idx].commit.unique_prefix()),
-        )
+        match self.picks {
+            Some(picks) => {
+                let revision = self.app.dag.nodes[entry_idx].commit.unique_prefix();
+                picks.targets.contains(&revision)
+            }
+            None => self.app.is_commit_selected(entry_idx),
+        }
     }
 }
 

@@ -363,11 +363,25 @@ pub struct CommandLogEntry {
     pub timestamp: jiff::Timestamp,
 }
 
-/// Whether the target-select picker allows one or many targets.
+/// What a target selection has picked.
 #[derive(Debug, Clone)]
-pub enum TargetMode {
-    Single,
-    Multi { targets: HashSet<RevisionArg> },
+pub struct Picks {
+    /// The commits the operation acts on: one, or every selected commit
+    /// for an operation that takes several.
+    pub sources: SmallVec1<RevisionArg>,
+    /// The targets picked so far, in the order they were picked.
+    pub targets: Vec<RevisionArg>,
+}
+
+/// What a follow-up asks.
+pub enum FollowUpPrompt {
+    /// A question of its own.
+    Text(String),
+    /// How to carry out an operation on what a target selection picked.
+    Picked {
+        operation: &'static str,
+        picks: Picks,
+    },
 }
 
 pub struct SubmenuToggle {
@@ -974,14 +988,10 @@ pub enum AppMode {
     SearchInput,
     /// Navigating to select a target commit for a two-commit operation.
     TargetSelect {
-        prompt: &'static str,
-        /// The commits the operation acts on: one, or every selected
-        /// commit for an operation that takes several.
-        sources: SmallVec1<RevisionArg>,
+        picks: Picks,
         restore_cursor: RowIdx,
         operation: TargetOperation,
         flags: CommandFlags,
-        target_mode: TargetMode,
         origin: Option<Invocation>,
     },
     /// Navigating to select a single commit (e.g. for workspace revision).
@@ -993,7 +1003,7 @@ pub enum AppMode {
     },
     /// Choosing from a set of follow-up options after target selection.
     FollowUp {
-        prompt: String,
+        prompt: FollowUpPrompt,
         options: Vec<FollowUpOption>,
         origin: Option<Invocation>,
     },
@@ -1077,7 +1087,7 @@ impl AppMode {
         match std::mem::replace(self, AppMode::Normal) {
             AppMode::CommandOutput(state) if !state.retry.is_empty() => {
                 *self = AppMode::FollowUp {
-                    prompt: "Retry?".into(),
+                    prompt: FollowUpPrompt::Text("Retry?".into()),
                     options: state.retry,
                     origin: state.origin,
                 };
@@ -1088,6 +1098,19 @@ impl AppMode {
                 *self = other;
                 false
             }
+        }
+    }
+
+    /// What a target selection, or the follow-up to one, has picked. The
+    /// DAG marks them while either is on screen.
+    pub fn picks(&self) -> Option<&Picks> {
+        match self {
+            AppMode::TargetSelect { picks, .. }
+            | AppMode::FollowUp {
+                prompt: FollowUpPrompt::Picked { picks, .. },
+                ..
+            } => Some(picks),
+            _ => None,
         }
     }
 

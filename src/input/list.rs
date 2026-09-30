@@ -2,7 +2,6 @@ use fuzzy_matcher::FuzzyMatcher;
 use fuzzy_matcher::skim::SkimMatcherV2;
 use ratatui::crossterm::event::KeyEvent;
 
-use crate::app::TargetMode;
 use crate::app::{App, AppMode};
 use crate::jj_command::{JJCommand, JJCommandKind};
 use crate::keymap;
@@ -295,14 +294,15 @@ pub(super) fn resolve_selection(
                 app.switch_view(crate::types::ActiveView::Dag);
             }
             app.mode = AppMode::TargetSelect {
-                prompt: "move bookmark",
-                sources: crate::types::SmallVec1::new(source),
+                picks: crate::app::Picks {
+                    sources: crate::types::SmallVec1::new(source),
+                    targets: Vec::new(),
+                },
                 restore_cursor: app.cursor,
                 operation: TargetOperation::BookmarkMove {
                     bookmark_name: name,
                 },
                 flags,
-                target_mode: TargetMode::Single,
                 origin: None,
             };
             Action::None

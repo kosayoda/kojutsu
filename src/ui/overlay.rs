@@ -426,9 +426,9 @@ pub(super) fn draw_target_select(
     );
 }
 
-/// `sources` joined for a title, as many as fit in `width` with the rest
-/// counted: `tus, qpv +4`. At least the first is always shown.
-pub(super) fn sources_label(sources: &[crate::types::RevisionArg], width: usize) -> String {
+/// `revisions` joined, as many as fit in `width` with the rest counted:
+/// `tus, qpv +4`. At least the first is always shown.
+pub(super) fn revisions_label(revisions: &[crate::types::RevisionArg], width: usize) -> String {
     let join = |shown: &[crate::types::RevisionArg]| {
         shown
             .iter()
@@ -436,15 +436,24 @@ pub(super) fn sources_label(sources: &[crate::types::RevisionArg], width: usize)
             .collect::<Vec<_>>()
             .join(", ")
     };
-    let all = join(sources);
+    let all = join(revisions);
     if all.width() <= width {
         return all;
     }
-    (1..sources.len())
+    (1..revisions.len())
         .rev()
-        .map(|shown| format!("{} +{}", join(&sources[..shown]), sources.len() - shown))
+        .map(|shown| format!("{} +{}", join(&revisions[..shown]), revisions.len() - shown))
         .find(|label| label.width() <= width)
-        .unwrap_or_else(|| format!("{} +{}", join(&sources[..1]), sources.len() - 1))
+        .unwrap_or_else(|| format!("{} +{}", join(&revisions[..1]), revisions.len() - 1))
+}
+
+/// `rebase revision tus, qpv → xzp:`: what the follow-up to a target
+/// selection is about, both lists fitted to `width` between them.
+pub(super) fn picks_prompt(operation: &str, picks: &crate::app::Picks, width: usize) -> String {
+    let room = width.saturating_sub(format!("{operation}  → :").width());
+    let sources = revisions_label(&picks.sources, room / 2);
+    let targets = revisions_label(&picks.targets, room.saturating_sub(sources.width()));
+    format!("{operation} {sources} → {targets}:")
 }
 
 pub(super) fn draw_commit_select(frame: &mut Frame, area: Rect, prompt: &str, theme: &Theme) {
@@ -467,10 +476,11 @@ pub(super) fn draw_commit_select(frame: &mut Frame, area: Rect, prompt: &str, th
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
+/// The follow-up panel. `prompt` is given the width the options leave it.
 pub(super) fn draw_follow_up(
     frame: &mut Frame,
     area: Rect,
-    prompt: &str,
+    prompt: impl FnOnce(usize) -> String,
     options: &[FollowUpOption],
     theme: &Theme,
 ) {
@@ -478,16 +488,10 @@ pub(super) fn draw_follow_up(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let mut spans = vec![Span::styled(
-        format!("{prompt} "),
-        Style::default()
-            .fg(theme.accent)
-            .add_modifier(Modifier::BOLD),
-    )];
-
+    let mut option_spans = Vec::new();
     for (i, opt) in options.iter().enumerate() {
         if i > 0 {
-            spans.push(Span::raw("  "));
+            option_spans.push(Span::raw("  "));
         }
         // Enter accepts the first (primary) option.
         let keys = if i == 0 {
@@ -495,18 +499,27 @@ pub(super) fn draw_follow_up(
         } else {
             format!("({})", opt.key)
         };
-        spans.push(Span::styled(
+        option_spans.push(Span::styled(
             keys,
             Style::default()
                 .fg(theme.selection)
                 .add_modifier(Modifier::BOLD),
         ));
-        spans.push(Span::styled(
+        option_spans.push(Span::styled(
             format!(" {}", opt.label),
             Style::default().fg(theme.text),
         ));
     }
 
+    let options_width: usize = option_spans.iter().map(Span::width).sum();
+    let prompt = prompt((inner.width as usize).saturating_sub(options_width + 1));
+    let mut spans = vec![Span::styled(
+        format!("{prompt} "),
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    )];
+    spans.extend(option_spans);
     frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
@@ -774,8 +787,8 @@ pub(super) fn draw_command_output(
 }
 
 #[cfg(test)]
-mod sources_label_tests {
-    use super::sources_label;
+mod revisions_label_tests {
+    use super::revisions_label;
     use crate::types::RevisionArg;
 
     fn revisions(names: &[&str]) -> Vec<RevisionArg> {
@@ -785,19 +798,44 @@ mod sources_label_tests {
     #[test]
     fn every_source_is_listed_when_they_fit() {
         let sources = revisions(&["tus", "qpv", "xyz"]);
-        assert_eq!(sources_label(&sources, 40), "tus, qpv, xyz");
+        assert_eq!(revisions_label(&sources, 40), "tus, qpv, xyz");
     }
 
     #[test]
     fn the_rest_are_counted_when_they_dont() {
         let sources = revisions(&["tus", "qpv", "xyz", "kmn"]);
-        assert_eq!(sources_label(&sources, 12), "tus, qpv +2");
+        assert_eq!(revisions_label(&sources, 12), "tus, qpv +2");
     }
 
     /// Even with no room, the title names at least one source.
     #[test]
     fn the_first_is_always_shown() {
         let sources = revisions(&["tus", "qpv"]);
-        assert_eq!(sources_label(&sources, 0), "tus +1");
+        assert_eq!(revisions_label(&sources, 0), "tus +1");
+    }
+
+    fn picks(sources: &[&str], targets: &[&str]) -> crate::app::Picks {
+        crate::app::Picks {
+            sources: crate::types::SmallVec1::try_from_smallvec(revisions(sources).into()).unwrap(),
+            targets: revisions(targets),
+        }
+    }
+
+    #[test]
+    fn the_follow_up_prompt_names_both_sides() {
+        let picks = picks(&["tus", "qpv"], &["xzp", "sp"]);
+        assert_eq!(
+            super::picks_prompt("rebase revision", &picks, 80),
+            "rebase revision tus, qpv → xzp, sp:"
+        );
+    }
+
+    #[test]
+    fn a_tight_follow_up_prompt_counts_what_doesnt_fit() {
+        let picks = picks(&["tus", "qpv", "xyz"], &["xzp", "sp"]);
+        assert_eq!(
+            super::picks_prompt("rebase revision", &picks, 34),
+            "rebase revision tus +2 → xzp, sp:"
+        );
     }
 }

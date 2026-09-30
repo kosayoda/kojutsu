@@ -10,7 +10,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::widgets::Paragraph;
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, AppMode, TargetMode};
+use crate::app::{App, AppMode, FollowUpPrompt};
 use crate::config::Config;
 use crate::keymap::{self, Keymaps};
 
@@ -158,21 +158,21 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
             overlay::draw_search_input(frame, area, app, theme);
         }
         AppMode::TargetSelect {
-            prompt,
-            sources,
+            picks,
+            operation,
             flags,
-            target_mode,
             origin,
             ..
         } => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
-            let multi = matches!(target_mode, TargetMode::Multi { .. });
+            let multi = operation.multi_target();
             let toggles = origin.as_ref().map_or(&[][..], |o| &o.toggles[..]);
+            let label = operation.label();
             let title = |room: usize| {
-                let fixed = format!(" {prompt} from  ").width();
-                let sources = overlay::sources_label(sources, room.saturating_sub(fixed));
-                format!(" {prompt} from {sources} ")
+                let fixed = format!(" {label} from  ").width();
+                let sources = overlay::revisions_label(&picks.sources, room.saturating_sub(fixed));
+                format!(" {label} from {sources} ")
             };
             overlay::draw_target_select(frame, area, title, multi, toggles, *flags, theme);
         }
@@ -186,6 +186,12 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
         } => {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
+            let prompt = |room: usize| match prompt {
+                FollowUpPrompt::Text(text) => text.clone(),
+                FollowUpPrompt::Picked { operation, picks } => {
+                    overlay::picks_prompt(operation, picks, room)
+                }
+            };
             overlay::draw_follow_up(frame, area, prompt, options, theme);
         }
         AppMode::CommandRunning(state) => {

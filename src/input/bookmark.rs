@@ -49,7 +49,7 @@ pub(super) fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Acti
     } else {
         // Not on working copy: show follow-up to choose between selected and @.
         app.mode = AppMode::FollowUp {
-            prompt: "advance bookmarks to:".to_string(),
+            prompt: crate::app::FollowUpPrompt::Text("advance bookmarks to:".to_string()),
             options: vec![
                 FollowUpOption {
                     key: 's',

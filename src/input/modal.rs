@@ -329,28 +329,24 @@ pub(super) fn handle_search_input(
 /// Handle the keys target-select owns. `None` means the key isn't one of
 /// them, leaving the caller to resolve it through the keymap as navigation.
 pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Option<Action> {
-    use crate::app::TargetMode;
-
     match key.code {
         KeyCode::Char(' ') => {
-            // Toggle target in multi-select mode.
+            // Toggle a target, where the operation takes several.
             let multi = matches!(
-                app.mode,
-                AppMode::TargetSelect {
-                    target_mode: TargetMode::Multi { .. },
-                    ..
-                }
+                &app.mode,
+                AppMode::TargetSelect { operation, .. } if operation.multi_target()
             );
-            if let Some(id) = app.selected_change_id()
-                && multi
+            if multi
+                && let Some(id) = app.selected_change_id()
                 && !refuse_source_as_target(app, &id)
-                && let AppMode::TargetSelect {
-                    target_mode: TargetMode::Multi { targets },
-                    ..
-                } = &mut app.mode
-                && !targets.remove(&id)
+                && let AppMode::TargetSelect { picks, .. } = &mut app.mode
             {
-                targets.insert(id);
+                match picks.targets.iter().position(|t| *t == id) {
+                    Some(i) => {
+                        picks.targets.remove(i);
+                    }
+                    None => picks.targets.push(id),
+                }
             }
             Some(Action::None)
         }
@@ -383,8 +379,10 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Option<Actio
 /// Say so, and return true, when `target` is one of the commits the target
 /// select acts on: jj would only fail on it.
 fn refuse_source_as_target(app: &mut App, target: &crate::types::RevisionArg) -> bool {
-    let is_source =
-        matches!(&app.mode, AppMode::TargetSelect { sources, .. } if sources.contains(target));
+    let is_source = app
+        .mode
+        .picks()
+        .is_some_and(|picks| picks.sources.contains(target));
     if is_source {
         app.set_error(format!("{target} is a source; pick another commit"));
     }
@@ -393,16 +391,13 @@ fn refuse_source_as_target(app: &mut App, target: &crate::types::RevisionArg) ->
 
 /// Confirm the pending target(s) and start the operation they were picked for.
 fn confirm_target_select(app: &mut App) -> Action {
-    use crate::app::TargetMode;
+    use crate::app::FollowUpPrompt;
     use crate::types::{RevisionArg, SmallVec, SmallVec1};
 
     // Picked with Space, or else the one under the cursor. Checked before the
     // mode is left, so a refused target keeps the selection going.
-    let picked: SmallVec<RevisionArg> = match &app.mode {
-        AppMode::TargetSelect {
-            target_mode: TargetMode::Multi { targets },
-            ..
-        } if !targets.is_empty() => targets.iter().cloned().collect(),
+    let picked: SmallVec<RevisionArg> = match app.mode.picks() {
+        Some(picks) if !picks.targets.is_empty() => picks.targets.iter().cloned().collect(),
         _ => match app.selected_change_id() {
             Some(target) if !refuse_source_as_target(app, &target) => smallvec::smallvec![target],
             _ => return Action::None,
@@ -414,7 +409,7 @@ fn confirm_target_select(app: &mut App) -> Action {
 
     let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
     let AppMode::TargetSelect {
-        sources,
+        mut picks,
         operation,
         flags,
         ..
@@ -424,7 +419,7 @@ fn confirm_target_select(app: &mut App) -> Action {
     };
     // Interdiff is handled directly (needs commit IDs from app state).
     if matches!(operation, crate::types::TargetOperation::Interdiff) {
-        let source = sources.first();
+        let source = picks.sources.first();
         let target = targets.first();
         // Resolve change IDs to commit IDs via the DAG index.
         let from_commit = app.commit_id_for_change(source);
@@ -439,19 +434,17 @@ fn confirm_target_select(app: &mut App) -> Action {
 
     let label = operation.label();
     let selection = super::action::build_change_selection(app);
-    let mut options = operation.follow_up(sources, targets.clone(), flags, selection);
+    picks.targets = targets.iter().cloned().collect();
+    let mut options = operation.follow_up(picks.sources.clone(), targets, flags, selection);
     if options.len() == 1 {
         let opt = options.remove(0);
         return super::action::execute_follow_up(app, opt.action);
     }
-    let target_str: String = targets
-        .iter()
-        .map(|t| t.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let prompt = format!("{label} {target_str}:");
     app.mode = AppMode::FollowUp {
-        prompt,
+        prompt: FollowUpPrompt::Picked {
+            operation: label,
+            picks,
+        },
         options,
         origin: None,
     };
