@@ -68,15 +68,15 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         vis_end += 1;
     }
 
-    let (target_source, target_marks): (Option<&str>, Option<&HashSet<RevisionArg>>) =
+    let (target_sources, target_marks): (&[RevisionArg], Option<&HashSet<RevisionArg>>) =
         match &app.mode {
             AppMode::TargetSelect {
-                source,
+                sources,
                 target_mode: TargetMode::Multi { targets },
                 ..
-            } => (Some(source.as_str()), Some(targets)),
-            AppMode::TargetSelect { source, .. } => (Some(source.as_str()), None),
-            _ => (None, None),
+            } => (sources, Some(targets)),
+            AppMode::TargetSelect { sources, .. } => (sources, None),
+            _ => (&[], None),
         };
 
     let search_case_sensitive = app
@@ -114,7 +114,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
         config,
         tab_spaces: &tab_spaces,
         width: area.width as usize,
-        target_source,
+        target_sources,
         target_marks,
         annotate_highlight: (app.active_view == ActiveView::Annotate)
             .then(|| {
@@ -219,9 +219,7 @@ fn render_row(
         DisplayRow::CommitNode { entry_idx } => {
             let node = &app.dag.nodes[entry_idx];
             let flags = RenderFlags {
-                is_source: ctx
-                    .target_source
-                    .is_some_and(|src| src == node.commit.unique_prefix().as_str()),
+                is_source: ctx.is_source(entry_idx),
                 is_selected: ctx.is_marked(entry_idx),
                 in_visual: app.is_in_visual_commit_range(entry_idx),
             };

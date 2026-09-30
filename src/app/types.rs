@@ -15,8 +15,8 @@ use crate::history::{EvoLogEntry, OpDetailLine, OpLogEntry};
 use crate::keymap::{CommandFlags, TrieNode};
 use crate::types::{
     BookmarkName, CommitId, FollowUpOption, OperationId, PendingCommitSelect, PendingSelection,
-    RemoteName, RepoPath, RevisionArg, SearchScopes, Str, TagName, TargetOperation, TextPrompt,
-    VisualRange, WorkspaceName,
+    RemoteName, RepoPath, RevisionArg, SearchScopes, SmallVec1, Str, TagName, TargetOperation,
+    TextPrompt, VisualRange, WorkspaceName,
 };
 
 use super::{FileTree, Loadable};
@@ -975,7 +975,9 @@ pub enum AppMode {
     /// Navigating to select a target commit for a two-commit operation.
     TargetSelect {
         prompt: &'static str,
-        source: RevisionArg,
+        /// The commits the operation acts on: one, or every selected
+        /// commit for an operation that takes several.
+        sources: SmallVec1<RevisionArg>,
         restore_cursor: RowIdx,
         operation: TargetOperation,
         flags: CommandFlags,

@@ -334,14 +334,20 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Option<Actio
     match key.code {
         KeyCode::Char(' ') => {
             // Toggle target in multi-select mode.
-            let id = app.selected_change_id();
-            if let (
-                Some(id),
+            let multi = matches!(
+                app.mode,
                 AppMode::TargetSelect {
+                    target_mode: TargetMode::Multi { .. },
+                    ..
+                }
+            );
+            if let Some(id) = app.selected_change_id()
+                && multi
+                && !refuse_source_as_target(app, &id)
+                && let AppMode::TargetSelect {
                     target_mode: TargetMode::Multi { targets },
                     ..
-                },
-            ) = (id, &mut app.mode)
+                } = &mut app.mode
                 && !targets.remove(&id)
             {
                 targets.insert(id);
@@ -374,66 +380,81 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Option<Actio
     }
 }
 
+/// Say so, and return true, when `target` is one of the commits the target
+/// select acts on: jj would only fail on it.
+fn refuse_source_as_target(app: &mut App, target: &crate::types::RevisionArg) -> bool {
+    let is_source =
+        matches!(&app.mode, AppMode::TargetSelect { sources, .. } if sources.contains(target));
+    if is_source {
+        app.set_error(format!("{target} is a source; pick another commit"));
+    }
+    is_source
+}
+
 /// Confirm the pending target(s) and start the operation they were picked for.
 fn confirm_target_select(app: &mut App) -> Action {
     use crate::app::TargetMode;
+    use crate::types::{RevisionArg, SmallVec, SmallVec1};
+
+    // Picked with Space, or else the one under the cursor. Checked before the
+    // mode is left, so a refused target keeps the selection going.
+    let picked: SmallVec<RevisionArg> = match &app.mode {
+        AppMode::TargetSelect {
+            target_mode: TargetMode::Multi { targets },
+            ..
+        } if !targets.is_empty() => targets.iter().cloned().collect(),
+        _ => match app.selected_change_id() {
+            Some(target) if !refuse_source_as_target(app, &target) => smallvec::smallvec![target],
+            _ => return Action::None,
+        },
+    };
+    let Ok(targets) = SmallVec1::try_from_smallvec(picked) else {
+        return Action::None;
+    };
 
     let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-    if let AppMode::TargetSelect {
-        source,
+    let AppMode::TargetSelect {
+        sources,
         operation,
         flags,
-        target_mode,
         ..
     } = mode
-    {
-        let targets: crate::types::SmallVec1<crate::types::RevisionArg> = match target_mode {
-            TargetMode::Multi { targets } if !targets.is_empty() => {
-                match crate::types::SmallVec1::try_from_smallvec(targets.into_iter().collect()) {
-                    Ok(v) => v,
-                    Err(_) => return Action::None,
-                }
-            }
-            _ => {
-                let Some(target) = app.selected_change_id() else {
-                    return Action::None;
-                };
-                crate::types::SmallVec1::new(target)
-            }
-        };
-        // Interdiff is handled directly (needs commit IDs from app state).
-        if matches!(operation, crate::types::TargetOperation::Interdiff) {
-            let target = targets.split_off_first().0;
-            // Resolve change IDs to commit IDs via the DAG index.
-            let from_commit = app.commit_id_for_change(&source);
-            let to_commit = app.commit_id_for_change(&target);
-            if let (Some(from_cid), Some(to_cid)) = (from_commit, to_commit) {
-                let from_label = crate::types::Str::from(source.as_str());
-                let to_label = crate::types::Str::from(target.as_str());
-                app.enter_interdiff_view(from_cid, to_cid, from_label, to_label);
-            }
-            return Action::None;
+    else {
+        return Action::None;
+    };
+    // Interdiff is handled directly (needs commit IDs from app state).
+    if matches!(operation, crate::types::TargetOperation::Interdiff) {
+        let source = sources.first();
+        let target = targets.first();
+        // Resolve change IDs to commit IDs via the DAG index.
+        let from_commit = app.commit_id_for_change(source);
+        let to_commit = app.commit_id_for_change(target);
+        if let (Some(from_cid), Some(to_cid)) = (from_commit, to_commit) {
+            let from_label = crate::types::Str::from(source.as_str());
+            let to_label = crate::types::Str::from(target.as_str());
+            app.enter_interdiff_view(from_cid, to_cid, from_label, to_label);
         }
-
-        let label = operation.label();
-        let selection = super::action::build_change_selection(app);
-        let mut options = operation.follow_up(source, targets.clone(), flags, selection);
-        if options.len() == 1 {
-            let opt = options.remove(0);
-            return super::action::execute_follow_up(app, opt.action);
-        }
-        let target_str: String = targets
-            .iter()
-            .map(|t| t.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let prompt = format!("{label} {target_str}:");
-        app.mode = AppMode::FollowUp {
-            prompt,
-            options,
-            origin: None,
-        };
+        return Action::None;
     }
+
+    let label = operation.label();
+    let selection = super::action::build_change_selection(app);
+    let mut options = operation.follow_up(sources, targets.clone(), flags, selection);
+    if options.len() == 1 {
+        let opt = options.remove(0);
+        return super::action::execute_follow_up(app, opt.action);
+    }
+    let target_str: String = targets
+        .iter()
+        .map(|t| t.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let prompt = format!("{label} {target_str}:");
+    app.mode = AppMode::FollowUp {
+        prompt,
+        options,
+        origin: None,
+    };
     Action::None
 }
 

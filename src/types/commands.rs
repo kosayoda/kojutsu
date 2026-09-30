@@ -286,22 +286,12 @@ pub enum PromptStep {
 pub enum TargetOperation {
     Squash(SquashKind),
     Split(SplitKind),
-    Rebase {
-        source_mode: RebaseSource,
-        /// All source commit IDs (supports multi-commit rebase).
-        sources: SmallVec<RevisionArg>,
-    },
+    Rebase { source_mode: RebaseSource },
     RestoreFrom,
     RestoreInto,
-    BookmarkMove {
-        bookmark_name: BookmarkName,
-    },
-    DuplicateOnto {
-        sources: SmallVec<RevisionArg>,
-    },
-    Revert {
-        sources: SmallVec<RevisionArg>,
-    },
+    BookmarkMove { bookmark_name: BookmarkName },
+    DuplicateOnto,
+    Revert,
     Interdiff,
 }
 
@@ -314,6 +304,17 @@ impl TargetOperation {
                 | TargetOperation::Split(_)
                 | TargetOperation::RestoreFrom
                 | TargetOperation::RestoreInto
+        )
+    }
+
+    /// Whether it acts on every selected commit, rather than on the one
+    /// under the cursor (or the one a file selection is in).
+    pub fn takes_many_sources(&self) -> bool {
+        matches!(
+            self,
+            TargetOperation::Rebase { .. }
+                | TargetOperation::DuplicateOnto
+                | TargetOperation::Revert
         )
     }
 
@@ -343,8 +344,8 @@ impl TargetOperation {
             TargetOperation::RestoreFrom => "restore from",
             TargetOperation::RestoreInto => "restore into",
             TargetOperation::BookmarkMove { .. } => "move bookmark",
-            TargetOperation::DuplicateOnto { .. } => "duplicate onto",
-            TargetOperation::Revert { .. } => "revert",
+            TargetOperation::DuplicateOnto => "duplicate onto",
+            TargetOperation::Revert => "revert",
             TargetOperation::Interdiff => "interdiff with",
         }
     }

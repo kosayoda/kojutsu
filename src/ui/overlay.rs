@@ -3,6 +3,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::App;
 use crate::keymap::{self, ActionRegistry, CommandFlags, HelpEntry, HelpGroup, TrieNode};
@@ -366,10 +367,12 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App, theme:
     }
 }
 
+/// The target-select panel. `title` is given the width the border has left
+/// beside the toggles.
 pub(super) fn draw_target_select(
     frame: &mut Frame,
     area: Rect,
-    title: &str,
+    title: impl FnOnce(usize) -> String,
     multi: bool,
     toggles: &[crate::app::SubmenuToggle],
     flags: crate::keymap::CommandFlags,
@@ -392,10 +395,13 @@ pub(super) fn draw_target_select(
         ));
     }
 
+    let toggles_width: usize = toggle_spans.iter().map(Span::width).sum();
+    let title = title((area.width as usize).saturating_sub(toggles_width));
+
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(theme.muted))
-        .title(title.to_string())
+        .title(title)
         .title_style(
             Style::default()
                 .fg(theme.accent)
@@ -418,6 +424,27 @@ pub(super) fn draw_target_select(
         ))),
         inner,
     );
+}
+
+/// `sources` joined for a title, as many as fit in `width` with the rest
+/// counted: `tus, qpv +4`. At least the first is always shown.
+pub(super) fn sources_label(sources: &[crate::types::RevisionArg], width: usize) -> String {
+    let join = |shown: &[crate::types::RevisionArg]| {
+        shown
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let all = join(sources);
+    if all.width() <= width {
+        return all;
+    }
+    (1..sources.len())
+        .rev()
+        .map(|shown| format!("{} +{}", join(&sources[..shown]), sources.len() - shown))
+        .find(|label| label.width() <= width)
+        .unwrap_or_else(|| format!("{} +{}", join(&sources[..1]), sources.len() - 1))
 }
 
 pub(super) fn draw_commit_select(frame: &mut Frame, area: Rect, prompt: &str, theme: &Theme) {
@@ -744,4 +771,33 @@ pub(super) fn draw_command_output(
         .border_style(Style::default().fg(border_color))
         .padding(Padding::new(1, 1, 0, 0));
     frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+#[cfg(test)]
+mod sources_label_tests {
+    use super::sources_label;
+    use crate::types::RevisionArg;
+
+    fn revisions(names: &[&str]) -> Vec<RevisionArg> {
+        names.iter().map(|n| RevisionArg::new(*n)).collect()
+    }
+
+    #[test]
+    fn every_source_is_listed_when_they_fit() {
+        let sources = revisions(&["tus", "qpv", "xyz"]);
+        assert_eq!(sources_label(&sources, 40), "tus, qpv, xyz");
+    }
+
+    #[test]
+    fn the_rest_are_counted_when_they_dont() {
+        let sources = revisions(&["tus", "qpv", "xyz", "kmn"]);
+        assert_eq!(sources_label(&sources, 12), "tus, qpv +2");
+    }
+
+    /// Even with no room, the title names at least one source.
+    #[test]
+    fn the_first_is_always_shown() {
+        let sources = revisions(&["tus", "qpv"]);
+        assert_eq!(sources_label(&sources, 0), "tus +1");
+    }
 }

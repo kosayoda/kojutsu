@@ -8,6 +8,7 @@ mod views;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::widgets::Paragraph;
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, AppMode, TargetMode};
 use crate::config::Config;
@@ -158,7 +159,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
         }
         AppMode::TargetSelect {
             prompt,
-            source,
+            sources,
             flags,
             target_mode,
             origin,
@@ -167,9 +168,13 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
             let area = overlay_area(overlay_base, 2);
             frame.render_widget(ratatui::widgets::Clear, area);
             let multi = matches!(target_mode, TargetMode::Multi { .. });
-            let title = format!(" {prompt} from {source} ");
             let toggles = origin.as_ref().map_or(&[][..], |o| &o.toggles[..]);
-            overlay::draw_target_select(frame, area, &title, multi, toggles, *flags, theme);
+            let title = |room: usize| {
+                let fixed = format!(" {prompt} from  ").width();
+                let sources = overlay::sources_label(sources, room.saturating_sub(fixed));
+                format!(" {prompt} from {sources} ")
+            };
+            overlay::draw_target_select(frame, area, title, multi, toggles, *flags, theme);
         }
         AppMode::CommitSelect { pending, .. } => {
             let area = overlay_area(overlay_base, 2);

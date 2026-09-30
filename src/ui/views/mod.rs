@@ -44,8 +44,8 @@ pub(in crate::ui) struct RowContext<'a> {
     pub tab_spaces: &'a str,
     /// Width of the list area.
     pub width: usize,
-    /// In target select: the source commit.
-    pub target_source: Option<&'a str>,
+    /// In target select: the commits the operation acts on.
+    pub target_sources: &'a [crate::types::RevisionArg],
     /// In a multi-target select: the picked targets, which mark rows in
     /// place of the selection.
     pub target_marks: Option<&'a std::collections::HashSet<crate::types::RevisionArg>>,
@@ -55,6 +55,12 @@ pub(in crate::ui) struct RowContext<'a> {
 }
 
 impl RowContext<'_> {
+    /// Whether a DAG commit is one the target select acts on.
+    pub fn is_source(&self, entry_idx: crate::idx::EntryIdx) -> bool {
+        let revision = self.app.dag.nodes[entry_idx].commit.unique_prefix();
+        self.target_sources.contains(&revision)
+    }
+
     /// Whether a DAG commit carries the selection mark: picked as a target
     /// in a multi-target select, otherwise selected.
     pub fn is_marked(&self, entry_idx: crate::idx::EntryIdx) -> bool {

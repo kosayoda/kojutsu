@@ -296,7 +296,7 @@ pub(super) fn resolve_selection(
             }
             app.mode = AppMode::TargetSelect {
                 prompt: "move bookmark",
-                source,
+                sources: crate::types::SmallVec1::new(source),
                 restore_cursor: app.cursor,
                 operation: TargetOperation::BookmarkMove {
                     bookmark_name: name,

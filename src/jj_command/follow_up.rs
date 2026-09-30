@@ -90,13 +90,17 @@ impl PendingCommitSelect {
 }
 
 impl TargetOperation {
+    /// The commands on offer once `targets` are picked for `sources`. An
+    /// operation that doesn't [take many sources](Self::takes_many_sources)
+    /// is given exactly one.
     pub fn follow_up(
         self,
-        source: RevisionArg,
+        sources: SmallVec1<RevisionArg>,
         targets: SmallVec1<RevisionArg>,
         flags: CommandFlags,
         selection: ChangeSelection,
     ) -> Vec<FollowUpOption> {
+        let source = sources.first().clone();
         match self {
             TargetOperation::Squash(kind) => squash_follow_up(
                 source,
@@ -121,10 +125,12 @@ impl TargetOperation {
                     flags,
                 },
             ),
-            TargetOperation::Rebase {
+            TargetOperation::Rebase { source_mode } => rebase_follow_up(
+                sources.into_smallvec(),
+                targets.into_smallvec(),
                 source_mode,
-                sources,
-            } => rebase_follow_up(sources, targets.into_smallvec(), source_mode, flags),
+                flags,
+            ),
             TargetOperation::RestoreFrom => auto_follow_up(
                 "restore",
                 JJCommand {
@@ -159,11 +165,11 @@ impl TargetOperation {
                     flags,
                 },
             ),
-            TargetOperation::DuplicateOnto { sources } => auto_follow_up(
+            TargetOperation::DuplicateOnto => auto_follow_up(
                 "duplicate",
                 JJCommand {
                     kind: JJCommandKind::Duplicate {
-                        change_ids: sources,
+                        change_ids: sources.into_smallvec(),
                         onto: Some(targets.split_off_first().0),
                     },
                     flags,
@@ -182,13 +188,13 @@ impl TargetOperation {
                     },
                 }]
             }
-            TargetOperation::Revert { sources } => RebaseKind::iter()
+            TargetOperation::Revert => RebaseKind::iter()
                 .map(|kind| FollowUpOption {
                     key: kind.key(),
                     label: kind.label(),
                     action: FollowUpAction::Execute(JJCommand {
                         kind: JJCommandKind::Revert {
-                            change_ids: sources.clone(),
+                            change_ids: sources.clone().into_smallvec(),
                             dest: RebaseTarget {
                                 targets: targets.clone().into_smallvec(),
                                 kind,

@@ -12,7 +12,7 @@ use crate::repo_service::RevsetLoadKind;
 use smallvec::smallvec;
 
 use crate::types::FileOwner;
-use crate::types::{ChangeSelection, RevisionArg, SmallVec};
+use crate::types::{ChangeSelection, RevisionArg, SmallVec, SmallVec1};
 use crate::types::{
     CommandPrompt, CommitId, DisplayRow, FollowUpAction, FollowUpOption, PendingSelection,
     PromptStep, RemoteCommand, SelectionKind, TargetOperation,
@@ -1094,13 +1094,16 @@ pub(super) fn enter_target_select(
     operation: TargetOperation,
     flags: CommandFlags,
 ) -> Action {
-    // An operation taking the selection acts on the commit it is in.
-    let source = if operation.takes_selection() && app.selection_owner().is_some() {
-        selection_owner_revision(app)
+    // A multi-commit operation acts on the selected commits; one taking
+    // the file selection, on the commit it is in; any other, on the cursor's.
+    let sources: SmallVec<RevisionArg> = if operation.takes_many_sources() {
+        app.selected_change_ids()
+    } else if operation.takes_selection() && app.selection_owner().is_some() {
+        selection_owner_revision(app).into_iter().collect()
     } else {
-        app.selected_change_id()
+        app.selected_change_id().into_iter().collect()
     };
-    let Some(source) = source else {
+    let Ok(sources) = SmallVec1::try_from_smallvec(sources) else {
         return Action::None;
     };
     let restore_cursor = app.cursor;
@@ -1113,7 +1116,7 @@ pub(super) fn enter_target_select(
     };
     app.mode = AppMode::TargetSelect {
         prompt: operation.label(),
-        source,
+        sources,
         restore_cursor,
         operation,
         flags,

@@ -315,48 +315,27 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
         AppAction::SquashBefore => {
             enter_target_select(app, TargetOperation::Squash(SquashKind::Before), flags)
         }
-        AppAction::RebaseRevision => {
-            let sources = app.selected_change_ids();
-            if sources.is_empty() {
-                return Action::None;
-            }
-            enter_target_select(
-                app,
-                TargetOperation::Rebase {
-                    source_mode: RebaseSource::Revision,
-                    sources,
-                },
-                flags,
-            )
-        }
-        AppAction::RebaseSource => {
-            let sources = app.selected_change_ids();
-            if sources.is_empty() {
-                return Action::None;
-            }
-            enter_target_select(
-                app,
-                TargetOperation::Rebase {
-                    source_mode: RebaseSource::Source,
-                    sources,
-                },
-                flags,
-            )
-        }
-        AppAction::RebaseBranch => {
-            let sources = app.selected_change_ids();
-            if sources.is_empty() {
-                return Action::None;
-            }
-            enter_target_select(
-                app,
-                TargetOperation::Rebase {
-                    source_mode: RebaseSource::Branch,
-                    sources,
-                },
-                flags,
-            )
-        }
+        AppAction::RebaseRevision => enter_target_select(
+            app,
+            TargetOperation::Rebase {
+                source_mode: RebaseSource::Revision,
+            },
+            flags,
+        ),
+        AppAction::RebaseSource => enter_target_select(
+            app,
+            TargetOperation::Rebase {
+                source_mode: RebaseSource::Source,
+            },
+            flags,
+        ),
+        AppAction::RebaseBranch => enter_target_select(
+            app,
+            TargetOperation::Rebase {
+                source_mode: RebaseSource::Branch,
+            },
+            flags,
+        ),
         AppAction::Restore => selection_command(app, |id, selection| JJCommand {
             kind: JJCommandKind::Restore {
                 from: None,
@@ -447,13 +426,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             },
             flags,
         }),
-        AppAction::DuplicateOnto => {
-            let sources = app.selected_change_ids();
-            if sources.is_empty() {
-                return Action::None;
-            }
-            enter_target_select(app, TargetOperation::DuplicateOnto { sources }, flags)
-        }
+        AppAction::DuplicateOnto => enter_target_select(app, TargetOperation::DuplicateOnto, flags),
 
         AppAction::Parallelize => make_multi_command(app, |ids| JJCommand {
             kind: JJCommandKind::Parallelize { change_ids: ids },
@@ -465,10 +438,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
         }),
         AppAction::ArrangeUp => arrange(app, flags, crate::types::ArrangeDirection::Up),
         AppAction::ArrangeDown => arrange(app, flags, crate::types::ArrangeDirection::Down),
-        AppAction::Revert => {
-            let sources = app.selected_change_ids();
-            enter_target_select(app, TargetOperation::Revert { sources }, flags)
-        }
+        AppAction::Revert => enter_target_select(app, TargetOperation::Revert, flags),
 
         other => unreachable!("{other:?} is not routed to this view"),
     }
@@ -728,7 +698,9 @@ mod selection_owner_tests {
     use crate::jj_command::JJCommandKind;
     use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
     use crate::lua::LuaEngine;
-    use crate::types::{ChangeSelection, CommitId, FileRef, RepoPath, Selection, WorkspaceName};
+    use crate::types::{
+        ChangeSelection, CommitId, FileRef, RepoPath, RevisionArg, Selection, WorkspaceName,
+    };
 
     fn press(app: &mut App, key: char) -> Action {
         let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
@@ -794,10 +766,10 @@ mod selection_owner_tests {
         let mut app = files_selected_in_b();
         press(&mut app, 's');
         press(&mut app, 't');
-        let AppMode::TargetSelect { source, .. } = &app.mode else {
+        let AppMode::TargetSelect { sources, .. } = &app.mode else {
             panic!("expected target selection");
         };
-        assert_eq!(source.as_str(), "bb");
+        assert_eq!(sources.as_slice(), [RevisionArg::new("bb")]);
     }
 
     /// `jj commit` only takes the working copy's changes, so paths chosen
@@ -808,5 +780,100 @@ mod selection_owner_tests {
         press(&mut app, 'c');
         assert!(matches!(press(&mut app, 'c'), Action::None));
         assert!(app.status_message.is_some());
+    }
+}
+
+#[cfg(test)]
+mod multi_source_tests {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::app::{App, AppMode};
+    use crate::dag::CommitInfo;
+    use crate::idx::EntryIdx;
+    use crate::input::{Action, handle_key};
+    use crate::jj_command::JJCommandKind;
+    use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+    use crate::lua::LuaEngine;
+    use crate::types::{FollowUpAction, RevisionArg};
+
+    fn press(app: &mut App, code: KeyCode) -> Action {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let lua = LuaEngine::for_test();
+        handle_key(app, &keymaps, &lua, KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    fn keys(app: &mut App, keys: &str) {
+        for c in keys.chars() {
+            press(app, KeyCode::Char(c));
+        }
+    }
+
+    /// Commits `aa`..`dd`, with `aa`, `bb` and `cc` selected, rebasing by
+    /// revision, the cursor back on `aa`.
+    fn rebasing_three() -> App {
+        let mut app = App::for_test();
+        for tag in ['a', 'b', 'c', 'd'] {
+            let mut commit = CommitInfo::for_test(
+                &format!("{tag}{tag}nnomkxrqvlypszwlwkvvqnstvzoxrs"),
+                &format!("{tag}1"),
+            );
+            commit.change_id.set_prefix_len(2);
+            app.push_test_commit(commit);
+        }
+        app.rebuild_rows();
+        for i in 0..3 {
+            app.toggle_commit_selection(EntryIdx::new(i));
+        }
+        keys(&mut app, "rr");
+        app
+    }
+
+    fn sources(app: &App) -> Vec<&str> {
+        let AppMode::TargetSelect { sources, .. } = &app.mode else {
+            panic!("expected target selection");
+        };
+        sources.iter().map(RevisionArg::as_str).collect()
+    }
+
+    /// The prompt and the highlight read the commits the rebase will move,
+    /// every selected one, not only the one under the cursor.
+    #[test]
+    fn a_multi_commit_rebase_selects_from_every_selected_commit() {
+        let app = rebasing_three();
+        assert_eq!(sources(&app), ["aa", "bb", "cc"]);
+    }
+
+    /// Rebasing a commit onto itself only fails in jj; it's refused here,
+    /// with Space and with Enter, and target selection carries on.
+    #[test]
+    fn a_source_is_refused_as_a_target() {
+        let mut app = rebasing_three();
+        app.cursor = app.row_of_commit(EntryIdx::new(1)).unwrap();
+
+        press(&mut app, KeyCode::Char(' '));
+        assert!(app.status_message.is_some());
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
+        assert!(matches!(app.mode, AppMode::TargetSelect { .. }));
+    }
+
+    /// Confirming on another commit rebases all three onto it.
+    #[test]
+    fn confirming_rebases_every_source() {
+        let mut app = rebasing_three();
+        app.cursor = app.row_of_commit(EntryIdx::new(3)).unwrap();
+
+        let action = press(&mut app, KeyCode::Enter);
+        let options = match (&action, &app.mode) {
+            (_, AppMode::FollowUp { options, .. }) => options,
+            _ => panic!("expected the rebase follow-up"),
+        };
+        let FollowUpAction::Execute(cmd) = &options[0].action else {
+            panic!("expected a command");
+        };
+        let JJCommandKind::Rebase { change_ids, .. } = &cmd.kind else {
+            panic!("expected a rebase");
+        };
+        let ids: Vec<&str> = change_ids.iter().map(RevisionArg::as_str).collect();
+        assert_eq!(ids, ["aa", "bb", "cc"]);
     }
 }
