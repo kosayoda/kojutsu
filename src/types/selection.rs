@@ -220,7 +220,10 @@ impl SelectionContext {
     /// exclude each other; File and Line mix freely, with each file holding
     /// one or the other (enforced where the toggles are).
     pub fn ensure_compatible(&mut self, kind: SelectionKind) {
-        let commit_selected = self.summary.commit_count > 0;
+        // Read from the set, not the summary: `extend` defers recomputing
+        // the summary to the end of its batch. The set holds commits or
+        // parts of commits, never both, so any member says which.
+        let commit_selected = matches!(self.explicit.iter().next(), Some(Selection::Commit(_)));
         let clash = match kind {
             SelectionKind::Commit => self.is_active() && !commit_selected,
             SelectionKind::File | SelectionKind::Line => commit_selected,
@@ -468,5 +471,22 @@ mod selection_context_tests {
         let ctx = SelectionContext::new();
         assert_eq!(ctx.kinds(), SelectionKindSet::empty());
         assert!(!ctx.is_active());
+    }
+
+    /// A batch is checked for compatibility item by item while its summary
+    /// is only brought up to date at the end; the check mustn't read the
+    /// stale summary and clear what the batch has just added.
+    #[test]
+    fn extending_with_several_commits_keeps_them_all() {
+        let commit = |c: &str| {
+            Selection::Commit(CommitRef {
+                commit_id: CommitId::new(c),
+                change_id: ChangeId::new(c),
+            })
+        };
+        let mut ctx = SelectionContext::new();
+        ctx.extend([commit("a"), commit("b"), commit("c")]);
+        assert_eq!(ctx.len(), 3);
+        assert_eq!(ctx.describe().as_deref(), Some("3 commits"));
     }
 }

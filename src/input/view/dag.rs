@@ -895,3 +895,40 @@ mod multi_source_tests {
         assert_eq!(targets, ["dd"]);
     }
 }
+
+#[cfg(test)]
+mod visual_select_tests {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::app::App;
+    use crate::dag::CommitInfo;
+    use crate::input::handle_key;
+    use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+    use crate::lua::LuaEngine;
+
+    /// `v`, two steps down, Space: the three commits the range covers are
+    /// selected at once.
+    #[test]
+    fn space_selects_the_whole_visual_commit_range() {
+        let mut app = App::for_test();
+        for tag in ['a', 'b', 'c', 'd'] {
+            app.push_test_commit(CommitInfo::for_test(
+                &format!("{tag}{tag}nnomkxrqvlypszwlwkvvqnstvzoxrs"),
+                &format!("{tag}1"),
+            ));
+        }
+        app.rebuild_rows();
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let lua = LuaEngine::for_test();
+        for key in ['v', 'j', 'j', ' '] {
+            let event = KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE);
+            handle_key(&mut app, &keymaps, &lua, event);
+        }
+
+        assert_eq!(app.selection_count(), 3);
+        assert_eq!(
+            app.selection.display_text().as_deref(),
+            Some("3 commits selected")
+        );
+    }
+}
