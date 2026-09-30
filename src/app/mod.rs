@@ -3,6 +3,7 @@ mod cursor;
 mod data;
 mod file_tree;
 mod fold;
+mod list_anchor;
 mod navigation;
 mod search;
 mod selection;
@@ -648,6 +649,7 @@ impl App {
         if self.active_view == ActiveView::Dag && view != ActiveView::Dag {
             self.on_dag_hidden();
         }
+        self.anchor_list_cursor();
         // Save current view state.
         let offset = self.scroll;
         let vs = &mut self.view_states[self.active_view.idx()];
@@ -667,6 +669,7 @@ impl App {
         if view == ActiveView::Dag {
             self.on_dag_shown();
         }
+        self.on_list_shown();
     }
 
     /// Start whatever a view needs when it is entered. Runs before its rows

@@ -113,7 +113,8 @@ impl App {
 
     /// Run `f` as something the user did. If it moves the cursor in the
     /// view the pending target lands in, the target is dropped rather than
-    /// applied later over the user's own move.
+    /// applied later over the user's own move; likewise a list view's
+    /// anchor.
     pub(crate) fn as_user_input<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
         let pending = self
             .dag
@@ -122,10 +123,13 @@ impl App {
             .map(|p| (p.id, p.target.lands_in(self.active_view)));
         let (cursor, view) = (self.cursor, self.active_view);
         let result = f(self);
+        let moved_here = self.active_view == view && self.cursor != cursor;
+        if moved_here {
+            self.drop_list_anchor(view);
+        }
         if let Some((id, lands_in)) = pending
-            && self.active_view == view
+            && moved_here
             && lands_in == view
-            && self.cursor != cursor
             && self.dag.pending_cursor.as_ref().is_some_and(|p| p.id == id)
         {
             self.dag.pending_cursor = None;

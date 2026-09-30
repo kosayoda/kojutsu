@@ -677,6 +677,9 @@ pub struct ViewState {
     pub scroll_offset: usize,
     pub h_scroll: usize,
     pub search_scopes: SearchScopes,
+    /// For a list view, what its cursor is on by name, and the DAG load it
+    /// was taken at, while a load may still reorder its list.
+    pub(crate) anchor: Option<(super::list_anchor::ListAnchor, u64)>,
 }
 
 impl ViewState {
@@ -686,6 +689,7 @@ impl ViewState {
             scroll_offset: 0,
             h_scroll: 0,
             search_scopes: scopes,
+            anchor: None,
         }
     }
 }

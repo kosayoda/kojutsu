@@ -158,9 +158,11 @@ impl App {
             }
         }
 
+        self.anchor_list_cursor();
         self.rebuild_bookmark_entries();
         self.rebuild_tag_entries();
         self.rebuild_rows();
+        self.settle_list_anchor(done);
 
         if done {
             self.prune_conflict_ui();
@@ -188,6 +190,8 @@ impl App {
         match result {
             RepoResult::Revset { revset, result } => match result {
                 Ok(data) => {
+                    // Before the lists the view on screen points into change.
+                    self.anchor_list_cursor();
                     self.clear_info_status();
                     self.run_jobs = data.run_jobs;
                     self.revset.current = data.revset.into();
