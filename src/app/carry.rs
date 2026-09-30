@@ -10,9 +10,82 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{App, DagNode, FileFoldKey};
+use crate::idx::EntryIdx;
 use crate::types::{ChangeId, CommitId, Selection};
 
+/// A commit from before a reload, as the reload can find it again.
+pub(super) struct Revision {
+    pub(super) commit_id: CommitId,
+    pub(super) change_id: ChangeId,
+    /// Whether its change had other commits too, so that one of those
+    /// turning up says nothing about where this one went.
+    pub(super) divergent: bool,
+}
+
+/// Where a commit from before a reload is now.
+pub(super) enum Whereabouts {
+    /// Unchanged.
+    Here(EntryIdx),
+    /// Replaced: these are the commits of its change, in DAG order.
+    Rewritten(Vec<EntryIdx>),
+    /// Not known until more of the reload arrives.
+    Pending,
+    /// Neither it nor a rewrite is in the complete reload.
+    Gone,
+}
+
 impl App {
+    /// Revisions for `entries`, each noting whether the DAG holds other
+    /// commits of its change.
+    pub(super) fn revisions_at(&self, entries: &[EntryIdx]) -> Vec<Revision> {
+        let mut counts: HashMap<ChangeId, usize> = entries
+            .iter()
+            .map(|&e| (self.dag.nodes[e].commit.change_id.change_id(), 0))
+            .collect();
+        for node in self.dag.nodes.iter() {
+            if let Some(count) = counts.get_mut(&node.commit.change_id.change_id()) {
+                *count += 1;
+            }
+        }
+        entries
+            .iter()
+            .map(|&e| {
+                let commit = &self.dag.nodes[e].commit;
+                let change_id = commit.change_id.change_id();
+                Revision {
+                    commit_id: commit.graph_id.clone(),
+                    divergent: counts[&change_id] > 1,
+                    change_id,
+                }
+            })
+            .collect()
+    }
+
+    /// Where `revision` is in the DAG so far. `complete` says the whole
+    /// reload is in, so that nothing missing can still arrive.
+    pub(super) fn locate(&self, revision: &Revision, complete: bool) -> Whereabouts {
+        if let Some(entry) = self.entry_by_commit_id(&revision.commit_id) {
+            return Whereabouts::Here(entry);
+        }
+        // Among several commits of one change, this one may still come back
+        // itself in a later chunk.
+        if revision.divergent && !complete {
+            return Whereabouts::Pending;
+        }
+        let copies: Vec<EntryIdx> = self
+            .dag
+            .nodes
+            .iter_enumerated()
+            .filter(|(_, node)| node.commit.change_id.change_id() == revision.change_id)
+            .map(|(idx, _)| idx)
+            .collect();
+        match (copies.is_empty(), complete) {
+            (false, _) => Whereabouts::Rewritten(copies),
+            (true, true) => Whereabouts::Gone,
+            (true, false) => Whereabouts::Pending,
+        }
+    }
+
     /// Move the state of commits missing from the DAG to their rewrites, and
     /// forget it once the reload is `complete` without either turning up.
     /// `old_nodes` holds the pre-reload commits that haven't come back, and
@@ -39,31 +112,33 @@ impl App {
             return false;
         }
 
-        let change_of: HashMap<&CommitId, ChangeId> = stranded
-            .iter()
-            .filter_map(|id| Some((id, old_nodes.get(id)?.commit.change_id.change_id())))
-            .collect();
-        let mut copies: HashMap<&ChangeId, Vec<CommitId>> =
-            change_of.values().map(|c| (c, Vec::new())).collect();
-        for node in self.dag.nodes.iter() {
-            if let Some(list) = copies.get_mut(&node.commit.change_id.change_id()) {
-                list.push(node.commit.graph_id.clone());
-            }
-        }
-
         let mut dropped_selection = false;
         for old in &stranded {
-            match change_of.get(old).map(|change| (change, &copies[change])) {
-                Some((change, to)) if !to.is_empty() => {
-                    // Among several commits of one change, this one may still
-                    // come back itself in a later chunk.
-                    if divergent_before.contains(change) && !complete {
-                        continue;
-                    }
-                    dropped_selection |= self.move_commit_state(old, to);
+            // A key for a commit that wasn't in the DAG before either has
+            // nothing to find a rewrite by.
+            let whereabouts = match old_nodes.get(old) {
+                Some(node) => {
+                    let change_id = node.commit.change_id.change_id();
+                    self.locate(
+                        &Revision {
+                            commit_id: old.clone(),
+                            divergent: divergent_before.contains(&change_id),
+                            change_id,
+                        },
+                        complete,
+                    )
                 }
-                _ if complete => self.forget_commit_state(old),
-                _ => {}
+                None if complete => Whereabouts::Gone,
+                None => Whereabouts::Pending,
+            };
+            match whereabouts {
+                Whereabouts::Rewritten(copies) => {
+                    let to: Vec<CommitId> =
+                        copies.iter().map(|&e| self.commit_id(e).clone()).collect();
+                    dropped_selection |= self.move_commit_state(old, &to);
+                }
+                Whereabouts::Gone => self.forget_commit_state(old),
+                Whereabouts::Here(_) | Whereabouts::Pending => {}
             }
         }
         dropped_selection

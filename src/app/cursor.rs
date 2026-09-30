@@ -9,9 +9,10 @@
 //! commit arriving in a later chunk, or a rewritten commit's files arriving
 //! after it, still land the cursor where it belongs.
 
+use super::carry::{Revision, Whereabouts};
 use super::{App, JumpTarget, Loadable};
 use crate::idx::{DiffLineIdx, EntryIdx, RowIdx};
-use crate::types::{ActiveView, ChangeId, CommitId, DisplayRow, FileOwner, RepoPath};
+use crate::types::{ActiveView, DisplayRow, FileOwner, RepoPath};
 
 /// How many commits on each side of the cursor are remembered as fallbacks
 /// for when its own commit doesn't survive a reload.
@@ -59,15 +60,6 @@ pub(crate) struct PendingCursor {
     load: u64,
     /// Tells this target from one set in its place.
     id: u64,
-}
-
-/// A commit as a reload can find it again: by its commit ID while it is
-/// unchanged, by its change ID once rewritten. The change ID is the bare
-/// one; the divergence offset is computed after the commits load, so a key
-/// carrying it would match nothing when it is needed.
-struct Revision {
-    commit_id: CommitId,
-    change_id: ChangeId,
 }
 
 /// The cursor's position before a reload.
@@ -204,16 +196,19 @@ impl App {
         let at = entry.raw();
         let below = (at + 1)..self.dag.nodes.len().min(at + 1 + NEIGHBOURS);
         let above = (at.saturating_sub(NEIGHBOURS)..at).rev();
-        let neighbours = below
+        let entries: Vec<EntryIdx> = std::iter::once(at)
+            .chain(below)
             .chain(above)
-            .map(|i| self.revision_at(EntryIdx::new(i)))
+            .map(EntryIdx::new)
             .collect();
+        let mut revisions = self.revisions_at(&entries).into_iter();
+        let revision = revisions.next().expect("the cursor's own entry");
         let anchor = Anchor {
-            revision: self.revision_at(entry),
+            revision,
             on_working_copy: self.dag.nodes[entry].commit.is_working_copy(),
             file,
             line,
-            neighbours,
+            neighbours: revisions.collect(),
         };
         self.set_pending_cursor(CursorTarget::Anchor(anchor), load);
     }
@@ -312,30 +307,40 @@ impl App {
     /// line, stopping where the data isn't in yet. Returns whether it is
     /// settled.
     fn settle_anchor(&mut self, anchor: &Anchor, complete: bool) -> bool {
-        let entry = if anchor.on_working_copy {
-            match self.jump_entry(&JumpTarget::WorkingCopy) {
-                Some(entry) => Some(entry),
-                // A revset can leave `@` out: only once the stream is
-                // complete is it known to be missing.
-                None if !complete => return false,
-                None => self.find_revision(&anchor.revision),
+        let working_copy = if anchor.on_working_copy {
+            let entry = self.jump_entry(&JumpTarget::WorkingCopy);
+            // A revset can leave `@` out: only once the stream is complete
+            // is it known to be missing.
+            if entry.is_none() && !complete {
+                return false;
             }
+            entry
         } else {
-            self.find_revision(&anchor.revision)
+            None
         };
-        let Some(entry) = entry else {
-            // It may still arrive in a later chunk; only once the stream
-            // is complete is it gone.
-            if complete
-                && let Some(row) = anchor
-                    .neighbours
-                    .iter()
-                    .find_map(|n| self.find_revision(n))
-                    .and_then(|e| self.row_of_commit(e))
-            {
-                self.cursor = row;
-            }
-            return complete;
+        let entry = match working_copy {
+            Some(entry) => entry,
+            None => match self.locate(&anchor.revision, complete) {
+                Whereabouts::Here(entry) => entry,
+                // The cursor can only be on one of the copies.
+                Whereabouts::Rewritten(copies) => copies[0],
+                Whereabouts::Pending => return false,
+                Whereabouts::Gone => {
+                    let survivor =
+                        anchor
+                            .neighbours
+                            .iter()
+                            .find_map(|n| match self.locate(n, true) {
+                                Whereabouts::Here(entry) => Some(entry),
+                                Whereabouts::Rewritten(copies) => Some(copies[0]),
+                                Whereabouts::Pending | Whereabouts::Gone => None,
+                            });
+                    if let Some(row) = survivor.and_then(|e| self.row_of_commit(e)) {
+                        self.cursor = row;
+                    }
+                    return true;
+                }
+            },
         };
         if let Some(row) = self.row_of_commit(entry) {
             self.cursor = row;
@@ -395,25 +400,6 @@ impl App {
             self.cursor = row;
         }
         true
-    }
-
-    fn revision_at(&self, entry: EntryIdx) -> Revision {
-        let commit = &self.dag.nodes[entry].commit;
-        Revision {
-            commit_id: commit.graph_id.clone(),
-            change_id: commit.change_id.change_id(),
-        }
-    }
-
-    /// The entry of `revision` itself if unchanged, or of its rewrite.
-    fn find_revision(&self, revision: &Revision) -> Option<EntryIdx> {
-        self.entry_by_commit_id(&revision.commit_id).or_else(|| {
-            self.dag
-                .nodes
-                .iter_enumerated()
-                .find(|(_, node)| node.commit.change_id.change_id() == revision.change_id)
-                .map(|(idx, _)| idx)
-        })
     }
 
     fn find_row(&self, row: DisplayRow) -> Option<RowIdx> {
@@ -869,5 +855,20 @@ mod tests {
 
         let jump = JumpTarget::Revision(RevisionArg::new("uu/2"));
         assert_eq!(app.jump_entry(&jump), Some(EntryIdx::new(1)));
+    }
+
+    /// With several commits of the change about, a copy missing from the
+    /// first chunk may yet arrive itself: the cursor waits for it rather
+    /// than settling on its sibling.
+    #[test]
+    fn a_cursor_on_a_divergent_copy_waits_for_it() {
+        let mut app = App::for_test();
+        load(&mut app, vec![entry('u', "u1"), entry('u', "u2")], true);
+        put_cursor_on(&mut app, "u2");
+
+        load(&mut app, vec![entry('u', "u1")], false);
+        chunk(&mut app, vec![entry('u', "u2")], true);
+
+        assert_eq!(cursor_commit(&app), "u2");
     }
 }
