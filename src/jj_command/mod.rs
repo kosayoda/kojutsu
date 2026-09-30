@@ -682,3 +682,32 @@ mod jump_target_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod remote_ref_args_tests {
+    use super::*;
+    use crate::types::BookmarkName;
+
+    /// Each remote bookmark goes to jj as one exact symbol. As separate names
+    /// and `--remote` values, jj would track every name on every remote.
+    #[test]
+    fn tracking_names_each_remote_bookmark_exactly() {
+        let cmd = JJCommand {
+            kind: JJCommandKind::BookmarkTrack {
+                bookmarks: [("main", "origin"), ("feat x", "upstream")]
+                    .into_iter()
+                    .map(|(name, remote)| BookmarkRef {
+                        name: BookmarkName::new(name),
+                        remote: RemoteName::new(remote),
+                    })
+                    .collect(),
+            },
+            flags: CommandFlags::empty(),
+        };
+        let args: Vec<String> = cmd.args().iter().map(|a| a.to_string()).collect();
+        assert_eq!(
+            args,
+            ["bookmark", "track", "main@origin", "\"feat x\"@upstream"]
+        );
+    }
+}

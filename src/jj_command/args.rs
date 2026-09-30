@@ -24,6 +24,15 @@ fn rev(id: impl std::fmt::Display) -> TaggedArg {
     (format_compact!("{id}"), CommandPartKind::Revision)
 }
 
+/// A bookmark on one remote, as the `name@remote` symbol jj resolves exactly,
+/// quoted where the name or remote needs it.
+fn remote_symbol(bookmark: &crate::dag::BookmarkRef) -> TaggedArg {
+    rev(jj_lib::revset::format_remote_symbol(
+        bookmark.name.as_str(),
+        bookmark.remote.as_str(),
+    ))
+}
+
 /// A plain value: message, path, count, remote or workspace name.
 fn arg(text: impl Into<Str>) -> TaggedArg {
     (text.into(), CommandPartKind::String)
@@ -235,22 +244,16 @@ impl JJCommand {
                 }
                 args
             }
+            // Exact `name@remote` symbols: the names and `--remote` values
+            // are separate lists to jj, which tracks every pairing of them.
             JJCommandKind::BookmarkTrack { bookmarks, .. } => {
                 let mut args = vec![sub("bookmark"), sub("track")];
-                for br in bookmarks {
-                    args.push(rev(br.name.as_str()));
-                    args.push(flag("--remote"));
-                    args.push(arg(br.remote.as_str()));
-                }
+                args.extend(bookmarks.iter().map(remote_symbol));
                 args
             }
             JJCommandKind::BookmarkUntrack { bookmarks, .. } => {
                 let mut args = vec![sub("bookmark"), sub("untrack")];
-                for br in bookmarks {
-                    args.push(rev(br.name.as_str()));
-                    args.push(flag("--remote"));
-                    args.push(arg(br.remote.as_str()));
-                }
+                args.extend(bookmarks.iter().map(remote_symbol));
                 args
             }
             JJCommandKind::Undo => vec![sub("undo")],
