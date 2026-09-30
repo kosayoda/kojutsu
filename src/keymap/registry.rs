@@ -112,8 +112,8 @@ mod availability_tests {
     #[test]
     fn an_action_is_blocked_by_a_selection_it_cannot_take() {
         let mixed = ctx(SelectionKindSet::FILE | SelectionKindSet::LINE, true);
-        // Absorb takes commits and files, not lines.
-        assert!(blocks(&mixed, AppAction::Absorb));
+        // Fix takes commits and files, not lines.
+        assert!(blocks(&mixed, AppAction::Fix));
         // Squash takes any selection.
         assert!(!blocks(&mixed, AppAction::Squash));
     }

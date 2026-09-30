@@ -112,7 +112,7 @@ impl AppAction {
             ExpandAncestors => ui(ALL).label("expand"),
             ExpandDescendants => ui(ALL).label("expand"),
             Abandon => mutate(C).repeatable(),
-            Absorb => mutate(CF).repeatable(),
+            Absorb => mutate(ALL).repeatable(),
             Commit => mutate(ALL),
             CommitWithMessage => mutate(ALL).label("commit"),
             Describe => mutate(C),

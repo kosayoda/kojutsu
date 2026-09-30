@@ -338,15 +338,7 @@ impl JJCommand {
                     args.push(flag("--from"));
                     args.push(rev(id));
                 }
-                match selection {
-                    ChangeSelection::All => {}
-                    ChangeSelection::Files(paths) => {
-                        args.extend(paths.iter().map(|p| fileset_arg(p)));
-                    }
-                    ChangeSelection::Lines(_) => {
-                        debug_assert!(false, "line selection should be blocked for absorb");
-                    }
-                }
+                push_change_selection(&mut args, selection);
                 args
             }
             JJCommandKind::Commit {

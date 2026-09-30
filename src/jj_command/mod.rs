@@ -785,3 +785,29 @@ mod run_tests {
         assert_eq!(cmd.terminal_use(), TerminalUse::Passthrough);
     }
 }
+
+#[cfg(test)]
+mod absorb_tests {
+    use super::*;
+    use crate::types::ChangeSelection;
+
+    /// A line selection reaches `jj absorb` the way it reaches squash: as
+    /// kojutsu's own diff tool, which keeps only the selected lines.
+    #[test]
+    fn absorbing_lines_goes_through_the_diff_tool() {
+        let cmd = JJCommand {
+            kind: JJCommandKind::Absorb {
+                from: Some(RevisionArg::new("qpv")),
+                selection: ChangeSelection::Lines(std::path::PathBuf::from("/tmp/sel.json")),
+            },
+            flags: CommandFlags::empty(),
+        };
+        let args: Vec<String> = cmd.args().iter().map(|a| a.to_string()).collect();
+        assert!(args.contains(&"--interactive".to_string()), "{args:?}");
+        assert!(
+            args.windows(2).any(|w| w == ["--tool", "kojutsu-select"]),
+            "{args:?}"
+        );
+        assert!(args.iter().any(|a| a.contains("/tmp/sel.json")), "{args:?}");
+    }
+}
