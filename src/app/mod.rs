@@ -636,6 +636,9 @@ impl App {
         if self.active_view == view && !view.reloads_on_reentry() {
             return;
         }
+        if self.active_view == ActiveView::Dag && view != ActiveView::Dag {
+            self.on_dag_hidden();
+        }
         // Save current view state.
         let offset = self.scroll;
         let vs = &mut self.view_states[self.active_view.idx()];
@@ -653,7 +656,7 @@ impl App {
         self.scroll = vs.scroll_offset;
         self.h_scroll = vs.h_scroll;
         if view == ActiveView::Dag {
-            self.settle_pending_cursor();
+            self.on_dag_shown();
         }
     }
 

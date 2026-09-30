@@ -46,7 +46,7 @@ impl App {
     /// their commits reappear in later chunks; the cursor via its anchor.
     fn apply_entries(&mut self, entries: Vec<DagEntry>, done: bool) {
         self.dag.loads += 1;
-        self.anchor_dag_cursor();
+        self.anchor_for_reload();
         // The rows point into the nodes being replaced, so they would
         // restore the cursor onto whichever commit now has the old index.
         // The anchor restores it instead.

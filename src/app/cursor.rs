@@ -22,20 +22,32 @@ pub(crate) enum CursorTarget {
     /// Back to the revision the cursor was on before a reload.
     Anchor(Anchor),
     /// Where a command said the cursor should go.
-    Jump(JumpTarget),
+    Jump {
+        jump: JumpTarget,
+        /// A bookmark jump made in the bookmark view first selects the
+        /// bookmark there, once, and is a DAG position after that.
+        bookmark_selected: bool,
+    },
 }
 
 impl CursorTarget {
-    /// The view whose cursor this moves while `active` is on screen. A
-    /// bookmark jump made from the bookmark view selects the bookmark there;
-    /// everything else is a position in the DAG.
+    /// The view whose cursor this moves while `active` is on screen.
     fn lands_in(&self, active: ActiveView) -> ActiveView {
-        match self {
-            Self::Jump(JumpTarget::Bookmark(_)) if active == ActiveView::Bookmarks => {
-                ActiveView::Bookmarks
-            }
-            _ => ActiveView::Dag,
+        if self.selects_bookmark(active) {
+            ActiveView::Bookmarks
+        } else {
+            ActiveView::Dag
         }
+    }
+
+    fn selects_bookmark(&self, active: ActiveView) -> bool {
+        matches!(
+            self,
+            Self::Jump {
+                jump: JumpTarget::Bookmark(_),
+                bookmark_selected: false,
+            }
+        ) && active == ActiveView::Bookmarks
     }
 }
 
@@ -75,7 +87,11 @@ impl App {
     /// Send the cursor somewhere once the DAG next loads, in place of
     /// whatever was pending.
     pub fn set_jump_target(&mut self, target: JumpTarget) {
-        self.set_pending_cursor(CursorTarget::Jump(target), self.dag.loads + 1);
+        let target = CursorTarget::Jump {
+            jump: target,
+            bookmark_selected: false,
+        };
+        self.set_pending_cursor(target, self.dag.loads + 1);
     }
 
     fn set_pending_cursor(&mut self, target: CursorTarget, load: u64) {
@@ -123,10 +139,38 @@ impl App {
     }
 
     /// Anchor the DAG cursor to its revision as a reload starts replacing
-    /// the nodes its rows point into. A target already pending is kept: it is
-    /// either a jump, which wins, or an anchor from a reload this one
-    /// interrupted, which is still where the user was.
-    pub(super) fn anchor_dag_cursor(&mut self) {
+    /// the nodes its rows point into.
+    pub(super) fn anchor_for_reload(&mut self) {
+        self.anchor_dag_cursor(self.dag.loads);
+    }
+
+    /// The DAG is leaving the screen. Its rows are about to be replaced by
+    /// another view's, so anchor its cursor while they are still here, for
+    /// the next reload to bring back to.
+    pub(super) fn on_dag_hidden(&mut self) {
+        self.anchor_dag_cursor(self.dag.loads + 1);
+    }
+
+    /// The DAG is back on screen with its saved row restored. If nothing
+    /// reloaded meanwhile, that row is still exactly right, and more exact
+    /// than an anchor can be (a description or graph line, say), so the
+    /// anchor left on the way out is dropped. Then whatever is pending lands.
+    pub(super) fn on_dag_shown(&mut self) {
+        if self
+            .dag
+            .pending_cursor
+            .as_ref()
+            .is_some_and(|p| matches!(p.target, CursorTarget::Anchor(_)) && p.load > self.dag.loads)
+        {
+            self.dag.pending_cursor = None;
+        }
+        self.settle_pending_cursor();
+    }
+
+    /// Anchor the DAG cursor for `load`. A target already pending is kept:
+    /// it is either a jump, which wins, or an anchor from before, which is
+    /// still where the user was.
+    fn anchor_dag_cursor(&mut self, load: u64) {
         if self.dag.pending_cursor.is_some() || self.active_view != ActiveView::Dag {
             return;
         }
@@ -166,8 +210,7 @@ impl App {
             line,
             neighbours,
         };
-        // Captured as the load starts, so it is for this load.
-        self.set_pending_cursor(CursorTarget::Anchor(anchor), self.dag.loads);
+        self.set_pending_cursor(CursorTarget::Anchor(anchor), load);
     }
 
     /// Move the cursor to the pending target as far as what has loaded
@@ -175,7 +218,7 @@ impl App {
     /// Runs after each batch of repo results, once rows are rebuilt, and on
     /// entering the DAG.
     pub(super) fn settle_pending_cursor(&mut self) {
-        let Some(pending) = self.dag.pending_cursor.take() else {
+        let Some(mut pending) = self.dag.pending_cursor.take() else {
             return;
         };
         if pending.load > self.dag.loads {
@@ -183,13 +226,21 @@ impl App {
             return;
         }
         let complete = self.dag.stream.is_none();
-        let settled = match &pending.target {
-            CursorTarget::Jump(JumpTarget::Bookmark(name))
-                if self.active_view == ActiveView::Bookmarks =>
-            {
-                self.select_bookmark_row(name) || self.jump_missed(complete)
+        let selects_bookmark = pending.target.selects_bookmark(self.active_view);
+        let settled = match &mut pending.target {
+            CursorTarget::Jump {
+                jump: JumpTarget::Bookmark(name),
+                bookmark_selected,
+            } if selects_bookmark => {
+                if self.select_bookmark_row(name) {
+                    // Kept as where the DAG goes when next on screen.
+                    *bookmark_selected = true;
+                    false
+                } else {
+                    self.jump_missed(complete)
+                }
             }
-            CursorTarget::Jump(jump) => self.settle_jump(jump, complete),
+            CursorTarget::Jump { jump, .. } => self.settle_jump(jump, complete),
             // The anchor is into DAG rows, which only exist while the DAG
             // is on screen.
             CursorTarget::Anchor(_) if self.active_view != ActiveView::Dag => false,
@@ -645,7 +696,8 @@ mod tests {
     }
 
     /// A bookmark command run from the bookmark view keeps that view on
-    /// the bookmark it acted on, wherever the reload lists it.
+    /// the bookmark it acted on, wherever the reload lists it, and the DAG
+    /// goes to its commit when next on screen.
     #[test]
     fn a_bookmark_jump_in_the_bookmark_view_selects_the_bookmark() {
         let mut app = App::for_test();
@@ -666,17 +718,73 @@ mod tests {
                 .as_str()
                 .to_string()
         };
-        // Whichever the cursor isn't on, so landing there shows the jump.
-        let other = if bookmark_at_cursor(&app) == "main" {
-            "dev"
+        // Whichever the cursor isn't on, and with the DAG on the other
+        // commit, so landing in either place shows the jump.
+        let (other, other_commit, dag_commit) = if bookmark_at_cursor(&app) == "main" {
+            ("dev", "b1", "a1")
         } else {
-            "main"
+            ("main", "a1", "b1")
         };
+        app.switch_view(ActiveView::Dag);
+        put_cursor_on(&mut app, dag_commit);
+        app.switch_view(ActiveView::Bookmarks);
 
         app.set_jump_target(JumpTarget::Bookmark(crate::types::BookmarkName::new(other)));
         load(&mut app, entries(), true);
-
         assert_eq!(bookmark_at_cursor(&app), other);
+
+        app.switch_view(ActiveView::Dag);
+        assert_eq!(cursor_commit(&app), other_commit);
+    }
+
+    /// Leaving the DAG anchors its cursor, so a reload while another view
+    /// is on screen still brings it back to the same revision rather than
+    /// the same row number.
+    #[test]
+    fn a_reload_while_away_returns_to_the_same_revision() {
+        let mut app = App::for_test();
+        let entries = vec![entry('a', "a1"), entry('b', "b1"), entry('c', "c1")];
+        load(&mut app, entries, true);
+        put_cursor_on(&mut app, "c1");
+        app.switch_view(ActiveView::Tags);
+
+        let entries = vec![
+            entry('n', "n1"),
+            entry('a', "a1"),
+            entry('b', "b1"),
+            entry('c', "c1"),
+        ];
+        load(&mut app, entries, true);
+        app.switch_view(ActiveView::Dag);
+
+        assert_eq!(cursor_commit(&app), "c1");
+    }
+
+    /// Without a reload the saved row is still right, and finer than an
+    /// anchor: a description line would come back as its commit.
+    #[test]
+    fn returning_without_a_reload_keeps_the_exact_row() {
+        let mut app = App::for_test();
+        let mut described = entry('a', "a1");
+        described.commit.full_description = Some("subject\nbody".into());
+        load(&mut app, vec![described], true);
+        let a = EntryIdx::new(0);
+        app.dag.unfolded_commits.insert(app.change_id(a));
+        app.rebuild_rows();
+        app.cursor = app
+            .rows
+            .iter()
+            .position(|r| matches!(r, DisplayRow::DescriptionLine { .. }))
+            .map(RowIdx::new)
+            .expect("a description line");
+
+        app.switch_view(ActiveView::Tags);
+        app.switch_view(ActiveView::Dag);
+
+        assert!(matches!(
+            cursor_row(&app),
+            DisplayRow::DescriptionLine { .. }
+        ));
     }
 
     /// A failed load brings nothing a jump was waiting for; the next load,
