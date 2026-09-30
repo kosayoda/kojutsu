@@ -318,7 +318,11 @@ pub struct DagState {
     /// In-progress revset stream state (present while chunks are arriving).
     stream: Option<data::DagStreamState>,
     /// Where the cursor goes once the DAG has loaded.
-    pending_cursor: Option<cursor::CursorTarget>,
+    pending_cursor: Option<cursor::PendingCursor>,
+    /// How many loads have started replacing the nodes.
+    loads: u64,
+    /// How many cursor targets have been set, to tell them apart.
+    cursor_targets_set: u64,
     /// Per-commit fold state, keyed by change id (stable across mutations).
     pub unfolded_commits: HashSet<ChangeId>,
     /// Per-file fold state, keyed by (change id, path) (stable across mutations).
@@ -648,6 +652,9 @@ impl App {
         self.cursor = RowIdx::new(vs.cursor.raw().min(self.rows.len().saturating_sub(1)));
         self.scroll = vs.scroll_offset;
         self.h_scroll = vs.h_scroll;
+        if view == ActiveView::Dag {
+            self.settle_pending_cursor();
+        }
     }
 
     /// Start whatever a view needs when it is entered. Runs before its rows

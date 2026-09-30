@@ -45,6 +45,7 @@ impl App {
     /// load. Cached data and fold state carry over via [`DagStreamState`] as
     /// their commits reappear in later chunks; the cursor via its anchor.
     fn apply_entries(&mut self, entries: Vec<DagEntry>, done: bool) {
+        self.dag.loads += 1;
         self.anchor_dag_cursor();
         // The rows point into the nodes being replaced, so they would
         // restore the cursor onto whichever commit now has the old index.
@@ -240,6 +241,7 @@ impl App {
                     self.revset.pending = None;
                     self.revset.draft = Some(revset.into());
                     self.revset.load_state = Loadable::Failed(error.clone());
+                    self.drop_cursor_target_for_failed_load();
                     self.set_error("failed to load revset");
                     self.show_error_overlay("revset error", error);
                 }

@@ -27,7 +27,6 @@ enum AppEvent {
     JjDone {
         result: Box<JJCommandResult>,
         cmd: Box<JJCommand>,
-        jump: Option<JumpTarget>,
         completion: Completion,
     },
 }
@@ -400,18 +399,12 @@ impl Session {
             AppEvent::JjDone {
                 result,
                 cmd,
-                jump,
                 completion,
             } => match completion {
                 Completion::ResumeLua => resume_lua_jj(&mut self.app, result, &self.runtime.engine),
-                Completion::Refresh { hook } => finish_jj_command(
-                    &mut self.app,
-                    *result,
-                    *cmd,
-                    jump,
-                    hook,
-                    &self.runtime.engine,
-                ),
+                Completion::Refresh { hook } => {
+                    finish_jj_command(&mut self.app, *result, *cmd, hook, &self.runtime.engine)
+                }
             },
             AppEvent::Terminal(ev) => match ev {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
@@ -581,7 +574,6 @@ impl Session {
     /// progress, then sends `AppEvent::JjDone` when the child exits (or is
     /// cancelled via Esc, which kills the child process group).
     fn run_jj(&mut self, cmd: JJCommand, completion: Completion) {
-        let jump = cmd.jump_target();
         let (kill_main, kill_bg) = kojutsu::jj_command::KillHandle::pair();
         self.app.mode = AppMode::CommandRunning(kojutsu::app::CommandRunningState::new(
             cmd.display(),
@@ -600,7 +592,6 @@ impl Session {
             let _ = event_tx.send(AppEvent::JjDone {
                 result: Box::new(result),
                 cmd: Box::new(cmd),
-                jump,
                 completion,
             });
         });
@@ -709,13 +700,9 @@ fn finish_foreground_command(
     );
 
     if result.success {
-        if let Some(jump) = cmd.jump_target() {
-            app.set_jump_target(jump);
-        }
-        app.clear_selection();
         // The user may have edited files while the terminal was suspended
         // (e.g. in $EDITOR), so re-scan the working copy.
-        app.refresh(RevsetLoadKind::Snapshot);
+        after_command_success(app, cmd, RevsetLoadKind::Snapshot);
     }
 
     // Show output if there is any, or if the command failed (so failures are
@@ -730,6 +717,26 @@ fn finish_foreground_command(
             retry,
         );
         adopt_hook(app, hook);
+    }
+}
+
+/// What every command does once it has succeeded, whether it ran captured
+/// or on the real terminal: aim the DAG cursor where the command says, drop
+/// the selection it consumed, and reload.
+fn after_command_success(app: &mut App, cmd: &JJCommand, load_kind: RevsetLoadKind) {
+    let jump = cmd.jump_target();
+    let show_dag = match &jump {
+        Some(JumpTarget::WorkingCopy | JumpTarget::Prefix(_)) => true,
+        Some(JumpTarget::Bookmark(_)) => false,
+        None => app.active_view == kojutsu::types::ActiveView::Evolog,
+    };
+    if let Some(jump) = jump {
+        app.set_jump_target(jump);
+    }
+    app.clear_selection();
+    app.refresh(load_kind);
+    if show_dag && app.active_view != kojutsu::types::ActiveView::Dag {
+        app.switch_view(kojutsu::types::ActiveView::Dag);
     }
 }
 
@@ -1038,7 +1045,6 @@ fn finish_jj_command(
     app: &mut App,
     result: JJCommandResult,
     cmd: JJCommand,
-    jump: Option<JumpTarget>,
     hook: Option<AppAction>,
     lua_engine: &kojutsu::lua::LuaEngine,
 ) -> Action {
@@ -1061,22 +1067,10 @@ fn finish_jj_command(
     adopt_hook(app, hook);
 
     if result.success {
-        let switch_to_dag = match &jump {
-            Some(JumpTarget::WorkingCopy | JumpTarget::Prefix(_)) => true,
-            Some(JumpTarget::Bookmark(_)) => false,
-            None => app.active_view == kojutsu::types::ActiveView::Evolog,
-        };
-        if let Some(jump) = jump {
-            app.set_jump_target(jump);
-        }
-        app.clear_selection();
-        if switch_to_dag && app.active_view != kojutsu::types::ActiveView::Dag {
-            app.switch_view(kojutsu::types::ActiveView::Dag);
-        }
         // The command already snapshotted the working copy when it started
         // (unless run with --ignore-working-copy, where skipping is wanted),
         // so skip the redundant re-scan.
-        app.refresh(RevsetLoadKind::NoSnapshot);
+        after_command_success(app, &cmd, RevsetLoadKind::NoSnapshot);
     }
 
     if let Some(hook) = hook {

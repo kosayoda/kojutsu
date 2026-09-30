@@ -3,7 +3,8 @@
 //!
 //! There is one slot. A reload fills it with an anchor on the revision the
 //! cursor was on; a command that says where to go replaces that with a jump;
-//! moving the cursor yourself empties it. Whatever is in it is resolved as
+//! moving the cursor yourself empties it. A target waits for the load it is
+//! for, and for the DAG to be on screen. Whatever is in it is resolved as
 //! far as the loaded data allows after each batch of repo results, so a
 //! commit arriving in a later chunk, or a rewritten commit's files arriving
 //! after it, still land the cursor where it belongs.
@@ -22,6 +23,30 @@ pub(crate) enum CursorTarget {
     Anchor(Anchor),
     /// Where a command said the cursor should go.
     Jump(JumpTarget),
+}
+
+impl CursorTarget {
+    /// The view whose cursor this moves while `active` is on screen. A
+    /// bookmark jump made from the bookmark view selects the bookmark there;
+    /// everything else is a position in the DAG.
+    fn lands_in(&self, active: ActiveView) -> ActiveView {
+        match self {
+            Self::Jump(JumpTarget::Bookmark(_)) if active == ActiveView::Bookmarks => {
+                ActiveView::Bookmarks
+            }
+            _ => ActiveView::Dag,
+        }
+    }
+}
+
+/// The slot's content.
+pub(crate) struct PendingCursor {
+    target: CursorTarget,
+    /// The DAG load it is for. A jump is set before the load that brings
+    /// its commit back, and must not land on the DAG that load replaces.
+    load: u64,
+    /// Tells this target from one set in its place.
+    id: u64,
 }
 
 /// A commit as a reload can find it again: by its commit ID while it is
@@ -50,24 +75,55 @@ impl App {
     /// Send the cursor somewhere once the DAG next loads, in place of
     /// whatever was pending.
     pub fn set_jump_target(&mut self, target: JumpTarget) {
-        self.dag.pending_cursor = Some(CursorTarget::Jump(target));
+        self.set_pending_cursor(CursorTarget::Jump(target), self.dag.loads + 1);
     }
 
-    /// Run `f` as something the user did. If it moves the cursor or changes
-    /// view, the pending target is dropped rather than applied later over
-    /// the user's own move. A target `f` sets itself is kept.
+    fn set_pending_cursor(&mut self, target: CursorTarget, load: u64) {
+        self.dag.cursor_targets_set += 1;
+        self.dag.pending_cursor = Some(PendingCursor {
+            target,
+            load,
+            id: self.dag.cursor_targets_set,
+        });
+    }
+
+    /// Run `f` as something the user did. If it moves the cursor in the
+    /// view the pending target lands in, the target is dropped rather than
+    /// applied later over the user's own move.
     pub(crate) fn as_user_input<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
-        let pending = self.dag.pending_cursor.take();
+        let pending = self
+            .dag
+            .pending_cursor
+            .as_ref()
+            .map(|p| (p.id, p.target.lands_in(self.active_view)));
         let (cursor, view) = (self.cursor, self.active_view);
         let result = f(self);
-        if self.dag.pending_cursor.is_none() && self.cursor == cursor && self.active_view == view {
-            self.dag.pending_cursor = pending;
+        if let Some((id, lands_in)) = pending
+            && self.active_view == view
+            && lands_in == view
+            && self.cursor != cursor
+            && self.dag.pending_cursor.as_ref().is_some_and(|p| p.id == id)
+        {
+            self.dag.pending_cursor = None;
         }
         result
     }
 
-    /// Anchor the DAG cursor to its revision before a reload replaces the
-    /// nodes its rows point into. A target already pending is kept: it is
+    /// A load that failed brings nothing a pending jump was waiting for.
+    /// Left in place, it would fire on some unrelated later load.
+    pub(super) fn drop_cursor_target_for_failed_load(&mut self) {
+        if self
+            .dag
+            .pending_cursor
+            .as_ref()
+            .is_some_and(|p| p.load > self.dag.loads)
+        {
+            self.dag.pending_cursor = None;
+        }
+    }
+
+    /// Anchor the DAG cursor to its revision as a reload starts replacing
+    /// the nodes its rows point into. A target already pending is kept: it is
     /// either a jump, which wins, or an anchor from a reload this one
     /// interrupted, which is still where the user was.
     pub(super) fn anchor_dag_cursor(&mut self) {
@@ -104,27 +160,35 @@ impl App {
             .chain(above)
             .map(|i| self.revision_at(EntryIdx::new(i)))
             .collect();
-        self.dag.pending_cursor = Some(CursorTarget::Anchor(Anchor {
+        let anchor = Anchor {
             revision: self.revision_at(entry),
             file,
             line,
             neighbours,
-        }));
+        };
+        // Captured as the load starts, so it is for this load.
+        self.set_pending_cursor(CursorTarget::Anchor(anchor), self.dag.loads);
     }
 
     /// Move the cursor to the pending target as far as what has loaded
     /// allows, and clear it once nothing more can arrive to improve on that.
-    /// Runs after each batch of repo results, once rows are rebuilt.
+    /// Runs after each batch of repo results, once rows are rebuilt, and on
+    /// entering the DAG.
     pub(super) fn settle_pending_cursor(&mut self) {
-        // Asked for but not started: the DAG is still the old one.
-        if matches!(self.revset.load_state, Loadable::Loading) {
-            return;
-        }
-        let Some(target) = self.dag.pending_cursor.take() else {
+        let Some(pending) = self.dag.pending_cursor.take() else {
             return;
         };
+        if pending.load > self.dag.loads {
+            self.dag.pending_cursor = Some(pending);
+            return;
+        }
         let complete = self.dag.stream.is_none();
-        let settled = match &target {
+        let settled = match &pending.target {
+            CursorTarget::Jump(JumpTarget::Bookmark(name))
+                if self.active_view == ActiveView::Bookmarks =>
+            {
+                self.select_bookmark_row(name) || self.jump_missed(complete)
+            }
             CursorTarget::Jump(jump) => self.settle_jump(jump, complete),
             // The anchor is into DAG rows, which only exist while the DAG
             // is on screen.
@@ -132,20 +196,51 @@ impl App {
             CursorTarget::Anchor(anchor) => self.settle_anchor(anchor, complete),
         };
         if !settled {
-            self.dag.pending_cursor = Some(target);
+            self.dag.pending_cursor = Some(pending);
         }
     }
 
     fn settle_jump(&mut self, jump: &JumpTarget, complete: bool) -> bool {
-        let found = match jump {
-            JumpTarget::WorkingCopy => self.jump_to_working_copy(),
-            JumpTarget::Bookmark(name) => self.jump_to_bookmark(name),
-            JumpTarget::Prefix(prefix) => self.jump_to_change_id(prefix),
+        let Some(entry) = self.jump_entry(jump) else {
+            return self.jump_missed(complete);
         };
-        if !found && complete {
+        // Found, but placed only once the DAG is on screen to place it in.
+        if self.active_view != ActiveView::Dag {
+            return false;
+        }
+        if let Some(row) = self.row_of_commit(entry) {
+            self.cursor = row;
+        }
+        true
+    }
+
+    /// A jump whose commit hasn't turned up: settled, with a word to the
+    /// user, once there is nothing left to arrive.
+    fn jump_missed(&mut self, complete: bool) -> bool {
+        if complete {
             self.set_status("jump target not in current revset");
         }
-        found || complete
+        complete
+    }
+
+    /// The DAG entry a jump names. IDs match on their whole length, so a
+    /// prefix of any length works, not just one short enough to display.
+    pub(crate) fn jump_entry(&self, jump: &JumpTarget) -> Option<EntryIdx> {
+        self.dag
+            .nodes
+            .iter_enumerated()
+            .find(|(_, node)| {
+                let commit = &node.commit;
+                match jump {
+                    JumpTarget::WorkingCopy => commit.is_working_copy(),
+                    JumpTarget::Bookmark(name) => commit.bookmarks.iter().any(|b| b.name == *name),
+                    JumpTarget::Prefix(prefix) => {
+                        commit.change_id.full().starts_with(prefix.as_str())
+                            || commit.graph_id.as_str().starts_with(prefix.as_str())
+                    }
+                }
+            })
+            .map(|(idx, _)| idx)
     }
 
     /// Place the cursor on the anchor's commit, then its file, then its
@@ -255,7 +350,7 @@ mod tests {
     };
     use crate::idx::{EntryIdx, RowIdx};
     use crate::repo_service::{RepoResult, RevsetData};
-    use crate::types::{CommitId, DisplayRow, JumpTarget, RepoPath};
+    use crate::types::{ActiveView, CommitId, DisplayRow, JumpTarget, RepoPath};
 
     fn change_id(tag: char) -> String {
         format!("{tag}{tag}nnomkxrqvlypszwlwkvvqnstvzoxrs")
@@ -482,5 +577,125 @@ mod tests {
         chunk(&mut app, vec![entry('b', "b1")], true);
 
         assert_eq!(cursor_commit(&app), "a1");
+    }
+
+    /// Shorter than the displayed form, exactly it, and longer than it: the
+    /// last only works because the whole ID is matched.
+    #[test]
+    fn a_prefix_of_any_length_names_the_commit() {
+        let mut app = App::for_test();
+        let change = change_id('u');
+        load(&mut app, vec![entry('u', "7bbaa2cb1f0e4d3a9c8b7a")], true);
+        let found = |prefix: &str| app.jump_entry(&JumpTarget::Prefix(prefix.into())).is_some();
+
+        for prefix in ["uu", "uunnomkx", "uunnomkxrqvlyp", change.as_str()] {
+            assert!(found(prefix), "change prefix {prefix:?}");
+        }
+        for prefix in ["7b", "7bbaa2cb", "7bbaa2cb1f0e4d3a9c8b7a"] {
+            assert!(found(prefix), "commit prefix {prefix:?}");
+        }
+        assert!(!found("zzzz"));
+    }
+
+    fn with_bookmark(mut entry: DagEntry, name: &str) -> DagEntry {
+        entry.commit.bookmarks.push(crate::dag::BookmarkInfo {
+            name: crate::types::BookmarkName::new(name),
+            is_dirty: false,
+            is_tracking: false,
+            is_conflicted: false,
+        });
+        entry
+    }
+
+    /// A jump names a commit the coming load brings. Settling it against
+    /// the DAG still on screen (here, on an unrelated batch of results)
+    /// would report it missing and drop it before that load arrives.
+    #[test]
+    fn a_jump_waits_for_the_load_it_was_set_for() {
+        let mut app = App::for_test();
+        load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], true);
+        put_cursor_on(&mut app, "b1");
+
+        app.set_jump_target(JumpTarget::Prefix("c1".into()));
+        app.apply_deferred(Default::default());
+        assert_eq!(cursor_commit(&app), "b1");
+
+        let entries = vec![entry('a', "a1"), entry('b', "b1"), entry('c', "c1")];
+        load(&mut app, entries, true);
+        assert_eq!(cursor_commit(&app), "c1");
+        assert!(app.status_message.is_none());
+    }
+
+    /// A jump that lands while another view is on screen is a DAG position:
+    /// placed on entering the DAG, and not undone by moving around in the
+    /// other view meanwhile.
+    #[test]
+    fn a_jump_from_another_view_is_placed_on_entering_the_dag() {
+        let mut app = App::for_test();
+        load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], true);
+        put_cursor_on(&mut app, "b1");
+        app.switch_view(ActiveView::Tags);
+
+        app.set_jump_target(JumpTarget::Prefix("a1".into()));
+        load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], true);
+        app.as_user_input(|app| app.cursor = RowIdx::new(1));
+        app.as_user_input(|app| app.switch_view(ActiveView::Dag));
+
+        assert_eq!(cursor_commit(&app), "a1");
+    }
+
+    /// A bookmark command run from the bookmark view keeps that view on
+    /// the bookmark it acted on, wherever the reload lists it.
+    #[test]
+    fn a_bookmark_jump_in_the_bookmark_view_selects_the_bookmark() {
+        let mut app = App::for_test();
+        let entries = || {
+            vec![
+                with_bookmark(entry('a', "a1"), "main"),
+                with_bookmark(entry('b', "b1"), "dev"),
+            ]
+        };
+        load(&mut app, entries(), true);
+        app.switch_view(ActiveView::Bookmarks);
+        let bookmark_at_cursor = |app: &App| {
+            let DisplayRow::BookmarkItem { bookmark_idx } = cursor_row(app) else {
+                panic!("cursor not on a bookmark");
+            };
+            app.views.bookmark_entries[bookmark_idx.raw()]
+                .name
+                .as_str()
+                .to_string()
+        };
+        // Whichever the cursor isn't on, so landing there shows the jump.
+        let other = if bookmark_at_cursor(&app) == "main" {
+            "dev"
+        } else {
+            "main"
+        };
+
+        app.set_jump_target(JumpTarget::Bookmark(crate::types::BookmarkName::new(other)));
+        load(&mut app, entries(), true);
+
+        assert_eq!(bookmark_at_cursor(&app), other);
+    }
+
+    /// A failed load brings nothing a jump was waiting for; the next load,
+    /// whatever it is for, restores the cursor instead.
+    #[test]
+    fn a_failed_load_drops_the_jump_it_was_for() {
+        use crate::repo_service::{RepoError, RepoErrorKind};
+
+        let mut app = App::for_test();
+        load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], true);
+        put_cursor_on(&mut app, "b1");
+
+        app.set_jump_target(JumpTarget::Prefix("a1".into()));
+        app.handle_repo_result(RepoResult::Revset {
+            revset: "bad(".into(),
+            result: Err(RepoError::new(RepoErrorKind::Revset, "parse error")),
+        });
+        load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], true);
+
+        assert_eq!(cursor_commit(&app), "b1");
     }
 }
