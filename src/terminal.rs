@@ -32,6 +32,16 @@ pub fn restore() -> io::Result<()> {
     Ok(())
 }
 
+/// With the terminal handed back to the shell, hold it until Enter, so what a
+/// command wrote there can be read before the TUI draws over it.
+pub fn wait_for_enter(prompt: &str) {
+    use std::io::{BufRead, Write};
+    let mut out = stdout();
+    let _ = write!(out, "\n[{prompt}]");
+    let _ = out.flush();
+    let _ = io::stdin().lock().read_line(&mut String::new());
+}
+
 /// Ensure the terminal is restored even on panic so the user doesn't get
 /// stuck in raw mode.
 fn install_panic_hook() {

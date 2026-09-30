@@ -215,13 +215,16 @@ pub(in crate::input) fn submit_run_command(
         }
     };
     app.record_run_command(&text);
-    // --jobs only matters when running over several revisions.
-    if change_ids.len() == 1 {
+    // --jobs only matters when running over several revisions, and
+    // passthrough allows only one job: several would interleave their output
+    // on the terminal, so jj refuses more, including a `run.jobs` default.
+    let passthrough = flags.contains(keymap::CommandFlags::PASSTHROUGH);
+    if change_ids.len() == 1 || passthrough {
         return Action::run(JJCommand {
             kind: JJCommandKind::Run {
                 change_ids,
                 argv,
-                jobs: None,
+                jobs: passthrough.then_some(1),
             },
             flags,
         });

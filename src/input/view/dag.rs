@@ -475,6 +475,11 @@ fn make_command(app: &App, build: impl FnOnce(RevisionArg) -> JJCommand) -> Acti
 }
 
 fn enter_run_input(app: &mut App, flags: CommandFlags) -> Action {
+    // jj refuses the two together: one discards the changes the other keeps.
+    if flags.contains(CommandFlags::IGNORE_CHANGES | CommandFlags::RESTORE_DESCENDANTS) {
+        app.set_error("run: ignore changes and restore descendants can't be combined");
+        return Action::None;
+    }
     let ids = app.selected_change_ids();
     if ids.is_empty() {
         return Action::None;
@@ -970,5 +975,74 @@ mod visual_select_tests {
             app.selection.display_text().as_deref(),
             Some("3 commits selected")
         );
+    }
+}
+
+#[cfg(test)]
+mod run_input_tests {
+    use crate::app::{App, AppMode};
+    use crate::dag::CommitInfo;
+    use crate::idx::EntryIdx;
+    use crate::input::Action;
+    use crate::jj_command::JJCommandKind;
+    use crate::keymap::CommandFlags;
+    use crate::types::RevisionArg;
+
+    fn two_commits_selected() -> App {
+        let mut app = App::for_test();
+        for tag in ['a', 'b'] {
+            app.push_test_commit(CommitInfo::for_test(
+                &format!("{tag}{tag}nnomkxrqvlypszwlwkvvqnstvzoxrs"),
+                &format!("{tag}1"),
+            ));
+        }
+        app.rebuild_rows();
+        for i in 0..2 {
+            app.toggle_commit_selection(EntryIdx::new(i));
+        }
+        app
+    }
+
+    fn revisions() -> crate::types::SmallVec<RevisionArg> {
+        smallvec::smallvec![RevisionArg::new("a1"), RevisionArg::new("b1")]
+    }
+
+    /// jj refuses the pair, so it's refused before a command is typed.
+    #[test]
+    fn ignoring_changes_while_restoring_descendants_is_refused() {
+        let mut app = two_commits_selected();
+        let flags = CommandFlags::IGNORE_CHANGES | CommandFlags::RESTORE_DESCENDANTS;
+        assert!(matches!(
+            super::enter_run_input(&mut app, flags),
+            Action::None
+        ));
+        assert!(app.status_message.is_some());
+        assert!(matches!(app.mode, AppMode::Normal));
+    }
+
+    /// Several revisions normally ask for a job count; passthrough allows
+    /// only one job, so it runs with one straight away.
+    #[test]
+    fn passthrough_skips_the_job_count() {
+        let mut app = two_commits_selected();
+        let action = crate::input::modal::submit_run_command(
+            &mut app,
+            revisions(),
+            CommandFlags::PASSTHROUGH,
+            "cargo test".into(),
+        );
+        let Action::RunJj { cmd, .. } = action else {
+            panic!("expected the run to start");
+        };
+        assert!(matches!(cmd.kind, JJCommandKind::Run { jobs: Some(1), .. }));
+
+        let action = crate::input::modal::submit_run_command(
+            &mut app,
+            revisions(),
+            CommandFlags::empty(),
+            "cargo test".into(),
+        );
+        assert!(matches!(action, Action::None));
+        assert!(matches!(app.mode, AppMode::TextInput { .. }));
     }
 }

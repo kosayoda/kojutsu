@@ -57,6 +57,9 @@ bitflags::bitflags! {
         const DRY_RUN             = 1 << 9;
         const PARALLEL            = 1 << 10;
         const CLEAN               = 1 << 11;
+        const PASSTHROUGH         = 1 << 12;
+        const IGNORE_CHANGES      = 1 << 13;
+        const IGNORE_ERRORS       = 1 << 14;
     }
 }
 

@@ -545,6 +545,9 @@ impl JJCommand {
                     &[
                         (CommandFlags::CLEAN, "--clean"),
                         (CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
+                        (CommandFlags::PASSTHROUGH, "--passthrough"),
+                        (CommandFlags::IGNORE_CHANGES, "--ignore-changes"),
+                        (CommandFlags::IGNORE_ERRORS, "--ignore-errors"),
                     ],
                 );
                 // Global flags must precede `--`: everything after it is

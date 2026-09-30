@@ -679,6 +679,11 @@ fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
 fn run_in_foreground(cmd: &JJCommand, repo_path: &std::path::Path) -> JJCommandResult {
     match cmd.terminal_use() {
         TerminalUse::Interactive => cmd.run_interactive(repo_path),
+        TerminalUse::Passthrough => {
+            let result = cmd.run_interactive(repo_path);
+            kojutsu::terminal::wait_for_enter("press Enter to return to kojutsu");
+            result
+        }
         TerminalUse::Foreground | TerminalUse::Background => cmd.run_suspend_captured(repo_path),
     }
 }

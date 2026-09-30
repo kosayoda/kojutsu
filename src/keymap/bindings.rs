@@ -257,6 +257,19 @@ pub fn default_bindings() -> Vec<BindingSpec> {
             "restore descendants",
             dag(),
         ),
+        toggle("! shift-p", CommandFlags::PASSTHROUGH, "passthrough", dag()),
+        toggle(
+            "! shift-i",
+            CommandFlags::IGNORE_CHANGES,
+            "ignore changes",
+            dag(),
+        ),
+        toggle(
+            "! shift-e",
+            CommandFlags::IGNORE_ERRORS,
+            "ignore errors",
+            dag(),
+        ),
         bind("! !", Run, "run command\u{2026}", C, dag()),
         // File prefix (dag also has untrack)
         bind("shift-f u", FileUntrack, "untrack", C, dag()),

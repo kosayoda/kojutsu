@@ -301,6 +301,9 @@ pub enum TerminalUse {
     Foreground,
     /// The child takes the whole terminal: an editor or a diff editor.
     Interactive,
+    /// The child writes straight to the terminal, as for `Interactive`, and
+    /// the screen is held once it exits so what it wrote can be read.
+    Passthrough,
 }
 
 impl JJCommand {
@@ -425,6 +428,10 @@ impl JJCommand {
     /// How the command uses the terminal while it runs: the one place that
     /// decides whether the TUI steps aside for it.
     pub fn terminal_use(&self) -> TerminalUse {
+        // Read off the args for the same reason as `--interactive`.
+        if self.args().iter().any(|a| a.as_str() == "--passthrough") {
+            return TerminalUse::Passthrough;
+        }
         if self.is_interactive() {
             return TerminalUse::Interactive;
         }
@@ -730,5 +737,51 @@ mod remote_ref_args_tests {
         };
         let args: Vec<String> = cmd.args().iter().map(|a| a.to_string()).collect();
         assert_eq!(args, ["tag", "track", "v1.0@origin"]);
+    }
+}
+
+#[cfg(test)]
+mod run_tests {
+    use super::*;
+
+    fn run(flags: CommandFlags, jobs: Option<usize>) -> JJCommand {
+        JJCommand {
+            kind: JJCommandKind::Run {
+                change_ids: smallvec::smallvec![RevisionArg::new("qpv"), RevisionArg::new("xyz")],
+                argv: vec!["cargo".into(), "test".into()],
+                jobs,
+            },
+            flags,
+        }
+    }
+
+    fn args(cmd: &JJCommand) -> Vec<String> {
+        cmd.args().iter().map(|a| a.to_string()).collect()
+    }
+
+    /// The new options are jj's, so they go before the `--` that hands the
+    /// rest to the command being run.
+    #[test]
+    fn run_options_go_to_jj_not_to_the_command() {
+        let cmd = run(
+            CommandFlags::IGNORE_CHANGES | CommandFlags::IGNORE_ERRORS,
+            None,
+        );
+        let args = args(&cmd);
+        let dashes = args.iter().position(|a| a == "--").expect("a --");
+        for option in ["--ignore-changes", "--ignore-errors"] {
+            let at = args.iter().position(|a| a == option).expect(option);
+            assert!(at < dashes, "{option} after --: {args:?}");
+        }
+        assert_eq!(cmd.terminal_use(), TerminalUse::Background);
+    }
+
+    /// Passthrough output goes to the terminal, so the TUI steps aside for
+    /// it and holds the screen afterwards.
+    #[test]
+    fn a_passthrough_run_takes_the_terminal() {
+        let cmd = run(CommandFlags::PASSTHROUGH, Some(1));
+        assert!(args(&cmd).windows(2).any(|w| w == ["--jobs", "1"]));
+        assert_eq!(cmd.terminal_use(), TerminalUse::Passthrough);
     }
 }
