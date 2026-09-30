@@ -991,7 +991,7 @@ impl App {
             )
         };
 
-        self.set_jump_target(JumpTarget::Prefix(change_str));
+        self.set_jump_target(JumpTarget::Revision(RevisionArg::new(change_str)));
         // Pure revset change: no filesystem interaction, no snapshot needed.
         self.request_revset_load(Some(new_revset), RevsetLoadKind::NoSnapshot);
     }

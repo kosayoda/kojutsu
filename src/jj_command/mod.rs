@@ -15,8 +15,8 @@ use crate::dag::BookmarkRef;
 use crate::keymap::CommandFlags;
 use crate::types::{
     BookmarkName, ChangeSelection, JumpTarget, MessageMode, OperationId, RebaseSource,
-    RebaseTarget, RemoteName, RevisionArg, SmallVec, SplitTarget, SquashTarget, Str, TagName,
-    WorkspaceName,
+    RebaseTarget, RemoteName, RevisionArg, SmallVec, SplitTarget, SquashKind, SquashTarget, Str,
+    TagName, WorkspaceName,
 };
 
 #[derive(Clone)]
@@ -303,19 +303,25 @@ impl JJCommand {
         self
     }
 
+    /// Where the cursor should go once the command has run, when the
+    /// command itself decides that. Commands that move `@` take the cursor
+    /// with them, and squashing into a named commit follows the content
+    /// there. Everything else rewrites commits in place or out of sight, and
+    /// leaves the cursor to find the revision it was on (or `@`, if it was
+    /// on `@`).
     pub fn jump_target(&self) -> Option<JumpTarget> {
         match &self.kind {
             JJCommandKind::New { .. }
             | JJCommandKind::Edit { .. }
-            | JJCommandKind::Commit { .. }
-            | JJCommandKind::Squash { .. }
-            | JJCommandKind::Abandon { .. }
-            | JJCommandKind::Absorb { .. }
-            | JJCommandKind::Split { .. }
-            | JJCommandKind::Diffedit { .. }
-            | JJCommandKind::Parallelize { .. }
-            | JJCommandKind::SimplifyParents { .. }
-            | JJCommandKind::Revert { .. } => Some(JumpTarget::WorkingCopy),
+            | JJCommandKind::Commit { .. } => Some(JumpTarget::WorkingCopy),
+            JJCommandKind::Squash {
+                target:
+                    Some(SquashTarget {
+                        target,
+                        kind: SquashKind::Into,
+                    }),
+                ..
+            } => Some(JumpTarget::Revision(target.clone())),
             JJCommandKind::BookmarkTrack { bookmarks, .. } => bookmarks
                 .first()
                 .map(|br| JumpTarget::Bookmark(br.name.clone())),
@@ -619,5 +625,60 @@ mod is_interactive_tests {
         );
         assert!(!cmd.args().iter().any(|a| a.as_str() == "--interactive"));
         assert!(cmd.is_interactive());
+    }
+}
+
+#[cfg(test)]
+mod jump_target_tests {
+    use super::*;
+    use crate::types::{ChangeSelection, MessageMode, RevisionArg};
+
+    fn cmd(kind: JJCommandKind) -> JJCommand {
+        JJCommand {
+            kind,
+            flags: CommandFlags::empty(),
+        }
+    }
+
+    fn squash(target: Option<SquashTarget>) -> JJCommand {
+        cmd(JJCommandKind::Squash {
+            change_id: RevisionArg::new("qpv"),
+            target,
+            message: MessageMode::Default,
+            selection: ChangeSelection::All,
+        })
+    }
+
+    #[test]
+    fn moving_at_takes_the_cursor_to_at() {
+        let edit = cmd(JJCommandKind::Edit {
+            change_id: RevisionArg::new("qpv"),
+        });
+        assert!(matches!(edit.jump_target(), Some(JumpTarget::WorkingCopy)));
+    }
+
+    /// The content lands in the named commit, so the cursor follows it.
+    #[test]
+    fn squashing_into_a_commit_follows_the_content() {
+        let into = squash(Some(SquashTarget {
+            target: RevisionArg::new("zzz"),
+            kind: SquashKind::Into,
+        }));
+        assert!(matches!(into.jump_target(), Some(JumpTarget::Revision(r)) if r.as_str() == "zzz"));
+    }
+
+    /// Rewrites leave the cursor to find the revision it was on.
+    #[test]
+    fn other_rewrites_set_no_jump() {
+        let onto = squash(Some(SquashTarget {
+            target: RevisionArg::new("zzz"),
+            kind: SquashKind::Onto,
+        }));
+        let abandon = cmd(JJCommandKind::Abandon {
+            change_ids: SmallVec::from_elem(RevisionArg::new("qpv"), 1),
+        });
+        for command in [squash(None), onto, abandon] {
+            assert!(command.jump_target().is_none(), "{}", command.display());
+        }
     }
 }

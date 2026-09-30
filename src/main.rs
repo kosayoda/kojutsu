@@ -726,7 +726,7 @@ fn finish_foreground_command(
 fn after_command_success(app: &mut App, cmd: &JJCommand, load_kind: RevsetLoadKind) {
     let jump = cmd.jump_target();
     let show_dag = match &jump {
-        Some(JumpTarget::WorkingCopy | JumpTarget::Prefix(_)) => true,
+        Some(JumpTarget::WorkingCopy | JumpTarget::Revision(_)) => true,
         Some(JumpTarget::Bookmark(_)) => false,
         None => app.active_view == kojutsu::types::ActiveView::Evolog,
     };

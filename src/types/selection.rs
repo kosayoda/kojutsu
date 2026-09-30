@@ -378,8 +378,10 @@ pub enum JumpTarget {
     WorkingCopy,
     /// Jump to the commit that has this local bookmark.
     Bookmark(super::BookmarkName),
-    /// Jump to a commit by change ID or commit ID prefix.
-    Prefix(String),
+    /// Jump to a commit by a change or commit ID prefix, with jj's
+    /// `/offset` when it names one copy of a divergent change or a hidden
+    /// commit.
+    Revision(super::RevisionArg),
 }
 
 #[cfg(test)]

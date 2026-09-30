@@ -73,6 +73,10 @@ struct Revision {
 /// The cursor's position before a reload.
 pub(crate) struct Anchor {
     revision: Revision,
+    /// Whether it was on `@`. Then it follows `@`, even to another change:
+    /// squashing or abandoning `@` gives jj a new working-copy commit, and
+    /// that is where someone working at `@` still is.
+    on_working_copy: bool,
     /// The file the cursor was in, if it was on a file or below one.
     file: Option<RepoPath>,
     /// The diff line it was on, by its old and new line numbers, which
@@ -206,6 +210,7 @@ impl App {
             .collect();
         let anchor = Anchor {
             revision: self.revision_at(entry),
+            on_working_copy: self.dag.nodes[entry].commit.is_working_copy(),
             file,
             line,
             neighbours,
@@ -285,9 +290,18 @@ impl App {
                 match jump {
                     JumpTarget::WorkingCopy => commit.is_working_copy(),
                     JumpTarget::Bookmark(name) => commit.bookmarks.iter().any(|b| b.name == *name),
-                    JumpTarget::Prefix(prefix) => {
-                        commit.change_id.full().starts_with(prefix.as_str())
-                            || commit.graph_id.as_str().starts_with(prefix.as_str())
+                    JumpTarget::Revision(revision) => {
+                        let (prefix, offset) = match revision.as_str().split_once('/') {
+                            Some((prefix, offset)) => (prefix, offset.parse::<usize>().ok()),
+                            None => (revision.as_str(), None),
+                        };
+                        (commit.change_id.full().starts_with(prefix)
+                            || commit.graph_id.as_str().starts_with(prefix))
+                            // The offset picks one copy of a divergent change,
+                            // once the background pass has said which is which.
+                            && offset.is_none_or(|offset| {
+                                commit.change_id_suffix().is_none_or(|s| s == offset)
+                            })
                     }
                 }
             })
@@ -298,7 +312,18 @@ impl App {
     /// line, stopping where the data isn't in yet. Returns whether it is
     /// settled.
     fn settle_anchor(&mut self, anchor: &Anchor, complete: bool) -> bool {
-        let Some(entry) = self.find_revision(&anchor.revision) else {
+        let entry = if anchor.on_working_copy {
+            match self.jump_entry(&JumpTarget::WorkingCopy) {
+                Some(entry) => Some(entry),
+                // A revset can leave `@` out: only once the stream is
+                // complete is it known to be missing.
+                None if !complete => return false,
+                None => self.find_revision(&anchor.revision),
+            }
+        } else {
+            self.find_revision(&anchor.revision)
+        };
+        let Some(entry) = entry else {
             // It may still arrive in a later chunk; only once the stream
             // is complete is it gone.
             if complete
@@ -316,6 +341,11 @@ impl App {
             self.cursor = row;
         }
 
+        // The file and line are the old commit's, so they carry over only
+        // to the same change.
+        if self.dag.nodes[entry].commit.change_id.change_id() != anchor.revision.change_id {
+            return true;
+        }
         let Some(path) = &anchor.file else {
             return true;
         };
@@ -401,7 +431,7 @@ mod tests {
     };
     use crate::idx::{EntryIdx, RowIdx};
     use crate::repo_service::{RepoResult, RevsetData};
-    use crate::types::{ActiveView, CommitId, DisplayRow, JumpTarget, RepoPath};
+    use crate::types::{ActiveView, CommitId, DisplayRow, JumpTarget, RepoPath, RevisionArg};
 
     fn change_id(tag: char) -> String {
         format!("{tag}{tag}nnomkxrqvlypszwlwkvvqnstvzoxrs")
@@ -622,7 +652,7 @@ mod tests {
         load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], true);
         put_cursor_on(&mut app, "b1");
 
-        app.set_jump_target(JumpTarget::Prefix("a1".into()));
+        app.set_jump_target(JumpTarget::Revision(RevisionArg::new("a1")));
         app.refresh(crate::repo_service::RevsetLoadKind::NoSnapshot);
         load(&mut app, vec![entry('a', "a1")], false);
         chunk(&mut app, vec![entry('b', "b1")], true);
@@ -637,7 +667,10 @@ mod tests {
         let mut app = App::for_test();
         let change = change_id('u');
         load(&mut app, vec![entry('u', "7bbaa2cb1f0e4d3a9c8b7a")], true);
-        let found = |prefix: &str| app.jump_entry(&JumpTarget::Prefix(prefix.into())).is_some();
+        let found = |prefix: &str| {
+            app.jump_entry(&JumpTarget::Revision(RevisionArg::new(prefix)))
+                .is_some()
+        };
 
         for prefix in ["uu", "uunnomkx", "uunnomkxrqvlyp", change.as_str()] {
             assert!(found(prefix), "change prefix {prefix:?}");
@@ -667,7 +700,7 @@ mod tests {
         load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], true);
         put_cursor_on(&mut app, "b1");
 
-        app.set_jump_target(JumpTarget::Prefix("c1".into()));
+        app.set_jump_target(JumpTarget::Revision(RevisionArg::new("c1")));
         app.apply_deferred(Default::default());
         assert_eq!(cursor_commit(&app), "b1");
 
@@ -687,7 +720,7 @@ mod tests {
         put_cursor_on(&mut app, "b1");
         app.switch_view(ActiveView::Tags);
 
-        app.set_jump_target(JumpTarget::Prefix("a1".into()));
+        app.set_jump_target(JumpTarget::Revision(RevisionArg::new("a1")));
         load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], true);
         app.as_user_input(|app| app.cursor = RowIdx::new(1));
         app.as_user_input(|app| app.switch_view(ActiveView::Dag));
@@ -797,7 +830,7 @@ mod tests {
         load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], true);
         put_cursor_on(&mut app, "b1");
 
-        app.set_jump_target(JumpTarget::Prefix("a1".into()));
+        app.set_jump_target(JumpTarget::Revision(RevisionArg::new("a1")));
         app.handle_repo_result(RepoResult::Revset {
             revset: "bad(".into(),
             result: Err(RepoError::new(RepoErrorKind::Revset, "parse error")),
@@ -805,5 +838,72 @@ mod tests {
         load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], true);
 
         assert_eq!(cursor_commit(&app), "b1");
+    }
+
+    fn working_copy(mut entry: DagEntry) -> DagEntry {
+        entry
+            .commit
+            .workspaces
+            .push(crate::dag::WorkspaceAnnotation {
+                name: crate::types::WorkspaceName::new("default"),
+                is_current: true,
+            });
+        entry
+    }
+
+    /// Squashing `@` into its parent leaves jj a new, empty working-copy
+    /// commit of a new change. Someone who was at `@` is still at `@`.
+    #[test]
+    fn a_cursor_on_the_working_copy_follows_it_to_a_new_change() {
+        let mut app = App::for_test();
+        load(
+            &mut app,
+            vec![working_copy(entry('w', "w1")), entry('p', "p1")],
+            true,
+        );
+        put_cursor_on(&mut app, "w1");
+
+        load(
+            &mut app,
+            vec![working_copy(entry('x', "x1")), entry('p', "p2")],
+            true,
+        );
+
+        assert_eq!(cursor_commit(&app), "x1");
+    }
+
+    /// Elsewhere, a new `@` is none of the cursor's business.
+    #[test]
+    fn a_cursor_elsewhere_stays_put_when_the_working_copy_moves() {
+        let mut app = App::for_test();
+        let entries = vec![working_copy(entry('w', "w1")), entry('b', "b1")];
+        load(&mut app, entries, true);
+        put_cursor_on(&mut app, "b1");
+
+        let entries = vec![
+            working_copy(entry('x', "x1")),
+            entry('w', "w2"),
+            entry('b', "b1"),
+        ];
+        load(&mut app, entries, true);
+
+        assert_eq!(cursor_commit(&app), "b1");
+    }
+
+    /// A revision naming one copy of a divergent change picks that copy.
+    #[test]
+    fn a_revision_offset_picks_its_copy_of_a_divergent_change() {
+        let mut app = App::for_test();
+        load(&mut app, vec![entry('u', "u1"), entry('u', "u2")], true);
+        for (i, suffix) in [(0, 1), (1, 2)] {
+            app.dag.nodes[EntryIdx::new(i)].commit.divergence = Some(DivergenceInfo {
+                is_divergent: true,
+                is_hidden: false,
+                suffix: Some(suffix),
+            });
+        }
+
+        let jump = JumpTarget::Revision(RevisionArg::new("uu/2"));
+        assert_eq!(app.jump_entry(&jump), Some(EntryIdx::new(1)));
     }
 }
