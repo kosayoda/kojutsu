@@ -1,5 +1,6 @@
 use tui_input::Input;
 
+use super::DisplayRow;
 use crate::idx::RowIdx;
 
 bitflags::bitflags! {
@@ -165,17 +166,20 @@ pub struct SearchState {
     pub input: Input,
     pub matches: Vec<RowIdx>,
     pub current_match: Option<usize>,
-    pub restore_cursor: RowIdx,
+    /// Where the cursor was when the search began: where cancelling returns
+    /// it, and where the first match is looked for from. Kept as the row,
+    /// since rows can come and go above it while the query is typed.
+    pub started_on: Option<DisplayRow>,
     pub focus: SearchFocus,
 }
 
 impl SearchState {
-    pub fn new(restore_cursor: RowIdx) -> Self {
+    pub fn new(started_on: Option<DisplayRow>) -> Self {
         Self {
             input: Input::new(String::new()),
             matches: Vec::new(),
             current_match: None,
-            restore_cursor,
+            started_on,
             focus: SearchFocus::Query,
         }
     }

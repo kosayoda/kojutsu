@@ -11,7 +11,7 @@
 
 use super::carry::{Revision, Whereabouts};
 use super::{App, JumpTarget, Loadable};
-use crate::idx::{DiffLineIdx, EntryIdx, RowIdx};
+use crate::idx::{DiffLineIdx, EntryIdx};
 use crate::types::{ActiveView, DisplayRow, FileOwner, RepoPath};
 
 /// How many commits on each side of the cursor are remembered as fallbacks
@@ -380,7 +380,7 @@ impl App {
             return true;
         };
         let owner = FileOwner::Dag(entry);
-        let Some(row) = self.find_row(DisplayRow::FileChange { owner, file_idx }) else {
+        let Some(row) = self.position_of(DisplayRow::FileChange { owner, file_idx }) else {
             return true;
         };
         self.cursor = row;
@@ -402,7 +402,7 @@ impl App {
                     .position(|dl| (dl.old_line, dl.new_line) == numbers)
             })
             .and_then(|line_idx| {
-                self.find_row(DisplayRow::DiffLine {
+                self.position_of(DisplayRow::DiffLine {
                     owner,
                     file_idx,
                     line_idx: DiffLineIdx::new(line_idx),
@@ -412,10 +412,6 @@ impl App {
             self.cursor = row;
         }
         true
-    }
-
-    fn find_row(&self, row: DisplayRow) -> Option<RowIdx> {
-        self.rows.iter().position(|r| *r == row).map(RowIdx::new)
     }
 }
 

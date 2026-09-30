@@ -24,14 +24,14 @@ fn ref_entry_matches(
 
 impl App {
     pub fn begin_search(&mut self) {
-        let restore_cursor = self.cursor;
+        let started_on = self.cursor_row();
         match &mut self.search {
             Some(search) => {
-                search.restore_cursor = restore_cursor;
+                search.started_on = started_on;
                 search.focus = SearchFocus::Query;
             }
             None => {
-                self.search = Some(SearchState::new(restore_cursor));
+                self.search = Some(SearchState::new(started_on));
             }
         }
         self.recompute_search_matches();
@@ -41,7 +41,7 @@ impl App {
     /// End the search and put the cursor back where it started.
     pub fn cancel_search(&mut self) {
         if let Some(search) = &self.search {
-            self.cursor = search.restore_cursor;
+            self.return_to_row(search.started_on);
         }
         self.finish_search();
     }
@@ -113,17 +113,14 @@ impl App {
     }
 
     fn recompute_search_matches(&mut self) {
+        // Matches are looked for from where the search began, or from the
+        // cursor if that row is gone.
         let preferred = self
             .search
             .as_ref()
-            .map(|s| {
-                RowIdx::new(
-                    s.restore_cursor
-                        .raw()
-                        .min(self.rows.len().saturating_sub(1)),
-                )
-            })
-            .unwrap_or(RowIdx::new(0));
+            .and_then(|s| s.started_on)
+            .and_then(|row| self.position_of(row))
+            .unwrap_or(self.cursor);
         self.recompute_search_matches_at(preferred, true);
     }
 
@@ -392,5 +389,39 @@ mod id_match_tests {
             SearchScopes::DESCRIPTION,
             &contains
         ));
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::super::App;
+    use super::super::test_support::{entry, load};
+    use crate::dag::{DiffSummary, FileChange, LineStats};
+    use crate::idx::EntryIdx;
+    use crate::types::CommitId;
+
+    /// Rows can open above the cursor while a query is typed (a file list
+    /// arriving, say); cancelling returns to the row the search began on,
+    /// not to the number it had.
+    #[test]
+    fn cancelling_returns_to_the_starting_row_after_rows_shift() {
+        let mut app = App::for_test();
+        let entries = vec![entry('a', "a1"), entry('b', "b1"), entry('c', "c1")];
+        load(&mut app, entries, true);
+        app.dag.unfolded_commits.insert(CommitId::new("a1"));
+        app.rebuild_rows();
+        app.cursor = app.row_of_commit(EntryIdx::new(2)).unwrap();
+        app.begin_search();
+
+        app.dag.nodes[EntryIdx::new(0)]
+            .files
+            .set_summary(Ok(DiffSummary {
+                files: vec![FileChange::for_test("f")],
+                stats: LineStats::default(),
+            }));
+        app.rebuild_rows();
+        app.cancel_search();
+
+        assert_eq!(app.selected_entry_idx(), Some(EntryIdx::new(2)));
     }
 }

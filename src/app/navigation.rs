@@ -533,10 +533,15 @@ impl App {
         self.rows.get(self.cursor.raw()).copied()
     }
 
+    /// Where `row` is shown now, if it is.
+    pub(crate) fn position_of(&self, row: DisplayRow) -> Option<RowIdx> {
+        self.rows.iter().position(|r| *r == row).map(RowIdx::new)
+    }
+
     /// Put the cursor back on `row`, if it is still shown.
     pub fn return_to_row(&mut self, row: Option<DisplayRow>) {
-        if let Some(idx) = row.and_then(|row| self.rows.iter().position(|r| *r == row)) {
-            self.cursor = RowIdx::new(idx);
+        if let Some(idx) = row.and_then(|row| self.position_of(row)) {
+            self.cursor = idx;
         }
     }
 
