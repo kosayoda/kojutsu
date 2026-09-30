@@ -315,6 +315,7 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
         AppAction::SquashBefore => {
             enter_target_select(app, TargetOperation::Squash(SquashKind::Before), flags)
         }
+        AppAction::Converge => converge(app, flags),
         AppAction::RebaseRevision => enter_target_select(
             app,
             TargetOperation::Rebase {
@@ -472,6 +473,24 @@ fn make_command(app: &App, build: impl FnOnce(RevisionArg) -> JJCommand) -> Acti
         return Action::None;
     };
     Action::run(build(change_id))
+}
+
+/// Converge the divergent changes in view: those of the selected commits, or
+/// else the cursor's. When none of them is divergent, jj's own `converge`
+/// revset decides, asking which change if it finds several.
+fn converge(app: &mut App, flags: CommandFlags) -> Action {
+    let mut changes: SmallVec<crate::types::ChangeId> = SmallVec::new();
+    for entry in app.target_entries() {
+        let commit = &app.dag.nodes[entry].commit;
+        let change = commit.change_id.change_id();
+        if commit.is_divergent() && !changes.contains(&change) {
+            changes.push(change);
+        }
+    }
+    Action::run(JJCommand {
+        kind: JJCommandKind::Converge { changes },
+        flags,
+    })
 }
 
 fn enter_run_input(app: &mut App, flags: CommandFlags) -> Action {
@@ -1044,5 +1063,80 @@ mod run_input_tests {
         );
         assert!(matches!(action, Action::None));
         assert!(matches!(app.mode, AppMode::TextInput { .. }));
+    }
+}
+
+#[cfg(test)]
+mod converge_input_tests {
+    use crate::app::App;
+    use crate::dag::{CommitInfo, DivergenceInfo};
+    use crate::idx::EntryIdx;
+    use crate::input::Action;
+    use crate::jj_command::JJCommandKind;
+    use crate::keymap::CommandFlags;
+
+    const CHANGE: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
+
+    /// Two copies of change `uu`, then an ordinary commit.
+    fn with_divergence() -> App {
+        let mut app = App::for_test();
+        for (commit, suffix) in [("u1", Some(1)), ("u2", Some(2))] {
+            let mut info = CommitInfo::for_test(CHANGE, commit);
+            info.divergence = suffix.map(|s| DivergenceInfo {
+                is_divergent: true,
+                is_hidden: false,
+                suffix: Some(s),
+            });
+            app.push_test_commit(info);
+        }
+        app.push_test_commit(CommitInfo::for_test(
+            "bbnnomkxrqvlypszwlwkvvqnstvzoxrs",
+            "b1",
+        ));
+        app.rebuild_rows();
+        app
+    }
+
+    fn changes(action: Action) -> Vec<String> {
+        let Action::RunJj { cmd, .. } = action else {
+            panic!("expected a command");
+        };
+        let JJCommandKind::Converge { changes } = cmd.kind else {
+            panic!("expected converge");
+        };
+        changes.iter().map(|c| c.to_string()).collect()
+    }
+
+    /// On a divergent copy, converge is aimed at that change.
+    #[test]
+    fn converge_aims_at_the_divergent_change_under_the_cursor() {
+        let mut app = with_divergence();
+        app.cursor = app.row_of_commit(EntryIdx::new(1)).unwrap();
+        assert_eq!(
+            changes(super::converge(&mut app, CommandFlags::empty())),
+            [CHANGE]
+        );
+    }
+
+    /// Elsewhere there's nothing in view to aim at, so jj's own converge
+    /// revset decides.
+    #[test]
+    fn off_a_divergent_commit_converge_is_left_to_jj() {
+        let mut app = with_divergence();
+        app.cursor = app.row_of_commit(EntryIdx::new(2)).unwrap();
+        assert!(changes(super::converge(&mut app, CommandFlags::empty())).is_empty());
+    }
+
+    /// Both copies selected name the change once.
+    #[test]
+    fn selected_copies_of_one_change_name_it_once() {
+        let mut app = with_divergence();
+        for i in 0..2 {
+            app.toggle_commit_selection(EntryIdx::new(i));
+        }
+        assert_eq!(
+            changes(super::converge(&mut app, CommandFlags::empty())),
+            [CHANGE]
+        );
     }
 }

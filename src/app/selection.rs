@@ -174,6 +174,21 @@ impl App {
         revisions
     }
 
+    /// The DAG entries a commit-level action is aimed at: the explicitly
+    /// selected commits that are loaded, or else the cursor's.
+    pub fn target_entries(&self) -> Vec<EntryIdx> {
+        if self.selection_kind() == SelectionKind::Commit && self.selection_active() {
+            let mut entries: Vec<EntryIdx> = self
+                .selection
+                .iter()
+                .filter_map(|s| self.entry_by_commit_id(s.commit_id()))
+                .collect();
+            entries.sort_unstable();
+            return entries;
+        }
+        self.selected_entry_idx().into_iter().collect()
+    }
+
     /// A commit as a selection records it.
     pub(super) fn commit_ref(&self, entry_idx: EntryIdx) -> CommitRef {
         CommitRef {

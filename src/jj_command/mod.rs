@@ -14,7 +14,7 @@ use std::sync::{Arc, atomic::AtomicI32, atomic::Ordering};
 use crate::dag::{BookmarkRef, TagRef};
 use crate::keymap::CommandFlags;
 use crate::types::{
-    BookmarkName, ChangeSelection, JumpTarget, MessageMode, OperationId, RebaseSource,
+    BookmarkName, ChangeId, ChangeSelection, JumpTarget, MessageMode, OperationId, RebaseSource,
     RebaseTarget, RemoteName, RevisionArg, SmallVec, SplitTarget, SquashKind, SquashTarget, Str,
     TagName, WorkspaceName,
 };
@@ -207,6 +207,11 @@ pub enum JJCommandKind {
     },
     TagTrack {
         tags: SmallVec<TagRef>,
+    },
+    /// Replace each divergent change's copies with one commit. Empty:
+    /// whichever changes jj's own `converge` revset finds.
+    Converge {
+        changes: SmallVec<ChangeId>,
     },
     TagUntrack {
         tags: SmallVec<TagRef>,
@@ -468,6 +473,9 @@ impl JJCommand {
             | JJCommandKind::Diffedit { .. }
             | JJCommandKind::Split { .. } => true,
             JJCommandKind::Squash { message, .. } => matches!(message, MessageMode::Default),
+            // Asks on the terminal when its heuristics can't decide, and
+            // may open $EDITOR to merge descriptions.
+            JJCommandKind::Converge { .. } => !self.flags.contains(CommandFlags::NO_INTERACTIVE),
             JJCommandKind::Commit { message, .. } => message.is_none(),
             JJCommandKind::Resolve { tool, .. } => matches!(tool, ResolveTool::Default),
             // A command line the user typed; assume it may want the terminal.
@@ -809,5 +817,53 @@ mod absorb_tests {
             "{args:?}"
         );
         assert!(args.iter().any(|a| a.contains("/tmp/sel.json")), "{args:?}");
+    }
+}
+
+#[cfg(test)]
+mod converge_tests {
+    use super::*;
+
+    fn converge(changes: &[&str], flags: CommandFlags) -> JJCommand {
+        JJCommand {
+            kind: JJCommandKind::Converge {
+                changes: changes.iter().map(|c| ChangeId::new(*c)).collect(),
+            },
+            flags,
+        }
+    }
+
+    fn args(cmd: &JJCommand) -> Vec<String> {
+        cmd.args().iter().map(|a| a.to_string()).collect()
+    }
+
+    /// Each change is named by `change_id()`, which takes in all its copies
+    /// wherever they sit, rather than one copy's revision.
+    #[test]
+    fn converge_is_scoped_to_whole_changes() {
+        let cmd = converge(&["twznmtor", "tnklypyx"], CommandFlags::empty());
+        assert_eq!(
+            args(&cmd),
+            [
+                "converge",
+                "-r",
+                "change_id(twznmtor)",
+                "-r",
+                "change_id(tnklypyx)"
+            ]
+        );
+    }
+
+    /// Converge prompts on the terminal when it can't decide, so it gets
+    /// the terminal; told not to prompt, it can run in the background.
+    #[test]
+    fn converge_takes_the_terminal_unless_told_not_to_prompt() {
+        assert_eq!(
+            converge(&["x"], CommandFlags::empty()).terminal_use(),
+            TerminalUse::Interactive
+        );
+        let quiet = converge(&["x"], CommandFlags::NO_INTERACTIVE);
+        assert!(args(&quiet).contains(&"--no-interactive".to_string()));
+        assert_eq!(quiet.terminal_use(), TerminalUse::Background);
     }
 }

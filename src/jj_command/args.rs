@@ -482,6 +482,19 @@ impl JJCommand {
                 args.extend(names.iter().map(|n| rev(n.as_str())));
                 args
             }
+            JJCommandKind::Converge { changes } => {
+                let mut args = vec![sub("converge")];
+                for change in changes {
+                    args.push(flag("-r"));
+                    args.push(rev(format_compact!("change_id({change})")));
+                }
+                push_flags(
+                    &mut args,
+                    flags,
+                    &[(CommandFlags::NO_INTERACTIVE, "--no-interactive")],
+                );
+                args
+            }
             JJCommandKind::TagTrack { tags } => {
                 let mut args = vec![sub("tag"), sub("track")];
                 args.extend(

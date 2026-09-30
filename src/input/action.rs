@@ -779,6 +779,7 @@ fn perform(
         | AppAction::SquashOnto
         | AppAction::SquashAfter
         | AppAction::SquashBefore
+        | AppAction::Converge
         | AppAction::RebaseRevision
         | AppAction::RebaseSource
         | AppAction::RebaseBranch

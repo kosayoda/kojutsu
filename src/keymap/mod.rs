@@ -60,6 +60,7 @@ bitflags::bitflags! {
         const PASSTHROUGH         = 1 << 12;
         const IGNORE_CHANGES      = 1 << 13;
         const IGNORE_ERRORS       = 1 << 14;
+        const NO_INTERACTIVE      = 1 << 15;
     }
 }
 
@@ -194,6 +195,7 @@ pub enum AppAction {
     TagDelete,
     TagTrack,
     TagUntrack,
+    Converge,
     SelectPreset,
     #[strum(serialize = "switch_preset_1")]
     SwitchPreset1,

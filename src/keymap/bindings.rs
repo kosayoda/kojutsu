@@ -248,6 +248,15 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("[ c", PrevConflict, "prev conflict", N, dag()),
         // Fix
         bind("f", Fix, "fix", C, dag()),
+        // Converge prefix
+        prefix("m", "converge", C, dag()),
+        toggle(
+            "m shift-n",
+            CommandFlags::NO_INTERACTIVE,
+            "no prompts",
+            dag(),
+        ),
+        bind("m m", Converge, "converge divergent", C, dag()),
         // Run prefix
         prefix("!", "run", C, dag()),
         toggle("! shift-c", CommandFlags::CLEAN, "clean", dag()),
