@@ -810,13 +810,8 @@ impl LuaEngine {
                     PendingAction::SwitchView(view) => {
                         app.switch_view(view);
                     }
-                    PendingAction::JumpTo(change_id) => {
-                        if let Some(commit_id) = app.commit_id_for_change(&change_id)
-                            && let Some(idx) = app.entry_by_commit_id(&commit_id)
-                            && let Some(row) = app.row_of_commit(idx)
-                        {
-                            app.set_cursor(row);
-                        }
+                    PendingAction::JumpTo(revision) => {
+                        app.jump_now(crate::types::JumpTarget::Revision(revision));
                     }
                     PendingAction::Interactive(args) => {
                         let cmd = JJCommand {

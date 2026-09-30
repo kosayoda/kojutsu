@@ -951,11 +951,11 @@ pub(super) fn jump_to_commit_in_dag(
     commit_id: &CommitId,
     change_id: Option<&crate::dag::ShortId>,
 ) {
-    if let Some(idx) = app.entry_by_commit_id(commit_id) {
+    if app.entry_by_commit_id(commit_id).is_some() {
+        app.jump_now(crate::types::JumpTarget::Revision(RevisionArg::new(
+            commit_id.as_str(),
+        )));
         app.switch_view(crate::types::ActiveView::Dag);
-        if let Some(row) = app.row_of_commit(idx) {
-            app.set_cursor(row);
-        }
     } else {
         // Use change ID if available, otherwise fall back to commit ID.
         let id_for_revset = change_id

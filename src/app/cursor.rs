@@ -90,6 +90,18 @@ impl App {
         self.set_pending_cursor(target, self.dag.loads + 1);
     }
 
+    /// Send the DAG cursor to `target` in the DAG as loaded now, replacing
+    /// whatever was pending: at once if the DAG is on screen, otherwise on
+    /// entering it.
+    pub fn jump_now(&mut self, target: JumpTarget) {
+        let target = CursorTarget::Jump {
+            jump: target,
+            bookmark_selected: false,
+        };
+        self.set_pending_cursor(target, self.dag.loads);
+        self.settle_pending_cursor();
+    }
+
     fn set_pending_cursor(&mut self, target: CursorTarget, load: u64) {
         self.dag.cursor_targets_set += 1;
         self.dag.pending_cursor = Some(PendingCursor {
@@ -874,5 +886,38 @@ mod tests {
         chunk(&mut app, vec![entry('u', "u2")], true);
 
         assert_eq!(cursor_commit(&app), "u2");
+    }
+
+    /// A plugin moving the DAG cursor from another view moves the DAG's,
+    /// not the cursor of the view on screen.
+    #[test]
+    fn jumping_now_from_another_view_moves_only_the_dag() {
+        let mut app = App::for_test();
+        let entries = vec![entry('a', "a1"), entry('b', "b1"), entry('c', "c1")];
+        load(&mut app, entries, true);
+        app.switch_view(ActiveView::Tags);
+        let tags_cursor = app.cursor;
+
+        app.jump_now(JumpTarget::Revision(RevisionArg::new("c1")));
+        assert_eq!(app.cursor, tags_cursor);
+
+        app.switch_view(ActiveView::Dag);
+        assert_eq!(cursor_commit(&app), "c1");
+    }
+
+    /// Showing a commit replaces whatever was pending, so a jump still
+    /// waiting on a load can't pull the cursor off it afterwards.
+    #[test]
+    fn jumping_now_replaces_a_pending_target() {
+        let mut app = App::for_test();
+        let entries = || vec![entry('a', "a1"), entry('b', "b1"), entry('c', "c1")];
+        load(&mut app, entries(), true);
+        app.set_jump_target(JumpTarget::Revision(RevisionArg::new("a1")));
+
+        app.jump_now(JumpTarget::Revision(RevisionArg::new("c1")));
+        assert_eq!(cursor_commit(&app), "c1");
+        load(&mut app, entries(), true);
+
+        assert_eq!(cursor_commit(&app), "c1");
     }
 }
