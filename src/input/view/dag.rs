@@ -4,13 +4,15 @@ use crate::app::{App, AppMode};
 use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{
-    ArrangeDirection, CommandPrompt, FollowUpAction, FollowUpOption, MessageMode, PendingSelection,
-    RebaseKind, RebaseSource, RebaseTarget, RemoteCommand, RevisionArg, SelectionKind, SmallVec,
-    SplitKind, SquashKind, Str, TargetOperation,
+    ArrangeDirection, ChangeSelection, CommandPrompt, FollowUpAction, FollowUpOption, MessageMode,
+    PendingSelection, RebaseKind, RebaseSource, RebaseTarget, RemoteCommand, RevisionArg,
+    SelectionKind, SmallVec, SplitKind, SquashKind, Str, TargetOperation,
 };
 
 use crate::input::Action;
-use crate::input::action::{build_change_selection, enter_target_select};
+use crate::input::action::{
+    enter_target_select, selection_scope, selection_targets, working_copy_selection,
+};
 use crate::input::bookmark::enter_bookmark_advance;
 use crate::input::target::with_remote;
 
@@ -27,10 +29,10 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             kind: JJCommandKind::Abandon { change_ids: ids },
             flags,
         }),
-        AppAction::Absorb => make_command(app, |id| JJCommand {
+        AppAction::Absorb => selection_command(app, |id, selection| JJCommand {
             kind: JJCommandKind::Absorb {
                 from: Some(id),
-                selection: build_change_selection(app),
+                selection,
             },
             flags,
         }),
@@ -48,16 +50,16 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             app.expand_descendants(entry_idx);
             Action::None
         }
-        AppAction::Fix => {
-            let selection = build_change_selection(app);
-            make_multi_command(app, |ids| JJCommand {
+        AppAction::Fix => match selection_targets(app) {
+            Some((ids, selection)) => Action::run(JJCommand {
                 kind: JJCommandKind::Fix {
                     change_ids: ids,
-                    selection: selection.clone(),
+                    selection,
                 },
                 flags,
-            })
-        }
+            }),
+            None => Action::None,
+        },
         AppAction::Run => enter_run_input(app, flags),
         AppAction::ResolveOurs | AppAction::ResolveTheirs | AppAction::ResolveMergeTool => {
             // Whole-file resolution via jj's native tools, from any row of
@@ -233,23 +235,25 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             })
         }
         AppAction::Commit => {
-            let cmd = JJCommand {
+            let Some(selection) = working_copy_selection(app) else {
+                return Action::None;
+            };
+            Action::run(JJCommand {
                 kind: JJCommandKind::Commit {
                     message: None,
-                    selection: build_change_selection(app),
+                    selection,
                 },
                 flags,
-            };
-            Action::run(cmd)
+            })
         }
         AppAction::CommitWithMessage => {
+            let Some(selection) = working_copy_selection(app) else {
+                return Action::None;
+            };
             app.mode = AppMode::text_input(
                 "commit message: ",
                 "",
-                CommandPrompt::Commit {
-                    flags,
-                    selection: build_change_selection(app),
-                },
+                CommandPrompt::Commit { flags, selection },
             );
             Action::None
         }
@@ -258,10 +262,10 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             kind: JJCommandKind::DescribeInEditor { change_id: id },
             flags,
         }),
-        AppAction::Diffedit => make_command(app, |id| JJCommand {
+        AppAction::Diffedit => selection_command(app, |id, selection| JJCommand {
             kind: JJCommandKind::Diffedit {
                 change_id: id,
-                selection: build_change_selection(app),
+                selection,
             },
             flags,
         }),
@@ -280,16 +284,20 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             flags,
         }),
         AppAction::Squash => {
-            if app.selected_is_merge() {
+            // A merge has no one parent to squash into, so ask for the target.
+            let source = match app.selection_owner() {
+                Some(owner) => app.entry_by_commit_id(owner),
+                None => app.selected_entry_idx(),
+            };
+            if source.is_some_and(|entry| app.dag.nodes[entry].commit.is_merge) {
                 enter_target_select(app, TargetOperation::Squash(SquashKind::Into), flags)
             } else {
-                let selection = build_change_selection(app);
-                make_command(app, |id| JJCommand {
+                selection_command(app, |id, selection| JJCommand {
                     kind: JJCommandKind::Squash {
                         change_id: id,
                         target: None,
                         message: MessageMode::Default,
-                        selection: selection.clone(),
+                        selection,
                     },
                     flags,
                 })
@@ -349,22 +357,22 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 flags,
             )
         }
-        AppAction::Restore => make_command(app, |id| JJCommand {
+        AppAction::Restore => selection_command(app, |id, selection| JJCommand {
             kind: JJCommandKind::Restore {
                 from: None,
                 into: None,
                 changes_in: Some(id),
-                selection: build_change_selection(app),
+                selection,
             },
             flags,
         }),
         AppAction::RestoreFrom => enter_target_select(app, TargetOperation::RestoreFrom, flags),
         AppAction::RestoreInto => enter_target_select(app, TargetOperation::RestoreInto, flags),
-        AppAction::Split => make_command(app, |id| JJCommand {
+        AppAction::Split => selection_command(app, |id, selection| JJCommand {
             kind: JJCommandKind::Split {
                 change_id: id,
                 target: None,
-                selection: build_change_selection(app),
+                selection,
             },
             flags,
         }),
@@ -472,6 +480,18 @@ fn make_multi_command(app: &App, build: impl FnOnce(SmallVec<RevisionArg>) -> JJ
         return Action::None;
     }
     Action::run(build(ids))
+}
+
+/// A one-commit command taking the selection, built for the commit the
+/// selection is in (see [`selection_scope`]).
+fn selection_command(
+    app: &mut App,
+    build: impl FnOnce(RevisionArg, ChangeSelection) -> JJCommand,
+) -> Action {
+    match selection_scope(app) {
+        Some((id, selection)) => Action::run(build(id, selection)),
+        None => Action::None,
+    }
 }
 
 fn make_command(app: &App, build: impl FnOnce(RevisionArg) -> JJCommand) -> Action {
@@ -696,4 +716,97 @@ fn persist_resolved_content(content: &str) -> std::io::Result<std::path::PathBuf
     tmp.flush()?;
     let (_, path) = tmp.keep().map_err(|e| e.error)?;
     Ok(path)
+}
+
+#[cfg(test)]
+mod selection_owner_tests {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::app::{App, AppMode};
+    use crate::dag::{CommitInfo, WorkspaceAnnotation};
+    use crate::input::{Action, handle_key};
+    use crate::jj_command::JJCommandKind;
+    use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+    use crate::lua::LuaEngine;
+    use crate::types::{ChangeSelection, CommitId, FileRef, RepoPath, Selection, WorkspaceName};
+
+    fn press(app: &mut App, key: char) -> Action {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let lua = LuaEngine::for_test();
+        handle_key(
+            app,
+            &keymaps,
+            &lua,
+            KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE),
+        )
+    }
+
+    /// `@` (change `ww…`, commit `w1`) above `b` (change `bb…`, commit
+    /// `b1`), with file `f` of `b` selected and the cursor moved on to `@`.
+    fn files_selected_in_b() -> App {
+        let mut app = App::for_test();
+        let mut working_copy = CommitInfo::for_test("wwnnomkxrqvlypszwlwkvvqnstvzoxrs", "w1");
+        working_copy.workspaces.push(WorkspaceAnnotation {
+            name: WorkspaceName::new("default"),
+            is_current: true,
+        });
+        let at = app.push_test_commit(working_copy);
+        app.push_test_commit(CommitInfo::for_test(
+            "bbnnomkxrqvlypszwlwkvvqnstvzoxrs",
+            "b1",
+        ));
+        for node in app.dag.nodes.iter_mut() {
+            node.commit.change_id.set_prefix_len(2);
+        }
+        app.rebuild_rows();
+        app.selection.insert(Selection::File(FileRef {
+            commit_id: CommitId::new("b1"),
+            path: RepoPath::new("f"),
+        }));
+        app.cursor = app.row_of_commit(at).unwrap();
+        app
+    }
+
+    /// The selected paths are `b`'s, so squashing them squashes `b`, not
+    /// the commit the cursor happens to be on now.
+    #[test]
+    fn squashing_a_file_selection_acts_on_its_own_commit() {
+        let mut app = files_selected_in_b();
+        press(&mut app, 's');
+        let Action::RunJj { cmd, .. } = press(&mut app, 's') else {
+            panic!("expected a command");
+        };
+        let JJCommandKind::Squash {
+            change_id,
+            selection: ChangeSelection::Files(paths),
+            ..
+        } = cmd.kind
+        else {
+            panic!("expected a squash of files");
+        };
+        assert_eq!(change_id.as_str(), "bb");
+        assert_eq!(paths.iter().map(|p| p.as_str()).collect::<Vec<_>>(), ["f"]);
+    }
+
+    /// Choosing a target first still starts from the selection's commit.
+    #[test]
+    fn a_squash_into_a_target_starts_from_the_selections_commit() {
+        let mut app = files_selected_in_b();
+        press(&mut app, 's');
+        press(&mut app, 't');
+        let AppMode::TargetSelect { source, .. } = &app.mode else {
+            panic!("expected target selection");
+        };
+        assert_eq!(source.as_str(), "bb");
+    }
+
+    /// `jj commit` only takes the working copy's changes, so paths chosen
+    /// in another commit are refused rather than applied to `@`.
+    #[test]
+    fn committing_refuses_a_selection_from_another_commit() {
+        let mut app = files_selected_in_b();
+        press(&mut app, 'c');
+        assert!(matches!(press(&mut app, 'c'), Action::None));
+        assert!(app.status_message.is_some());
+    }
 }

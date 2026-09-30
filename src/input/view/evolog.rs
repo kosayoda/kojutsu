@@ -17,12 +17,16 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 return Action::None;
             }
             let from = RevisionArg::new(entry.commit_id.as_str());
-            let into = app
-                .evolog
-                .entries
-                .iter()
-                .find(|e| e.is_current)
-                .map(|e| RevisionArg::new(e.commit_id.as_str()));
+            let current = app.evolog.entries.iter().find(|e| e.is_current);
+            // The DAG's file or line selection narrows the restore, but only
+            // when made in the commit being restored into.
+            if let Some(owner) = app.selection_owner()
+                && current.is_none_or(|e| e.commit_id != *owner)
+            {
+                app.set_error("the selection is in another commit than this change's current one");
+                return Action::None;
+            }
+            let into = current.map(|e| RevisionArg::new(e.commit_id.as_str()));
             Action::run(JJCommand {
                 kind: JJCommandKind::Restore {
                     from: Some(from),

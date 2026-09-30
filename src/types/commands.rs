@@ -306,6 +306,17 @@ pub enum TargetOperation {
 }
 
 impl TargetOperation {
+    /// Whether the command it builds takes the file or line selection.
+    pub fn takes_selection(&self) -> bool {
+        matches!(
+            self,
+            TargetOperation::Squash(_)
+                | TargetOperation::Split(_)
+                | TargetOperation::RestoreFrom
+                | TargetOperation::RestoreInto
+        )
+    }
+
     /// Whether this operation supports selecting multiple targets.
     pub fn multi_target(&self) -> bool {
         matches!(self, TargetOperation::Rebase { .. })

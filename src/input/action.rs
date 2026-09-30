@@ -9,8 +9,10 @@ use crate::keymap::{
     self, ActionId, ActionRegistry, AppAction, CommandFlags, Effect, Keymap, LookupResult, TrieNode,
 };
 use crate::repo_service::RevsetLoadKind;
-use crate::types::ChangeSelection;
+use smallvec::smallvec;
+
 use crate::types::FileOwner;
+use crate::types::{ChangeSelection, RevisionArg, SmallVec};
 use crate::types::{
     CommandPrompt, CommitId, DisplayRow, FollowUpAction, FollowUpOption, PendingSelection,
     PromptStep, RemoteCommand, SelectionKind, TargetOperation,
@@ -26,6 +28,61 @@ use super::PAGE_SIZE;
 /// Revset the conflicted-filter toggle switches to (and recognizes to
 /// switch back from).
 const CONFLICTED_REVSET: &str = "conflicted()";
+
+/// What a one-commit command consuming the selection acts on: the commit a
+/// file or line selection is in, with the part of it selected, or else the
+/// cursor's commit, whole. `None` while commits are explicitly selected,
+/// where a one-commit command would silently pick one of them, or (with an
+/// error) while the selection's commit is still loading.
+pub(super) fn selection_scope(app: &mut App) -> Option<(RevisionArg, ChangeSelection)> {
+    if app.selection_owner().is_some() {
+        return Some((selection_owner_revision(app)?, build_change_selection(app)));
+    }
+    if app.selection_active() {
+        return None;
+    }
+    Some((app.selected_change_id()?, ChangeSelection::All))
+}
+
+/// As [`selection_scope`], for a command that takes several commits: those
+/// explicitly selected, or the cursor's, when no files or lines are.
+pub(super) fn selection_targets(app: &mut App) -> Option<(SmallVec<RevisionArg>, ChangeSelection)> {
+    if app.selection_owner().is_some() {
+        return selection_scope(app).map(|(revision, selection)| (smallvec![revision], selection));
+    }
+    let revisions = app.selected_change_ids();
+    (!revisions.is_empty()).then_some((revisions, ChangeSelection::All))
+}
+
+/// The revision of the commit the file or line selection is in, if it has
+/// loaded; otherwise says so.
+pub(super) fn selection_owner_revision(app: &mut App) -> Option<RevisionArg> {
+    let entry = app
+        .selection_owner()
+        .and_then(|commit_id| app.entry_by_commit_id(commit_id));
+    match entry {
+        Some(entry) => Some(app.revision(entry)),
+        None => {
+            app.set_error("the selection's commit is still loading");
+            None
+        }
+    }
+}
+
+/// The selection for a command that only ever acts on `@`, refusing (with
+/// an error) one made in another commit rather than applying its paths to
+/// the working copy.
+pub(super) fn working_copy_selection(app: &mut App) -> Option<ChangeSelection> {
+    if let Some(owner) = app.selection_owner()
+        && !app
+            .entry_by_commit_id(owner)
+            .is_some_and(|entry| app.dag.nodes[entry].commit.is_working_copy())
+    {
+        app.set_error("the selection is in another commit; this only takes the working copy's");
+        return None;
+    }
+    Some(build_change_selection(app))
+}
 
 /// Build the appropriate `ChangeSelection` from the current app state.
 pub(super) fn build_change_selection(app: &App) -> ChangeSelection {
@@ -1037,7 +1094,13 @@ pub(super) fn enter_target_select(
     operation: TargetOperation,
     flags: CommandFlags,
 ) -> Action {
-    let Some(source) = app.selected_change_id() else {
+    // An operation taking the selection acts on the commit it is in.
+    let source = if operation.takes_selection() && app.selection_owner().is_some() {
+        selection_owner_revision(app)
+    } else {
+        app.selected_change_id()
+    };
+    let Some(source) = source else {
         return Action::None;
     };
     let restore_cursor = app.cursor;

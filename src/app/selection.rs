@@ -446,6 +446,17 @@ impl App {
         paths
     }
 
+    /// The commit the file and line selections are in, if there are any.
+    /// They are scoped to one commit ([`Self::clear_other_commits`]), so a
+    /// command consuming them acts on that commit, wherever the cursor has
+    /// moved since.
+    pub fn selection_owner(&self) -> Option<&CommitId> {
+        if self.selection_kind() == SelectionKind::Commit {
+            return None;
+        }
+        self.selection.iter().next().map(Selection::commit_id)
+    }
+
     /// Number of currently selected items.
     pub fn selection_count(&self) -> usize {
         self.selection.len()
