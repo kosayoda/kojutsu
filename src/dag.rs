@@ -420,15 +420,13 @@ impl CommitInfo {
         self.divergence.as_ref().and_then(|d| d.suffix)
     }
 
-    /// Stable identity for this commit, unique even among divergent ones.
-    ///
-    /// Built from the whole change ID rather than the displayed prefix, so
-    /// that anything keyed by it (selections, fold state, cursor restore)
-    /// keeps matching when the background pass revises `prefix_len`.
-    pub fn unique_change_id(&self) -> ChangeId {
+    /// The revision [`Self::unique_prefix`] abbreviates: the whole change
+    /// ID, plus the offset. Unlike the prefix, it doesn't change as the
+    /// background pass works out how short the prefix can be.
+    pub fn full_revision(&self) -> RevisionArg {
         match self.change_id_suffix() {
-            Some(suffix) => ChangeId::new(format_compact!("{}/{suffix}", self.change_id.full())),
-            None => self.change_id.change_id(),
+            Some(suffix) => RevisionArg::new(format_compact!("{}/{suffix}", self.change_id.full())),
+            None => RevisionArg::new(self.change_id.full()),
         }
     }
 
@@ -720,8 +718,8 @@ mod short_id_tests {
 
     #[test]
     fn the_full_id_never_changes_as_the_prefix_length_does() {
-        // Selections, fold state and cursor restore are keyed by the full ID,
-        // so the background prefix pass must not move that key.
+        // Rewrites are found again by the full change ID, so the background
+        // prefix pass must not move it.
         let mut id = ShortId::new(CHANGE_ID);
         let before = id.full().to_string();
         for len in [1, 8, 12, 40] {
@@ -786,11 +784,11 @@ mod revision_tests {
     }
 
     #[test]
-    fn identity_is_the_whole_change_id_not_the_revision() {
-        // The revision shortens as prefixes are computed; the key must not.
+    fn the_full_revision_is_the_whole_change_id() {
+        // The prefix shortens as prefixes are computed; the full form must not.
         let c = commit(None);
-        assert_eq!(c.unique_change_id().as_str(), CHANGE_ID);
-        assert_ne!(c.unique_change_id().as_str(), c.unique_prefix().as_str());
+        assert_eq!(c.full_revision().as_str(), CHANGE_ID);
+        assert_ne!(c.full_revision(), c.unique_prefix());
     }
 
     fn summary(divergence: Option<DivergenceInfo>) -> CommitSummary {
@@ -849,12 +847,12 @@ mod revision_tests {
     }
 
     #[test]
-    fn a_divergent_identity_keeps_the_offset_too() {
+    fn a_divergent_full_revision_keeps_the_offset_too() {
         let c = commit(Some(DivergenceInfo {
             is_divergent: true,
             is_hidden: false,
             suffix: Some(2),
         }));
-        assert_eq!(c.unique_change_id().as_str(), format!("{CHANGE_ID}/2"));
+        assert_eq!(c.full_revision().as_str(), format!("{CHANGE_ID}/2"));
     }
 }

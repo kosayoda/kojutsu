@@ -423,52 +423,16 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_support::{change_id, chunk, entry, load};
     use super::super::{App, FileFoldKey};
     use crate::dag::DiffTarget;
     use crate::dag::{
-        CommitInfo, DagEntry, DiffLine, DiffLineKind, DiffResult, DiffSummary, DivergenceInfo,
-        FileChange, LineStats,
+        DagEntry, DiffLine, DiffLineKind, DiffResult, DiffSummary, DivergenceInfo, FileChange,
+        LineStats,
     };
     use crate::idx::{EntryIdx, RowIdx};
-    use crate::repo_service::{RepoResult, RevsetData};
+    use crate::repo_service::RepoResult;
     use crate::types::{ActiveView, CommitId, DisplayRow, JumpTarget, RepoPath, RevisionArg};
-
-    fn change_id(tag: char) -> String {
-        format!("{tag}{tag}nnomkxrqvlypszwlwkvvqnstvzoxrs")
-    }
-
-    /// Change `tag` as the commit `commit`: two entries with the same tag
-    /// and different commits are one change before and after a rewrite.
-    fn entry(tag: char, commit: &str) -> DagEntry {
-        DagEntry {
-            commit: CommitInfo::for_test(&change_id(tag), commit),
-            edges: Vec::new(),
-        }
-    }
-
-    fn load(app: &mut App, entries: Vec<DagEntry>, done: bool) {
-        app.handle_repo_result(RepoResult::Revset {
-            revset: "all()".into(),
-            result: Ok(Box::new(RevsetData {
-                revset: "all()".into(),
-                repo_root: String::new(),
-                entries,
-                remote_bookmarks: Vec::new(),
-                remotes: Vec::new(),
-                all_tags: Vec::new(),
-                tag_details: Default::default(),
-                bookmark_details: Default::default(),
-                workspace_entries: Vec::new(),
-                warnings: Vec::new(),
-                run_jobs: None,
-                done,
-            })),
-        });
-    }
-
-    fn chunk(app: &mut App, entries: Vec<DagEntry>, done: bool) {
-        app.handle_repo_result(RepoResult::RevsetChunk { entries, done });
-    }
 
     fn cursor_commit(app: &App) -> String {
         let entry = app.selected_entry_idx().expect("cursor on a commit");
@@ -543,10 +507,10 @@ mod tests {
                 line(DiffLineKind::Added, None, Some(2)),
             ])),
         );
-        let change = app.change_id(b);
-        app.dag.unfolded_commits.insert(change.clone());
+        let commit = app.commit_id(b).clone();
+        app.dag.unfolded_commits.insert(commit.clone());
         app.dag.unfolded_files.insert(FileFoldKey {
-            change_id: change,
+            commit_id: commit,
             path: path.clone(),
         });
         app.rebuild_rows();
@@ -802,7 +766,7 @@ mod tests {
         described.commit.full_description = Some("subject\nbody".into());
         load(&mut app, vec![described], true);
         let a = EntryIdx::new(0);
-        app.dag.unfolded_commits.insert(app.change_id(a));
+        app.dag.unfolded_commits.insert(app.commit_id(a).clone());
         app.rebuild_rows();
         app.cursor = app
             .rows

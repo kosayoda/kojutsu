@@ -59,9 +59,18 @@ define_str_newtype!(pub RepoPath);
 define_str_newtype!(pub OperationId);
 define_str_newtype!(pub WorkspaceName);
 
-/// A reference to a file associated with a change_id
+/// A file in one commit.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct FileRef {
-    pub change_id: ChangeId,
+    pub commit_id: CommitId,
     pub path: RepoPath,
+}
+
+/// A selected commit. Its commit ID is its identity; its change ID, without
+/// a divergence offset, is how jj is asked for it while the DAG hasn't
+/// loaded it again, since the commit ID may name what a rewrite replaced.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub struct CommitRef {
+    pub commit_id: CommitId,
+    pub change_id: ChangeId,
 }

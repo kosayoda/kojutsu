@@ -757,8 +757,8 @@ impl App {
     }
 
     pub(crate) fn toggle_commit_fold(&mut self, entry_idx: EntryIdx) {
-        let change_id = self.change_id(entry_idx);
-        let unfolded = toggle_membership(&mut self.dag.unfolded_commits, change_id);
+        let commit_id = self.commit_id(entry_idx).clone();
+        let unfolded = toggle_membership(&mut self.dag.unfolded_commits, commit_id);
         if unfolded {
             let request = self.dag.nodes[entry_idx].files.request_summary();
             self.pending_repo_requests.extend(request);
@@ -829,7 +829,7 @@ impl App {
             // Clear visual state if it's for this file.
             if let Some(super::PersistentVisualRange::Lines(vr)) = &self.visual.persistent
                 && let Some(file) = self.file(owner, file_idx)
-                && self.change_id(entry_idx) == vr.change_id
+                && *self.commit_id(entry_idx) == vr.commit_id
                 && file.path == vr.path
             {
                 self.visual.persistent = None;

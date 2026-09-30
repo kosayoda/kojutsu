@@ -251,11 +251,11 @@ mod tests {
     use std::collections::{HashMap, HashSet};
 
     use super::{FileSelection, SelectedLine, apply_partial, selection_map};
-    use crate::types::{ChangeId, FileRef, RepoPath, Selection};
+    use crate::types::{CommitId, FileRef, RepoPath, Selection};
 
     fn file_ref(path: &str) -> FileRef {
         FileRef {
-            change_id: ChangeId::new("uunnomkxrqvlypszwlwkvvqnstvzoxrs"),
+            commit_id: CommitId::new("7bbaa2cb"),
             path: RepoPath::new(path),
         }
     }

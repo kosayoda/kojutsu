@@ -1,32 +1,30 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::App;
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
 use crate::types::FileOwner;
 use crate::types::{
-    ChangeId, FileRef, FileSelectionState, RepoPath, RevisionArg, Selection, SelectionKind,
-    SmallVec,
+    ChangeId, CommitId, CommitRef, FileRef, FileSelectionState, RepoPath, RevisionArg, Selection,
+    SelectionKind, SmallVec,
 };
 
 impl App {
-    /// Resolve entry + file indices to (change_id, file_path).
+    /// Resolve entry + file indices to (commit_id, file_path).
     /// Returns `None` if the file list isn't loaded yet.
-    fn resolve_file(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<(ChangeId, RepoPath)> {
-        let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
+    fn resolve_file(&self, entry_idx: EntryIdx, file_idx: FileIdx) -> Option<(CommitId, RepoPath)> {
         let files = self.dag.nodes[entry_idx].files.files()?;
-        Some((change_id, files[file_idx.raw()].path.clone()))
+        Some((
+            self.commit_id(entry_idx).clone(),
+            files[file_idx.raw()].path.clone(),
+        ))
     }
 
     /// The blocker naming a commit's files, or `None` when every change in
     /// it can be narrowed by a line selection.
-    fn line_selection_blocker(&self, change_id: &ChangeId) -> Option<String> {
-        let files = self
-            .dag
-            .nodes
-            .iter()
-            .find(|node| node.commit.unique_change_id() == *change_id)
-            .and_then(|node| node.files.files())?;
+    fn line_selection_blocker(&self, commit_id: &CommitId) -> Option<String> {
+        let entry_idx = self.entry_by_commit_id(commit_id)?;
+        let files = self.dag.nodes[entry_idx].files.files()?;
         line_selection_blocker(files)
     }
 
@@ -37,14 +35,14 @@ impl App {
     /// Whole-file selection takes a different route (a jj fileset rather
     /// than a diff editor) and handles those paths correctly, so that's
     /// what the message points at.
-    pub(super) fn begin_line_selection(&mut self, change_id: &ChangeId) -> bool {
-        if let Some(blocker) = self.line_selection_blocker(change_id) {
+    pub(super) fn begin_line_selection(&mut self, commit_id: &CommitId) -> bool {
+        if let Some(blocker) = self.line_selection_blocker(commit_id) {
             self.set_error(format!(
                 "{blocker}, so it comes along whichever lines you pick - select whole files instead"
             ));
             return false;
         }
-        self.clear_other_commits(change_id);
+        self.clear_other_commits(commit_id);
         self.selection.ensure_compatible(SelectionKind::Line);
         true
     }
@@ -61,11 +59,11 @@ impl App {
         if self.selection_kind() != SelectionKind::Line {
             return;
         }
-        let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
-        if !self.selection.any(|s| *s.change_id() == change_id) {
+        let commit_id = self.commit_id(entry_idx).clone();
+        if !self.selection.any(|s| *s.commit_id() == commit_id) {
             return;
         }
-        let Some(blocker) = self.line_selection_blocker(&change_id) else {
+        let Some(blocker) = self.line_selection_blocker(&commit_id) else {
             return;
         };
         self.clear_selection();
@@ -100,18 +98,18 @@ impl App {
     /// existing selections, clears the old selections first (selections are
     /// scoped to one commit at a time).
     pub fn toggle_file_selection(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
-        let Some((change_id, path)) = self.resolve_file(entry_idx, file_idx) else {
+        let Some((commit_id, path)) = self.resolve_file(entry_idx, file_idx) else {
             return;
         };
 
-        self.clear_other_commits(&change_id);
+        self.clear_other_commits(&commit_id);
         self.selection.ensure_compatible(SelectionKind::File);
 
         // Clear any line-level selections for this file (File overrides Lines).
         self.selection
             .retain(|s| !matches!(s, Selection::Line { file_ref: f, .. } if f.path == path));
 
-        let sel = Selection::File(FileRef { change_id, path });
+        let sel = Selection::File(FileRef { commit_id, path });
         self.selection.toggle(sel);
     }
 
@@ -122,55 +120,66 @@ impl App {
         if self.is_commit_unfolded(entry_idx) {
             self.toggle_commit_file_selection(entry_idx);
         } else {
-            let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
+            let commit = self.commit_ref(entry_idx);
             self.selection.ensure_compatible(SelectionKind::Commit);
-            self.selection.toggle(Selection::Commit(change_id));
+            self.selection.toggle(Selection::Commit(commit));
         }
     }
 
     /// Check if a commit is in the explicit commit selection set.
     pub fn is_commit_selected(&self, entry_idx: EntryIdx) -> bool {
-        let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
-        self.selection.contains(&Selection::Commit(change_id))
+        self.selection
+            .contains(&Selection::Commit(self.commit_ref(entry_idx)))
     }
 
     /// Explicitly selected commits as revisions for `jj`, in DAG order, or the
     /// commit under the cursor when nothing is selected.
     ///
-    /// Selections are keyed by whole change IDs so they survive prefix-length
-    /// updates, but what goes to `jj` is the shortest unique prefix: the same
-    /// form the cursor path uses, and the same form shown on screen.
+    /// What goes to `jj` is the shortest unique prefix: the same form the
+    /// cursor path uses, and the same form shown on screen.
     pub fn selected_change_ids(&self) -> SmallVec<RevisionArg> {
         if self.selection_kind() != SelectionKind::Commit || !self.selection_active() {
             return self.selected_change_id().into_iter().collect();
         }
 
-        let mut pending: HashSet<ChangeId> = self
+        let mut pending: HashMap<&CommitId, &ChangeId> = self
             .selection
             .iter()
             .filter_map(|s| match s {
-                Selection::Commit(id) => Some(id.clone()),
+                Selection::Commit(commit) => Some((&commit.commit_id, &commit.change_id)),
                 _ => None,
             })
             .collect();
 
         // Resolved by one walk of the DAG rather than a search per selection,
-        // so each node's identity is built once and the revisions come out in
-        // DAG order: the selection itself is a hash set, whose order would
-        // otherwise vary between identical invocations.
+        // so the revisions come out in DAG order: the selection itself is a
+        // hash set, whose order would otherwise vary between identical
+        // invocations.
         let mut revisions: SmallVec<RevisionArg> = self
             .dag
             .nodes
             .iter()
-            .filter(|n| pending.remove(&n.commit.unique_change_id()))
+            .filter(|n| pending.remove(&n.commit.graph_id).is_some())
             .map(|n| n.commit.unique_prefix())
             .collect();
 
-        // A selection can outrun the DAG stream, since stale ones are only
-        // pruned once a load completes. The commit exists either way, and its
-        // whole change ID still resolves.
-        revisions.extend(pending.into_iter().map(|id| RevisionArg::new(id.as_str())));
+        // A selection can outrun the DAG stream while a reload carries it to
+        // a rewrite. Its commit ID might name what was rewritten, so ask for
+        // its change instead, which jj resolves to the current commit.
+        revisions.extend(
+            pending
+                .into_values()
+                .map(|change_id| RevisionArg::new(change_id.as_str())),
+        );
         revisions
+    }
+
+    /// A commit as a selection records it.
+    pub(super) fn commit_ref(&self, entry_idx: EntryIdx) -> CommitRef {
+        CommitRef {
+            commit_id: self.commit_id(entry_idx).clone(),
+            change_id: self.dag.nodes[entry_idx].commit.change_id.change_id(),
+        }
     }
 
     /// Toggle all files in an unfolded commit (select all / deselect all).
@@ -179,8 +188,8 @@ impl App {
             return;
         }
 
-        let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
-        self.clear_other_commits(&change_id);
+        let commit_id = self.commit_id(entry_idx).clone();
+        self.clear_other_commits(&commit_id);
         self.selection.ensure_compatible(SelectionKind::File);
 
         // Collect file paths upfront to avoid borrowing loaded file state across mutations.
@@ -195,7 +204,7 @@ impl App {
         // If all files are already selected (File-level), deselect all.
         let all_selected = file_paths.iter().all(|p| {
             self.selection.contains(&Selection::File(FileRef {
-                change_id: change_id.clone(),
+                commit_id: commit_id.clone(),
                 path: p.clone(),
             }))
         });
@@ -206,7 +215,7 @@ impl App {
             self.selection.clear();
             for p in file_paths {
                 self.selection.insert(Selection::File(FileRef {
-                    change_id: change_id.clone(),
+                    commit_id: commit_id.clone(),
                     path: p,
                 }));
             }
@@ -219,11 +228,11 @@ impl App {
     /// inside one has to deselect that line, not discard the rest of the
     /// file, and it needs the lines to exist individually to do that.
     fn expand_file_selection_to_lines(&mut self, entry_idx: EntryIdx, file_idx: FileIdx) {
-        let Some((change_id, path)) = self.resolve_file(entry_idx, file_idx) else {
+        let Some((commit_id, path)) = self.resolve_file(entry_idx, file_idx) else {
             return;
         };
         let file_ref = FileRef {
-            change_id: change_id.clone(),
+            commit_id: commit_id.clone(),
             path,
         };
         if !self.selection.contains(&Selection::File(file_ref.clone())) {
@@ -254,7 +263,7 @@ impl App {
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     ) {
-        let Some((change_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
+        let Some((commit_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
             return;
         };
 
@@ -269,14 +278,14 @@ impl App {
         let old_line = dl.old_line;
         let new_line = dl.new_line;
 
-        if !self.begin_line_selection(&change_id) {
+        if !self.begin_line_selection(&commit_id) {
             return;
         }
         self.expand_file_selection_to_lines(entry_idx, file_idx);
 
         let sel = Selection::Line {
             file_ref: FileRef {
-                change_id,
+                commit_id,
                 path: file_path,
             },
             old_line,
@@ -292,7 +301,7 @@ impl App {
         file_idx: FileIdx,
         header_line_idx: DiffLineIdx,
     ) {
-        let Some((change_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
+        let Some((commit_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
             return;
         };
 
@@ -309,7 +318,7 @@ impl App {
                 if dl.is_selectable() {
                     hunk_lines.push(Selection::Line {
                         file_ref: FileRef {
-                            change_id: change_id.clone(),
+                            commit_id: commit_id.clone(),
                             path: file_path.clone(),
                         },
                         old_line: dl.old_line,
@@ -319,7 +328,7 @@ impl App {
             }
         }
 
-        if !self.begin_line_selection(&change_id) {
+        if !self.begin_line_selection(&commit_id) {
             return;
         }
         self.expand_file_selection_to_lines(entry_idx, file_idx);
@@ -342,7 +351,7 @@ impl App {
         file_idx: FileIdx,
         line_idx: DiffLineIdx,
     ) -> bool {
-        let Some((change_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
+        let Some((commit_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
             return false;
         };
         let Some(diff_lines) = self.diff_lines(FileOwner::Dag(entry_idx), file_idx) else {
@@ -352,7 +361,7 @@ impl App {
 
         // If the whole file is selected, all lines are implicitly selected.
         if self.selection.contains(&Selection::File(FileRef {
-            change_id: change_id.clone(),
+            commit_id: commit_id.clone(),
             path: file_path.clone(),
         })) {
             return diff_line.is_selectable();
@@ -360,7 +369,7 @@ impl App {
 
         self.selection.contains(&Selection::Line {
             file_ref: FileRef {
-                change_id,
+                commit_id,
                 path: file_path,
             },
             old_line: diff_line.old_line,
@@ -374,13 +383,13 @@ impl App {
         entry_idx: EntryIdx,
         file_idx: FileIdx,
     ) -> FileSelectionState {
-        let Some((change_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
+        let Some((commit_id, file_path)) = self.resolve_file(entry_idx, file_idx) else {
             return FileSelectionState::None;
         };
 
         // Explicit file-level selection.
         if self.selection.contains(&Selection::File(FileRef {
-            change_id: change_id.clone(),
+            commit_id: commit_id.clone(),
             path: file_path.clone(),
         })) {
             return FileSelectionState::Full;
@@ -392,7 +401,7 @@ impl App {
             return FileSelectionState::None;
         };
         let file_ref = FileRef {
-            change_id,
+            commit_id,
             path: file_path,
         };
         let mut selected_count = 0usize;
@@ -448,9 +457,9 @@ impl App {
     }
 
     /// Clear selections from other commits if switching to a different one.
-    pub(crate) fn clear_other_commits(&mut self, change_id: &ChangeId) {
+    pub(crate) fn clear_other_commits(&mut self, commit_id: &CommitId) {
         if self.selection.is_active() {
-            let same_commit = self.selection.any(|s| s.change_id() == change_id);
+            let same_commit = self.selection.any(|s| s.commit_id() == commit_id);
             if !same_commit {
                 self.clear_selection();
             }
@@ -477,22 +486,16 @@ fn line_selection_blocker(files: &[crate::dag::FileChange]) -> Option<String> {
 
 #[cfg(test)]
 mod change_id_key_tests {
-    use super::super::{App, DagNode};
+    use super::super::App;
     use crate::dag::CommitInfo;
-    use crate::graph::GraphLines;
     use crate::idx::EntryIdx;
-    use crate::types::SmallVec;
 
     const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
     const COMMIT_ID: &str = "7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654";
 
     fn app_with_one_commit() -> App {
         let mut app = App::for_test();
-        app.dag.nodes.push(DagNode::new(
-            CommitInfo::for_test(CHANGE_ID, COMMIT_ID),
-            GraphLines::default(),
-            SmallVec::new(),
-        ));
+        app.push_test_commit(CommitInfo::for_test(CHANGE_ID, COMMIT_ID));
         app
     }
 
@@ -513,8 +516,8 @@ mod change_id_key_tests {
 
     #[test]
     fn a_selected_commit_reaches_jj_as_its_short_prefix() {
-        // Selections are keyed by the whole change ID; commands must still get
-        // the same short prefix the cursor path and the UI use.
+        // Commands get the same short prefix the cursor path and the UI use,
+        // not the selection's key.
         let mut app = app_with_one_commit();
         let idx = EntryIdx::new(0);
         app.dag.nodes[idx].commit.change_id.set_prefix_len(2);
@@ -529,11 +532,10 @@ mod change_id_key_tests {
 
 #[cfg(test)]
 mod selected_revision_tests {
-    use super::super::{App, DagNode};
+    use super::super::App;
     use crate::dag::CommitInfo;
-    use crate::graph::GraphLines;
     use crate::idx::EntryIdx;
-    use crate::types::{ChangeId, Selection, SmallVec};
+    use crate::types::{ChangeId, CommitId, CommitRef, Selection};
 
     /// Distinct 32-char change IDs whose first two characters differ, so a
     /// short prefix identifies each one.
@@ -551,9 +553,7 @@ mod selected_revision_tests {
         for &tag in tags {
             let mut commit = CommitInfo::for_test(&change_id(tag), &commit_id(tag));
             commit.change_id.set_prefix_len(2);
-            app.dag
-                .nodes
-                .push(DagNode::new(commit, GraphLines::default(), SmallVec::new()));
+            app.push_test_commit(commit);
         }
         app.rebuild_rows();
         app
@@ -584,12 +584,15 @@ mod selected_revision_tests {
 
     #[test]
     fn a_selection_the_dag_has_not_loaded_yet_still_resolves() {
-        // Stale selections are pruned only once a load completes, so one can
-        // outrun the stream. Its whole change ID is still a valid revision.
+        // A selection can outrun the stream while a reload carries it to a
+        // rewrite. Its commit ID might name what was rewritten; its change
+        // ID resolves to the current commit.
         let mut app = app_with(&['a']);
         app.toggle_commit_selection(EntryIdx::new(0));
-        app.selection
-            .insert(Selection::Commit(ChangeId::new(change_id('z'))));
+        app.selection.insert(Selection::Commit(CommitRef {
+            commit_id: CommitId::new(commit_id('z')),
+            change_id: ChangeId::new(change_id('z')),
+        }));
 
         let revs = revisions(&app);
         assert_eq!(revs.len(), 2);
@@ -606,14 +609,13 @@ mod selected_revision_tests {
 
 #[cfg(test)]
 mod submodule_line_selection_tests {
-    use super::super::{App, DagNode};
+    use super::super::App;
     use crate::dag::{
         CommitInfo, DiffLine, DiffLineKind, DiffResult, DiffSummary, FileChange, FileStatus,
         LineStats,
     };
-    use crate::graph::GraphLines;
     use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
-    use crate::types::{FileSelectionState, RepoPath, SelectionKind, SmallVec};
+    use crate::types::{FileSelectionState, RepoPath, SelectionKind};
 
     const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
     const COMMIT_ID: &str = "7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654";
@@ -655,11 +657,7 @@ mod submodule_line_selection_tests {
     /// A single commit whose files are `paths`, each with a two-line diff.
     fn app_with_files(paths: &[(&str, bool)]) -> App {
         let mut app = App::for_test();
-        app.dag.nodes.push(DagNode::new(
-            CommitInfo::for_test(CHANGE_ID, COMMIT_ID),
-            GraphLines::default(),
-            SmallVec::new(),
-        ));
+        app.push_test_commit(CommitInfo::for_test(CHANGE_ID, COMMIT_ID));
         let idx = EntryIdx::new(0);
         app.dag.nodes[idx].files.set_summary(Ok(DiffSummary {
             files: paths

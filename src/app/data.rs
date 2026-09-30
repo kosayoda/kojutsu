@@ -14,6 +14,9 @@ pub(super) struct DagStreamState {
     /// The pre-refresh nodes, whose loaded data is restored as their
     /// commits reappear.
     old_nodes: HashMap<CommitId, super::DagNode>,
+    /// The changes that had several commits before the reload, whose state
+    /// can only be carried to a rewrite once every commit has arrived.
+    divergent_before: HashSet<ChangeId>,
     /// Direct-edge child entries waiting for their parent commit to arrive
     /// in a later chunk.
     pending_parents: HashMap<CommitId, Vec<EntryIdx>>,
@@ -60,12 +63,20 @@ impl App {
             .map(|n| (n.commit.graph_id.clone(), n))
             .collect();
 
+        let mut seen = HashSet::new();
+        let divergent_before: HashSet<ChangeId> = old_nodes
+            .values()
+            .map(|n| n.commit.change_id.change_id())
+            .filter(|change| !seen.insert(change.clone()))
+            .collect();
+
         self.dag.commit_index.clear();
         self.visual.mode = None;
         self.visual.persistent = None;
         self.dag.stream = Some(DagStreamState {
             renderer: crate::graph::DagGraphRenderer::new(),
             old_nodes,
+            divergent_before,
             pending_parents: HashMap::new(),
         });
         self.append_entries(entries, done);
@@ -135,12 +146,13 @@ impl App {
             }
         }
 
-        // Re-request data for new commits that are still unfolded but whose
-        // cached file data didn't survive the refresh (happens after mutation).
-        for idx_raw in base..self.dag.nodes.len() {
-            let idx = EntryIdx::new(idx_raw);
-            let change_id = self.dag.nodes[idx].commit.unique_change_id();
-            if self.dag.unfolded_commits.contains(&change_id) {
+        let dropped_selection =
+            self.carry_commit_state(&stream.old_nodes, &stream.divergent_before, done);
+
+        // Unfolded commits need their files again when the cached ones didn't
+        // survive: a rewrite, or state just carried to the commit.
+        for idx in (0..self.dag.nodes.len()).map(EntryIdx::new) {
+            if self.is_commit_unfolded(idx) {
                 let request = self.dag.nodes[idx].files.request_summary();
                 self.pending_repo_requests.extend(request);
             }
@@ -151,25 +163,15 @@ impl App {
         self.rebuild_rows();
 
         if done {
-            // Prune fold state for changes no longer in the DAG.
-            let live_change_ids: HashSet<ChangeId> = self
-                .dag
-                .nodes
-                .iter()
-                .map(|n| n.commit.unique_change_id())
-                .collect();
-            self.dag
-                .unfolded_commits
-                .retain(|k| live_change_ids.contains(k));
-            self.dag
-                .unfolded_files
-                .retain(|k| live_change_ids.contains(&k.change_id));
-            self.selection
-                .retain(|s| live_change_ids.contains(s.change_id()));
             self.prune_conflict_ui();
             self.clear_info_status();
         } else {
             self.set_status(format!("loading… {} commits", self.dag.nodes.len()));
+        }
+        if dropped_selection {
+            self.set_status(
+                "a selected commit was rewritten into several copies; selection cleared",
+            );
         }
 
         if !done {

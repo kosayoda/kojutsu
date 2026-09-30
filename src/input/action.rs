@@ -1064,11 +1064,11 @@ pub(super) fn enter_target_select(
 mod selection_gate_tests {
     use super::*;
     use crate::keymap::SelectionKindSet;
-    use crate::types::{ChangeId, FileRef, RepoPath, Selection};
+    use crate::types::{CommitId, FileRef, RepoPath, Selection};
 
     fn select_file(app: &mut App) {
         app.selection.insert(Selection::File(FileRef {
-            change_id: ChangeId::new("qpvuntsm"),
+            commit_id: CommitId::new("7bbaa2cb"),
             path: RepoPath::new("a.rs"),
         }));
     }
@@ -1076,7 +1076,7 @@ mod selection_gate_tests {
     fn select_line(app: &mut App) {
         app.selection.insert(Selection::Line {
             file_ref: FileRef {
-                change_id: ChangeId::new("qpvuntsm"),
+                commit_id: CommitId::new("7bbaa2cb"),
                 path: RepoPath::new("b.rs"),
             },
             old_line: None,

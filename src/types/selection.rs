@@ -1,6 +1,6 @@
 use strum::EnumDiscriminants;
 
-use super::id::{ChangeId, FileRef};
+use super::id::{CommitId, CommitRef, FileRef};
 use crate::idx::DiffLineIdx;
 use crate::keymap::{CommandFlags, SelectionKindSet};
 use crate::pluralize;
@@ -8,21 +8,21 @@ use crate::pluralize;
 /// A persistent visual selection range within one file's diff.
 #[derive(Clone)]
 pub struct VisualRange {
-    pub change_id: ChangeId,
+    pub commit_id: CommitId,
     pub path: super::id::RepoPath,
     pub start_line: DiffLineIdx,
     pub end_line: DiffLineIdx,
 }
 
-/// A selected item in the DAG. Tied to commit identity (change ID) and file
-/// path, so selections survive DAG refreshes.
+/// A selected item in the DAG, tied to its commit by commit ID. A reload
+/// carries it to the commit's rewrite, if there is one.
 #[derive(Clone, PartialEq, Eq, Hash, EnumDiscriminants)]
 #[strum_discriminants(name(SelectionKind))]
 #[strum_discriminants(derive(strum::Display, strum::EnumString, strum::EnumIter))]
 #[strum_discriminants(strum(serialize_all = "snake_case"))]
 pub enum Selection {
-    /// Commit selected (used implicitly from cursor, not currently in explicit sets).
-    Commit(ChangeId),
+    /// Whole commit selected.
+    Commit(CommitRef),
     /// Entire file selected.
     File(FileRef),
     /// Individual diff line selected (added or removed).
@@ -311,12 +311,24 @@ impl Selection {
         }
     }
 
-    /// Get the change ID from any selection variant.
-    pub fn change_id(&self) -> &ChangeId {
+    /// The commit this selects in, or selects.
+    pub fn commit_id(&self) -> &CommitId {
         match self {
-            Selection::Commit(change_id) => change_id,
-            Selection::File(file_ref) | Selection::Line { file_ref, .. } => &file_ref.change_id,
+            Selection::Commit(commit) => &commit.commit_id,
+            Selection::File(file_ref) | Selection::Line { file_ref, .. } => &file_ref.commit_id,
         }
+    }
+
+    /// The same selection in another commit.
+    pub fn moved_to(&self, commit_id: &CommitId) -> Self {
+        let mut moved = self.clone();
+        match &mut moved {
+            Selection::Commit(commit) => commit.commit_id = commit_id.clone(),
+            Selection::File(file_ref) | Selection::Line { file_ref, .. } => {
+                file_ref.commit_id = commit_id.clone()
+            }
+        }
+        moved
     }
 
     /// Get the file path from any selection variant.
@@ -387,11 +399,11 @@ pub enum JumpTarget {
 #[cfg(test)]
 mod selection_context_tests {
     use super::*;
-    use crate::types::id::{ChangeId, RepoPath};
+    use crate::types::id::{ChangeId, CommitId, CommitRef, RepoPath};
 
     fn file_ref(path: &str) -> FileRef {
         FileRef {
-            change_id: ChangeId::new("qpvuntsm"),
+            commit_id: CommitId::new("7bbaa2cb"),
             path: RepoPath::new(path),
         }
     }
@@ -421,12 +433,18 @@ mod selection_context_tests {
     #[test]
     fn commits_stay_exclusive_in_both_directions() {
         let mut ctx = SelectionContext::new();
-        ctx.insert(Selection::Commit(ChangeId::new("qpvuntsm")));
+        ctx.insert(Selection::Commit(CommitRef {
+            commit_id: CommitId::new("7bbaa2cb"),
+            change_id: ChangeId::new("qpvuntsm"),
+        }));
         ctx.insert(Selection::File(file_ref("a.rs")));
         assert_eq!(ctx.len(), 1);
         assert_eq!(ctx.kind(), SelectionKind::File);
 
-        ctx.insert(Selection::Commit(ChangeId::new("qpvuntsm")));
+        ctx.insert(Selection::Commit(CommitRef {
+            commit_id: CommitId::new("7bbaa2cb"),
+            change_id: ChangeId::new("qpvuntsm"),
+        }));
         assert_eq!(ctx.len(), 1);
         assert_eq!(ctx.kind(), SelectionKind::Commit);
     }

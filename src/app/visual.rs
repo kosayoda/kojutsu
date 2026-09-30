@@ -386,7 +386,7 @@ impl App {
             .files()
             .and_then(|files| files.get(file_idx.raw()))
             .is_some_and(|file| {
-                node.commit.unique_change_id() == vr.change_id
+                node.commit.graph_id == vr.commit_id
                     && file.path == vr.path
                     && line_idx >= vr.start_line
                     && line_idx <= vr.end_line
@@ -416,7 +416,7 @@ impl App {
 
         let mut start_line = None;
         let mut end_line = None;
-        let mut change_id = None;
+        let mut commit_id = None;
         let mut path = None;
 
         for idx in lo..=hi {
@@ -428,7 +428,7 @@ impl App {
             {
                 if start_line.is_none() {
                     start_line = Some(*line_idx);
-                    change_id = Some(self.dag.nodes[*entry_idx].commit.unique_change_id());
+                    commit_id = Some(self.commit_id(*entry_idx).clone());
                     path = self.dag.nodes[*entry_idx]
                         .files
                         .files()
@@ -439,10 +439,10 @@ impl App {
             }
         }
 
-        match (start_line, end_line, change_id, path) {
-            (Some(start), Some(end), Some(change_id), Some(p)) => {
+        match (start_line, end_line, commit_id, path) {
+            (Some(start), Some(end), Some(commit_id), Some(p)) => {
                 Some(PersistentVisualRange::Lines(VisualRange {
-                    change_id,
+                    commit_id,
                     path: p,
                     start_line: start,
                     end_line: end,
@@ -460,17 +460,12 @@ impl App {
         let vr = vr.clone();
 
         let line_data: Vec<Selection> = self
-            .dag
-            .nodes
-            .iter()
-            .filter_map(|node| {
-                let cid = node.commit.unique_change_id();
-                if cid != vr.change_id {
-                    return None;
-                }
-                let fi = node.files.file_idx(&vr.path)?;
-                let diff_lines = node.files.diff_lines(fi, crate::dag::DiffFormat::Git)?;
-                let lines: Vec<_> = diff_lines
+            .entry_by_commit_id(&vr.commit_id)
+            .and_then(|entry_idx| {
+                let files = &self.dag.nodes[entry_idx].files;
+                let diff_lines =
+                    files.diff_lines(files.file_idx(&vr.path)?, crate::dag::DiffFormat::Git)?;
+                let lines = diff_lines
                     .iter()
                     .enumerate()
                     .filter(|(i, _)| {
@@ -480,7 +475,7 @@ impl App {
                     .filter(|(_, dl)| dl.is_selectable())
                     .map(|(_, dl)| Selection::Line {
                         file_ref: FileRef {
-                            change_id: vr.change_id.clone(),
+                            commit_id: vr.commit_id.clone(),
                             path: vr.path.clone(),
                         },
                         old_line: dl.old_line,
@@ -489,8 +484,7 @@ impl App {
                     .collect();
                 Some(lines)
             })
-            .flatten()
-            .collect();
+            .unwrap_or_default();
 
         if line_data.is_empty() {
             return;
@@ -503,7 +497,7 @@ impl App {
                 self.selection.remove(s);
             }
         } else {
-            if !self.begin_line_selection(&vr.change_id) {
+            if !self.begin_line_selection(&vr.commit_id) {
                 return;
             }
             for s in &line_data {
@@ -521,7 +515,7 @@ impl App {
             return;
         };
         let selections: Vec<Selection> = (lo.raw()..=hi.raw())
-            .map(|i| Selection::Commit(self.dag.nodes[EntryIdx::new(i)].commit.unique_change_id()))
+            .map(|i| Selection::Commit(self.commit_ref(EntryIdx::new(i))))
             .collect();
 
         self.selection.ensure_compatible(SelectionKind::Commit);
@@ -570,7 +564,7 @@ impl App {
         let Some(files) = self.dag.nodes[entry_idx].files.files() else {
             return;
         };
-        let change_id = self.dag.nodes[entry_idx].commit.unique_change_id();
+        let commit_id = self.commit_id(entry_idx).clone();
         let file_refs: Vec<FileRef> = files
             .iter()
             .enumerate()
@@ -579,7 +573,7 @@ impl App {
                 fi >= lo && fi <= hi
             })
             .map(|(_, f)| FileRef {
-                change_id: change_id.clone(),
+                commit_id: commit_id.clone(),
                 path: f.path.clone(),
             })
             .collect();
@@ -597,7 +591,7 @@ impl App {
                 self.selection.remove(&Selection::File(fr.clone()));
             }
         } else {
-            self.clear_other_commits(&change_id);
+            self.clear_other_commits(&commit_id);
             self.selection.ensure_compatible(SelectionKind::File);
             for fr in file_refs {
                 // File overrides Lines within that file, same as toggling one
@@ -684,9 +678,9 @@ mod tests {
                 .files
                 .set_diff(&RepoPath::new(path), Ok(diff()));
         }
-        app.dag.unfolded_commits.insert(app.change_id(a));
+        app.dag.unfolded_commits.insert(app.commit_id(a).clone());
         app.dag.unfolded_files.insert(FileFoldKey {
-            change_id: app.change_id(a),
+            commit_id: app.commit_id(a).clone(),
             path: RepoPath::new("y"),
         });
         app.rebuild_rows();

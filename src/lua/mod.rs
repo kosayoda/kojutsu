@@ -1034,10 +1034,10 @@ impl LuaEngine {
             ctx.set("is_merge", commit.is_merge)?;
         }
         if let Some(node) = node {
-            let parents: Vec<crate::types::ChangeId> = node
+            let parents: Vec<crate::types::RevisionArg> = node
                 .parents
                 .iter()
-                .map(|&idx| app.dag.nodes[idx].commit.unique_change_id())
+                .map(|&idx| app.dag.nodes[idx].commit.full_revision())
                 .collect();
             ctx.set(
                 "parent_change_ids",

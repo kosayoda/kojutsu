@@ -1,3 +1,4 @@
+mod carry;
 mod cursor;
 mod data;
 mod file_tree;
@@ -5,6 +6,8 @@ mod fold;
 mod navigation;
 mod search;
 mod selection;
+#[cfg(test)]
+mod test_support;
 mod types;
 mod visual;
 
@@ -88,7 +91,7 @@ use crate::types::SmallVec;
 use crate::keymap::CommandFlags;
 use crate::repo_service::{RepoError, RepoRequest, RevsetLoadKind};
 use crate::types::{
-    ChangeId, CommitId, ConflictHunkRef, DisplayRow, FileOwner, JumpTarget, RepoPath, RevisionArg,
+    CommitId, ConflictHunkRef, DisplayRow, FileOwner, JumpTarget, RepoPath, RevisionArg,
     SearchScopes, SearchState, SelectionContext,
 };
 
@@ -234,7 +237,7 @@ impl DagNode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct FileFoldKey {
-    pub change_id: ChangeId,
+    pub commit_id: CommitId,
     pub path: RepoPath,
 }
 
@@ -323,9 +326,10 @@ pub struct DagState {
     loads: u64,
     /// How many cursor targets have been set, to tell them apart.
     cursor_targets_set: u64,
-    /// Per-commit fold state, keyed by change id (stable across mutations).
-    pub unfolded_commits: HashSet<ChangeId>,
-    /// Per-file fold state, keyed by (change id, path) (stable across mutations).
+    /// Per-commit fold state, keyed by commit ID. A reload carries it to
+    /// the commit's rewrite, if there is one.
+    pub unfolded_commits: HashSet<CommitId>,
+    /// Per-file fold state, keyed and carried the same way.
     pub(crate) unfolded_files: HashSet<FileFoldKey>,
     /// Per-hunk conflict UI state (picks, base-fold, gap-expansion),
     /// authoritative and persisted across reloads. Keyed by commit ID:
@@ -479,17 +483,22 @@ impl App {
     #[cfg(test)]
     pub fn with_test_commit(change_id: &str, commit_id: &str) -> Self {
         let mut app = Self::for_test();
-        let commit = crate::dag::CommitInfo::for_test(change_id, commit_id);
-        app.dag
-            .commit_index
-            .insert(commit.graph_id.clone(), EntryIdx::new(0));
-        app.dag.nodes.push(DagNode::new(
+        app.push_test_commit(crate::dag::CommitInfo::for_test(change_id, commit_id));
+        app.rebuild_rows();
+        app
+    }
+
+    /// Add a commit to the DAG the way a load would, indexed by its ID.
+    #[cfg(test)]
+    pub fn push_test_commit(&mut self, commit: crate::dag::CommitInfo) -> EntryIdx {
+        let idx = EntryIdx::new(self.dag.nodes.len());
+        self.dag.commit_index.insert(commit.graph_id.clone(), idx);
+        self.dag.nodes.push(DagNode::new(
             commit,
             crate::graph::GraphLines::default(),
             SmallVec::new(),
         ));
-        app.rebuild_rows();
-        app
+        idx
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
@@ -955,8 +964,9 @@ impl App {
     }
 
     fn expand_revset(&mut self, entry_idx: crate::idx::EntryIdx, func: &str) {
-        let change_id = self.change_id(entry_idx);
-        let change_str = change_id.to_string();
+        // The full revision, which the prefix pass never shortens, so the
+        // next expansion finds this one in the revset to widen it.
+        let change_str = self.dag.nodes[entry_idx].commit.full_revision().to_string();
         let pattern = format!("{func}({change_str}, ");
 
         let new_revset = if let Some(pos) = self.revset.current.find(&pattern) {
@@ -1379,11 +1389,6 @@ impl App {
         &self.dag.nodes[entry_idx].commit.graph_id
     }
 
-    /// Stable identity of a commit, for keying internal state.
-    pub(crate) fn change_id(&self, entry_idx: EntryIdx) -> ChangeId {
-        self.dag.nodes[entry_idx].commit.unique_change_id()
-    }
-
     /// The revision to hand `jj` for a commit.
     pub(crate) fn revision(&self, entry_idx: EntryIdx) -> RevisionArg {
         self.dag.nodes[entry_idx].commit.unique_prefix()
@@ -1396,8 +1401,7 @@ impl App {
             .nodes
             .iter()
             .find(|n| {
-                n.commit.unique_prefix() == *revision
-                    || n.commit.unique_change_id().as_str() == revision.as_str()
+                n.commit.unique_prefix() == *revision || n.commit.full_revision() == *revision
             })
             .map(|n| n.commit.graph_id.clone())
     }
@@ -1405,7 +1409,7 @@ impl App {
     pub fn is_commit_unfolded(&self, entry_idx: EntryIdx) -> bool {
         self.dag
             .unfolded_commits
-            .contains(&self.change_id(entry_idx))
+            .contains(self.commit_id(entry_idx))
     }
 
     /// The file tree listing an owner's changed files.
@@ -1442,15 +1446,15 @@ impl App {
     }
 
     /// Whether a file is unfolded to show its diff. Each view keys its fold
-    /// state by what identifies the file there: the DAG by change ID so
-    /// folds survive rewrites, the evolog by step, the interdiff by path.
+    /// state by what identifies the file there: the DAG by commit, carried
+    /// across rewrites by reloads; the evolog by step; the interdiff by path.
     pub fn is_file_unfolded(&self, owner: FileOwner, file_idx: FileIdx) -> bool {
         let Some(path) = self.file(owner, file_idx).map(|f| &f.path) else {
             return false;
         };
         match owner {
             FileOwner::Dag(entry_idx) => self.dag.unfolded_files.contains(&FileFoldKey {
-                change_id: self.change_id(entry_idx),
+                commit_id: self.commit_id(entry_idx).clone(),
                 path: path.clone(),
             }),
             FileOwner::EvoLog(evolog_idx) => {
@@ -1474,7 +1478,7 @@ impl App {
         match owner {
             FileOwner::Dag(entry_idx) => {
                 let key = FileFoldKey {
-                    change_id: self.change_id(entry_idx),
+                    commit_id: self.commit_id(entry_idx).clone(),
                     path,
                 };
                 set_membership(&mut self.dag.unfolded_files, key, unfolded);
