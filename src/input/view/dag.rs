@@ -894,6 +894,46 @@ mod multi_source_tests {
         assert_eq!(sources, ["aa", "bb", "cc"]);
         assert_eq!(targets, ["dd"]);
     }
+
+    /// Picking a target is a detour: confirming puts the cursor back on
+    /// what the command acts on, for the reload to follow it from there.
+    #[test]
+    fn confirming_returns_the_cursor_to_where_it_started() {
+        let mut app = rebasing_three();
+        app.cursor = app.row_of_commit(EntryIdx::new(3)).unwrap();
+
+        press(&mut app, KeyCode::Enter);
+
+        assert!(matches!(app.mode, AppMode::FollowUp { .. }));
+        assert_eq!(app.selected_entry_idx(), Some(EntryIdx::new(0)));
+    }
+
+    /// Rows can shift while targets are picked (a diff arriving above the
+    /// start, say): Esc goes back to the row the cursor was on, not to the
+    /// number it had.
+    #[test]
+    fn esc_returns_to_the_starting_commit_after_rows_shift() {
+        use crate::dag::{DiffSummary, FileChange, LineStats};
+        use crate::types::CommitId;
+
+        let mut app = rebasing_three();
+        let a = EntryIdx::new(0);
+        app.dag.nodes[a].files.set_summary(Ok(DiffSummary {
+            files: vec![FileChange::for_test("f")],
+            stats: LineStats::default(),
+        }));
+        app.dag.unfolded_commits.insert(CommitId::new("a1"));
+        // Start on `cc`, then open `aa` above it.
+        press(&mut app, KeyCode::Esc);
+        app.cursor = app.row_of_commit(EntryIdx::new(2)).unwrap();
+        keys(&mut app, "rr");
+        app.rebuild_rows();
+        app.cursor = app.row_of_commit(EntryIdx::new(3)).unwrap();
+
+        press(&mut app, KeyCode::Esc);
+
+        assert_eq!(app.selected_entry_idx(), Some(EntryIdx::new(2)));
+    }
 }
 
 #[cfg(test)]

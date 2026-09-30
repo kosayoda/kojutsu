@@ -455,17 +455,13 @@ mod tests {
         }
     }
 
-    fn cursor_row(app: &App) -> DisplayRow {
-        app.rows[app.cursor.raw()]
-    }
-
     /// The cursor's numbers `(old, new)` on the diff line it is on.
     fn cursor_line_numbers(app: &App) -> (Option<u32>, Option<u32>) {
         let DisplayRow::DiffLine {
             owner,
             file_idx,
             line_idx,
-        } = cursor_row(app)
+        } = app.cursor_row().expect("cursor on a row")
         else {
             panic!("cursor not on a diff line");
         };
@@ -505,14 +501,20 @@ mod tests {
 
         load(&mut app, vec![entry('a', "a1"), entry('b', "b2")], true);
         assert_eq!(cursor_commit(&app), "b2");
-        assert!(matches!(cursor_row(&app), DisplayRow::CommitNode { .. }));
+        assert!(matches!(
+            app.cursor_row().expect("cursor on a row"),
+            DisplayRow::CommitNode { .. }
+        ));
 
         let target = DiffTarget::Commit(CommitId::new("b2"));
         app.handle_repo_result(RepoResult::DiffSummary {
             target: target.clone(),
             result: Ok(summary()),
         });
-        assert!(matches!(cursor_row(&app), DisplayRow::FileChange { .. }));
+        assert!(matches!(
+            app.cursor_row().expect("cursor on a row"),
+            DisplayRow::FileChange { .. }
+        ));
 
         app.handle_repo_result(RepoResult::FileDiff {
             target,
@@ -693,7 +695,9 @@ mod tests {
         load(&mut app, entries(), true);
         app.switch_view(ActiveView::Bookmarks);
         let bookmark_at_cursor = |app: &App| {
-            let DisplayRow::BookmarkItem { bookmark_idx } = cursor_row(app) else {
+            let DisplayRow::BookmarkItem { bookmark_idx } =
+                app.cursor_row().expect("cursor on a row")
+            else {
                 panic!("cursor not on a bookmark");
             };
             app.views.bookmark_entries[bookmark_idx.raw()]
@@ -765,7 +769,7 @@ mod tests {
         app.switch_view(ActiveView::Dag);
 
         assert!(matches!(
-            cursor_row(&app),
+            app.cursor_row().expect("cursor on a row"),
             DisplayRow::DescriptionLine { .. }
         ));
     }

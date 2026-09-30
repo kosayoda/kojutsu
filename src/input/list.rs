@@ -298,7 +298,7 @@ pub(super) fn resolve_selection(
                     sources: crate::types::SmallVec1::new(source),
                     targets: Vec::new(),
                 },
-                restore_cursor: app.cursor,
+                started_on: app.cursor_row(),
                 operation: TargetOperation::BookmarkMove {
                     bookmark_name: name,
                 },

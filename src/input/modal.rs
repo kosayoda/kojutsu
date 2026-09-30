@@ -42,7 +42,7 @@ fn submit_step(
                 app.switch_view(crate::types::ActiveView::Dag);
             }
             app.mode = AppMode::CommitSelect {
-                restore_cursor: app.cursor,
+                started_on: app.cursor_row(),
                 pending: crate::types::PendingCommitSelect::WorkspaceAdd { path, name },
                 flags,
                 origin: None,
@@ -353,8 +353,8 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Option<Actio
         KeyCode::Enter => Some(confirm_target_select(app)),
         KeyCode::Esc => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::TargetSelect { restore_cursor, .. } = mode {
-                app.set_cursor(restore_cursor);
+            if let AppMode::TargetSelect { started_on, .. } = mode {
+                app.return_to_row(started_on);
             }
             Some(Action::None)
         }
@@ -410,6 +410,7 @@ fn confirm_target_select(app: &mut App) -> Action {
     let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
     let AppMode::TargetSelect {
         mut picks,
+        started_on,
         operation,
         flags,
         ..
@@ -417,6 +418,10 @@ fn confirm_target_select(app: &mut App) -> Action {
     else {
         return Action::None;
     };
+    // Picking the target was a detour: the command acts on what the cursor
+    // was on, so it goes back there, and the reload's anchor follows that
+    // commit to wherever the command moves it.
+    app.return_to_row(started_on);
     // Interdiff is handled directly (needs commit IDs from app state).
     if matches!(operation, crate::types::TargetOperation::Interdiff) {
         let source = picks.sources.first();
@@ -468,8 +473,8 @@ pub(super) fn handle_commit_select(app: &mut App, key: KeyEvent) -> Option<Actio
         }
         KeyCode::Esc => {
             let mode = std::mem::replace(&mut app.mode, AppMode::Normal);
-            if let AppMode::CommitSelect { restore_cursor, .. } = mode {
-                app.set_cursor(restore_cursor);
+            if let AppMode::CommitSelect { started_on, .. } = mode {
+                app.return_to_row(started_on);
             }
             Some(Action::None)
         }
@@ -569,7 +574,7 @@ mod jump_tests {
                 name: None,
             },
             flags: CommandFlags::empty(),
-            restore_cursor: RowIdx::new(0),
+            started_on: None,
             origin: None,
         };
         app

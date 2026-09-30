@@ -1110,7 +1110,7 @@ pub(super) fn enter_target_select(
             sources,
             targets: Vec::new(),
         },
-        restore_cursor: app.cursor,
+        started_on: app.cursor_row(),
         operation,
         flags,
         origin: None,

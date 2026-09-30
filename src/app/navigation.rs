@@ -527,6 +527,19 @@ impl App {
     }
 
     /// Set cursor to a specific row, clamping to valid bounds.
+    /// Where the cursor is, as a row that stays the same while rows around
+    /// it are inserted or removed.
+    pub fn cursor_row(&self) -> Option<DisplayRow> {
+        self.rows.get(self.cursor.raw()).copied()
+    }
+
+    /// Put the cursor back on `row`, if it is still shown.
+    pub fn return_to_row(&mut self, row: Option<DisplayRow>) {
+        if let Some(idx) = row.and_then(|row| self.rows.iter().position(|r| *r == row)) {
+            self.cursor = RowIdx::new(idx);
+        }
+    }
+
     pub fn set_cursor(&mut self, row: RowIdx) {
         self.cursor = RowIdx::new(row.raw().min(self.rows.len().saturating_sub(1)));
     }

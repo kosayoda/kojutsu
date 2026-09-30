@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tui_input::Input;
 
 use crate::idx::{EntryIdx, RowIdx};
-use crate::types::ActiveView;
+use crate::types::{ActiveView, DisplayRow};
 
 use std::sync::Arc;
 
@@ -989,14 +989,17 @@ pub enum AppMode {
     /// Navigating to select a target commit for a two-commit operation.
     TargetSelect {
         picks: Picks,
-        restore_cursor: RowIdx,
+        /// Where the cursor was, to return to: on Esc, and on confirming,
+        /// since the command acts on what was there, not on the target.
+        started_on: Option<DisplayRow>,
         operation: TargetOperation,
         flags: CommandFlags,
         origin: Option<Invocation>,
     },
     /// Navigating to select a single commit (e.g. for workspace revision).
     CommitSelect {
-        restore_cursor: RowIdx,
+        /// Where the cursor was, to return to on Esc.
+        started_on: Option<DisplayRow>,
         pending: PendingCommitSelect,
         flags: CommandFlags,
         origin: Option<Invocation>,
