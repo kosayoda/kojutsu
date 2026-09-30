@@ -11,7 +11,7 @@ pub use follow_up::{FollowUpAction, FollowUpOption};
 
 use std::sync::{Arc, atomic::AtomicI32, atomic::Ordering};
 
-use crate::dag::BookmarkRef;
+use crate::dag::{BookmarkRef, TagRef};
 use crate::keymap::CommandFlags;
 use crate::types::{
     BookmarkName, ChangeSelection, JumpTarget, MessageMode, OperationId, RebaseSource,
@@ -204,6 +204,12 @@ pub enum JJCommandKind {
     },
     TagDelete {
         names: SmallVec<TagName>,
+    },
+    TagTrack {
+        tags: SmallVec<TagRef>,
+    },
+    TagUntrack {
+        tags: SmallVec<TagRef>,
     },
     OpRestore {
         op_id: OperationId,
@@ -709,5 +715,20 @@ mod remote_ref_args_tests {
             args,
             ["bookmark", "track", "main@origin", "\"feat x\"@upstream"]
         );
+    }
+
+    #[test]
+    fn tracking_a_tag_names_it_exactly_too() {
+        let cmd = JJCommand {
+            kind: JJCommandKind::TagTrack {
+                tags: smallvec::smallvec![TagRef {
+                    name: crate::types::TagName::new("v1.0"),
+                    remote: RemoteName::new("origin"),
+                }],
+            },
+            flags: CommandFlags::empty(),
+        };
+        let args: Vec<String> = cmd.args().iter().map(|a| a.to_string()).collect();
+        assert_eq!(args, ["tag", "track", "v1.0@origin"]);
     }
 }

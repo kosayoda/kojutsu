@@ -839,6 +839,8 @@ fn perform(
             flags,
         }),
         AppAction::TagDelete => super::target::tag_delete(app, flags),
+        AppAction::TagTrack => super::target::tag_track(app, flags, true),
+        AppAction::TagUntrack => super::target::tag_track(app, flags, false),
         AppAction::TagSet => super::target::tag_set(app, flags),
         AppAction::SwitchToDagView => {
             app.switch_view(crate::types::ActiveView::Dag);

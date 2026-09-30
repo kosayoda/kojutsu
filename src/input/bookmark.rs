@@ -76,16 +76,22 @@ pub(super) fn enter_bookmark_advance(app: &mut App, flags: CommandFlags) -> Acti
     }
 }
 
+/// Parse the `"name@remote"` strings a picker lists remote refs as.
+pub(super) fn parse_remote_refs<T>(
+    names: SmallVec<String>,
+    make: impl Fn(&str, &str) -> T,
+) -> SmallVec<T> {
+    names
+        .iter()
+        .filter_map(|s| s.rsplit_once('@'))
+        .map(|(name, remote)| make(name, remote))
+        .collect()
+}
+
 /// Parse `"name@remote"` display strings into `BookmarkRef` values.
 pub(super) fn parse_remote_bookmarks(names: SmallVec<String>) -> SmallVec<BookmarkRef> {
-    names
-        .into_iter()
-        .filter_map(|s| {
-            let (name, remote) = s.rsplit_once('@')?;
-            Some(BookmarkRef {
-                name: BookmarkName::new(name),
-                remote: crate::types::RemoteName::new(remote),
-            })
-        })
-        .collect()
+    parse_remote_refs(names, |name, remote| BookmarkRef {
+        name: BookmarkName::new(name),
+        remote: crate::types::RemoteName::new(remote),
+    })
 }

@@ -2,6 +2,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
 use crate::app::TagViewEntry;
+use crate::dag::TagPresence;
 use crate::theme::Theme;
 use crate::types::SearchScopes;
 
@@ -15,10 +16,9 @@ pub(crate) fn render_tag_item(
 ) -> Vec<Line<'static>> {
     let mut spans = vec![gutter_span(search, theme)];
 
-    let style = if entry.is_deleted {
-        Style::default().fg(theme.muted)
-    } else {
-        Style::default().fg(theme.tag).add_modifier(Modifier::BOLD)
+    let style = match entry.presence {
+        TagPresence::Local => Style::default().fg(theme.tag).add_modifier(Modifier::BOLD),
+        TagPresence::Deleted | TagPresence::RemoteOnly => Style::default().fg(theme.muted),
     };
     push_searchable(
         &mut spans,
@@ -28,8 +28,13 @@ pub(crate) fn render_tag_item(
         search,
     );
 
-    if entry.is_deleted {
-        spans.push(Span::styled(" (deleted)", Style::default().fg(theme.muted)));
+    let note = match entry.presence {
+        TagPresence::Local => None,
+        TagPresence::Deleted => Some(" (deleted)"),
+        TagPresence::RemoteOnly => Some(" (remote only)"),
+    };
+    if let Some(note) = note {
+        spans.push(Span::styled(note, Style::default().fg(theme.muted)));
     }
 
     use crate::ui::spans::dot;
@@ -69,6 +74,12 @@ pub(crate) fn render_tag_remote_target(
         Style::default().fg(theme.remote),
     ));
 
+    if !target.is_tracked {
+        spans.push(Span::styled(
+            " (untracked)",
+            Style::default().fg(theme.muted),
+        ));
+    }
     spans.push(Span::styled(": ", Style::default().fg(theme.muted)));
 
     // A remote-only target's commit may not be in the repo, leaving no change ID.

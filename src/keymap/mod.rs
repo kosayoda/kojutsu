@@ -189,6 +189,8 @@ pub enum AppAction {
     JumpToCommit,
     TagSet,
     TagDelete,
+    TagTrack,
+    TagUntrack,
     SelectPreset,
     #[strum(serialize = "switch_preset_1")]
     SwitchPreset1,

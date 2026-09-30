@@ -287,6 +287,8 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         ),
         bind("t s", TagSet, "set", C, dag()),
         bind("t d", TagDelete, "delete", C, dag()),
+        bind("t t", TagTrack, "track", C, dag()),
+        bind("t u", TagUntrack, "untrack", C, dag()),
         // Commit prefix
         prefix("c", "commit", C, dag()),
         toggle("c shift-i", CommandFlags::INTERACTIVE, "interactive", dag()),
@@ -432,6 +434,8 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     let tag = || views(&[Tags]);
     specs.extend([
         bind("d", TagDelete, "delete", C, tag()),
+        bind("t", TagTrack, "track", C, tag()),
+        bind("shift-u", TagUntrack, "untrack", C, tag()),
         bind("s", TagSet, "set\u{2026}", C, tag()),
         bind("e", Edit, "edit (checkout)", C, tag()),
         bind("enter", JumpToCommit, "jump to commit", C, tag()),

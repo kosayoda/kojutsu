@@ -44,6 +44,14 @@ pub enum PendingSelection {
     TagDelete {
         flags: CommandFlags,
     },
+    /// Track remote tags.
+    TagTrack {
+        flags: CommandFlags,
+    },
+    /// Untrack remote tags.
+    TagUntrack {
+        flags: CommandFlags,
+    },
     /// Switch to a named revset preset.
     PresetSelect,
     /// Filter op log by workspace.

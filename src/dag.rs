@@ -276,6 +276,13 @@ pub struct BookmarkRef {
     pub remote: RemoteName,
 }
 
+/// A tag name + remote pair, for track/untrack.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagRef {
+    pub name: TagName,
+    pub remote: RemoteName,
+}
+
 /// A remote bookmark (e.g., `main@origin`).
 #[derive(Clone, Debug)]
 pub struct RemoteBookmarkInfo {
@@ -366,16 +373,28 @@ pub struct BookmarkDetails {
 
 /// Remote tracking info for a tag at a specific remote.
 pub struct TagRemoteTarget {
-    /// Remote name (e.g., "origin", "git").
+    /// Remote name (e.g., "origin").
     pub remote: RemoteName,
     /// Commit metadata.
     pub summary: CommitSummary,
+    /// Whether the local tag tracks it.
+    pub is_tracked: bool,
+}
+
+/// Whether a tag exists locally, and if not, why it is listed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TagPresence {
+    Local,
+    /// Deleted locally; a remote it tracks still has it, until the
+    /// deletion is pushed.
+    Deleted,
+    /// Only on remotes, and not tracked: fetched, but never taken up.
+    RemoteOnly,
 }
 
 /// Rich data for a single tag (local target + remote tracking).
 pub struct TagDetails {
-    /// Whether the local tag has been deleted (remote-only).
-    pub is_deleted: bool,
+    pub presence: TagPresence,
     /// Commit info for the local target (if present).
     pub local_target: Option<TagLocalTarget>,
     /// Remote tracking info.

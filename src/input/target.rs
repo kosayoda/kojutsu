@@ -318,6 +318,53 @@ pub(super) fn with_remote(
     })
 }
 
+/// Track (or untrack) remote tags: in the tag view, the remote under the
+/// cursor or those of the tag under it; elsewhere, any remote tag. Asks
+/// which when there are several.
+pub(super) fn tag_track(app: &mut App, flags: CommandFlags, track: bool) -> Action {
+    let tags = app.remote_tags_to_track(track);
+    match tags.len() {
+        0 => {
+            app.set_status(if track {
+                "no untracked remote tags here"
+            } else {
+                "no tracked remote tags here"
+            });
+            Action::None
+        }
+        1 => {
+            let tags = tags.into_iter().collect();
+            let kind = if track {
+                JJCommandKind::TagTrack { tags }
+            } else {
+                JJCommandKind::TagUntrack { tags }
+            };
+            Action::run(JJCommand { kind, flags })
+        }
+        _ => {
+            let items = tags
+                .iter()
+                .map(|t| format!("{}@{}", t.name, t.remote))
+                .collect();
+            let (title, on_select) = if track {
+                ("track tag", PendingSelection::TagTrack { flags })
+            } else {
+                ("untrack tag", PendingSelection::TagUntrack { flags })
+            };
+            app.mode = AppMode::select_from_list(title, items, true, on_select, true);
+            Action::None
+        }
+    }
+}
+
+/// Parse `"name@remote"` display strings into `TagRef` values.
+pub(super) fn parse_remote_tags(names: SmallVec<String>) -> SmallVec<crate::dag::TagRef> {
+    super::bookmark::parse_remote_refs(names, |name, remote| crate::dag::TagRef {
+        name: crate::types::TagName::new(name),
+        remote: crate::types::RemoteName::new(remote),
+    })
+}
+
 /// Delete target tags, asking which when there are several.
 pub(super) fn tag_delete(app: &mut App, flags: CommandFlags) -> Action {
     let names = app.target_tags();
@@ -451,7 +498,7 @@ mod tests {
             short_commit_id: None,
             revision: Some(RevisionArg::new("qpv")),
             description: None,
-            is_deleted: false,
+            presence: crate::dag::TagPresence::Local,
         });
         app.switch_view(ActiveView::Tags);
         app

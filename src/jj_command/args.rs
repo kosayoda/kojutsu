@@ -24,13 +24,10 @@ fn rev(id: impl std::fmt::Display) -> TaggedArg {
     (format_compact!("{id}"), CommandPartKind::Revision)
 }
 
-/// A bookmark on one remote, as the `name@remote` symbol jj resolves exactly,
-/// quoted where the name or remote needs it.
-fn remote_symbol(bookmark: &crate::dag::BookmarkRef) -> TaggedArg {
-    rev(jj_lib::revset::format_remote_symbol(
-        bookmark.name.as_str(),
-        bookmark.remote.as_str(),
-    ))
+/// A bookmark or tag on one remote, as the `name@remote` symbol jj resolves
+/// exactly, quoted where the name or remote needs it.
+fn remote_symbol(name: &str, remote: &crate::types::RemoteName) -> TaggedArg {
+    rev(jj_lib::revset::format_remote_symbol(name, remote.as_str()))
 }
 
 /// A plain value: message, path, count, remote or workspace name.
@@ -248,12 +245,20 @@ impl JJCommand {
             // are separate lists to jj, which tracks every pairing of them.
             JJCommandKind::BookmarkTrack { bookmarks, .. } => {
                 let mut args = vec![sub("bookmark"), sub("track")];
-                args.extend(bookmarks.iter().map(remote_symbol));
+                args.extend(
+                    bookmarks
+                        .iter()
+                        .map(|b| remote_symbol(b.name.as_str(), &b.remote)),
+                );
                 args
             }
             JJCommandKind::BookmarkUntrack { bookmarks, .. } => {
                 let mut args = vec![sub("bookmark"), sub("untrack")];
-                args.extend(bookmarks.iter().map(remote_symbol));
+                args.extend(
+                    bookmarks
+                        .iter()
+                        .map(|b| remote_symbol(b.name.as_str(), &b.remote)),
+                );
                 args
             }
             JJCommandKind::Undo => vec![sub("undo")],
@@ -483,6 +488,22 @@ impl JJCommand {
             JJCommandKind::TagDelete { names, .. } => {
                 let mut args = vec![sub("tag"), sub("delete")];
                 args.extend(names.iter().map(|n| rev(n.as_str())));
+                args
+            }
+            JJCommandKind::TagTrack { tags } => {
+                let mut args = vec![sub("tag"), sub("track")];
+                args.extend(
+                    tags.iter()
+                        .map(|t| remote_symbol(t.name.as_str(), &t.remote)),
+                );
+                args
+            }
+            JJCommandKind::TagUntrack { tags } => {
+                let mut args = vec![sub("tag"), sub("untrack")];
+                args.extend(
+                    tags.iter()
+                        .map(|t| remote_symbol(t.name.as_str(), &t.remote)),
+                );
                 args
             }
             JJCommandKind::OpRestore { op_id, .. } => {

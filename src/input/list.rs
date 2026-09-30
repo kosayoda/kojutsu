@@ -269,6 +269,18 @@ pub(super) fn resolve_selection(
                 flags,
             })
         }
+        PendingSelection::TagTrack { flags } => Action::run(JJCommand {
+            kind: JJCommandKind::TagTrack {
+                tags: super::target::parse_remote_tags(names),
+            },
+            flags,
+        }),
+        PendingSelection::TagUntrack { flags } => Action::run(JJCommand {
+            kind: JJCommandKind::TagUntrack {
+                tags: super::target::parse_remote_tags(names),
+            },
+            flags,
+        }),
         PendingSelection::TagDelete { flags } => {
             let names = names.into_iter().map(TagName::new).collect();
             Action::run(JJCommand {

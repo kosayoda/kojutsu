@@ -777,8 +777,7 @@ pub struct TagViewEntry {
     /// rebuilt from `change_id`, which doesn't know about divergence.
     pub revision: Option<RevisionArg>,
     pub description: Option<String>,
-    /// Whether the local tag has been deleted (only remote refs remain).
-    pub is_deleted: bool,
+    pub presence: crate::dag::TagPresence,
 }
 
 /// A log entry with its graph drawn. The repo supplies the entry; the

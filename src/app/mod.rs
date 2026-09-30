@@ -1081,6 +1081,50 @@ impl App {
         })
     }
 
+    /// The remote tags a track (untrack when `!track`) applies to, those
+    /// not already tracked (or tracked): in the tag view, the remote row under
+    /// the cursor, or every remote of the tag under it; elsewhere, all of
+    /// them, by name.
+    pub fn remote_tags_to_track(&self, track: bool) -> Vec<crate::dag::TagRef> {
+        let row = self.cursor_row();
+        let scope: Vec<(&crate::types::TagName, &crate::dag::TagDetails)> =
+            match (self.active_view, row) {
+                (ActiveView::Tags, _) => self
+                    .selected_tag_entry()
+                    .and_then(|entry| {
+                        let details = self.views.tag_details.get(&entry.name)?;
+                        Some((&entry.name, details))
+                    })
+                    .into_iter()
+                    .collect(),
+                _ => {
+                    let mut all: Vec<_> = self.views.tag_details.iter().collect();
+                    all.sort_by(|a, b| a.0.cmp(b.0));
+                    all
+                }
+            };
+        let only_target = match row {
+            Some(DisplayRow::TagRemoteTarget { target_idx, .. }) => Some(target_idx.raw()),
+            _ => None,
+        };
+        scope
+            .into_iter()
+            .flat_map(|(name, details)| {
+                details
+                    .remote_targets
+                    .iter()
+                    .enumerate()
+                    .filter(move |(i, target)| {
+                        only_target.is_none_or(|only| only == *i) && target.is_tracked != track
+                    })
+                    .map(move |(_, target)| crate::dag::TagRef {
+                        name: name.clone(),
+                        remote: target.remote.clone(),
+                    })
+            })
+            .collect()
+    }
+
     pub fn selected_tag_entry(&self) -> Option<&TagViewEntry> {
         let tag_idx = self.rows.get(self.cursor.raw())?.tag_idx()?;
         self.views.tag_entries.get(tag_idx.raw())

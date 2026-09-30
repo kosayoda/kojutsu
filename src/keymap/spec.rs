@@ -225,6 +225,8 @@ impl AppAction {
             JumpToCommit => ui(ALL).label("jump"),
             TagSet => mutate(C).label("tag"),
             TagDelete => mutate(C).label("tag"),
+            TagTrack => mutate(C).label("tag"),
+            TagUntrack => mutate(C).label("tag"),
             SelectPreset => ui(ALL).label("preset"),
             SwitchPreset1 => ui(ALL),
             SwitchPreset2 => ui(ALL),

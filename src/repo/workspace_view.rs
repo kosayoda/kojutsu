@@ -51,112 +51,81 @@ impl JjRepo {
 
     /// Extract rich tag details: local target + remote tracking info.
     pub fn extract_tag_details(&self) -> HashMap<TagName, crate::dag::TagDetails> {
-        use crate::dag::{TagDetails, TagLocalTarget, TagRemoteTarget};
+        use crate::dag::{TagDetails, TagLocalTarget, TagPresence, TagRemoteTarget};
 
         let repo = self.repo.as_ref();
         let view = repo.view();
-        let mut result: HashMap<TagName, TagDetails> = HashMap::new();
 
-        // Pre-index remote tags by name.
-        let mut remotes_by_name: HashMap<String, Vec<(String, jj_lib::backend::CommitId)>> =
-            HashMap::new();
+        let summary_of = |commit_id: &jj_lib::backend::CommitId| {
+            let hex = commit_id.hex();
+            match self.commit_detail_info(commit_id) {
+                Some(info) => crate::dag::CommitSummary {
+                    commit_id: UiCommitId::new(hex),
+                    change_id: info.change_id,
+                    short_commit_id: info.short_commit_id,
+                    description: info.description,
+                    divergence: info.divergence,
+                },
+                // Commit isn't in the repo, so its change ID is genuinely
+                // unknown: leave it empty rather than showing the commit ID
+                // in the change ID's place.
+                None => crate::dag::CommitSummary {
+                    commit_id: UiCommitId::new(&hex),
+                    change_id: ShortId::new(""),
+                    short_commit_id: ShortId::new(&hex),
+                    description: None,
+                    divergence: None,
+                },
+            }
+        };
+
+        // Remote tags by name, leaving out the synthetic `git` remote of a
+        // colocated repo, which isn't one that can be tracked.
+        let mut remotes_by_name: HashMap<String, Vec<TagRemoteTarget>> = HashMap::new();
         for (symbol, remote_ref) in view.all_remote_tags() {
+            if Some(symbol.remote) == self.default_ignored_remote {
+                continue;
+            }
             if let Some(commit_id) = remote_ref.target.as_normal() {
                 remotes_by_name
                     .entry(symbol.name.as_str().to_owned())
                     .or_default()
-                    .push((symbol.remote.as_str().to_owned(), commit_id.clone()));
+                    .push(TagRemoteTarget {
+                        remote: RemoteName::new(symbol.remote.as_str()),
+                        summary: summary_of(commit_id),
+                        is_tracked: remote_ref.is_tracked(),
+                    });
             }
         }
 
-        // Process local tags.
+        let mut result: HashMap<TagName, TagDetails> = HashMap::new();
         for (name, target) in view.local_tags() {
-            let tag_name = TagName::new(name.as_str());
-            let local_target = target.as_normal().and_then(|commit_id| {
-                let info = self.commit_detail_info(commit_id)?;
-                Some(TagLocalTarget {
-                    summary: crate::dag::CommitSummary {
-                        commit_id: UiCommitId::new(commit_id.hex()),
-                        change_id: info.change_id,
-                        short_commit_id: info.short_commit_id,
-                        description: info.description,
-                        divergence: info.divergence,
-                    },
-                })
+            let local_target = target.as_normal().map(|commit_id| TagLocalTarget {
+                summary: summary_of(commit_id),
             });
-
-            let remote_targets: Vec<TagRemoteTarget> = remotes_by_name
-                .get(name.as_str())
-                .map(|refs| {
-                    refs.iter()
-                        .filter_map(|(remote, commit_id)| {
-                            let info = self.commit_detail_info(commit_id)?;
-                            Some(TagRemoteTarget {
-                                remote: RemoteName::new(remote),
-                                summary: crate::dag::CommitSummary {
-                                    commit_id: UiCommitId::new(commit_id.hex()),
-                                    change_id: info.change_id,
-                                    short_commit_id: info.short_commit_id,
-                                    description: info.description,
-                                    divergence: info.divergence,
-                                },
-                            })
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            if local_target.is_some() || !remote_targets.is_empty() {
-                result.insert(
-                    tag_name,
-                    TagDetails {
-                        is_deleted: false,
-                        local_target,
-                        remote_targets,
-                    },
-                );
-            }
+            let remote_targets = remotes_by_name.remove(name.as_str()).unwrap_or_default();
+            result.insert(
+                TagName::new(name.as_str()),
+                TagDetails {
+                    presence: TagPresence::Local,
+                    local_target,
+                    remote_targets,
+                },
+            );
         }
 
-        // Remote-only tags (deleted locally).
-        for (name, refs) in &remotes_by_name {
-            let tag_name = TagName::new(name.as_str());
-            if result.contains_key(&tag_name) {
-                continue;
-            }
-            let remote_targets: Vec<TagRemoteTarget> = refs
-                .iter()
-                .map(|(remote, commit_id)| {
-                    let hex = commit_id.hex();
-                    let resolved = self.commit_detail_info(commit_id);
-                    let (change_id, short_commit_id, description, divergence) = match resolved {
-                        Some(info) => (
-                            info.change_id,
-                            info.short_commit_id,
-                            info.description,
-                            info.divergence,
-                        ),
-                        // Commit isn't in the repo, so its change ID is
-                        // genuinely unknown: leave it empty rather than
-                        // showing the commit ID in the change ID's place.
-                        None => (ShortId::new(""), ShortId::new(&hex), None, None),
-                    };
-                    TagRemoteTarget {
-                        remote: RemoteName::new(remote),
-                        summary: crate::dag::CommitSummary {
-                            commit_id: UiCommitId::new(hex),
-                            change_id,
-                            short_commit_id,
-                            description,
-                            divergence,
-                        },
-                    }
-                })
-                .collect();
+        // What's left is on remotes only: deleted here if a remote it
+        // tracked still has it, otherwise never taken up.
+        for (name, remote_targets) in remotes_by_name {
+            let presence = if remote_targets.iter().any(|t| t.is_tracked) {
+                TagPresence::Deleted
+            } else {
+                TagPresence::RemoteOnly
+            };
             result.insert(
-                tag_name,
+                TagName::new(&name),
                 TagDetails {
-                    is_deleted: true,
+                    presence,
                     local_target: None,
                     remote_targets,
                 },

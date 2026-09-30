@@ -694,6 +694,7 @@ impl App {
     /// Aggregate tag data from DAG nodes + tag_details into a flat list for the tag view.
     pub fn rebuild_tag_entries(&mut self) {
         use super::TagViewEntry;
+        use crate::dag::TagPresence;
         use std::collections::HashSet;
 
         let mut entries: Vec<TagViewEntry> = Vec::new();
@@ -703,11 +704,11 @@ impl App {
         for node in self.dag.nodes.iter() {
             for tag in &node.commit.tags {
                 if seen.insert(tag.clone()) {
-                    let is_deleted = self
+                    let presence = self
                         .views
                         .tag_details
                         .get(tag)
-                        .is_some_and(|d| d.is_deleted);
+                        .map_or(TagPresence::Local, |d| d.presence);
                     entries.push(TagViewEntry {
                         name: tag.clone(),
                         commit_id: Some(node.commit.graph_id.clone()),
@@ -715,7 +716,7 @@ impl App {
                         short_commit_id: Some(node.commit.commit_id.clone()),
                         revision: Some(node.commit.unique_prefix()),
                         description: node.commit.description.clone(),
-                        is_deleted,
+                        presence,
                     });
                 }
             }
@@ -745,14 +746,14 @@ impl App {
                     short_commit_id,
                     revision,
                     description,
-                    is_deleted: false,
+                    presence: TagPresence::Local,
                 });
             }
         }
 
-        // Remote-only tags (deleted locally, not in all_tags).
+        // Tags only on remotes: deleted here, or never taken up.
         for (name, details) in &self.views.tag_details {
-            if details.is_deleted && seen.insert(name.clone()) {
+            if details.presence != TagPresence::Local && seen.insert(name.clone()) {
                 entries.push(TagViewEntry {
                     name: name.clone(),
                     commit_id: None,
@@ -760,7 +761,7 @@ impl App {
                     short_commit_id: None,
                     revision: None,
                     description: None,
-                    is_deleted: true,
+                    presence: details.presence,
                 });
             }
         }
@@ -1040,7 +1041,7 @@ mod view_entry_revision_tests {
         app.views.tag_details.insert(
             tag,
             TagDetails {
-                is_deleted: false,
+                presence: crate::dag::TagPresence::Local,
                 local_target: Some(TagLocalTarget {
                     summary: CommitSummary {
                         commit_id: CommitId::new(COMMIT_ID),
@@ -1075,5 +1076,119 @@ mod view_entry_revision_tests {
         }));
         let entry = &app.views.tag_entries[0];
         assert_eq!(entry.revision.as_ref().unwrap().as_str(), "uu/1");
+    }
+}
+
+#[cfg(test)]
+mod tag_tracking_tests {
+    use super::super::App;
+    use crate::dag::{CommitSummary, ShortId, TagDetails, TagPresence, TagRef, TagRemoteTarget};
+    use crate::idx::{TagDetailIdx, TagIdx};
+    use crate::types::{ActiveView, CommitId, DisplayRow, RemoteName, TagName};
+
+    fn remote(name: &str, commit: &str, is_tracked: bool) -> TagRemoteTarget {
+        TagRemoteTarget {
+            remote: RemoteName::new(name),
+            summary: CommitSummary {
+                commit_id: CommitId::new(commit),
+                change_id: ShortId::new(""),
+                short_commit_id: ShortId::new(commit),
+                description: None,
+                divergence: None,
+            },
+            is_tracked,
+        }
+    }
+
+    /// `v1` locally, tracked on origin and not on upstream (both away from
+    /// the local tag, so both have rows); `v2` only on origin, untracked.
+    fn tag_view() -> App {
+        let mut app = App::for_test();
+        app.views.all_tags.push(TagName::new("v1"));
+        app.views.tag_details.insert(
+            TagName::new("v1"),
+            TagDetails {
+                presence: TagPresence::Local,
+                local_target: None,
+                remote_targets: vec![
+                    remote("origin", "o1", true),
+                    remote("upstream", "u1", false),
+                ],
+            },
+        );
+        app.views.tag_details.insert(
+            TagName::new("v2"),
+            TagDetails {
+                presence: TagPresence::RemoteOnly,
+                local_target: None,
+                remote_targets: vec![remote("origin", "o2", false)],
+            },
+        );
+        app.rebuild_tag_entries();
+        app.switch_view(ActiveView::Tags);
+        app
+    }
+
+    fn refs(tags: &[TagRef]) -> Vec<String> {
+        tags.iter()
+            .map(|t| format!("{}@{}", t.name, t.remote))
+            .collect()
+    }
+
+    fn cursor_on(app: &mut App, row: DisplayRow) {
+        app.cursor = app.position_of(row).expect("row is shown");
+    }
+
+    /// A tag fetched but never tracked is listed, so there's something to
+    /// track it from.
+    #[test]
+    fn a_tag_only_on_a_remote_is_listed_as_such() {
+        let app = tag_view();
+        let v2 = app
+            .views
+            .tag_entries
+            .iter()
+            .find(|e| e.name.as_str() == "v2");
+        assert_eq!(v2.map(|e| e.presence), Some(TagPresence::RemoteOnly));
+    }
+
+    /// On the tag's own row: its remotes not yet tracked, or those tracked.
+    #[test]
+    fn a_tag_row_offers_its_own_remotes() {
+        let mut app = tag_view();
+        cursor_on(
+            &mut app,
+            DisplayRow::TagItem {
+                tag_idx: TagIdx::new(0),
+            },
+        );
+        assert_eq!(refs(&app.remote_tags_to_track(true)), ["v1@upstream"]);
+        assert_eq!(refs(&app.remote_tags_to_track(false)), ["v1@origin"]);
+    }
+
+    /// On a remote's row: that remote alone.
+    #[test]
+    fn a_remote_row_offers_only_that_remote() {
+        let mut app = tag_view();
+        cursor_on(
+            &mut app,
+            DisplayRow::TagRemoteTarget {
+                tag_idx: TagIdx::new(0),
+                target_idx: TagDetailIdx::new(0),
+            },
+        );
+        assert_eq!(refs(&app.remote_tags_to_track(false)), ["v1@origin"]);
+        assert!(app.remote_tags_to_track(true).is_empty());
+    }
+
+    /// Outside the tag view, every remote tag is a candidate.
+    #[test]
+    fn elsewhere_every_remote_tag_is_offered() {
+        let mut app = tag_view();
+        app.switch_view(ActiveView::Dag);
+        assert_eq!(
+            refs(&app.remote_tags_to_track(true)),
+            ["v1@upstream", "v2@origin"]
+        );
     }
 }
