@@ -8,8 +8,8 @@ use jj_lib::graph::{GraphEdgeType, TopoGroupedGraph};
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::RefName;
 use jj_lib::repo::Repo;
-use jj_lib::repo_path::RepoPathUiConverter;
 use jj_lib::revset::{RevsetDiagnostics, RevsetParseContext, SymbolResolver};
+use jj_lib::ui_path::RepoPathUiConverter;
 use pollster::FutureExt as _;
 
 use super::JjRepo;
@@ -131,7 +131,7 @@ impl JjRepo {
             let is_in_log = revset.containing_fn();
             let prio_ids: Vec<BackendCommitId> = prio.stream().try_collect().block_on()?;
             for commit_id in prio_ids {
-                if is_in_log(&commit_id).unwrap_or(false) {
+                if is_in_log(&commit_id).block_on().unwrap_or(false) {
                     topo_iter.prioritize_branch(commit_id);
                 }
             }
@@ -217,6 +217,7 @@ impl JjRepo {
                 .as_ref()
                 .and_then(|check| {
                     check(&commit_id)
+                        .block_on()
                         .inspect_err(|e| tracing::warn!("immutability check failed: {e}"))
                         .ok()
                 })

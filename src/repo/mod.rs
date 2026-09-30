@@ -12,20 +12,23 @@ use std::sync::{Arc, OnceLock};
 use color_eyre::Result;
 use color_eyre::eyre::Context;
 use jj_lib::config::{ConfigGetResultExt as _, StackedConfig};
+use jj_lib::default_backend_factories::{
+    default_backend_factories, default_working_copy_factories,
+};
 use jj_lib::dsl_util::{AliasDeclarationParser, AliasesMap};
 use jj_lib::fileset::FilesetAliasesMap;
 use jj_lib::id_prefix::{IdPrefixContext, IdPrefixIndex};
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::WorkspaceNameBuf;
-use jj_lib::repo::{ReadonlyRepo, Repo as _, StoreFactories};
-use jj_lib::repo_path::RepoPathUiConverter;
+use jj_lib::repo::{ReadonlyRepo, Repo as _};
 use jj_lib::revset::{
     RevsetAliasesMap, RevsetDiagnostics, RevsetExtensions, RevsetParseContext,
     RevsetWorkspaceContext,
 };
 use jj_lib::settings::UserSettings;
 use jj_lib::time_util::DatePatternContext;
-use jj_lib::workspace::{Workspace, default_working_copy_factories};
+use jj_lib::ui_path::RepoPathUiConverter;
+use jj_lib::workspace::Workspace;
 
 pub use diff::{assemble_resolution, has_conflict_markers, hunk_markers};
 
@@ -130,7 +133,7 @@ impl JjRepo {
         let workspace = Workspace::load(
             &settings,
             path,
-            &StoreFactories::default(),
+            &default_backend_factories(),
             &default_working_copy_factories(),
         )
         .wrap_err_with(|| format!("failed to load jj workspace at {}", path.display()))?;

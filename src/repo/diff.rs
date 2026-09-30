@@ -6,6 +6,7 @@ use color_eyre::eyre::Context;
 use futures::AsyncReadExt as _;
 use futures::StreamExt as _;
 use jj_lib::backend::TreeValue;
+use jj_lib::backend::{MergedTreeValue, MergedTreeValueExt as _};
 use jj_lib::conflict_labels::ConflictLabels;
 use jj_lib::conflicts::{
     ConflictMaterializeOptions, MaterializedTreeValue, materialize_tree_value,
@@ -14,7 +15,7 @@ use jj_lib::conflicts::{
 use jj_lib::diff_presentation::DiffTokenType;
 use jj_lib::diff_presentation::unified::{self, DiffLineType};
 use jj_lib::matchers::EverythingMatcher;
-use jj_lib::merge::{Diff, Merge, MergedTreeValue};
+use jj_lib::merge::{Diff, Merge};
 use jj_lib::merged_tree::MergedTree;
 use jj_lib::repo::Repo;
 use jj_lib::repo_path::{RepoPath as JjRepoPath, RepoPathBuf};

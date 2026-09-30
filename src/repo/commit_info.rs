@@ -166,7 +166,9 @@ impl JjRepo {
             // Skip rather than report a made-up length: the ID keeps its
             // placeholder width, which is honest about not knowing.
             let (Ok(change_prefix_len), Ok(commit_prefix_len)) = (
-                id_prefix_index.shortest_change_prefix_len(repo, commit.change_id()),
+                id_prefix_index
+                    .shortest_change_prefix_len(repo, commit.change_id())
+                    .block_on(),
                 id_prefix_index.shortest_commit_prefix_len(repo, &commit_id),
             ) else {
                 tracing::warn!("prefix computation failed for {id}");
@@ -233,12 +235,17 @@ impl JjRepo {
             let Ok(commit) = repo.store().get_commit(&commit_id) else {
                 continue;
             };
-            let resolved = repo.resolve_change_id(commit.change_id()).ok().flatten();
+            let resolved = repo
+                .resolve_change_id(commit.change_id())
+                .block_on()
+                .ok()
+                .flatten();
             let is_divergent = resolved
                 .as_ref()
                 .is_some_and(|targets| targets.is_divergent());
             let is_hidden = commit
                 .is_hidden(repo.as_ref())
+                .block_on()
                 .inspect_err(|e| tracing::warn!("is_hidden check failed: {e}"))
                 .unwrap_or(false);
             if !is_divergent && !is_hidden {
@@ -266,7 +273,10 @@ impl JjRepo {
         commit: &Commit,
     ) -> ShortId {
         let mut id = ShortId::new(commit.change_id().reverse_hex());
-        if let Ok(len) = prefix_index.shortest_change_prefix_len(repo, commit.change_id()) {
+        if let Ok(len) = prefix_index
+            .shortest_change_prefix_len(repo, commit.change_id())
+            .block_on()
+        {
             id.set_prefix_len(len);
         }
         id
@@ -294,10 +304,15 @@ impl JjRepo {
         let commit = repo.store().get_commit(commit_id).ok()?;
         let is_hidden = commit
             .is_hidden(repo)
+            .block_on()
             .inspect_err(|e| tracing::warn!("is_hidden check failed: {e}"))
             .unwrap_or(false);
 
-        let resolved = repo.resolve_change_id(commit.change_id()).ok().flatten();
+        let resolved = repo
+            .resolve_change_id(commit.change_id())
+            .block_on()
+            .ok()
+            .flatten();
         let is_divergent = resolved
             .as_ref()
             .is_some_and(|targets| targets.is_divergent());

@@ -1,21 +1,22 @@
-# Vendored from jj-cli v0.43.0
-# Source: https://github.com/jj-vcs/jj/blob/v0.43.0/cli/src/config/revsets.toml
+# Vendored from jj-cli v0.45.1
+# Source: https://github.com/jj-vcs/jj/blob/v0.45.1/cli/src/config/revsets.toml
 # Update with: scripts/update-jj-config.sh
 #
-# jj-version: 0.43.0
+# jj-version: 0.45.1
 
 # NOTE: ensure you update docs/revsets.md with documentation when
 # adding/updating any of these aliases
 
 [revsets]
 arrange = "reachable(@, mutable())"
+converge = "mutable() & divergent()"
 fix = "reachable(@, mutable())"
 run = "reachable(@, mutable())"
 simplify-parents = "reachable(@, mutable())"
 # log revset is also used as the default short-prefixes. If it failed to
 # evaluate, lengthy warning messages would be printed. Use present(expr) if
 # symbols in expr might not always exist.
-log = "present(@) | ancestors(immutable_heads().., 2) | trunk()"
+log = "builtin_log()"
 # Emit the working-copy branch first, which is usually most interesting.
 # This also helps stabilize output order.
 log-graph-prioritize = "present(@)"
@@ -38,9 +39,15 @@ latest(
 )
 '''
 
+# The default set of revisions shown by `jj log` if no revisions or paths are
+# specified.
+'builtin_log()' = 'present(@) | ancestors(immutable_heads().., 2) | trunk()'
+
 # If immutable_heads() failed to evaluate, many jj commands wouldn't work. Use
 # present(expr) if symbols in expr might not always exist.
-'builtin_immutable_heads()' = 'trunk() | tags() | untracked_remote_bookmarks()'
+'builtin_immutable_heads()' = '''
+trunk() | tags() | untracked_remote_bookmarks() | untracked_remote_tags()
+'''
 'immutable_heads()' = 'builtin_immutable_heads()'
 'immutable()' = '::(immutable_heads() | root())'
 'mutable()' = '~immutable()'

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Update vendored jj-cli config files to match the jj-lib version in Cargo.toml.
+# Update vendored jj-cli config files to match the jj-lib version Cargo.lock
+# builds against.
 #
 # Usage:
-#   ./scripts/update-jj-config.sh          # auto-detect version from Cargo.toml
+#   ./scripts/update-jj-config.sh          # the version pinned in Cargo.lock
 #   ./scripts/update-jj-config.sh 0.39.0   # explicit version
 
 set -euo pipefail
@@ -13,13 +14,12 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 if [[ $# -ge 1 ]]; then
     VERSION="$1"
 else
-    # Extract jj-lib version from Cargo.toml (e.g. "0.39" -> "0.39.0")
-    RAW=$(grep 'jj-lib' "$PROJECT_DIR/Cargo.toml" | grep -oP '"\K[0-9]+\.[0-9]+' | head -1)
-    if [[ -z "$RAW" ]]; then
-        echo "error: could not detect jj-lib version from Cargo.toml" >&2
+    # The version line following jj-lib's name in Cargo.lock.
+    VERSION=$(grep -A1 '^name = "jj-lib"$' "$PROJECT_DIR/Cargo.lock" | grep -oP '^version = "\K[^"]+' || true)
+    if [[ -z "$VERSION" ]]; then
+        echo "error: could not find jj-lib in Cargo.lock" >&2
         exit 1
     fi
-    VERSION="${RAW}.0"
 fi
 
 echo "Fetching jj-cli config files for jj v${VERSION}..."

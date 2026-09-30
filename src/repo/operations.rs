@@ -284,7 +284,10 @@ impl JjRepo {
                 let mut id = ShortId::new(c.change_id().reverse_hex());
                 // Leave the placeholder width on failure rather than assert a
                 // prefix length we did not compute.
-                match prefix_index.shortest_change_prefix_len(repo, c.change_id()) {
+                match prefix_index
+                    .shortest_change_prefix_len(repo, c.change_id())
+                    .block_on()
+                {
                     Ok(len) => id.set_prefix_len(len),
                     Err(e) => tracing::warn!("change prefix computation failed: {e}"),
                 }
