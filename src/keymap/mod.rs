@@ -44,7 +44,7 @@ pub const FILE_PREFIX: &str = "file";
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct CommandFlags: u16 {
+    pub struct CommandFlags: u32 {
         const IGNORE_IMMUTABLE    = 1 << 0;
         const IGNORE_WORKING_COPY = 1 << 1;
         const DEBUG               = 1 << 2;
@@ -61,6 +61,8 @@ bitflags::bitflags! {
         const IGNORE_CHANGES      = 1 << 13;
         const IGNORE_ERRORS       = 1 << 14;
         const NO_INTERACTIVE      = 1 << 15;
+        const ALLOW_CONFLICTS     = 1 << 16;
+        const ALLOW_EMPTY_DESCRIPTION = 1 << 17;
     }
 }
 

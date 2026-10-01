@@ -867,3 +867,84 @@ mod converge_tests {
         assert_eq!(quiet.terminal_use(), TerminalUse::Background);
     }
 }
+
+#[cfg(test)]
+mod push_retry_tests {
+    use super::*;
+
+    fn push() -> JJCommand {
+        JJCommand {
+            kind: JJCommandKind::GitPush {
+                all: false,
+                remote: None,
+            },
+            flags: CommandFlags::empty(),
+        }
+    }
+
+    fn retried_flags(cmd: &JJCommand, output: &str) -> Option<CommandFlags> {
+        let options = cmd.retry_options(output.as_bytes());
+        match options.as_slice() {
+            [] => None,
+            [only] => match &only.action {
+                FollowUpAction::Execute(retry) => Some(retry.flags),
+                _ => panic!("expected a retry command"),
+            },
+            _ => panic!("expected at most one retry"),
+        }
+    }
+
+    #[test]
+    fn a_push_refused_for_conflicts_offers_to_allow_them() {
+        let flags = retried_flags(
+            &push(),
+            "Error: Won't push commit 1234abcd since it has conflicts\n",
+        );
+        assert_eq!(flags, Some(CommandFlags::ALLOW_CONFLICTS));
+        let retry = push().with_flag(CommandFlags::ALLOW_CONFLICTS);
+        assert!(
+            retry
+                .args()
+                .iter()
+                .any(|a| a.as_str() == "--allow-conflicts")
+        );
+    }
+
+    /// Allowing only one of two reasons would just be refused again.
+    #[test]
+    fn every_reason_given_is_allowed_together() {
+        let flags = retried_flags(
+            &push(),
+            "Error: Won't push bookmark main: commit 1234abcd has no description and has conflicts\n",
+        );
+        assert_eq!(
+            flags,
+            Some(CommandFlags::ALLOW_CONFLICTS | CommandFlags::ALLOW_EMPTY_DESCRIPTION)
+        );
+    }
+
+    /// The wording is matched as text, so only a push is offered a push flag.
+    #[test]
+    fn only_a_push_is_offered_the_push_override() {
+        let new = JJCommand {
+            kind: JJCommandKind::Raw {
+                args: vec!["log".into()],
+            },
+            flags: CommandFlags::empty(),
+        };
+        assert_eq!(
+            retried_flags(&new, "Won't push commit x since it has conflicts"),
+            None
+        );
+    }
+
+    /// A private commit is set in config; no flag gets it pushed.
+    #[test]
+    fn a_private_commit_offers_nothing() {
+        let flags = retried_flags(
+            &push(),
+            "Error: Won't push commit 1234abcd since it is private\n",
+        );
+        assert_eq!(flags, None);
+    }
+}

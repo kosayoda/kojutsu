@@ -24,6 +24,16 @@ fn rev(id: impl std::fmt::Display) -> TaggedArg {
     (format_compact!("{id}"), CommandPartKind::Revision)
 }
 
+/// The options every kind of `jj git push` takes.
+const PUSH_FLAGS: &[(CommandFlags, &str)] = &[
+    (CommandFlags::DRY_RUN, "--dry-run"),
+    (CommandFlags::ALLOW_CONFLICTS, "--allow-conflicts"),
+    (
+        CommandFlags::ALLOW_EMPTY_DESCRIPTION,
+        "--allow-empty-description",
+    ),
+];
+
 /// A bookmark or tag on one remote, as the `name@remote` symbol jj resolves
 /// exactly, quoted where the name or remote needs it.
 fn remote_symbol(name: &str, remote: &crate::types::RemoteName) -> TaggedArg {
@@ -287,7 +297,7 @@ impl JJCommand {
                     args.push(flag("--remote"));
                     args.push(arg(r.as_str()));
                 }
-                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
+                push_flags(&mut args, flags, PUSH_FLAGS);
                 args
             }
             JJCommandKind::GitPushChange {
@@ -298,7 +308,7 @@ impl JJCommand {
                     args.push(flag("--remote"));
                     args.push(arg(r.as_str()));
                 }
-                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
+                push_flags(&mut args, flags, PUSH_FLAGS);
                 args
             }
             JJCommandKind::GitPushBookmark {
@@ -313,7 +323,7 @@ impl JJCommand {
                     args.push(flag("--remote"));
                     args.push(arg(r.as_str()));
                 }
-                push_flags(&mut args, flags, &[(CommandFlags::DRY_RUN, "--dry-run")]);
+                push_flags(&mut args, flags, PUSH_FLAGS);
                 args
             }
             JJCommandKind::GitFetchBookmark {

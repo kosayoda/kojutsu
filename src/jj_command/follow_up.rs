@@ -60,6 +60,8 @@ impl JJCommand {
                     self.clone().with_flag(CommandFlags::IGNORE_IMMUTABLE),
                 ),
             });
+        } else if let Some(retry) = self.push_override_retry(&text) {
+            options.push(retry);
         } else if text.contains("stale") && text.contains("working copy") {
             options.push(FollowUpOption {
                 key: 'r',
@@ -71,6 +73,43 @@ impl JJCommand {
         }
 
         options
+    }
+
+    /// A push jj refused over what one of its commits holds (`Won't push
+    /// commit … since it has conflicts`), retried allowing every reason it
+    /// gave that a flag can override; one reason left standing would only be
+    /// refused again. A private commit is set in config, not by a flag.
+    fn push_override_retry(&self, text: &str) -> Option<FollowUpOption> {
+        let pushes = matches!(
+            self.kind,
+            super::JJCommandKind::GitPush { .. }
+                | super::JJCommandKind::GitPushChange { .. }
+                | super::JJCommandKind::GitPushBookmark { .. }
+        );
+        if !pushes || !text.contains("Won't push") {
+            return None;
+        }
+        let mut allow = CommandFlags::empty();
+        if text.contains("has conflicts") {
+            allow |= CommandFlags::ALLOW_CONFLICTS;
+        }
+        if text.contains("has no description") {
+            allow |= CommandFlags::ALLOW_EMPTY_DESCRIPTION;
+        }
+        let label = if allow == CommandFlags::ALLOW_CONFLICTS {
+            "retry with --allow-conflicts"
+        } else if allow == CommandFlags::ALLOW_EMPTY_DESCRIPTION {
+            "retry with --allow-empty-description"
+        } else if !allow.is_empty() {
+            "retry allowing conflicts and no description"
+        } else {
+            return None;
+        };
+        Some(FollowUpOption {
+            key: 'r',
+            label,
+            action: FollowUpAction::Execute(self.clone().with_flag(allow)),
+        })
     }
 }
 
