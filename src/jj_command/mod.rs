@@ -165,6 +165,12 @@ pub enum JJCommandKind {
     },
     GitExport,
     GitImport,
+    GitColocation {
+        command: Colocation,
+        /// Run from a workspace other than the main one, which jj only
+        /// supports from 0.46.
+        secondary_workspace: bool,
+    },
     Absorb {
         from: Option<RevisionArg>,
         selection: ChangeSelection,
@@ -261,6 +267,24 @@ pub enum JJCommandKind {
         program: Str,
         args: Vec<Str>,
     },
+}
+
+/// What `jj git colocation` is asked to do with the workspace it runs in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Colocation {
+    Status,
+    Enable,
+    Disable,
+}
+
+impl Colocation {
+    fn subcommand(self) -> &'static str {
+        match self {
+            Self::Status => "status",
+            Self::Enable => "enable",
+            Self::Disable => "disable",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1254,6 +1278,13 @@ mod jj_feature_tests {
             JjFeature::UndoCrossWorkspace => {
                 cmd(JJCommandKind::Redo, CommandFlags::ALLOW_CROSS_WORKSPACE)
             }
+            JjFeature::ColocationInWorkspaces => cmd(
+                JJCommandKind::GitColocation {
+                    command: Colocation::Status,
+                    secondary_workspace: true,
+                },
+                CommandFlags::empty(),
+            ),
             JjFeature::WorkspaceRemove => cmd(
                 JJCommandKind::WorkspaceRemove {
                     names: smallvec::smallvec![WorkspaceName::new("second")],
@@ -1311,6 +1342,21 @@ mod jj_feature_tests {
             CommandFlags::empty(),
         );
         assert_eq!(split.features().count(), 0);
+    }
+
+    /// The main workspace has taken `jj git colocation` since 0.35.
+    #[test]
+    fn colocation_in_the_main_workspace_needs_nothing_new() {
+        for command in [Colocation::Status, Colocation::Enable, Colocation::Disable] {
+            let main = cmd(
+                JJCommandKind::GitColocation {
+                    command,
+                    secondary_workspace: false,
+                },
+                CommandFlags::empty(),
+            );
+            assert_eq!(main.features().count(), 0);
+        }
     }
 
     /// A command that needs several features is held to the newest.

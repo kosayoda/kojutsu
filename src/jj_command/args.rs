@@ -403,6 +403,21 @@ impl JJCommand {
             }
             JJCommandKind::GitExport => vec![sub("git"), sub("export")],
             JJCommandKind::GitImport => vec![sub("git"), sub("import")],
+            JJCommandKind::GitColocation {
+                command,
+                secondary_workspace,
+            } => {
+                let colocation = sub("colocation");
+                vec![
+                    sub("git"),
+                    if *secondary_workspace {
+                        colocation.needs(JjFeature::ColocationInWorkspaces)
+                    } else {
+                        colocation
+                    },
+                    sub(command.subcommand()),
+                ]
+            }
             JJCommandKind::Absorb {
                 from, selection, ..
             } => {

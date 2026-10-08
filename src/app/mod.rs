@@ -969,6 +969,15 @@ impl App {
             .find(|ws| ws.name == *name)
     }
 
+    /// Whether kojutsu runs in the workspace that holds the repo, rather than
+    /// one added to it: only that one has `.jj/repo` as a directory.
+    pub fn in_main_workspace(&self) -> bool {
+        std::path::Path::new(&self.repo_root)
+            .join(".jj")
+            .join("repo")
+            .is_dir()
+    }
+
     /// Whether `name` is the workspace kojutsu runs in.
     pub fn is_current_workspace(&self, name: &crate::types::WorkspaceName) -> bool {
         self.workspace_entry(name).is_some_and(|ws| ws.is_current)

@@ -366,6 +366,10 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("g p b", GitPushBookmark, "bookmark", C, dag()),
         bind("g e", GitExport, "export (jj -> git)", C, dag()),
         bind("g i", GitImport, "import (git -> jj)", C, dag()),
+        prefix("g c", "colocation", C, dag()),
+        bind("g c s", GitColocationStatus, "status", C, dag()),
+        bind("g c e", GitColocationEnable, "enable", C, dag()),
+        bind("g c d", GitColocationDisable, "disable", C, dag()),
         // New prefix
         prefix("n", "new", C, dag()),
         toggle("n shift-e", CommandFlags::NO_EDIT, "no-edit", dag()),
@@ -521,6 +525,10 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("a", WorkspaceAdd, "add", C, workspace()),
         bind("f", WorkspaceForget, "forget", C, workspace()),
         bind("x", WorkspaceRemove, "remove (deletes it)", C, workspace()),
+        prefix("c", "git colocation", C, workspace()),
+        bind("c s", GitColocationStatus, "status", C, workspace()),
+        bind("c e", GitColocationEnable, "enable", C, workspace()),
+        bind("c d", GitColocationDisable, "disable", C, workspace()),
         bind("r", WorkspaceRename, "rename", C, workspace()),
         bind("enter", JumpToCommit, "jump to commit", C, workspace()),
     ]);

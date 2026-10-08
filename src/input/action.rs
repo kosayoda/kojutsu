@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::app::{App, AppMode, Invocation, SubmenuToggle};
 use crate::dag::DiffLineKind;
 use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
-use crate::jj_command::{JJCommand, JJCommandKind};
+use crate::jj_command::{Colocation, JJCommand, JJCommandKind};
 use crate::keymap::{
     self, ActionId, ActionRegistry, AppAction, CommandFlags, Effect, Keymap, LookupResult, TrieNode,
 };
@@ -738,6 +738,9 @@ fn perform(
         }
         AppAction::WorkspaceForget => super::target::workspace_forget(app, flags),
         AppAction::WorkspaceRemove => super::target::workspace_remove(app, flags),
+        AppAction::GitColocationStatus => colocation(app, Colocation::Status, flags),
+        AppAction::GitColocationEnable => colocation(app, Colocation::Enable, flags),
+        AppAction::GitColocationDisable => colocation(app, Colocation::Disable, flags),
         AppAction::WorkspaceList => Action::run(JJCommand {
             kind: JJCommandKind::WorkspaceList,
             flags,
@@ -972,6 +975,17 @@ pub(super) fn jump_to_commit_in_dag(
             .unwrap_or_else(|| commit_id.as_str().into());
         offer_widen_revset(app, &id_for_revset);
     }
+}
+
+/// `jj git colocation`, which acts on the workspace kojutsu runs in.
+fn colocation(app: &App, command: Colocation, flags: CommandFlags) -> Action {
+    Action::run(JJCommand {
+        kind: JJCommandKind::GitColocation {
+            command,
+            secondary_workspace: !app.in_main_workspace(),
+        },
+        flags,
+    })
 }
 
 /// What the grey-out in help and the submenu tests entries against: the one
