@@ -1048,6 +1048,10 @@ impl LuaEngine {
         ctx.set("view", app.active_view.to_string())?;
         ctx.set("revset", app.revset.current.as_str())?;
         ctx.set("repo_root", app.repo_root.as_str())?;
+        ctx.set(
+            "jj_version",
+            app.jj.version().map(|version| version.to_string()),
+        )?;
         Ok(ctx)
     }
 }

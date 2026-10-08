@@ -170,6 +170,11 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field view string").unwrap();
     writeln!(out, "---@field revset string").unwrap();
     writeln!(out, "---@field repo_root string").unwrap();
+    writeln!(
+        out,
+        "---@field jj_version string? the installed jj, as \"0.45.1\"; nil when it could not be told"
+    )
+    .unwrap();
     writeln!(out).unwrap();
 
     writeln!(out, "---@alias JJStatus \"ok\"|\"failed\"|\"cancelled\"").unwrap();
