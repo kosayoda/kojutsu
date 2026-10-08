@@ -845,7 +845,7 @@ fn perform(
             flags,
         ),
         AppAction::GitFetchAllRemotes => Action::run(JJCommand {
-            kind: RemoteCommand::Fetch { all_remotes: true }.to_kind(None),
+            kind: RemoteCommand::Fetch { all_remotes: true }.to_kind(SmallVec::new()),
             flags,
         }),
         AppAction::TagDelete => super::target::tag_delete(app, flags),

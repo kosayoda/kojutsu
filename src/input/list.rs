@@ -267,9 +267,9 @@ pub(super) fn resolve_selection(
             flags,
         ),
         PendingSelection::GitRemote { command, flags } => {
-            let remote = names.into_iter().next().map(RemoteName::new);
+            let remotes = names.into_iter().map(RemoteName::new).collect();
             Action::run(JJCommand {
-                kind: command.to_kind(remote),
+                kind: command.to_kind(remotes),
                 flags,
             })
         }

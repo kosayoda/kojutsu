@@ -403,13 +403,12 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             let Some(change_id) = app.selected_change_id() else {
                 return Action::None;
             };
-            Action::run(JJCommand {
-                kind: JJCommandKind::GitPushChange {
-                    change_id,
-                    remote: None,
-                },
+            with_remote(
+                app,
+                "push change to remote",
+                RemoteCommand::PushChange { change_id },
                 flags,
-            })
+            )
         }
         AppAction::GitExport => Action::run(JJCommand {
             kind: JJCommandKind::GitExport,

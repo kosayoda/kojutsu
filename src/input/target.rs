@@ -295,7 +295,8 @@ pub(super) fn git_fetch_bookmark(app: &mut App, flags: CommandFlags) -> Action {
     })
 }
 
-/// Run a git command against the only remote, or ask which one first.
+/// Run a git command against the only remote, or ask which first: several
+/// at once where jj takes them.
 pub(super) fn with_remote(
     app: &mut App,
     prompt: &str,
@@ -304,17 +305,18 @@ pub(super) fn with_remote(
 ) -> Action {
     if app.views.remotes.len() > 1 {
         let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
+        let multi = command.takes_several(app.jj);
         app.mode = AppMode::select_from_list(
             prompt,
             items,
-            false,
+            multi,
             PendingSelection::GitRemote { command, flags },
             false,
         );
         return Action::None;
     }
     Action::run(JJCommand {
-        kind: command.to_kind(None),
+        kind: command.to_kind(SmallVec::new()),
         flags,
     })
 }
@@ -647,8 +649,8 @@ mod tests {
             kind,
             JJCommandKind::GitFetch {
                 all_remotes: false,
-                remote: None
-            }
+                ref remotes
+            } if remotes.is_empty()
         ));
     }
 
@@ -766,5 +768,43 @@ mod workspace_remove_tests {
             status(&app),
             "jj workspace remove needs jj 0.46.0 or newer; the installed jj is 0.45.1"
         );
+    }
+}
+
+#[cfg(test)]
+mod remote_choice_tests {
+    use crate::app::{App, AppMode};
+    use crate::jj_version::{InstalledJj, JjVersion};
+    use crate::keymap::CommandFlags;
+    use crate::types::{RemoteCommand, RemoteName, SmallVec};
+
+    use super::with_remote;
+
+    fn chooses_several(command: RemoteCommand, minor: u32) -> bool {
+        let mut app = App::for_test();
+        app.jj = InstalledJj::known(JjVersion::new(0, minor, 0));
+        app.views.remotes = vec![RemoteName::new("origin"), RemoteName::new("upstream")];
+        with_remote(&mut app, "remote", command, CommandFlags::empty());
+        match &app.mode {
+            AppMode::SelectFromList(state) => state.multi,
+            _ => panic!("expected a remote list"),
+        }
+    }
+
+    /// A push picks several remotes only where jj takes them; a fetch
+    /// always has.
+    #[test]
+    fn several_remotes_are_offered_where_jj_takes_them() {
+        assert!(!chooses_several(RemoteCommand::Push { all: false }, 45));
+        assert!(chooses_several(RemoteCommand::Push { all: false }, 46));
+        let bookmarks = || RemoteCommand::PushBookmark {
+            bookmarks: SmallVec::new(),
+        };
+        assert!(!chooses_several(bookmarks(), 45));
+        assert!(chooses_several(bookmarks(), 46));
+        assert!(chooses_several(
+            RemoteCommand::Fetch { all_remotes: false },
+            36
+        ));
     }
 }

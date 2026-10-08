@@ -85,25 +85,38 @@ pub enum PendingSelection {
     },
 }
 
-/// A git command that talks to a remote, waiting to learn which one.
+/// A git command that talks to remotes, waiting to learn which.
 pub enum RemoteCommand {
     Fetch { all_remotes: bool },
     Push { all: bool },
+    PushChange { change_id: RevisionArg },
     PushBookmark { bookmarks: SmallVec<BookmarkName> },
 }
 
 impl RemoteCommand {
-    /// The command, against `remote` (`None` for jj's default).
-    pub fn to_kind(self, remote: Option<RemoteName>) -> crate::jj_command::JJCommandKind {
+    /// The command, against `remotes` (none for jj's default).
+    pub fn to_kind(self, remotes: SmallVec<RemoteName>) -> crate::jj_command::JJCommandKind {
         use crate::jj_command::JJCommandKind;
         match self {
             Self::Fetch { all_remotes } => JJCommandKind::GitFetch {
                 all_remotes,
-                remote,
+                remotes,
             },
-            Self::Push { all } => JJCommandKind::GitPush { all, remote },
+            Self::Push { all } => JJCommandKind::GitPush { all, remotes },
+            Self::PushChange { change_id } => JJCommandKind::GitPushChange { change_id, remotes },
             Self::PushBookmark { bookmarks } => {
-                JJCommandKind::GitPushBookmark { bookmarks, remote }
+                JJCommandKind::GitPushBookmark { bookmarks, remotes }
+            }
+        }
+    }
+
+    /// Whether `jj` takes several remotes for it at once: a fetch always
+    /// has, a push only lately.
+    pub fn takes_several(&self, jj: crate::jj_version::InstalledJj) -> bool {
+        match self {
+            Self::Fetch { .. } => true,
+            Self::Push { .. } | Self::PushChange { .. } | Self::PushBookmark { .. } => {
+                jj.supports(crate::jj_version::JjFeature::PushToRemotes)
             }
         }
     }

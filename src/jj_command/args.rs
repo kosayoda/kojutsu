@@ -338,54 +338,42 @@ impl JJCommand {
             }
             JJCommandKind::GitFetch {
                 all_remotes,
-                remote,
+                remotes,
                 ..
             } => {
                 let mut args = vec![sub("git"), sub("fetch")];
                 if *all_remotes {
                     args.push(flag("--all-remotes"));
                 }
-                if let Some(r) = remote {
-                    args.push(flag("--remote"));
-                    args.push(arg(r.as_str()));
-                }
+                push_remotes(&mut args, remotes, None);
                 args
             }
-            JJCommandKind::GitPush { all, remote, .. } => {
+            JJCommandKind::GitPush { all, remotes, .. } => {
                 let mut args = vec![sub("git"), sub("push")];
                 if *all {
                     args.push(flag("--all"));
                 }
-                if let Some(r) = remote {
-                    args.push(flag("--remote"));
-                    args.push(arg(r.as_str()));
-                }
+                push_remotes(&mut args, remotes, Some(JjFeature::PushToRemotes));
                 push_flags(&mut args, flags, PUSH_FLAGS);
                 args
             }
             JJCommandKind::GitPushChange {
-                change_id, remote, ..
+                change_id, remotes, ..
             } => {
                 let mut args = vec![sub("git"), sub("push"), flag("-c"), rev(change_id)];
-                if let Some(r) = remote {
-                    args.push(flag("--remote"));
-                    args.push(arg(r.as_str()));
-                }
+                push_remotes(&mut args, remotes, Some(JjFeature::PushToRemotes));
                 push_flags(&mut args, flags, PUSH_FLAGS);
                 args
             }
             JJCommandKind::GitPushBookmark {
-                bookmarks, remote, ..
+                bookmarks, remotes, ..
             } => {
                 let mut args = vec![sub("git"), sub("push")];
                 for name in bookmarks {
                     args.push(flag("--bookmark"));
                     args.push(rev(name.as_str()));
                 }
-                if let Some(r) = remote {
-                    args.push(flag("--remote"));
-                    args.push(arg(r.as_str()));
-                }
+                push_remotes(&mut args, remotes, Some(JjFeature::PushToRemotes));
                 push_flags(&mut args, flags, PUSH_FLAGS);
                 args
             }
@@ -794,6 +782,23 @@ fn push_flags(args: &mut Vec<TaggedArg>, flags: CommandFlags, mapping: &[FlagOpt
                 None => arg,
             });
         }
+    }
+}
+
+/// A `--remote` for each of `remotes`. A command that took only one until
+/// `several` came needs it from the second on.
+fn push_remotes(
+    args: &mut Vec<TaggedArg>,
+    remotes: &[crate::types::RemoteName],
+    several: Option<JjFeature>,
+) {
+    for (i, remote) in remotes.iter().enumerate() {
+        let remote_flag = flag("--remote");
+        args.push(match several {
+            Some(feature) if i > 0 => remote_flag.needs(feature),
+            _ => remote_flag,
+        });
+        args.push(arg(remote.as_str()));
     }
 }
 

@@ -143,21 +143,22 @@ pub enum JJCommandKind {
     },
     Undo,
     Redo,
+    /// `remotes` empty: jj's default, for this and the pushes.
     GitFetch {
         all_remotes: bool,
-        remote: Option<RemoteName>,
+        remotes: SmallVec<RemoteName>,
     },
     GitPush {
         all: bool,
-        remote: Option<RemoteName>,
+        remotes: SmallVec<RemoteName>,
     },
     GitPushChange {
         change_id: RevisionArg,
-        remote: Option<RemoteName>,
+        remotes: SmallVec<RemoteName>,
     },
     GitPushBookmark {
         bookmarks: SmallVec<BookmarkName>,
-        remote: Option<RemoteName>,
+        remotes: SmallVec<RemoteName>,
     },
     GitFetchBookmark {
         bookmark: BookmarkName,
@@ -686,7 +687,7 @@ mod is_interactive_tests {
         };
         let push = cmd(JJCommandKind::GitPush {
             all: false,
-            remote: None,
+            remotes: SmallVec::new(),
         });
         assert_eq!(push.terminal_use(), TerminalUse::Foreground);
         assert_eq!(
@@ -959,7 +960,7 @@ mod push_retry_tests {
         JJCommand {
             kind: JJCommandKind::GitPush {
                 all: false,
-                remote: None,
+                remotes: SmallVec::new(),
             },
             flags: CommandFlags::empty(),
         }
@@ -1125,7 +1126,7 @@ mod global_flag_tests {
             cmd(
                 JJCommandKind::GitFetch {
                     all_remotes: false,
-                    remote: None,
+                    remotes: SmallVec::new(),
                 },
                 TOGGLES,
             ),
@@ -1240,7 +1241,7 @@ mod jj_feature_tests {
         cmd(
             JJCommandKind::GitPush {
                 all: false,
-                remote: None,
+                remotes: SmallVec::new(),
             },
             flags,
         )
@@ -1278,6 +1279,16 @@ mod jj_feature_tests {
             JjFeature::UndoCrossWorkspace => {
                 cmd(JJCommandKind::Redo, CommandFlags::ALLOW_CROSS_WORKSPACE)
             }
+            JjFeature::PushToRemotes => cmd(
+                JJCommandKind::GitPush {
+                    all: false,
+                    remotes: smallvec::smallvec![
+                        RemoteName::new("origin"),
+                        RemoteName::new("upstream")
+                    ],
+                },
+                CommandFlags::empty(),
+            ),
             JjFeature::ColocationInWorkspaces => cmd(
                 JJCommandKind::GitColocation {
                     command: Colocation::Status,
@@ -1342,6 +1353,35 @@ mod jj_feature_tests {
             CommandFlags::empty(),
         );
         assert_eq!(split.features().count(), 0);
+    }
+
+    /// One remote is all a push took before 0.46; a fetch took several long
+    /// before the floor.
+    #[test]
+    fn only_a_second_push_remote_needs_anything_new() {
+        let one = cmd(
+            JJCommandKind::GitPush {
+                all: false,
+                remotes: smallvec::smallvec![RemoteName::new("origin")],
+            },
+            CommandFlags::empty(),
+        );
+        assert_eq!(one.features().count(), 0);
+        let fetch = cmd(
+            JJCommandKind::GitFetch {
+                all_remotes: false,
+                remotes: smallvec::smallvec![
+                    RemoteName::new("origin"),
+                    RemoteName::new("upstream")
+                ],
+            },
+            CommandFlags::empty(),
+        );
+        assert_eq!(fetch.features().count(), 0);
+        assert_eq!(
+            fetch.args(),
+            ["git", "fetch", "--remote", "origin", "--remote", "upstream"]
+        );
     }
 
     /// The main workspace has taken `jj git colocation` since 0.35.
