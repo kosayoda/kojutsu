@@ -311,8 +311,16 @@ pub fn default_bindings() -> Vec<BindingSpec> {
             dag(),
         ),
         bind("! !", Run, "run command\u{2026}", C, dag()),
-        // File prefix (dag also has untrack)
+        // File prefix: the DAG's own entries, which rewrite its commits
+        toggle(
+            "shift-f shift-d",
+            CommandFlags::RESTORE_DESCENDANTS,
+            "restore descendants",
+            dag(),
+        ),
         bind("shift-f u", FileUntrack, "untrack", C, dag()),
+        bind("shift-f d", FileDelete, "delete", C, dag()),
+        bind("shift-f e i", FileEdit, "in its revision", C, dag()),
         // Bookmark prefix
         prefix("b", "bookmark", C, dag()),
         toggle(

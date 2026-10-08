@@ -776,6 +776,8 @@ fn perform(
         | AppAction::ConflictEditFile
         | AppAction::ConflictEditHunk
         | AppAction::FileUntrack
+        | AppAction::FileEdit
+        | AppAction::FileDelete
         | AppAction::Commit
         | AppAction::CommitWithMessage
         | AppAction::Describe
@@ -1022,7 +1024,7 @@ fn has_conflict_context(app: &App) -> bool {
 
 /// Extract the file path and line number from the current cursor position.
 /// Works across DAG, evolog, interdiff, and annotate views.
-fn extract_file_and_line(app: &App) -> Option<(crate::types::RepoPath, usize)> {
+pub(super) fn extract_file_and_line(app: &App) -> Option<(crate::types::RepoPath, usize)> {
     match app.rows.get(app.cursor.raw())? {
         row @ (DisplayRow::FileChange { owner, file_idx }
         | DisplayRow::DiffLine {

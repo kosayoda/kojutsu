@@ -192,6 +192,11 @@ impl AppAction {
             Fix => mutate(CF).repeatable(),
             Run => mutate(C).needs(JjFeature::Run),
             FileUntrack => mutate(F).label("untrack"),
+            FileEdit => mutate(F)
+                .requires(Requires::File)
+                .needs(JjFeature::FileEdit)
+                .label("edit"),
+            FileDelete => mutate(F).needs(JjFeature::FileDelete).label("delete"),
             ResolveOurs => mutate(F)
                 .requires(Requires::Conflict)
                 .repeatable()

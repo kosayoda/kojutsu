@@ -84,6 +84,12 @@ fn remote_symbol(name: &str, remote: &crate::types::RemoteName) -> TaggedArg {
     rev(jj_lib::revset::format_remote_symbol(name, remote.as_str()))
 }
 
+/// The options `jj file edit` and `jj file delete` both take.
+const FILE_REWRITE_FLAGS: &[FlagOption] = &[opt(
+    CommandFlags::RESTORE_DESCENDANTS,
+    "--restore-descendants",
+)];
+
 /// The options `jj undo` and `jj redo` both take.
 const UNDO_FLAGS: &[FlagOption] = &[opt(
     CommandFlags::ALLOW_CROSS_WORKSPACE,
@@ -665,6 +671,30 @@ impl JJCommand {
             }
             JJCommandKind::FileUntrack { paths, .. } => {
                 let mut args = vec![sub("file"), sub("untrack")];
+                args.extend(paths.iter().map(|p| fileset_arg(p)));
+                args
+            }
+            JJCommandKind::FileEdit { change_id, path } => {
+                let mut args = vec![
+                    sub("file"),
+                    sub("edit").needs(JjFeature::FileEdit),
+                    flag("-r"),
+                    rev(change_id),
+                ];
+                push_flags(&mut args, flags, FILE_REWRITE_FLAGS);
+                // A path, not a fileset: jj would take the quotes as part of
+                // the name.
+                args.push(arg(path.clone()));
+                args
+            }
+            JJCommandKind::FileDelete { change_id, paths } => {
+                let mut args = vec![
+                    sub("file"),
+                    sub("delete").needs(JjFeature::FileDelete),
+                    flag("-r"),
+                    rev(change_id),
+                ];
+                push_flags(&mut args, flags, FILE_REWRITE_FLAGS);
                 args.extend(paths.iter().map(|p| fileset_arg(p)));
                 args
             }

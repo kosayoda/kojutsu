@@ -11,7 +11,8 @@ use crate::types::{
 
 use crate::input::Action;
 use crate::input::action::{
-    enter_target_select, selection_scope, selection_targets, working_copy_selection,
+    enter_target_select, extract_file_and_line, selection_owner_revision, selection_scope,
+    selection_targets, working_copy_selection,
 };
 use crate::input::bookmark::enter_bookmark_advance;
 use crate::input::target::with_remote;
@@ -234,6 +235,29 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
                 flags,
             })
         }
+        AppAction::FileEdit => {
+            let Some((path, _)) = extract_file_and_line(app) else {
+                app.set_error("put the cursor on a file to edit");
+                return Action::None;
+            };
+            let Some(change_id) = app.selected_change_id() else {
+                return Action::None;
+            };
+            Action::run(JJCommand {
+                kind: JJCommandKind::FileEdit {
+                    change_id,
+                    path: path.as_str().into(),
+                },
+                flags,
+            })
+        }
+        AppAction::FileDelete => match files_to_rewrite(app) {
+            Some((change_id, paths)) => Action::run(JJCommand {
+                kind: JJCommandKind::FileDelete { change_id, paths },
+                flags,
+            }),
+            None => Action::None,
+        },
         AppAction::Commit => {
             let Some(selection) = working_copy_selection(app) else {
                 return Action::None;
@@ -462,6 +486,21 @@ fn selection_command(
         Some((id, selection)) => Action::run(build(id, selection)),
         None => Action::None,
     }
+}
+
+/// The files a per-file rewrite acts on, and the revision they are in: the
+/// selected files, in the commit they were selected in, or else the file
+/// under the cursor. Never a whole commit's: says so when there are none.
+fn files_to_rewrite(app: &mut App) -> Option<(RevisionArg, SmallVec<Str>)> {
+    if app.selection_owner().is_some() {
+        let paths = app.selected_file_paths().into();
+        return Some((selection_owner_revision(app)?, paths));
+    }
+    let Some((path, _)) = extract_file_and_line(app) else {
+        app.set_error("select files, or put the cursor on one");
+        return None;
+    };
+    Some((app.selected_change_id()?, smallvec![path.as_str().into()]))
 }
 
 fn make_command(app: &App, build: impl FnOnce(RevisionArg) -> JJCommand) -> Action {

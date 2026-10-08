@@ -252,6 +252,16 @@ pub enum JJCommandKind {
     FileUntrack {
         paths: SmallVec<Str>,
     },
+    /// Open one file as it is in a revision in `$EDITOR`, and write the
+    /// edit back into that revision.
+    FileEdit {
+        change_id: RevisionArg,
+        path: Str,
+    },
+    FileDelete {
+        change_id: RevisionArg,
+        paths: SmallVec<Str>,
+    },
     Resolve {
         change_id: RevisionArg,
         path: Str,
@@ -549,7 +559,8 @@ impl JJCommand {
         match &self.kind {
             JJCommandKind::DescribeInEditor { .. }
             | JJCommandKind::Diffedit { .. }
-            | JJCommandKind::Split { .. } => true,
+            | JJCommandKind::Split { .. }
+            | JJCommandKind::FileEdit { .. } => true,
             JJCommandKind::Squash { message, .. } => matches!(message, MessageMode::Default),
             // Asks on the terminal when its heuristics can't decide, and
             // may open $EDITOR to merge descriptions.
@@ -1279,6 +1290,20 @@ mod jj_feature_tests {
             JjFeature::UndoCrossWorkspace => {
                 cmd(JJCommandKind::Redo, CommandFlags::ALLOW_CROSS_WORKSPACE)
             }
+            JjFeature::FileEdit => cmd(
+                JJCommandKind::FileEdit {
+                    change_id: RevisionArg::new("x"),
+                    path: "src/lib.rs".into(),
+                },
+                CommandFlags::empty(),
+            ),
+            JjFeature::FileDelete => cmd(
+                JJCommandKind::FileDelete {
+                    change_id: RevisionArg::new("x"),
+                    paths: smallvec::smallvec!["src/lib.rs".into()],
+                },
+                CommandFlags::empty(),
+            ),
             JjFeature::PushToRemotes => cmd(
                 JJCommandKind::GitPush {
                     all: false,
@@ -1381,6 +1406,42 @@ mod jj_feature_tests {
         assert_eq!(
             fetch.args(),
             ["git", "fetch", "--remote", "origin", "--remote", "upstream"]
+        );
+    }
+
+    /// `jj file edit` takes a path, not a fileset: quoted, it would edit a
+    /// new file with the quotes in its name.
+    #[test]
+    fn file_edit_names_its_file_as_a_plain_path() {
+        let edit = cmd(
+            JJCommandKind::FileEdit {
+                change_id: RevisionArg::new("x"),
+                path: "dir/a file.rs".into(),
+            },
+            CommandFlags::RESTORE_DESCENDANTS,
+        );
+        assert_eq!(
+            edit.args(),
+            [
+                "file",
+                "edit",
+                "-r",
+                "x",
+                "--restore-descendants",
+                "dir/a file.rs"
+            ]
+        );
+        assert_eq!(edit.terminal_use(), TerminalUse::Interactive);
+        let delete = cmd(
+            JJCommandKind::FileDelete {
+                change_id: RevisionArg::new("x"),
+                paths: smallvec::smallvec!["dir/a file.rs".into()],
+            },
+            CommandFlags::empty(),
+        );
+        assert_eq!(
+            delete.args(),
+            ["file", "delete", "-r", "x", "\"dir/a file.rs\""]
         );
     }
 

@@ -93,6 +93,8 @@ pub enum JjFeature {
     ColocationInWorkspaces,
     /// `jj git push` with more than one `--remote`.
     PushToRemotes,
+    FileEdit,
+    FileDelete,
 }
 
 impl JjFeature {
@@ -112,7 +114,9 @@ impl JjFeature {
             | Self::WorkspaceColocation
             | Self::WorkspaceRemove
             | Self::ColocationInWorkspaces
-            | Self::PushToRemotes => JjVersion::new(0, 46, 0),
+            | Self::PushToRemotes
+            | Self::FileEdit
+            | Self::FileDelete => JjVersion::new(0, 46, 0),
         }
     }
 
@@ -133,6 +137,8 @@ impl JjFeature {
             Self::WorkspaceRemove => "jj workspace remove",
             Self::ColocationInWorkspaces => "jj git colocation outside the main workspace",
             Self::PushToRemotes => "pushing to several remotes at once",
+            Self::FileEdit => "jj file edit",
+            Self::FileDelete => "jj file delete",
         }
     }
 }

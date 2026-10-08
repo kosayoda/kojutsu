@@ -189,6 +189,8 @@ pub enum AppAction {
     Fix,
     Run,
     FileUntrack,
+    FileEdit,
+    FileDelete,
     ResolveOurs,
     ResolveTheirs,
     ResolveMergeTool,
