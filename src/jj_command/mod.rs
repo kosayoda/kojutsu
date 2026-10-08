@@ -12,6 +12,7 @@ pub use follow_up::{FollowUpAction, FollowUpOption};
 use std::sync::{Arc, atomic::AtomicI32, atomic::Ordering};
 
 use crate::dag::{BookmarkRef, TagRef};
+use crate::jj_version::{InstalledJj, JjFeature};
 use crate::keymap::CommandFlags;
 use crate::types::{
     BookmarkName, ChangeId, ChangeSelection, JumpTarget, MessageMode, OperationId, RebaseSource,
@@ -443,22 +444,39 @@ impl JJCommand {
                 kind: CommandPartKind::Binary,
             },
         ];
-        parts.extend(self.tagged_args().into_iter().map(|(text, kind)| {
-            // Quote whatever a shell would need quoted, whichever kind it is:
-            // the log line is there to be read and pasted, and an argument that
-            // arrived as one word has to leave as one word. jj's own flags and
-            // subcommands never need it; a program's arguments can.
-            let text =
-                if text.contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c)) {
+        parts.extend(self.tagged_args().into_iter().map(
+            |args::TaggedArg { text, kind, .. }| {
+                // Quote whatever a shell would need quoted, whichever kind it is:
+                // the log line is there to be read and pasted, and an argument that
+                // arrived as one word has to leave as one word. jj's own flags and
+                // subcommands never need it; a program's arguments can.
+                let text = if text
+                    .contains(|c: char| c.is_whitespace() || "\"'\\$`!#&|;(){}".contains(c))
+                {
                     shlex::try_quote(&text)
                         .map(|q| q.into_owned())
                         .unwrap_or_else(|_| text.to_string())
                 } else {
                     text.to_string()
                 };
-            CommandPart { text, kind }
-        }));
+                CommandPart { text, kind }
+            },
+        ));
         parts
+    }
+
+    /// The jj features this command's line uses, read off the built args
+    /// for the same reason as `--interactive`: the builder is the one place
+    /// that knows every flag it added.
+    pub fn features(&self) -> impl Iterator<Item = JjFeature> {
+        self.tagged_args().into_iter().filter_map(|arg| arg.needs)
+    }
+
+    /// The newest feature this command uses that `jj` predates, if any.
+    pub fn unsupported_by(&self, jj: InstalledJj) -> Option<JjFeature> {
+        self.features()
+            .filter(|&feature| !jj.supports(feature))
+            .max_by_key(|feature| feature.since())
     }
 
     /// How the command uses the terminal while it runs: the one place that
@@ -1144,5 +1162,160 @@ mod global_flag_tests {
             args(&retry),
             ["run", "-r", "x", "--ignore-immutable", "--", "echo", "hi"]
         );
+    }
+}
+
+#[cfg(test)]
+mod jj_feature_tests {
+    use super::*;
+    use crate::jj_version::JjVersion;
+    use strum::IntoEnumIterator;
+
+    fn cmd(kind: JJCommandKind, flags: CommandFlags) -> JJCommand {
+        JJCommand { kind, flags }
+    }
+
+    fn run(flags: CommandFlags) -> JJCommand {
+        cmd(
+            JJCommandKind::Run {
+                change_ids: smallvec::smallvec![RevisionArg::new("x")],
+                argv: vec!["make".into()],
+                jobs: None,
+            },
+            flags,
+        )
+    }
+
+    fn absorb(selection: ChangeSelection) -> JJCommand {
+        cmd(
+            JJCommandKind::Absorb {
+                from: None,
+                selection,
+            },
+            CommandFlags::empty(),
+        )
+    }
+
+    fn push(flags: CommandFlags) -> JJCommand {
+        cmd(
+            JJCommandKind::GitPush {
+                all: false,
+                remote: None,
+            },
+            flags,
+        )
+    }
+
+    /// A command using `feature`. One arm per feature, so dating a new one
+    /// means showing where kojutsu emits it.
+    fn example(feature: JjFeature) -> JJCommand {
+        match feature {
+            JjFeature::BookmarkAdvance => cmd(
+                JJCommandKind::BookmarkAdvance { change_id: None },
+                CommandFlags::empty(),
+            ),
+            JjFeature::Run => run(CommandFlags::empty()),
+            JjFeature::RunPassthrough => run(CommandFlags::PASSTHROUGH),
+            JjFeature::RunIgnoreChanges => run(CommandFlags::IGNORE_CHANGES),
+            JjFeature::RunIgnoreErrors => run(CommandFlags::IGNORE_ERRORS),
+            JjFeature::PushAllowConflicts => push(CommandFlags::ALLOW_CONFLICTS),
+            JjFeature::AbsorbLines => absorb(ChangeSelection::Lines("/tmp/sel.json".into())),
+            JjFeature::TagTracking => cmd(
+                JJCommandKind::TagUntrack {
+                    tags: smallvec::smallvec![TagRef {
+                        name: TagName::new("v1"),
+                        remote: RemoteName::new("origin"),
+                    }],
+                },
+                CommandFlags::empty(),
+            ),
+            JjFeature::Converge => cmd(
+                JJCommandKind::Converge {
+                    changes: SmallVec::new(),
+                },
+                CommandFlags::empty(),
+            ),
+        }
+    }
+
+    /// A release of the series before `version`'s.
+    fn just_before(version: JjVersion) -> InstalledJj {
+        InstalledJj::known(JjVersion::new(version.major, version.minor - 1, 0))
+    }
+
+    /// Each dated feature is tagged where kojutsu spells it: the jj that
+    /// introduced it runs the command, the release before refuses it.
+    #[test]
+    fn every_feature_is_tagged_where_it_is_emitted() {
+        for feature in JjFeature::iter() {
+            let command = example(feature);
+            assert!(
+                command.features().any(|f| f == feature),
+                "{feature:?} not tagged in {:?}",
+                command.args()
+            );
+            let introduced = InstalledJj::known(feature.since());
+            assert_eq!(command.unsupported_by(introduced), None, "{feature:?}");
+            assert_eq!(
+                command.unsupported_by(just_before(feature.since())),
+                Some(feature)
+            );
+        }
+    }
+
+    /// Only a line selection goes through absorb's diff editor.
+    #[test]
+    fn absorbing_files_needs_nothing_new() {
+        let files = absorb(ChangeSelection::Files(vec!["src/lib.rs".into()]));
+        assert_eq!(files.features().count(), 0);
+        // Elsewhere `--interactive` is old: split has taken it since 0.10.
+        let split = cmd(
+            JJCommandKind::Split {
+                change_id: RevisionArg::new("x"),
+                target: None,
+                selection: ChangeSelection::Lines("/tmp/sel.json".into()),
+            },
+            CommandFlags::empty(),
+        );
+        assert_eq!(split.features().count(), 0);
+    }
+
+    /// A command that needs several features is held to the newest.
+    #[test]
+    fn the_newest_missing_feature_is_the_one_named() {
+        let both = run(CommandFlags::PASSTHROUGH);
+        let jj = InstalledJj::known(JjVersion::new(0, 42, 0));
+        assert_eq!(both.unsupported_by(jj), Some(JjFeature::RunPassthrough));
+    }
+
+    #[test]
+    fn a_refused_command_reports_why_without_running() {
+        let jj = InstalledJj::known(JjVersion::new(0, 44, 0));
+        let converge = example(JjFeature::Converge);
+        let refused = converge.refused_by(jj).expect("refused");
+        assert!(!refused.success);
+        assert_eq!(refused.code, None);
+        assert_eq!(refused.display, converge.display());
+        let output = String::from_utf8_lossy(refused.output.bytes()).into_owned();
+        assert_eq!(
+            output,
+            "not run: jj converge needs jj 0.45.0 or newer; the installed jj is 0.44.0\n"
+        );
+
+        assert!(run(CommandFlags::PASSTHROUGH).refused_by(jj).is_none());
+        assert!(converge.refused_by(InstalledJj::default()).is_none());
+    }
+
+    /// A typed command line is the user's own: jj judges it.
+    #[test]
+    fn a_raw_command_is_never_refused() {
+        let raw = cmd(
+            JJCommandKind::Raw {
+                args: vec!["converge".into()],
+            },
+            CommandFlags::empty(),
+        );
+        let ancient = InstalledJj::known(JjVersion::new(0, 1, 0));
+        assert!(raw.refused_by(ancient).is_none());
     }
 }

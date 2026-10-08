@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::process::Output;
 
+use crate::jj_version::InstalledJj;
+
 use super::capture::joined;
 use super::{Captured, CommandPart, JJCommand, JJCommandResult, KillHandle, Stream};
 
@@ -99,6 +101,21 @@ impl JJCommand {
             },
             Err(e) => jj_error(display, display_parts, e),
         }
+    }
+
+    /// The result standing in for this command when `jj` is too old to take
+    /// it: reported, logged and handed on like any failure, without jj ever
+    /// being asked to parse a flag it would only reject.
+    pub fn refused_by(&self, jj: InstalledJj) -> Option<JJCommandResult> {
+        let reason = jj.refusal(self.unsupported_by(jj)?)?;
+        Some(JJCommandResult {
+            display: self.display(),
+            display_parts: self.display_parts(),
+            output: Captured::from(format!("not run: {reason}\n").as_str()),
+            success: false,
+            cancelled: false,
+            code: None,
+        })
     }
 
     pub fn run(&self, repo_path: &Path) -> JJCommandResult {

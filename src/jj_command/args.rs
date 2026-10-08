@@ -1,34 +1,78 @@
 use compact_str::format_compact;
 
 use crate::conflict::MARKER_STYLE_CONFIG;
+use crate::jj_version::JjFeature;
 use crate::keymap::CommandFlags;
 use crate::types::{ChangeSelection, GLOBAL_TOGGLES, Str};
 
 use super::{CommandPartKind, JJCommand, JJCommandKind, ResolveTool};
 
 /// A CLI argument together with its display kind, assigned at construction
-/// so the command log never has to guess what an argument is.
-pub(super) type TaggedArg = (Str, CommandPartKind);
+/// so the command log never has to guess what an argument is, and the jj
+/// feature it needs when it is newer than the oldest jj kojutsu supports.
+/// Dated where it is spelled, so the two can't drift apart.
+pub(super) struct TaggedArg {
+    pub(super) text: Str,
+    pub(super) kind: CommandPartKind,
+    pub(super) needs: Option<JjFeature>,
+}
+
+impl TaggedArg {
+    fn new(text: impl Into<Str>, kind: CommandPartKind) -> Self {
+        Self {
+            text: text.into(),
+            kind,
+            needs: None,
+        }
+    }
+
+    fn needs(mut self, feature: JjFeature) -> Self {
+        self.needs = Some(feature);
+        self
+    }
+}
 
 fn sub(name: &'static str) -> TaggedArg {
-    (name.into(), CommandPartKind::Subcommand)
+    TaggedArg::new(name, CommandPartKind::Subcommand)
 }
 
 fn flag(text: impl Into<Str>) -> TaggedArg {
-    (text.into(), CommandPartKind::Flag)
+    TaggedArg::new(text, CommandPartKind::Flag)
 }
 
 /// A revision-like identifier: change/commit/op IDs and bookmark/tag names
 /// (which resolve to revisions and share their color in the theme).
 fn rev(id: impl std::fmt::Display) -> TaggedArg {
-    (format_compact!("{id}"), CommandPartKind::Revision)
+    TaggedArg::new(format_compact!("{id}"), CommandPartKind::Revision)
+}
+
+/// A flag a [`CommandFlags`] bit turns on.
+struct FlagOption {
+    bit: CommandFlags,
+    spelling: &'static str,
+    needs: Option<JjFeature>,
+}
+
+const fn opt(bit: CommandFlags, spelling: &'static str) -> FlagOption {
+    FlagOption {
+        bit,
+        spelling,
+        needs: None,
+    }
+}
+
+impl FlagOption {
+    const fn needs(mut self, feature: JjFeature) -> Self {
+        self.needs = Some(feature);
+        self
+    }
 }
 
 /// The options every kind of `jj git push` takes.
-const PUSH_FLAGS: &[(CommandFlags, &str)] = &[
-    (CommandFlags::DRY_RUN, "--dry-run"),
-    (CommandFlags::ALLOW_CONFLICTS, "--allow-conflicts"),
-    (
+const PUSH_FLAGS: &[FlagOption] = &[
+    opt(CommandFlags::DRY_RUN, "--dry-run"),
+    opt(CommandFlags::ALLOW_CONFLICTS, "--allow-conflicts").needs(JjFeature::PushAllowConflicts),
+    opt(
         CommandFlags::ALLOW_EMPTY_DESCRIPTION,
         "--allow-empty-description",
     ),
@@ -42,14 +86,14 @@ fn remote_symbol(name: &str, remote: &crate::types::RemoteName) -> TaggedArg {
 
 /// A plain value: message, path, count, remote or workspace name.
 fn arg(text: impl Into<Str>) -> TaggedArg {
-    (text.into(), CommandPartKind::String)
+    TaggedArg::new(text, CommandPartKind::String)
 }
 
 impl JJCommand {
     pub fn args(&self) -> Vec<Str> {
         self.tagged_args()
             .into_iter()
-            .map(|(text, kind)| {
+            .map(|TaggedArg { text, kind, .. }| {
                 if kind == CommandPartKind::Fileset {
                     let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
                     format_compact!("\"{escaped}\"")
@@ -70,8 +114,8 @@ impl JJCommand {
                     &mut args,
                     flags,
                     &[
-                        (CommandFlags::RETAIN_BOOKMARKS, "--retain-bookmarks"),
-                        (CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
+                        opt(CommandFlags::RETAIN_BOOKMARKS, "--retain-bookmarks"),
+                        opt(CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
                     ],
                 );
                 args.extend(change_ids.iter().map(rev));
@@ -109,7 +153,7 @@ impl JJCommand {
                     args.push(flag(pos.flag()));
                 }
                 args.extend(change_ids.iter().map(rev));
-                push_flags(&mut args, flags, &[(CommandFlags::NO_EDIT, "--no-edit")]);
+                push_flags(&mut args, flags, &[opt(CommandFlags::NO_EDIT, "--no-edit")]);
                 args
             }
             JJCommandKind::Rebase {
@@ -146,8 +190,8 @@ impl JJCommand {
                     &mut args,
                     flags,
                     &[
-                        (CommandFlags::INTERACTIVE, "--interactive"),
-                        (CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
+                        opt(CommandFlags::INTERACTIVE, "--interactive"),
+                        opt(CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
                     ],
                 );
                 if let Some(id) = from {
@@ -176,8 +220,8 @@ impl JJCommand {
                     &mut args,
                     flags,
                     &[
-                        (CommandFlags::INTERACTIVE, "--interactive"),
-                        (CommandFlags::PARALLEL, "--parallel"),
+                        opt(CommandFlags::INTERACTIVE, "--interactive"),
+                        opt(CommandFlags::PARALLEL, "--parallel"),
                     ],
                 );
                 if let Some(t) = target {
@@ -205,7 +249,7 @@ impl JJCommand {
                 push_flags(
                     &mut args,
                     flags,
-                    &[(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
+                    &[opt(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
                 );
                 args.push(flag("-r"));
                 args.push(rev(change_id));
@@ -227,7 +271,7 @@ impl JJCommand {
                 push_flags(
                     &mut args,
                     flags,
-                    &[(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
+                    &[opt(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
                 );
                 args.push(flag("--to"));
                 args.push(rev(target));
@@ -245,7 +289,10 @@ impl JJCommand {
                 ]
             }
             JJCommandKind::BookmarkAdvance { change_id, .. } => {
-                let mut args = vec![sub("bookmark"), sub("advance")];
+                let mut args = vec![
+                    sub("bookmark"),
+                    sub("advance").needs(JjFeature::BookmarkAdvance),
+                ];
                 if let Some(id) = change_id {
                     args.push(flag("--to"));
                     args.push(rev(id));
@@ -349,7 +396,11 @@ impl JJCommand {
                     args.push(flag("--from"));
                     args.push(rev(id));
                 }
-                push_change_selection(&mut args, selection);
+                push_change_selection_through(
+                    &mut args,
+                    selection,
+                    flag("--interactive").needs(JjFeature::AbsorbLines),
+                );
                 args
             }
             JJCommandKind::Commit {
@@ -359,7 +410,7 @@ impl JJCommand {
                 push_flags(
                     &mut args,
                     flags,
-                    &[(CommandFlags::INTERACTIVE, "--interactive")],
+                    &[opt(CommandFlags::INTERACTIVE, "--interactive")],
                 );
                 if let Some(msg) = message {
                     args.push(flag("-m"));
@@ -418,8 +469,8 @@ impl JJCommand {
                     &mut args,
                     flags,
                     &[
-                        (CommandFlags::INTERACTIVE, "--interactive"),
-                        (CommandFlags::KEEP_EMPTIED, "--keep-emptied"),
+                        opt(CommandFlags::INTERACTIVE, "--interactive"),
+                        opt(CommandFlags::KEEP_EMPTIED, "--keep-emptied"),
                     ],
                 );
                 match message {
@@ -481,7 +532,7 @@ impl JJCommand {
                 push_flags(
                     &mut args,
                     flags,
-                    &[(CommandFlags::ALLOW_MOVE, "--allow-move")],
+                    &[opt(CommandFlags::ALLOW_MOVE, "--allow-move")],
                 );
                 args.push(flag("-r"));
                 args.push(rev(change_id));
@@ -494,7 +545,7 @@ impl JJCommand {
                 args
             }
             JJCommandKind::Converge { changes } => {
-                let mut args = vec![sub("converge")];
+                let mut args = vec![sub("converge").needs(JjFeature::Converge)];
                 for change in changes {
                     args.push(flag("-r"));
                     args.push(rev(format_compact!("change_id({change})")));
@@ -502,12 +553,12 @@ impl JJCommand {
                 push_flags(
                     &mut args,
                     flags,
-                    &[(CommandFlags::NO_INTERACTIVE, "--no-interactive")],
+                    &[opt(CommandFlags::NO_INTERACTIVE, "--no-interactive")],
                 );
                 args
             }
             JJCommandKind::TagTrack { tags } => {
-                let mut args = vec![sub("tag"), sub("track")];
+                let mut args = vec![sub("tag"), sub("track").needs(JjFeature::TagTracking)];
                 args.extend(
                     tags.iter()
                         .map(|t| remote_symbol(t.name.as_str(), &t.remote)),
@@ -515,7 +566,7 @@ impl JJCommand {
                 args
             }
             JJCommandKind::TagUntrack { tags } => {
-                let mut args = vec![sub("tag"), sub("untrack")];
+                let mut args = vec![sub("tag"), sub("untrack").needs(JjFeature::TagTracking)];
                 args.extend(
                     tags.iter()
                         .map(|t| remote_symbol(t.name.as_str(), &t.remote)),
@@ -546,7 +597,7 @@ impl JJCommand {
                 argv,
                 jobs,
             } => {
-                let mut args = vec![sub("run")];
+                let mut args = vec![sub("run").needs(JjFeature::Run)];
                 for id in change_ids {
                     args.push(flag("-r"));
                     args.push(rev(id));
@@ -559,11 +610,14 @@ impl JJCommand {
                     &mut args,
                     flags,
                     &[
-                        (CommandFlags::CLEAN, "--clean"),
-                        (CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
-                        (CommandFlags::PASSTHROUGH, "--passthrough"),
-                        (CommandFlags::IGNORE_CHANGES, "--ignore-changes"),
-                        (CommandFlags::IGNORE_ERRORS, "--ignore-errors"),
+                        opt(CommandFlags::CLEAN, "--clean"),
+                        opt(CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
+                        opt(CommandFlags::PASSTHROUGH, "--passthrough")
+                            .needs(JjFeature::RunPassthrough),
+                        opt(CommandFlags::IGNORE_CHANGES, "--ignore-changes")
+                            .needs(JjFeature::RunIgnoreChanges),
+                        opt(CommandFlags::IGNORE_ERRORS, "--ignore-errors")
+                            .needs(JjFeature::RunIgnoreErrors),
                     ],
                 );
                 // Global flags must precede `--`: everything after it is
@@ -635,7 +689,7 @@ impl JJCommand {
                         } else {
                             CommandPartKind::String
                         };
-                        (arg.clone(), kind)
+                        TaggedArg::new(arg.clone(), kind)
                     })
                     .collect();
             }
@@ -656,13 +710,13 @@ fn lex_raw_args(args: &[Str]) -> Vec<TaggedArg> {
     let mut parts: Vec<TaggedArg> = Vec::with_capacity(args.len());
     let mut rest = args;
     if let Some((first, tail)) = rest.split_first() {
-        parts.push((first.clone(), CommandPartKind::Subcommand));
+        parts.push(TaggedArg::new(first.clone(), CommandPartKind::Subcommand));
         rest = tail;
         if COMPOUND_SUBCOMMANDS.contains(&first.as_str())
             && let Some((second, tail)) = rest.split_first()
             && !second.starts_with('-')
         {
-            parts.push((second.clone(), CommandPartKind::Subcommand));
+            parts.push(TaggedArg::new(second.clone(), CommandPartKind::Subcommand));
             rest = tail;
         }
     }
@@ -678,27 +732,42 @@ fn lex_raw_args(args: &[Str]) -> Vec<TaggedArg> {
         } else {
             CommandPartKind::String
         };
-        parts.push((a.clone(), kind));
+        parts.push(TaggedArg::new(a.clone(), kind));
     }
     parts
 }
 
-fn push_flags(args: &mut Vec<TaggedArg>, flags: CommandFlags, mapping: &[(CommandFlags, &str)]) {
-    for (flag_bit, cli_flag) in mapping {
-        if flags.contains(*flag_bit) {
-            args.push(flag(*cli_flag));
+fn push_flags(args: &mut Vec<TaggedArg>, flags: CommandFlags, mapping: &[FlagOption]) {
+    for option in mapping {
+        if flags.contains(option.bit) {
+            let arg = flag(option.spelling);
+            args.push(match option.needs {
+                Some(feature) => arg.needs(feature),
+                None => arg,
+            });
         }
     }
 }
 
 fn push_change_selection(args: &mut Vec<TaggedArg>, selection: &ChangeSelection) {
+    push_change_selection_through(args, selection, flag("--interactive"));
+}
+
+/// [`push_change_selection`], with the flag that opens the command's diff
+/// editor for a line selection given by the caller, for a command that
+/// gained it later than the rest.
+fn push_change_selection_through(
+    args: &mut Vec<TaggedArg>,
+    selection: &ChangeSelection,
+    interactive: TaggedArg,
+) {
     match selection {
         ChangeSelection::All => {}
         ChangeSelection::Files(paths) => {
             args.extend(paths.iter().map(|p| fileset_arg(p)));
         }
         ChangeSelection::Lines(json_path) => {
-            args.push(flag("--interactive"));
+            args.push(interactive);
             args.extend(self_invoking_tool("kojutsu-select"));
             args.extend([
                 flag("--config"),
@@ -737,7 +806,7 @@ fn self_invoking_tool(name: &str) -> Vec<TaggedArg> {
 }
 
 fn fileset_arg(path: &str) -> TaggedArg {
-    (path.into(), CommandPartKind::Fileset)
+    TaggedArg::new(path, CommandPartKind::Fileset)
 }
 
 fn push_global_flags(args: &mut Vec<TaggedArg>, flags: CommandFlags) {

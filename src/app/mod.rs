@@ -283,6 +283,8 @@ pub struct App {
     /// jj's `run.jobs` setting, as of the last repo load.
     pub run_jobs: Option<usize>,
     pub repo_root: String,
+    /// The `jj` commands run with, which decides what kojutsu may ask of it.
+    pub jj: crate::jj_version::InstalledJj,
     /// Current interaction mode.
     pub mode: AppMode,
     /// Repo requests waiting to be sent to the background service.
@@ -452,6 +454,7 @@ impl App {
             run_history: Vec::new(),
             run_jobs: None,
             repo_root,
+            jj: crate::jj_version::InstalledJj::default(),
             mode: AppMode::Normal,
             pending_repo_requests: Vec::new(),
             pending_file_view: None,

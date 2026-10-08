@@ -227,6 +227,9 @@ fn main() -> Result<()> {
         app.enter_annotate_view(commit_id, path);
     }
 
+    app.jj = kojutsu::jj_version::InstalledJj::probe();
+    report_jj_concerns(&mut app);
+
     if let Some(path) = kojutsu::config::superseded_toml_config() {
         let msg = format!(
             "{} is no longer read - its settings now live in init.lua \
@@ -436,13 +439,16 @@ impl Session {
             Action::None => {}
             Action::Quit => return ControlFlow::Break(()),
             Action::RunJj { cmd, completion } => {
-                if cmd.terminal_use() == TerminalUse::Background {
-                    self.run_jj(cmd, completion);
-                    return ControlFlow::Continue(());
-                }
-                let result = self
-                    .screen
-                    .suspended(|| run_in_foreground(&cmd, &self.repo_path));
+                let result = match cmd.refused_by(self.app.jj) {
+                    Some(refused) => refused,
+                    None if cmd.terminal_use() == TerminalUse::Background => {
+                        self.run_jj(cmd, completion);
+                        return ControlFlow::Continue(());
+                    }
+                    None => self
+                        .screen
+                        .suspended(|| run_in_foreground(&cmd, &self.repo_path)),
+                };
                 return match completion {
                     Completion::Refresh { hook } => {
                         finish_foreground_command(&mut self.app, &cmd, result, hook);
@@ -597,8 +603,9 @@ impl Session {
         });
     }
 
-    /// Run post-hooks for a command that ran while the TUI was suspended,
-    /// and carry out whatever action a hook leads to.
+    /// Run post-hooks for a command that ran while the TUI was suspended (or
+    /// was refused before it ran), and carry out whatever action a hook leads
+    /// to.
     fn run_post_hooks_after_suspend(&mut self, hook: AppAction) -> ControlFlow<()> {
         let (success, output) = extract_command_result(&self.app);
         let outcome = self.runtime.engine.run_post_hooks(
@@ -688,8 +695,9 @@ fn run_in_foreground(cmd: &JJCommand, repo_path: &std::path::Path) -> JJCommandR
     }
 }
 
-/// Record a command that ran on the real terminal, refresh after success,
-/// and show its output if it printed any or failed.
+/// Record a command that ran on the real terminal, or was refused before it
+/// ran, refresh after success, and show its output if it printed any or
+/// failed.
 fn finish_foreground_command(
     app: &mut App,
     cmd: &JJCommand,
@@ -830,6 +838,28 @@ fn reload_config(
     );
     app.set_status("reloaded init.lua");
     report_init_warnings(app, runtime.init_warnings());
+
+    // jj may have been upgraded since startup.
+    let jj = kojutsu::jj_version::InstalledJj::probe();
+    if jj != app.jj {
+        app.jj = jj;
+        report_jj_concerns(app);
+    }
+}
+
+/// Warn about a `jj` binary kojutsu can't fully work with: one too old for
+/// it, or one newer than the jj-lib it reads the repo with.
+fn report_jj_concerns(app: &mut App) {
+    for concern in app.jj.concerns() {
+        app.push_command_log(
+            kojutsu::app::CommandLogKind::Warning,
+            concern.clone(),
+            None,
+            Vec::new(),
+            false,
+        );
+        app.set_error(concern);
+    }
 }
 
 /// Show what `init.lua` registered wrongly: one command-log entry listing

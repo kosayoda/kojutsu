@@ -8,6 +8,7 @@ pub mod history;
 pub mod idx;
 pub mod input;
 pub mod jj_command;
+pub mod jj_version;
 pub mod keymap;
 pub mod lua;
 pub mod repo;
