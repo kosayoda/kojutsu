@@ -51,11 +51,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
     };
 
     // Compute context flags before borrowing app.mode mutably.
-    let availability = crate::keymap::Availability {
-        selection: app.selection.kinds(),
-        on_file: crate::input::has_file_context(app),
-        on_conflict: crate::input::has_conflict_context(app),
-    };
+    let availability = crate::input::availability(app);
     let submenu_suffix = app.selection.describe();
 
     match &mut app.mode {
@@ -174,7 +170,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
                 let sources = overlay::revisions_label(&picks.sources, room.saturating_sub(fixed));
                 format!(" {label} from {sources} ")
             };
-            overlay::draw_target_select(frame, area, title, multi, toggles, *flags, theme);
+            let toggles = overlay::submenu_toggle_spans(toggles, *flags, availability, theme);
+            overlay::draw_target_select(frame, area, title, multi, toggles, theme);
         }
         AppMode::CommitSelect { pending, .. } => {
             let area = overlay_area(overlay_base, 2);

@@ -6,6 +6,7 @@ use keymap_parser::Node;
 use super::bindings::{BindTarget, BindingSpec, Scope};
 use super::registry::{ActionId, ActionRegistry};
 use super::{CommandFlags, HelpGroup};
+use crate::jj_version::JjFeature;
 use crate::types::ActiveView;
 
 #[derive(Clone)]
@@ -23,6 +24,8 @@ pub enum TrieNode {
     Toggle {
         flag: CommandFlags,
         description: CompactString,
+        /// The jj feature the flag needs, as a hint for greying it out.
+        jj: Option<JjFeature>,
     },
 }
 
@@ -183,6 +186,8 @@ enum MutableTrieNode {
     Toggle {
         flag: CommandFlags,
         description: CompactString,
+        /// The jj feature the flag needs, as a hint for greying it out.
+        jj: Option<JjFeature>,
     },
 }
 
@@ -230,13 +235,18 @@ fn insert_binding(nodes: &mut Vec<(Node, MutableTrieNode)>, keys: &[Node], targe
                     ));
                 }
             }
-            BindTarget::Toggle { flag, description } => {
+            BindTarget::Toggle {
+                flag,
+                description,
+                jj,
+            } => {
                 nodes.retain(|(k, _)| k != &key);
                 nodes.push((
                     key,
                     MutableTrieNode::Toggle {
                         flag: *flag,
                         description: description.clone(),
+                        jj: *jj,
                     },
                 ));
             }
@@ -301,9 +311,15 @@ fn freeze_nodes(nodes: Vec<(Node, MutableTrieNode)>) -> Vec<(Node, TrieNode)> {
                     group,
                     children: freeze_nodes(children).into(),
                 },
-                MutableTrieNode::Toggle { flag, description } => {
-                    TrieNode::Toggle { flag, description }
-                }
+                MutableTrieNode::Toggle {
+                    flag,
+                    description,
+                    jj,
+                } => TrieNode::Toggle {
+                    flag,
+                    description,
+                    jj,
+                },
             };
             (key, frozen)
         })

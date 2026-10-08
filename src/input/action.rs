@@ -227,10 +227,15 @@ pub(super) fn handle_submenu_key(
             let toggles = children
                 .iter()
                 .filter_map(|(key_node, child)| match child {
-                    TrieNode::Toggle { flag, description } => Some(SubmenuToggle {
+                    TrieNode::Toggle {
+                        flag,
+                        description,
+                        jj,
+                    } => Some(SubmenuToggle {
                         node: key_node.clone(),
                         flag: *flag,
                         description: description.clone(),
+                        jj: *jj,
                     }),
                     _ => None,
                 })
@@ -968,12 +973,23 @@ pub(super) fn jump_to_commit_in_dag(
     }
 }
 
-/// Whether the current cursor row has a file context (for help panel greying).
-pub fn has_file_context(app: &App) -> bool {
+/// What the grey-out in help and the submenu tests entries against: the one
+/// place it is put together, so the two can't see different things.
+pub fn availability(app: &App) -> crate::keymap::Availability {
+    crate::keymap::Availability {
+        selection: app.selection_kinds(),
+        on_file: has_file_context(app),
+        on_conflict: has_conflict_context(app),
+        jj: app.jj,
+    }
+}
+
+/// Whether the current cursor row has a file context.
+fn has_file_context(app: &App) -> bool {
     extract_file_and_line(app).is_some()
 }
 
-pub fn has_conflict_context(app: &App) -> bool {
+fn has_conflict_context(app: &App) -> bool {
     app.rows.get(app.cursor.raw()).is_some_and(|row| {
         row.conflict_hunk().is_some()
             || matches!(

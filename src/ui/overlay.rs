@@ -104,18 +104,14 @@ fn render_help_column(
             Cell::from(""),
         ]));
         let desc_width = area.width.saturating_sub(20) as usize;
-        let availability = crate::keymap::Availability {
-            selection: app.selection_kinds(),
-            on_file: crate::input::has_file_context(app),
-            on_conflict: crate::input::has_conflict_context(app),
-        };
+        let availability = crate::input::availability(app);
         for entry in entries.iter() {
             let desc = if entry.description.len() > desc_width && desc_width > 1 {
                 format!("{}…", &entry.description[..desc_width - 1])
             } else {
                 entry.description.clone()
             };
-            let blocked = availability.blocks(entry.selection_support, entry.requires);
+            let blocked = availability.blocks(entry.gate);
             let key_style = if blocked {
                 key_style
                     .fg(theme.muted)
@@ -160,21 +156,23 @@ pub(super) fn draw_submenu(
     theme: &Theme,
 ) {
     // Build toggle indicators for the title bar.
-    let mut toggle_spans: Vec<Span> = Vec::new();
-    for (key_node, child) in children.iter() {
-        if let TrieNode::Toggle { flag, description } = child {
-            let active = flags.contains(*flag);
-            let key_str = keymap::display_key(key_node);
-            let style = if active {
-                Style::default()
-                    .fg(theme.selection)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.muted)
-            };
-            toggle_spans.push(Span::styled(format!(" [{key_str}] {description} "), style));
-        }
-    }
+    let toggle_spans: Vec<Span> = children
+        .iter()
+        .filter_map(|(key_node, child)| match child {
+            TrieNode::Toggle {
+                flag,
+                description,
+                jj,
+            } => Some(toggle_span(
+                key_node,
+                description,
+                flags.contains(*flag),
+                availability.lacks(*jj),
+                theme,
+            )),
+            _ => None,
+        })
+        .collect();
 
     // Capitalize the label for display (e.g., "squash" -> "Squash").
     let display_label = {
@@ -219,8 +217,7 @@ pub(super) fn draw_submenu(
             TrieNode::Action {
                 id, description, ..
             } => {
-                let blocked =
-                    availability.blocks(registry.selection_support(*id), registry.requires(*id));
+                let blocked = availability.blocks(registry.gate(*id));
                 (description.as_str(), blocked)
             }
             TrieNode::Prefix { label, .. } => (label.as_str(), false),
@@ -367,6 +364,53 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App, theme:
     }
 }
 
+/// A toggle's ` [key] description ` badge in a panel's title: lit while on,
+/// struck out like a blocked entry when the installed jj predates its flag.
+fn toggle_span(
+    key: &keymap_parser::Node,
+    description: &str,
+    active: bool,
+    unsupported: bool,
+    theme: &Theme,
+) -> Span<'static> {
+    let style = if unsupported {
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::DIM | Modifier::CROSSED_OUT)
+    } else if active {
+        Style::default()
+            .fg(theme.selection)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.muted)
+    };
+    Span::styled(
+        format!(" [{}] {description} ", keymap::display_key(key)),
+        style,
+    )
+}
+
+/// The badges for a chain of prompts' submenu toggles, as set in `flags`.
+pub(super) fn submenu_toggle_spans(
+    toggles: &[crate::app::SubmenuToggle],
+    flags: crate::keymap::CommandFlags,
+    availability: crate::keymap::Availability,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
+    toggles
+        .iter()
+        .map(|toggle| {
+            toggle_span(
+                &toggle.node,
+                &toggle.description,
+                flags.contains(toggle.flag),
+                availability.lacks(toggle.jj),
+                theme,
+            )
+        })
+        .collect()
+}
+
 /// The target-select panel. `title` is given the width the border has left
 /// beside the toggles.
 pub(super) fn draw_target_select(
@@ -374,27 +418,9 @@ pub(super) fn draw_target_select(
     area: Rect,
     title: impl FnOnce(usize) -> String,
     multi: bool,
-    toggles: &[crate::app::SubmenuToggle],
-    flags: crate::keymap::CommandFlags,
+    toggle_spans: Vec<Span<'static>>,
     theme: &Theme,
 ) {
-    let mut toggle_spans: Vec<Span> = Vec::new();
-    for toggle in toggles {
-        let active = flags.contains(toggle.flag);
-        let key_str = keymap::display_key(&toggle.node);
-        let style = if active {
-            Style::default()
-                .fg(theme.selection)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.muted)
-        };
-        toggle_spans.push(Span::styled(
-            format!(" [{key_str}] {} ", toggle.description),
-            style,
-        ));
-    }
-
     let toggles_width: usize = toggle_spans.iter().map(Span::width).sum();
     let title = title((area.width as usize).saturating_sub(toggles_width));
 

@@ -7,7 +7,7 @@ mod view;
 
 pub use view::dag::{complete_hunk_edit, staged_resolution};
 
-pub use action::{dispatch_action_after_hooks, has_conflict_context, has_file_context, no_toggles};
+pub use action::{availability, dispatch_action_after_hooks, no_toggles};
 
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,

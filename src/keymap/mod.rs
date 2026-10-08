@@ -9,7 +9,7 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 pub use bindings::{BindTarget, BindingSpec, Scope, default_bindings};
 pub use help::{HelpEntry, HelpGroup, help_entries, select_mode_help_entries};
-pub use registry::{ActionId, ActionRegistry, Availability};
+pub use registry::{ActionId, ActionRegistry, Availability, Gate};
 pub use spec::{ActionSpec, Effect, Requires};
 pub use trie::{Keymap, Keymaps, LookupResult, TrieNode};
 

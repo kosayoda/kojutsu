@@ -3,6 +3,7 @@ use smallvec::SmallVec;
 
 use super::registry::ActionId;
 use super::{AppAction, CommandFlags, HelpGroup, Keys, parse_sequence};
+use crate::jj_version::JjFeature;
 use crate::types::ActiveView;
 
 pub struct BindingSpec {
@@ -24,6 +25,7 @@ pub enum BindTarget {
     Toggle {
         flag: CommandFlags,
         description: CompactString,
+        jj: Option<JjFeature>,
     },
     Unbind,
 }
@@ -67,6 +69,27 @@ fn toggle(seq: &str, flag: CommandFlags, desc: &str, scope: Scope) -> BindingSpe
         target: BindTarget::Toggle {
             flag,
             description: desc.into(),
+            jj: None,
+        },
+        scope,
+    }
+}
+
+/// A toggle for a flag only jj from `feature`'s release on takes. A hint, as
+/// for actions: dispatch refuses the command the flag ends up in.
+fn newer_toggle(
+    seq: &str,
+    flag: CommandFlags,
+    desc: &str,
+    feature: JjFeature,
+    scope: Scope,
+) -> BindingSpec {
+    BindingSpec {
+        keys: keys(seq),
+        target: BindTarget::Toggle {
+            flag,
+            description: desc.into(),
+            jj: Some(feature),
         },
         scope,
     }
@@ -266,17 +289,25 @@ pub fn default_bindings() -> Vec<BindingSpec> {
             "restore descendants",
             dag(),
         ),
-        toggle("! shift-p", CommandFlags::PASSTHROUGH, "passthrough", dag()),
-        toggle(
+        newer_toggle(
+            "! shift-p",
+            CommandFlags::PASSTHROUGH,
+            "passthrough",
+            JjFeature::RunPassthrough,
+            dag(),
+        ),
+        newer_toggle(
             "! shift-i",
             CommandFlags::IGNORE_CHANGES,
             "ignore changes",
+            JjFeature::RunIgnoreChanges,
             dag(),
         ),
-        toggle(
+        newer_toggle(
             "! shift-e",
             CommandFlags::IGNORE_ERRORS,
             "ignore errors",
+            JjFeature::RunIgnoreErrors,
             dag(),
         ),
         bind("! !", Run, "run command\u{2026}", C, dag()),

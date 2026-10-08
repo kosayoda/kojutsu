@@ -1,6 +1,7 @@
-use super::registry::{ActionId, ActionRegistry};
+use super::registry::{ActionId, ActionRegistry, Gate};
 use super::trie::{Keymap, TrieNode};
 use super::{Requires, SelectionKindSet, display_key, toggle_hint};
+use crate::jj_version::JjFeature;
 use keymap_parser::Node;
 
 #[derive(
@@ -26,8 +27,7 @@ pub struct HelpEntry {
     pub keys: String,
     pub description: String,
     pub group: HelpGroup,
-    pub selection_support: SelectionKindSet,
-    pub requires: Requires,
+    pub gate: Gate,
 }
 
 fn sort_key(keys: &str) -> (String, bool) {
@@ -35,18 +35,39 @@ fn sort_key(keys: &str) -> (String, bool) {
     (keys.to_lowercase(), upper)
 }
 
-/// What every action under a prefix requires, so the prefix greys out only
-/// when none of its entries could run.
-fn common_requirement(registry: &ActionRegistry, children: &[(Node, TrieNode)]) -> Requires {
-    let mut requirements = children.iter().map(|(_, child)| match child {
-        TrieNode::Action { id, .. } => registry.requires(*id),
-        TrieNode::Prefix { .. } | TrieNode::Toggle { .. } => Requires::Nothing,
-    });
-    let first = requirements.next().unwrap_or(Requires::Nothing);
-    if requirements.all(|r| r == first) {
-        first
-    } else {
-        Requires::Nothing
+/// What a prefix needs to be available, so it greys out only when none of
+/// its entries could run: any selection one of its actions takes, a context
+/// they all read, and the oldest jj feature, when every one of them needs
+/// one. Toggles run nothing, so they are no entry; a nested prefix might hold
+/// anything, so it holds nothing back.
+fn prefix_gate(registry: &ActionRegistry, children: &[(Node, TrieNode)]) -> Gate {
+    let gates: Vec<Gate> = children
+        .iter()
+        .filter_map(|(_, child)| match child {
+            TrieNode::Action { id, .. } => Some(registry.gate(*id)),
+            TrieNode::Prefix { .. } => Some(Gate {
+                selection: SelectionKindSet::empty(),
+                ..Gate::OPEN
+            }),
+            TrieNode::Toggle { .. } => None,
+        })
+        .collect();
+    let selection = gates
+        .iter()
+        .fold(SelectionKindSet::empty(), |acc, gate| acc | gate.selection);
+    let requires = match gates.split_first() {
+        Some((first, rest)) if rest.iter().all(|g| g.requires == first.requires) => first.requires,
+        _ => Requires::Nothing,
+    };
+    let jj = gates
+        .iter()
+        .map(|gate| gate.jj)
+        .collect::<Option<Vec<JjFeature>>>()
+        .and_then(|features| features.into_iter().min_by_key(|f| f.since()));
+    Gate {
+        selection,
+        requires,
+        jj,
     }
 }
 
@@ -88,14 +109,7 @@ pub fn help_entries(
                     keys: format!("{key_str} \u{2026}"),
                     description: label.to_string(),
                     group: *group,
-                    selection_support: children.iter().fold(
-                        SelectionKindSet::empty(),
-                        |acc, (_, child)| match child {
-                            TrieNode::Action { id, .. } => acc | registry.selection_support(*id),
-                            _ => acc,
-                        },
-                    ),
-                    requires: common_requirement(registry, children),
+                    gate: prefix_gate(registry, children),
                 });
             }
             TrieNode::Toggle { .. } => {}
@@ -112,8 +126,10 @@ pub fn help_entries(
             keys: keys.join(" / "),
             description: "pick conflict side at cursor".into(),
             group: HelpGroup::Commands,
-            selection_support: SelectionKindSet::ALL,
-            requires: Requires::Conflict,
+            gate: Gate {
+                requires: Requires::Conflict,
+                ..Gate::OPEN
+            },
         });
 
     let mut entries: Vec<HelpEntry> = action_keys
@@ -132,8 +148,7 @@ pub fn help_entries(
                 keys: keys.join(" / "),
                 description,
                 group,
-                selection_support: registry.selection_support(id),
-                requires: registry.requires(id),
+                gate: registry.gate(id),
             }
         })
         .collect();
@@ -173,8 +188,7 @@ pub fn select_mode_help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntr
             keys,
             description: desc,
             group,
-            selection_support: SelectionKindSet::ALL,
-            requires: Requires::Nothing,
+            gate: Gate::OPEN,
         }
     }
 
@@ -216,4 +230,48 @@ pub fn select_mode_help_entries(keymap: &Keymap) -> Vec<(HelpGroup, Vec<HelpEntr
         entries.sort_unstable_by_key(|e| sort_key(&e.keys));
     }
     grouped
+}
+
+#[cfg(test)]
+mod prefix_gate_tests {
+    use super::*;
+    use crate::jj_version::{InstalledJj, JjVersion};
+    use crate::keymap::{Availability, Keymaps, default_bindings};
+    use crate::types::ActiveView;
+
+    /// Whether the DAG view's help greys out the prefix on `key` on jj
+    /// `minor`.
+    fn prefix_blocked(key: &str, minor: u32) -> bool {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let groups = help_entries(keymaps.for_view(ActiveView::Dag), &keymaps.registry, &[]);
+        let entry = groups
+            .iter()
+            .flat_map(|(_, entries)| entries)
+            .find(|entry| entry.keys == format!("{key} \u{2026}"))
+            .unwrap_or_else(|| panic!("no prefix on {key}"));
+        Availability {
+            selection: SelectionKindSet::empty(),
+            on_file: false,
+            on_conflict: false,
+            jj: InstalledJj::known(JjVersion::new(0, minor, 0)),
+        }
+        .blocks(entry.gate)
+    }
+
+    /// A prefix greys out once every action under it is too new: its toggles
+    /// run nothing, so they don't keep it lit.
+    #[test]
+    fn a_prefix_is_blocked_when_all_it_runs_is_too_new() {
+        assert!(prefix_blocked("!", 42));
+        assert!(!prefix_blocked("!", 43));
+        assert!(prefix_blocked("m", 44));
+        assert!(!prefix_blocked("m", 45));
+    }
+
+    /// One action jj can run keeps the prefix available: tag set is old,
+    /// tag track is not.
+    #[test]
+    fn a_prefix_with_anything_runnable_stays_available() {
+        assert!(!prefix_blocked("t", 36));
+    }
 }

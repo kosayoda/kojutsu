@@ -1,4 +1,5 @@
-use super::{AppAction, SelectionKindSet};
+use super::{AppAction, Gate, SelectionKindSet};
+use crate::jj_version::JjFeature;
 
 /// What running an action does, beyond its own effect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +38,10 @@ pub struct ActionSpec {
     /// The selection kinds it can act on.
     pub selection: SelectionKindSet,
     pub requires: Requires,
+    /// The jj feature the command it runs needs, as a hint for greying it
+    /// out on an older jj: dispatch refuses the built command itself, from
+    /// the flags it actually carries. Keep it matching what the action runs.
+    pub jj: Option<JjFeature>,
     /// A friendlier name for messages; `None` reads as the stable id.
     label: Option<&'static str>,
 }
@@ -48,7 +53,17 @@ impl ActionSpec {
             repeatable: false,
             selection,
             requires: Requires::Nothing,
+            jj: None,
             label: None,
+        }
+    }
+
+    /// What the grey-out tests this action against.
+    pub const fn gate(&self) -> Gate {
+        Gate {
+            selection: self.selection,
+            requires: self.requires,
+            jj: self.jj,
         }
     }
 
@@ -59,6 +74,11 @@ impl ActionSpec {
 
     const fn requires(mut self, requires: Requires) -> Self {
         self.requires = requires;
+        self
+    }
+
+    const fn needs(mut self, feature: JjFeature) -> Self {
+        self.jj = Some(feature);
         self
     }
 
@@ -147,7 +167,9 @@ impl AppAction {
             BookmarkForget => mutate(C).label("bookmark"),
             BookmarkMove => mutate(C).label("bookmark"),
             BookmarkRename => mutate(C).label("bookmark"),
-            BookmarkAdvance => mutate(C).label("bookmark"),
+            BookmarkAdvance => mutate(C)
+                .needs(JjFeature::BookmarkAdvance)
+                .label("bookmark"),
             BookmarkTrack => mutate(C).label("bookmark"),
             BookmarkUntrack => mutate(C).label("bookmark"),
             ShowHelp => nav(),
@@ -168,7 +190,7 @@ impl AppAction {
             ArrangeUp => mutate(ALL).repeatable().label("arrange"),
             ArrangeDown => mutate(ALL).repeatable().label("arrange"),
             Fix => mutate(CF).repeatable(),
-            Run => mutate(C),
+            Run => mutate(C).needs(JjFeature::Run),
             FileUntrack => mutate(F).label("untrack"),
             ResolveOurs => mutate(F)
                 .requires(Requires::Conflict)
@@ -225,9 +247,9 @@ impl AppAction {
             JumpToCommit => ui(ALL).label("jump"),
             TagSet => mutate(C).label("tag"),
             TagDelete => mutate(C).label("tag"),
-            TagTrack => mutate(C).label("tag"),
-            TagUntrack => mutate(C).label("tag"),
-            Converge => mutate(C).label("converge"),
+            TagTrack => mutate(C).needs(JjFeature::TagTracking).label("tag"),
+            TagUntrack => mutate(C).needs(JjFeature::TagTracking).label("tag"),
+            Converge => mutate(C).needs(JjFeature::Converge).label("converge"),
             SelectPreset => ui(ALL).label("preset"),
             SwitchPreset1 => ui(ALL),
             SwitchPreset2 => ui(ALL),

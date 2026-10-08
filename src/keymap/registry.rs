@@ -1,4 +1,5 @@
 use super::{AppAction, Requires, SelectionKindSet};
+use crate::jj_version::{InstalledJj, JjFeature};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ActionId {
@@ -6,25 +7,50 @@ pub enum ActionId {
     Lua(u16),
 }
 
-/// What the cursor and selection currently make available. Single source for
-/// the grey-out shown in help and in the submenu, which drifted apart once
-/// before.
+/// What an entry needs to be available: the selection kinds it takes, the
+/// cursor context it reads, and the jj feature it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Gate {
+    pub selection: SelectionKindSet,
+    pub requires: Requires,
+    pub jj: Option<JjFeature>,
+}
+
+impl Gate {
+    /// Open to everything.
+    pub const OPEN: Self = Self {
+        selection: SelectionKindSet::ALL,
+        requires: Requires::Nothing,
+        jj: None,
+    };
+}
+
+/// What the cursor, the selection and the installed jj currently make
+/// available. Single source for the grey-out shown in help and in the
+/// submenu, which drifted apart once before.
 #[derive(Clone, Copy)]
 pub struct Availability {
     /// Every selected kind; empty when nothing is selected.
     pub selection: SelectionKindSet,
     pub on_file: bool,
     pub on_conflict: bool,
+    pub jj: InstalledJj,
 }
 
 impl Availability {
-    pub fn blocks(&self, selection_support: SelectionKindSet, requires: Requires) -> bool {
-        self.selection.blocked_by(selection_support)
-            || match requires {
+    pub fn blocks(&self, gate: Gate) -> bool {
+        self.selection.blocked_by(gate.selection)
+            || match gate.requires {
                 Requires::Nothing => false,
                 Requires::File => !self.on_file,
                 Requires::Conflict => !self.on_conflict,
             }
+            || self.lacks(gate.jj)
+    }
+
+    /// Whether the installed jj predates `feature`.
+    pub fn lacks(&self, feature: Option<JjFeature>) -> bool {
+        feature.is_some_and(|feature| !self.jj.supports(feature))
     }
 }
 
@@ -66,10 +92,13 @@ impl ActionRegistry {
         }
     }
 
-    pub fn requires(&self, id: ActionId) -> Requires {
+    pub fn gate(&self, id: ActionId) -> Gate {
         match id {
-            ActionId::Builtin(action) => action.spec().requires,
-            ActionId::Lua(_) => Requires::Nothing,
+            ActionId::Builtin(action) => action.spec().gate(),
+            ActionId::Lua(_) => Gate {
+                selection: self.selection_support(id),
+                ..Gate::OPEN
+            },
         }
     }
 
@@ -88,12 +117,12 @@ mod availability_tests {
             selection,
             on_file,
             on_conflict: false,
+            jj: InstalledJj::default(),
         }
     }
 
     fn blocks(ctx: &Availability, action: AppAction) -> bool {
-        let spec = action.spec();
-        ctx.blocks(spec.selection, spec.requires)
+        ctx.blocks(action.spec().gate())
     }
 
     /// FileUntrack acts on the file selection, so it stays available with the
@@ -116,6 +145,20 @@ mod availability_tests {
         assert!(blocks(&mixed, AppAction::Fix));
         // Squash takes any selection.
         assert!(!blocks(&mixed, AppAction::Squash));
+    }
+
+    /// An action is greyed out on a jj older than what it runs, and on
+    /// nothing else: an undated binary is held to nothing.
+    #[test]
+    fn an_action_is_blocked_by_a_jj_too_old_for_it() {
+        use crate::jj_version::JjVersion;
+        let mut old = ctx(SelectionKindSet::empty(), false);
+        old.jj = InstalledJj::known(JjVersion::new(0, 44, 0));
+        assert!(blocks(&old, AppAction::Converge));
+        assert!(!blocks(&old, AppAction::Run));
+        assert!(!blocks(&old, AppAction::Squash));
+        let unknown = ctx(SelectionKindSet::empty(), false);
+        assert!(!blocks(&unknown, AppAction::Converge));
     }
 
     #[test]

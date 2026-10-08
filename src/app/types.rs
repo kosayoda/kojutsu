@@ -388,6 +388,8 @@ pub struct SubmenuToggle {
     pub node: keymap_parser::Node,
     pub flag: CommandFlags,
     pub description: CompactString,
+    /// The jj feature the flag needs, as a hint for greying it out.
+    pub jj: Option<crate::jj_version::JjFeature>,
 }
 
 /// The action a chain of prompts was started by. Each prompt in the chain
