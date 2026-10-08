@@ -43,16 +43,14 @@ pub enum FollowUpAction {
 
 impl JJCommand {
     pub fn retry_options(&self, output: &[u8]) -> Vec<FollowUpOption> {
-        // Every option here retries with a jj flag, which a foreign program
-        // would reject. It is matched on output text, so without this a `git`
-        // command that happened to say "immutable" would be offered one.
-        if matches!(self.kind, super::JJCommandKind::Exec { .. }) {
-            return Vec::new();
-        }
+        // Matched on output text, so a command that can't take a global flag
+        // (a foreign program, or a fetch for `--ignore-immutable`) would
+        // otherwise be offered a retry that drops it and runs the same again.
+        let takes = self.global_flags();
         let mut options = Vec::new();
         let text = String::from_utf8_lossy(output);
 
-        if text.contains("immutable") {
+        if text.contains("immutable") && takes.contains(CommandFlags::IGNORE_IMMUTABLE) {
             options.push(FollowUpOption {
                 key: 'r',
                 label: "retry with --ignore-immutable",
@@ -62,7 +60,10 @@ impl JJCommand {
             });
         } else if let Some(retry) = self.push_override_retry(&text) {
             options.push(retry);
-        } else if text.contains("stale") && text.contains("working copy") {
+        } else if text.contains("stale")
+            && text.contains("working copy")
+            && takes.contains(CommandFlags::IGNORE_WORKING_COPY)
+        {
             options.push(FollowUpOption {
                 key: 'r',
                 label: "retry with --ignore-working-copy",

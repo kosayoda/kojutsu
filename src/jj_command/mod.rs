@@ -317,6 +317,37 @@ impl JJCommand {
         self
     }
 
+    /// The global toggles this command takes; the rest are dropped from its
+    /// command line however they were set. A foreign program takes none of
+    /// jj's. `--ignore-immutable` is for rewriting what the user aimed a
+    /// command at, but all a fetch or import aims at is the remote: there it
+    /// only lets jj rebase other people's pushed commits onto new versions of
+    /// their changes, leaving local, bookmarkless copies of them behind.
+    pub fn global_flags(&self) -> CommandFlags {
+        let all = crate::types::GLOBAL_TOGGLES
+            .iter()
+            .fold(CommandFlags::empty(), |all, toggle| all | toggle.flag);
+        match &self.kind {
+            JJCommandKind::Exec { .. } => CommandFlags::empty(),
+            _ if self.imports_from_git() => all.difference(CommandFlags::IGNORE_IMMUTABLE),
+            _ => all,
+        }
+    }
+
+    /// Whether the command brings commits in from git, typed or not.
+    fn imports_from_git(&self) -> bool {
+        match &self.kind {
+            JJCommandKind::GitFetch { .. }
+            | JJCommandKind::GitFetchBookmark { .. }
+            | JJCommandKind::GitImport => true,
+            JJCommandKind::Raw { args } => matches!(
+                args.as_slice(),
+                [git, sub, ..] if git == "git" && (sub == "fetch" || sub == "import")
+            ),
+            _ => false,
+        }
+    }
+
     /// Where the cursor should go once the command has run, when the
     /// command itself decides that. Commands that move `@` take the cursor
     /// with them, and squashing into a named commit follows the content
@@ -946,5 +977,109 @@ mod push_retry_tests {
             "Error: Won't push commit 1234abcd since it is private\n",
         );
         assert_eq!(flags, None);
+    }
+}
+
+#[cfg(test)]
+mod global_flag_tests {
+    use super::*;
+
+    const TOGGLES: CommandFlags = CommandFlags::IGNORE_IMMUTABLE
+        .union(CommandFlags::IGNORE_WORKING_COPY)
+        .union(CommandFlags::DEBUG);
+
+    fn cmd(kind: JJCommandKind, flags: CommandFlags) -> JJCommand {
+        JJCommand { kind, flags }
+    }
+
+    fn raw(args: &[&str], flags: CommandFlags) -> JJCommand {
+        cmd(
+            JJCommandKind::Raw {
+                args: args.iter().map(|a| (*a).into()).collect(),
+            },
+            flags,
+        )
+    }
+
+    fn args(cmd: &JJCommand) -> Vec<String> {
+        cmd.args().iter().map(|a| a.to_string()).collect()
+    }
+
+    fn fetches() -> [JJCommand; 4] {
+        [
+            cmd(
+                JJCommandKind::GitFetch {
+                    all_remotes: false,
+                    remote: None,
+                },
+                TOGGLES,
+            ),
+            cmd(
+                JJCommandKind::GitFetchBookmark {
+                    bookmark: BookmarkName::new("b"),
+                    remote: RemoteName::new("origin"),
+                },
+                TOGGLES,
+            ),
+            cmd(JJCommandKind::GitImport, TOGGLES),
+            raw(&["git", "fetch"], TOGGLES),
+        ]
+    }
+
+    /// With the toggle left on, a fetch would rebase other people's pushed
+    /// commits onto new versions of their changes. The other toggles still
+    /// apply.
+    #[test]
+    fn a_fetch_never_ignores_immutability() {
+        for fetch in fetches() {
+            let args = args(&fetch);
+            assert!(!args.contains(&"--ignore-immutable".into()), "{args:?}");
+            assert!(args.contains(&"--ignore-working-copy".into()), "{args:?}");
+            assert!(args.contains(&"--debug".into()), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn a_fetch_refused_over_immutable_commits_offers_no_retry() {
+        for fetch in fetches() {
+            assert!(
+                fetch
+                    .retry_options(b"Error: Commit 1234abcd is immutable")
+                    .is_empty()
+            );
+        }
+    }
+
+    #[test]
+    fn a_rewrite_keeps_the_toggle() {
+        let describe = cmd(
+            JJCommandKind::Describe {
+                change_ids: SmallVec::from_elem(RevisionArg::new("x"), 1),
+                message: "m".into(),
+            },
+            CommandFlags::IGNORE_IMMUTABLE,
+        );
+        assert!(args(&describe).contains(&"--ignore-immutable".into()));
+    }
+
+    /// The retry offered for a typed command has to change its command line,
+    /// or it is the same command run again.
+    #[test]
+    fn a_typed_commands_retry_carries_the_flag_ahead_of_passthrough() {
+        let typed = raw(
+            &["run", "-r", "x", "--", "echo", "hi"],
+            CommandFlags::empty(),
+        );
+        let [retry] = typed
+            .retry_options(b"Error: Commit 1234abcd is immutable")
+            .try_into()
+            .unwrap_or_else(|_| panic!("expected one retry"));
+        let FollowUpAction::Execute(retry) = retry.action else {
+            panic!("expected a retry command");
+        };
+        assert_eq!(
+            args(&retry),
+            ["run", "-r", "x", "--ignore-immutable", "--", "echo", "hi"]
+        );
     }
 }

@@ -62,6 +62,7 @@ impl JJCommand {
 
     pub(super) fn tagged_args(&self) -> Vec<TaggedArg> {
         let flags = self.flags;
+        let globals = flags & self.global_flags();
         let mut args = match &self.kind {
             JJCommandKind::Abandon { change_ids, .. } => {
                 let mut args = vec![sub("abandon")];
@@ -567,7 +568,7 @@ impl JJCommand {
                 );
                 // Global flags must precede `--`: everything after it is
                 // passed verbatim to the subprocess, not to jj.
-                push_global_flags(&mut args, flags);
+                push_global_flags(&mut args, globals);
                 args.push(flag("--"));
                 args.extend(argv.iter().cloned().map(arg));
                 return args;
@@ -612,7 +613,17 @@ impl JJCommand {
                 args.push(fileset_arg(path));
                 args
             }
-            JJCommandKind::Raw { args } => return lex_raw_args(args),
+            JJCommandKind::Raw { args } => {
+                // Ahead of a bare `--`, past which jj passes words on
+                // verbatim. Lexing keeps one part per word, so the index is
+                // the same in both.
+                let mut parts = lex_raw_args(args);
+                let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
+                let mut global = Vec::new();
+                push_global_flags(&mut global, globals);
+                parts.splice(at..at, global);
+                return parts;
+            }
             // Not a jj command line, so there is no grammar to lex: the
             // program names itself in the log and the rest are plain values.
             JJCommandKind::Exec { args, .. } => {
@@ -630,7 +641,7 @@ impl JJCommand {
             }
         };
 
-        push_global_flags(&mut args, flags);
+        push_global_flags(&mut args, globals);
         args
     }
 }
