@@ -60,6 +60,8 @@ impl JJCommand {
             });
         } else if let Some(retry) = self.push_override_retry(&text) {
             options.push(retry);
+        } else if let Some(retry) = self.refused_move_retry(&text) {
+            options.push(retry);
         } else if text.contains("stale")
             && text.contains("working copy")
             && takes.contains(CommandFlags::IGNORE_WORKING_COPY)
@@ -106,6 +108,34 @@ impl JJCommand {
         } else {
             return None;
         };
+        Some(FollowUpOption {
+            key: 'r',
+            label,
+            action: FollowUpAction::Execute(self.clone().with_flag(allow)),
+        })
+    }
+
+    /// A ref jj refused to move, retried with the flag that allows it. Each
+    /// kind has its own: a bookmark may move forward unasked, and only going
+    /// backwards or sideways needs `--allow-backwards`; a tag that exists may
+    /// not move at all without `--allow-move`.
+    fn refused_move_retry(&self, text: &str) -> Option<FollowUpOption> {
+        let (refusal, allow, label) = match self.kind {
+            JJCommandKind::BookmarkSet { .. } | JJCommandKind::BookmarkMove { .. } => (
+                "Refusing to move bookmark",
+                CommandFlags::ALLOW_BACKWARDS,
+                "retry with --allow-backwards",
+            ),
+            JJCommandKind::TagSet { .. } => (
+                "Refusing to move tag",
+                CommandFlags::ALLOW_MOVE,
+                "retry with --allow-move",
+            ),
+            _ => return None,
+        };
+        if !text.contains(refusal) || self.flags.contains(allow) {
+            return None;
+        }
         Some(FollowUpOption {
             key: 'r',
             label,

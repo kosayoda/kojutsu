@@ -994,6 +994,25 @@ mod ref_move_tests {
         }
     }
 
+    fn bookmark_set() -> JJCommand {
+        JJCommand {
+            kind: JJCommandKind::BookmarkSet {
+                name: BookmarkName::new("main"),
+                change_id: RevisionArg::new("x"),
+            },
+            flags: CommandFlags::empty(),
+        }
+    }
+
+    fn retry(cmd: &JJCommand, output: &str) -> Option<JJCommand> {
+        cmd.retry_options(output.as_bytes())
+            .into_iter()
+            .find_map(|option| match option.action {
+                FollowUpAction::Execute(retry) => Some(retry),
+                _ => None,
+            })
+    }
+
     /// jj's flag for tags is `--allow-move`; `--allow-backwards` is a
     /// bookmark flag, and `tag set` rejects it as an unexpected argument.
     #[test]
@@ -1002,6 +1021,25 @@ mod ref_move_tests {
         assert!(args.contains(&"--allow-move".into()), "{args:?}");
         let args = tag_set(CommandFlags::ALLOW_BACKWARDS).args();
         assert!(!args.contains(&"--allow-backwards".into()), "{args:?}");
+    }
+
+    #[test]
+    fn a_refused_tag_move_offers_to_allow_it() {
+        let output =
+            "Error: Refusing to move tag: v1\nHint: Use --allow-move to update existing tags.\n";
+        let retried = retry(&tag_set(CommandFlags::empty()), output).expect("a retry");
+        assert!(retried.args().contains(&"--allow-move".into()));
+        // Already allowed: the same command would only fail again.
+        assert!(retry(&tag_set(CommandFlags::ALLOW_MOVE), output).is_none());
+    }
+
+    #[test]
+    fn a_refused_bookmark_move_offers_to_allow_backwards() {
+        let output = "Error: Refusing to move bookmark backwards or sideways: main\n";
+        let retried = retry(&bookmark_set(), output).expect("a retry");
+        assert!(retried.args().contains(&"--allow-backwards".into()));
+        // Each kind answers only its own refusal.
+        assert!(retry(&tag_set(CommandFlags::empty()), output).is_none());
     }
 }
 
