@@ -126,7 +126,7 @@ impl JjRepo {
     /// Open the jj workspace rooted at `path`.
     pub fn open(path: &Path) -> Result<Self> {
         let config = config::load(path)?;
-        let settings = UserSettings::from_config(config)
+        let settings = UserSettings::from_config_and_home_dir(config, config::home_dir())
             .wrap_err("failed to create jj settings from config")?;
         let aliases_map = load_aliases(&settings, "revset-aliases");
         let fileset_aliases_map = load_aliases(&settings, "fileset-aliases");

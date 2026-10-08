@@ -111,6 +111,14 @@ fn user_config_paths() -> Vec<PathBuf> {
     paths
 }
 
+/// The home directory jj expands `~` in config paths against: canonical, as
+/// jj makes it, since `$HOME` may be a symlink.
+pub(super) fn home_dir() -> Option<PathBuf> {
+    etcetera::home_dir()
+        .ok()
+        .map(|dir| std::fs::canonicalize(&dir).unwrap_or(dir))
+}
+
 /// The root under which jj stores repo- and workspace-scoped config.
 /// Deliberately independent of `JJ_CONFIG`, matching jj.
 fn secure_config_root() -> Option<PathBuf> {

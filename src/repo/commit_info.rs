@@ -93,7 +93,7 @@ impl JjRepo {
                 name: BookmarkName::new(name.as_str()),
                 is_dirty: ctx.dirty_bookmarks.contains(name),
                 is_tracking: ctx.tracking_bookmarks.contains(name),
-                is_conflicted: target.has_conflict(),
+                is_conflicted: !target.is_resolved(),
             })
             .collect();
 
@@ -101,7 +101,7 @@ impl JjRepo {
         let tags: Vec<TagName> = repo
             .view()
             .local_tags()
-            .filter(|(_, target)| target.added_ids().any(|id| id == commit.id()))
+            .filter(|(_, target)| target.adds().flatten().any(|id| id == commit.id()))
             .map(|(name, _)| TagName::new(name.as_str()))
             .collect();
 

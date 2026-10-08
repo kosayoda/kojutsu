@@ -1,8 +1,8 @@
-# Vendored from jj-cli v0.45.1
-# Source: https://github.com/jj-vcs/jj/blob/v0.45.1/cli/src/config/revsets.toml
+# Vendored from jj-cli v0.46.0
+# Source: https://github.com/jj-vcs/jj/blob/v0.46.0/cli/src/config/revsets.toml
 # Update with: scripts/update-jj-config.sh
 #
-# jj-version: 0.45.1
+# jj-version: 0.46.0
 
 # NOTE: ensure you update docs/revsets.md with documentation when
 # adding/updating any of these aliases
@@ -11,6 +11,7 @@
 arrange = "reachable(@, mutable())"
 converge = "mutable() & divergent()"
 fix = "reachable(@, mutable())"
+git-push = "remote_bookmarks(remote=exact:remote)..@"
 run = "reachable(@, mutable())"
 simplify-parents = "reachable(@, mutable())"
 # log revset is also used as the default short-prefixes. If it failed to

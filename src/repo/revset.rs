@@ -39,9 +39,7 @@ impl JjRepo {
         let resolved = parsed
             .resolve_user_expression(repo, &symbol_resolver)
             .wrap_err("failed to resolve revset symbols")?;
-        let revset = resolved
-            .evaluate(repo)
-            .wrap_err("failed to evaluate revset")?;
+        let revset = resolved.evaluate().wrap_err("failed to evaluate revset")?;
         let mut ids: Vec<BackendCommitId> = revset.stream().try_collect().block_on()?;
         match ids.len() {
             0 => Err(color_eyre::eyre::eyre!(
@@ -112,9 +110,7 @@ impl JjRepo {
         let resolved = parsed
             .resolve_user_expression(repo, &symbol_resolver)
             .wrap_err("failed to resolve revset symbols")?;
-        let revset = resolved
-            .evaluate(repo)
-            .wrap_err("failed to evaluate revset")?;
+        let revset = resolved.evaluate().wrap_err("failed to evaluate revset")?;
 
         // Evaluate the immutable() revset for tagging commits.
         // The evaluated revset must stay alive for containing_fn() to borrow from.
@@ -296,7 +292,7 @@ impl JjRepo {
                 return None;
             }
         };
-        match resolved.evaluate(repo) {
+        match resolved.evaluate() {
             Ok(r) => Some(r),
             Err(e) => {
                 let msg = format!("failed to evaluate prioritize revset: {e}");
@@ -336,7 +332,7 @@ impl JjRepo {
                 return None;
             }
         };
-        match resolved.evaluate(repo) {
+        match resolved.evaluate() {
             Ok(r) => Some(r),
             Err(e) => {
                 let msg = format!("failed to evaluate immutable() revset: {e}");

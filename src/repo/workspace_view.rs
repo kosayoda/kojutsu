@@ -168,13 +168,13 @@ impl JjRepo {
             };
 
             // Conflict targets: removed (-) then added (+).
-            if target.has_conflict() {
-                for removed_id in target.removed_ids() {
+            if !target.is_resolved() {
+                for removed_id in target.removes().flatten() {
                     if let Some(ct) = self.make_conflict_target(removed_id, DiffKind::Removed) {
                         details.conflict_targets.push(ct);
                     }
                 }
-                for added_id in target.added_ids() {
+                for added_id in target.adds().flatten() {
                     if let Some(ct) = self.make_conflict_target(added_id, DiffKind::Added) {
                         details.conflict_targets.push(ct);
                     }
