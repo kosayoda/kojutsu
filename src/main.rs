@@ -721,7 +721,7 @@ fn finish_foreground_command(
     // Show output if there is any, or if the command failed (so failures are
     // always visible even when interactive commands print to inherited stdio).
     if !result.success || !result.output.is_empty() {
-        let retry = cmd.retry_options(result.output.bytes());
+        let retry = cmd.retry_options(result.output.bytes(), app.jj);
         app.mode = AppMode::command_output(
             result.display,
             Some(result.display_parts),
@@ -1091,7 +1091,7 @@ fn finish_jj_command(
         result.output.bytes().to_vec(),
         result.success,
     );
-    let retry = cmd.retry_options(result.output.bytes());
+    let retry = cmd.retry_options(result.output.bytes(), app.jj);
     app.mode = AppMode::command_output(
         result.display,
         Some(result.display_parts),

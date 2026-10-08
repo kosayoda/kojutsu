@@ -7,7 +7,7 @@ mod run;
 pub use capture::{Captured, Stream};
 pub use completion::Completion;
 pub use completion::{common_prefix, complete, replace_current_token, split_for_completion};
-pub use follow_up::{FollowUpAction, FollowUpOption};
+pub use follow_up::{FollowUpAction, FollowUpOption, offerable};
 
 use std::sync::{Arc, atomic::AtomicI32, atomic::Ordering};
 
@@ -591,8 +591,11 @@ mod exec_tests {
     fn an_exec_is_never_offered_a_jj_retry_flag() {
         let cmd = exec(&["git", "push"]);
         assert!(
-            cmd.retry_options(b"refusing to rewrite immutable commit")
-                .is_empty()
+            cmd.retry_options(
+                b"refusing to rewrite immutable commit",
+                InstalledJj::default()
+            )
+            .is_empty()
         );
 
         let raw = JJCommand {
@@ -601,7 +604,10 @@ mod exec_tests {
             },
             flags: CommandFlags::empty(),
         };
-        assert!(!raw.retry_options(b"immutable").is_empty());
+        assert!(
+            !raw.retry_options(b"immutable", InstalledJj::default())
+                .is_empty()
+        );
     }
 
     /// Nothing foreign should be assumed to want the terminal, and nothing
@@ -932,7 +938,7 @@ mod push_retry_tests {
     }
 
     fn retried_flags(cmd: &JJCommand, output: &str) -> Option<CommandFlags> {
-        let options = cmd.retry_options(output.as_bytes());
+        let options = cmd.retry_options(output.as_bytes(), InstalledJj::default());
         match options.as_slice() {
             [] => None,
             [only] => match &only.action {
@@ -1023,7 +1029,7 @@ mod ref_move_tests {
     }
 
     fn retry(cmd: &JJCommand, output: &str) -> Option<JJCommand> {
-        cmd.retry_options(output.as_bytes())
+        cmd.retry_options(output.as_bytes(), InstalledJj::default())
             .into_iter()
             .find_map(|option| match option.action {
                 FollowUpAction::Execute(retry) => Some(retry),
@@ -1125,7 +1131,10 @@ mod global_flag_tests {
         for fetch in fetches() {
             assert!(
                 fetch
-                    .retry_options(b"Error: Commit 1234abcd is immutable")
+                    .retry_options(
+                        b"Error: Commit 1234abcd is immutable",
+                        InstalledJj::default()
+                    )
                     .is_empty()
             );
         }
@@ -1152,7 +1161,10 @@ mod global_flag_tests {
             CommandFlags::empty(),
         );
         let [retry] = typed
-            .retry_options(b"Error: Commit 1234abcd is immutable")
+            .retry_options(
+                b"Error: Commit 1234abcd is immutable",
+                InstalledJj::default(),
+            )
             .try_into()
             .unwrap_or_else(|_| panic!("expected one retry"));
         let FollowUpAction::Execute(retry) = retry.action else {
@@ -1317,5 +1329,57 @@ mod jj_feature_tests {
         );
         let ancient = InstalledJj::known(JjVersion::new(0, 1, 0));
         assert!(raw.refused_by(ancient).is_none());
+    }
+
+    #[test]
+    fn a_retry_jj_would_refuse_is_not_offered() {
+        let output = b"Error: Won't push commit 1234abcd since it has conflicts\n";
+        let old = InstalledJj::known(JjVersion::new(0, 43, 0));
+        assert!(
+            push(CommandFlags::empty())
+                .retry_options(output, old)
+                .is_empty()
+        );
+        let current = InstalledJj::known(JjFeature::PushAllowConflicts.since());
+        assert_eq!(
+            push(CommandFlags::empty())
+                .retry_options(output, current)
+                .len(),
+            1
+        );
+    }
+
+    fn option(key: char, command: JJCommand) -> FollowUpOption {
+        FollowUpOption {
+            key,
+            label: "option",
+            action: FollowUpAction::Execute(command),
+        }
+    }
+
+    #[test]
+    fn only_what_jj_can_carry_out_is_offered() {
+        let jj = InstalledJj::known(JjVersion::new(0, 44, 0));
+        let offered = offerable(
+            vec![
+                option('c', example(JjFeature::Converge)),
+                option('p', push(CommandFlags::empty())),
+            ],
+            jj,
+        )
+        .expect("one left");
+        assert_eq!(offered.iter().map(|o| o.key).collect::<String>(), "p");
+
+        // Nothing left: say why, rather than offer an empty choice.
+        let refused = offerable(vec![option('c', example(JjFeature::Converge))], jj);
+        assert_eq!(
+            refused.err().as_deref(),
+            Some("jj converge needs jj 0.45.0 or newer; the installed jj is 0.44.0")
+        );
+        assert!(
+            offerable(Vec::new(), jj)
+                .expect("nothing to drop")
+                .is_empty()
+        );
     }
 }

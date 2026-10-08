@@ -1,5 +1,6 @@
 use strum::IntoEnumIterator;
 
+use crate::jj_version::{InstalledJj, JjFeature};
 use crate::keymap::CommandFlags;
 use crate::types::{
     ChangeSelection, CommandPrompt, CommitId, MessageMode, PendingCommitSelect, ReadyCommand,
@@ -41,8 +42,44 @@ pub enum FollowUpAction {
     },
 }
 
+impl FollowUpOption {
+    /// The newest feature carrying this option out needs that `jj` predates.
+    fn unsupported_by(&self, jj: InstalledJj) -> Option<JjFeature> {
+        match &self.action {
+            FollowUpAction::Execute(cmd) => cmd.unsupported_by(jj),
+            _ => None,
+        }
+    }
+}
+
+/// The `options` `jj` can carry out: one it would refuse is not worth
+/// offering. When that leaves nothing of a non-empty choice, the reason the
+/// first was dropped, to report in its place.
+pub fn offerable(
+    mut options: Vec<FollowUpOption>,
+    jj: InstalledJj,
+) -> Result<Vec<FollowUpOption>, String> {
+    let first_refusal = options
+        .first()
+        .and_then(|option| jj.refusal(option.unsupported_by(jj)?));
+    options.retain(|option| option.unsupported_by(jj).is_none());
+    match first_refusal {
+        Some(reason) if options.is_empty() => Err(reason),
+        _ => Ok(options),
+    }
+}
+
 impl JJCommand {
-    pub fn retry_options(&self, output: &[u8]) -> Vec<FollowUpOption> {
+    /// What to offer after this command failed with `output`, among what
+    /// `jj` can carry out: a push refused over conflicts on a jj without
+    /// `--allow-conflicts` has nothing to retry with.
+    pub fn retry_options(&self, output: &[u8], jj: InstalledJj) -> Vec<FollowUpOption> {
+        let mut options = self.retry_options_for(output);
+        options.retain(|option| option.unsupported_by(jj).is_none());
+        options
+    }
+
+    fn retry_options_for(&self, output: &[u8]) -> Vec<FollowUpOption> {
         // Matched on output text, so a command that can't take a global flag
         // (a foreign program, or a fetch for `--ignore-immutable`) would
         // otherwise be offered a retry that drops it and runs the same again.

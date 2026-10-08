@@ -443,7 +443,17 @@ fn confirm_target_select(app: &mut App) -> Action {
     let label = operation.label();
     let selection = super::action::build_change_selection(app);
     picks.targets = targets.iter().cloned().collect();
-    let mut options = operation.follow_up(picks.sources.clone(), targets, flags, selection);
+    let offered = crate::jj_command::offerable(
+        operation.follow_up(picks.sources.clone(), targets, flags, selection),
+        app.jj,
+    );
+    let mut options = match offered {
+        Ok(options) => options,
+        Err(reason) => {
+            app.set_error(reason);
+            return Action::None;
+        }
+    };
     if options.len() == 1 {
         let opt = options.remove(0);
         return super::action::execute_follow_up(app, opt.action);
