@@ -50,6 +50,9 @@ pub(in crate::ui) struct RowContext<'a> {
     /// In the annotate view: the commit of the line under the cursor, whose
     /// other lines are highlighted.
     pub annotate_highlight: Option<crate::types::CommitId>,
+    /// Whether loading has gone on long enough to say so: until then a
+    /// placeholder row stays blank, so quick loads don't flash it up.
+    pub loading_shown: bool,
 }
 
 impl RowContext<'_> {

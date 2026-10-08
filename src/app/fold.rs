@@ -7,7 +7,7 @@ use crate::idx::{
 };
 use crate::repo_service::RepoRequest;
 use crate::types::ActiveView;
-use crate::types::{DisplayRow, FileOwner, SmallVec};
+use crate::types::{DisplayRow, FileOwner, LoadingRow, SmallVec};
 
 /// Restore cursor position after a row rebuild. Finds all fallback keys in a
 /// single pass over the rows, then picks the highest-priority match. Falls back
@@ -184,16 +184,23 @@ impl App {
             let oi = OpLogIdx::new(idx);
             self.rows.push(DisplayRow::OpLogItem { op_log_idx: oi });
 
-            // Emit detail lines if this op is unfolded and data is loaded.
+            // Emit detail lines if this op is unfolded: the lines once
+            // loaded, a placeholder until then.
             let op_id = &self.op_log.entries[idx].id;
-            if self.op_log.unfolded.contains(op_id)
-                && let Some(Loadable::Loaded(lines)) = self.op_log.details.get(op_id)
-            {
-                for li in 0..lines.len() {
-                    self.rows.push(DisplayRow::OpLogDetailLine {
-                        op_log_idx: oi,
-                        line_idx: OpLogDetailIdx::new(li),
-                    });
+            if self.op_log.unfolded.contains(op_id) {
+                match self.op_log.details.get(op_id) {
+                    Some(Loadable::Loaded(lines)) => {
+                        for li in 0..lines.len() {
+                            self.rows.push(DisplayRow::OpLogDetailLine {
+                                op_log_idx: oi,
+                                line_idx: OpLogDetailIdx::new(li),
+                            });
+                        }
+                    }
+                    Some(Loadable::Loading) => self
+                        .rows
+                        .push(DisplayRow::Loading(LoadingRow::Operation(oi))),
+                    _ => {}
                 }
             }
 
@@ -208,13 +215,17 @@ impl App {
         if self.op_log.has_more {
             self.rows.push(DisplayRow::OpLogLoadMore);
         }
+        if self.op_log.entries.is_empty() && matches!(self.op_log.load_state, Loadable::Loading) {
+            self.rows.push(DisplayRow::Loading(LoadingRow::View));
+        }
         // Don't follow the LoadMore sentinel: keep the numeric position so
         // the cursor lands on the first newly loaded entry.
         let prev_cursor = prev_cursor.filter(|k| *k != DisplayRow::OpLogLoadMore);
         let fallback = match prev_cursor {
-            Some(DisplayRow::OpLogDetailLine { op_log_idx, .. }) => {
-                Some(DisplayRow::OpLogItem { op_log_idx })
-            }
+            Some(
+                DisplayRow::OpLogDetailLine { op_log_idx, .. }
+                | DisplayRow::Loading(LoadingRow::Operation(op_log_idx)),
+            ) => Some(DisplayRow::OpLogItem { op_log_idx }),
             _ => None,
         };
         self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor, fallback]);
@@ -237,6 +248,9 @@ impl App {
                 }),
             );
         }
+        if self.evolog.entries.is_empty() && matches!(self.evolog.load_state, Loadable::Loading) {
+            rows.push(DisplayRow::Loading(LoadingRow::View));
+        }
         self.rows = rows;
         let fallbacks = cursor_fallbacks(prev_cursor);
         self.cursor = restore_cursor(&self.rows, self.cursor, &fallbacks);
@@ -252,6 +266,9 @@ impl App {
             let entry_idx = EntryIdx::new(idx_raw);
             self.dag.nodes[entry_idx].row = rows.len();
             self.push_dag_entry_rows(entry_idx, &mut rows);
+        }
+        if self.dag.nodes.is_empty() && matches!(self.revset.load_state, Loadable::Loading) {
+            rows.push(DisplayRow::Loading(LoadingRow::View));
         }
         self.rows = rows;
 
@@ -293,7 +310,13 @@ impl App {
     /// Emit the rows of an owner's files: each file and, under an unfolded
     /// one, its diff lines or, for a conflicted DAG file, its conflict hunks.
     fn push_file_rows(&self, owner: FileOwner, rows: &mut Vec<DisplayRow>) {
-        let Some(files) = self.file_tree(owner).and_then(FileTree::files) else {
+        let Some(tree) = self.file_tree(owner) else {
+            return;
+        };
+        let Some(files) = tree.files() else {
+            if matches!(tree.summary(), Loadable::Loading) {
+                rows.push(DisplayRow::Loading(LoadingRow::Files(owner)));
+            }
             return;
         };
         for file_idx in (0..files.len()).map(FileIdx::new) {
@@ -311,8 +334,26 @@ impl App {
                     file_idx,
                     line_idx: DiffLineIdx::new(li),
                 }));
+            } else if self.is_file_content_loading(owner, file_idx) {
+                rows.push(DisplayRow::Loading(LoadingRow::Diff(owner, file_idx)));
             }
         }
+    }
+
+    /// Whether what an unfolded file shows, its diff or for a conflicted DAG
+    /// file its hunks, is on its way.
+    fn is_file_content_loading(&self, owner: FileOwner, file_idx: FileIdx) -> bool {
+        let diff_loading = self
+            .file_tree(owner)
+            .and_then(|tree| tree.diff(file_idx))
+            .is_some_and(|diff| matches!(diff, Loadable::Loading));
+        let hunks_loading = match owner {
+            FileOwner::Dag(entry_idx) => self.dag.nodes[entry_idx]
+                .conflict_hunks(file_idx)
+                .is_some_and(|hunks| matches!(hunks, Loadable::Loading)),
+            FileOwner::EvoLog(_) | FileOwner::Interdiff => false,
+        };
+        diff_loading || hunks_loading
     }
 
     /// Emit the rows of a conflicted file's hunks, shown instead of its diff.
@@ -521,9 +562,15 @@ fn cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>; 3] 
             Some(DisplayRow::FileChange { owner, file_idx }),
             Some(owner_row(owner)),
         ],
-        Some(row @ DisplayRow::FileChange { owner, .. }) => {
+        Some(row @ DisplayRow::FileChange { owner, .. })
+        | Some(row @ DisplayRow::Loading(LoadingRow::Files(owner))) => {
             [Some(row), Some(owner_row(owner)), None]
         }
+        Some(row @ DisplayRow::Loading(LoadingRow::Diff(owner, file_idx))) => [
+            Some(row),
+            Some(DisplayRow::FileChange { owner, file_idx }),
+            Some(owner_row(owner)),
+        ],
         Some(
             DisplayRow::DescriptionLine { entry_idx, .. } | DisplayRow::GraphLink { entry_idx, .. },
         ) => [Some(DisplayRow::CommitNode { entry_idx }), None, None],
@@ -657,9 +704,19 @@ impl App {
                 DisplayRow::FileChange { owner, file_idx }
                 | DisplayRow::DiffLine {
                     owner, file_idx, ..
-                },
+                }
+                | DisplayRow::Loading(LoadingRow::Diff(owner, file_idx)),
             ) => {
                 self.toggle_file_fold(*owner, *file_idx);
+            }
+            // Folding while the files load folds what they belong to.
+            Some(DisplayRow::Loading(LoadingRow::Files(owner))) => match *owner {
+                FileOwner::Dag(entry_idx) => self.toggle_commit_fold(entry_idx),
+                FileOwner::EvoLog(evolog_idx) => self.toggle_evolog_fold(evolog_idx),
+                FileOwner::Interdiff => {}
+            },
+            Some(DisplayRow::Loading(LoadingRow::Operation(op_log_idx))) => {
+                self.toggle_op_fold(*op_log_idx);
             }
             Some(DisplayRow::ConflictTerm {
                 entry_idx,
@@ -917,6 +974,8 @@ impl App {
                     }
                 }
             }
+        } else if matches!(self.annotate.lines, Loadable::Loading) {
+            self.rows.push(DisplayRow::Loading(LoadingRow::View));
         }
 
         // Jump to target line after time-travel reload.
@@ -956,5 +1015,122 @@ impl App {
         if unfolded {
             self.scroll_to_show_children();
         }
+    }
+}
+
+#[cfg(test)]
+mod loading_row_tests {
+    use super::super::test_support::{entry, load};
+    use super::*;
+    use crate::dag::{DiffSummary, FileChange, LineStats};
+    use crate::repo_service::{RepoResult, RevsetLoadKind};
+
+    const COMMIT: &str = "7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654";
+    const ENTRY: EntryIdx = EntryIdx::new(0);
+
+    fn app_with_commit() -> App {
+        let mut app = App::for_test();
+        load(&mut app, vec![entry('a', COMMIT)], true);
+        app
+    }
+
+    fn summary_arrives(app: &mut App) {
+        app.handle_repo_result(RepoResult::DiffSummary {
+            target: DiffTarget::Commit(crate::types::CommitId::new(COMMIT)),
+            result: Ok(DiffSummary {
+                files: vec![FileChange::for_test("a.rs")],
+                stats: LineStats::default(),
+            }),
+        });
+    }
+
+    fn loading_rows(app: &App) -> Vec<LoadingRow> {
+        app.rows
+            .iter()
+            .filter_map(|row| match row {
+                DisplayRow::Loading(loading) => Some(*loading),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// An unfolded commit shows where its files will be, until they come.
+    #[test]
+    fn unfolded_files_hold_a_place_until_loaded() {
+        let mut app = app_with_commit();
+        app.toggle_commit_fold(ENTRY);
+        assert_eq!(
+            loading_rows(&app),
+            [LoadingRow::Files(FileOwner::Dag(ENTRY))]
+        );
+        summary_arrives(&mut app);
+        assert!(loading_rows(&app).is_empty());
+        assert!(app.rows.contains(&DisplayRow::FileChange {
+            owner: FileOwner::Dag(ENTRY),
+            file_idx: FileIdx::new(0),
+        }));
+    }
+
+    #[test]
+    fn an_unfolded_file_holds_a_place_for_its_diff() {
+        let mut app = app_with_commit();
+        app.toggle_commit_fold(ENTRY);
+        summary_arrives(&mut app);
+        app.toggle_file_fold(FileOwner::Dag(ENTRY), FileIdx::new(0));
+        assert_eq!(
+            loading_rows(&app),
+            [LoadingRow::Diff(FileOwner::Dag(ENTRY), FileIdx::new(0))]
+        );
+    }
+
+    /// A cursor left on a placeholder lands on what it belonged to.
+    #[test]
+    fn a_cursor_on_a_placeholder_falls_back_to_its_owner() {
+        let mut app = app_with_commit();
+        app.toggle_commit_fold(ENTRY);
+        let placeholder = app
+            .rows
+            .iter()
+            .position(|row| matches!(row, DisplayRow::Loading(_)))
+            .expect("a placeholder");
+        app.cursor = RowIdx::new(placeholder);
+        // The placeholder answers for its commit meanwhile.
+        assert_eq!(app.rows[placeholder].entry_idx(), Some(ENTRY));
+        summary_arrives(&mut app);
+        assert!(app.rows[app.cursor.raw()] == DisplayRow::CommitNode { entry_idx: ENTRY });
+    }
+
+    /// Before the first commits arrive, the log says it is loading them.
+    #[test]
+    fn an_empty_log_holds_a_place_while_loading() {
+        let mut app = App::for_test();
+        app.request_revset_load(None, RevsetLoadKind::Snapshot);
+        assert!(app.rows == [DisplayRow::Loading(LoadingRow::View)]);
+        load(&mut app, vec![entry('a', COMMIT)], true);
+        assert!(loading_rows(&app).is_empty());
+    }
+
+    /// Entering the op log for the first time shows it loading.
+    #[test]
+    fn an_empty_op_log_holds_a_place_while_loading() {
+        let mut app = App::for_test();
+        app.switch_view(ActiveView::Operations);
+        assert!(app.rows == [DisplayRow::Loading(LoadingRow::View)]);
+    }
+
+    /// Folding on the placeholder folds the commit it is loading for.
+    #[test]
+    fn folding_on_a_placeholder_folds_its_owner() {
+        let mut app = app_with_commit();
+        app.toggle_commit_fold(ENTRY);
+        app.cursor = RowIdx::new(
+            app.rows
+                .iter()
+                .position(|row| matches!(row, DisplayRow::Loading(_)))
+                .expect("a placeholder"),
+        );
+        app.toggle_fold();
+        assert!(!app.is_commit_unfolded(ENTRY));
+        assert!(loading_rows(&app).is_empty());
     }
 }

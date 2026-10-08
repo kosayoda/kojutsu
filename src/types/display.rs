@@ -26,6 +26,19 @@ pub enum FileOwner {
     Interdiff,
 }
 
+/// What a placeholder row stands in for while it loads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoadingRow {
+    /// An unfolded owner's changed files.
+    Files(FileOwner),
+    /// An unfolded file's diff, or a conflicted DAG file's hunks.
+    Diff(FileOwner, FileIdx),
+    /// An unfolded operation's details.
+    Operation(OpLogIdx),
+    /// A view with nothing to show until its first load lands.
+    View,
+}
+
 /// One visual row in the list.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DisplayRow {
@@ -144,6 +157,8 @@ pub enum DisplayRow {
         line_idx: AnnotateLineIdx,
         detail_idx: AnnotateDetailIdx,
     },
+    /// Where content is on its way.
+    Loading(LoadingRow),
 }
 
 impl DisplayRow {
@@ -165,7 +180,11 @@ impl DisplayRow {
             | Self::ConflictTerm { entry_idx, .. }
             | Self::ConflictContext { entry_idx, .. }
             | Self::ConflictGap { entry_idx, .. }
-            | Self::ConflictEdited { entry_idx, .. } => Some(entry_idx),
+            | Self::ConflictEdited { entry_idx, .. }
+            | Self::Loading(
+                LoadingRow::Files(FileOwner::Dag(entry_idx))
+                | LoadingRow::Diff(FileOwner::Dag(entry_idx), _),
+            ) => Some(entry_idx),
             _ => None,
         }
     }
@@ -176,7 +195,8 @@ impl DisplayRow {
             Self::FileChange { owner, file_idx }
             | Self::DiffLine {
                 owner, file_idx, ..
-            } => Some((owner, file_idx)),
+            }
+            | Self::Loading(LoadingRow::Diff(owner, file_idx)) => Some((owner, file_idx)),
             _ => self.dag_file().map(|(e, f)| (FileOwner::Dag(e), f)),
         }
     }
@@ -218,7 +238,10 @@ impl DisplayRow {
                 entry_idx,
                 file_idx,
                 ..
-            } => Some((entry_idx, file_idx)),
+            }
+            | Self::Loading(LoadingRow::Diff(FileOwner::Dag(entry_idx), file_idx)) => {
+                Some((entry_idx, file_idx))
+            }
             _ => None,
         }
     }
@@ -276,7 +299,8 @@ impl DisplayRow {
         match self {
             Self::OpLogItem { op_log_idx }
             | Self::OpLogDetailLine { op_log_idx, .. }
-            | Self::OpLogGraphLink { op_log_idx, .. } => Some(op_log_idx),
+            | Self::OpLogGraphLink { op_log_idx, .. }
+            | Self::Loading(LoadingRow::Operation(op_log_idx)) => Some(op_log_idx),
             _ => None,
         }
     }
@@ -293,7 +317,11 @@ impl DisplayRow {
                 owner: FileOwner::EvoLog(evolog_idx),
                 ..
             }
-            | Self::EvoLogGraphLink { evolog_idx, .. } => Some(evolog_idx),
+            | Self::EvoLogGraphLink { evolog_idx, .. }
+            | Self::Loading(
+                LoadingRow::Files(FileOwner::EvoLog(evolog_idx))
+                | LoadingRow::Diff(FileOwner::EvoLog(evolog_idx), _),
+            ) => Some(evolog_idx),
             _ => None,
         }
     }

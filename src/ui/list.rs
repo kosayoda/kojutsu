@@ -12,7 +12,9 @@ use std::collections::HashMap;
 
 use crate::app::{App, AppMode};
 use crate::config::Config;
-use crate::types::{ActiveView, ConflictHunkRef, DisplayRow, FileOwner, FileSelectionState};
+use crate::types::{
+    ActiveView, ConflictHunkRef, DisplayRow, FileOwner, FileSelectionState, LoadingRow,
+};
 
 pub(super) fn expand_tabs(s: &str, tab_spaces: &str) -> String {
     if s.contains('\t') {
@@ -108,6 +110,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
                     .map(|line| line.commit_id.clone())
             })
             .flatten(),
+        loading_shown: app.activity_shown(std::time::Instant::now()),
     };
     let mut rendered: Vec<RenderedRow> = (vis_start..vis_end)
         .map(|row_idx| {
@@ -190,6 +193,49 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     let mut list_state =
         ListState::default().with_selected(Some(app.cursor.raw().saturating_sub(vis_start)));
     frame.render_stateful_widget(list, area, &mut list_state);
+}
+
+/// A placeholder where content is on its way, indented like what it stands
+/// in for, and blank until loading has gone on long enough to mention.
+fn render_loading_row(ctx: &RowContext<'_>, row: LoadingRow) -> Vec<Line<'static>> {
+    if !ctx.loading_shown {
+        return vec![Line::raw("")];
+    }
+    let app = ctx.app;
+    let (indent, what) = match row {
+        // Where a file row's fold arrow sits.
+        LoadingRow::Files(_) => ("     ", "loading changed files…"),
+        // Under the file, where its diff starts.
+        LoadingRow::Diff(owner, file_idx) => {
+            let conflicted = app.file(owner, file_idx).is_some_and(|f| f.has_conflict);
+            let what = if conflicted && matches!(owner, FileOwner::Dag(_)) {
+                "loading conflict…"
+            } else {
+                "loading diff…"
+            };
+            ("         ", what)
+        }
+        // Where an operation's detail lines start.
+        LoadingRow::Operation(_) => ("    ", "loading operation…"),
+        LoadingRow::View => (
+            "  ",
+            match app.active_view {
+                ActiveView::Operations => "loading operations…",
+                ActiveView::Evolog => "loading evolution log…",
+                ActiveView::Annotate => "annotating…",
+                _ => "loading commits…",
+            },
+        ),
+    };
+    vec![Line::from(vec![
+        Span::raw(indent),
+        Span::styled(
+            what,
+            Style::default()
+                .fg(ctx.config.theme.muted)
+                .add_modifier(Modifier::ITALIC),
+        ),
+    ])]
 }
 
 /// Render one row of whichever view is showing.
@@ -480,6 +526,7 @@ fn render_row(
             line_idx,
             detail_idx,
         } => render_annotate_detail(ctx, line_idx, detail_idx, is_cursor, search),
+        DisplayRow::Loading(row) => render_loading_row(ctx, row),
     };
     lines.into()
 }

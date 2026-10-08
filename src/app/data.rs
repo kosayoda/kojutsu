@@ -30,6 +30,10 @@ impl App {
         self.revset.load_state = Loadable::Loading;
         self.revset.pending = revset.clone().map(Into::into);
         self.clear_info_status();
+        // With no commits yet, the log has only its placeholder to show.
+        if self.dag.nodes.is_empty() {
+            self.rebuild_rows();
+        }
         self.pending_repo_requests
             .push(RepoRequest::Revset { revset, load_kind });
     }

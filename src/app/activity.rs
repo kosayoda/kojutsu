@@ -153,10 +153,22 @@ impl App {
         }
         let frames = &self.config.spinner;
         let frame = (elapsed.as_millis() / FRAME.as_millis()) as usize;
+        // A placeholder row in the list already says what is loading.
+        let placeholder_shown = self
+            .rows
+            .iter()
+            .any(|row| matches!(row, crate::types::DisplayRow::Loading(_)));
+        let activity = self.activity()?;
         Some(Indicator {
             glyph: (!frames.is_empty()).then(|| frames[frame % frames.len()]),
-            label: self.activity()?.label(),
+            label: activity.label().filter(|_| !placeholder_shown),
         })
+    }
+
+    /// Whether work has gone on long enough at `now` to show for it.
+    pub fn activity_shown(&self, now: Instant) -> bool {
+        self.activity_since
+            .is_some_and(|since| now.saturating_duration_since(since) >= SHOW_AFTER)
     }
 
     /// How long until the screen changes on its own, with nothing else
@@ -239,6 +251,19 @@ mod tests {
             glyph(SHOW_AFTER + FRAME),
             Some(frames[(first + 1) % frames.len()])
         );
+    }
+
+    /// With a placeholder in the list saying it, the status line doesn't
+    /// repeat it; the spinner still turns.
+    #[test]
+    fn a_placeholder_row_takes_over_the_label() {
+        let mut app = App::for_test();
+        app.request_revset_load(None, crate::repo_service::RevsetLoadKind::Snapshot);
+        let start = Instant::now();
+        app.track_activity(start);
+        let shown = app.activity_indicator(start + SHOW_AFTER).expect("shown");
+        assert!(shown.glyph.is_some());
+        assert_eq!(shown.label, None);
     }
 
     /// No frames configured: the label still says what is happening.
