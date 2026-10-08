@@ -217,14 +217,18 @@ impl JjRepo {
             .collect()
     }
 
-    /// Unique git remote names, sorted alphabetically.
+    /// The remotes configured in git, sorted: every one a fetch or push can
+    /// name, including those with no bookmarks yet. None when the repo isn't
+    /// backed by git.
     pub fn git_remotes(&self) -> Vec<RemoteName> {
-        use std::collections::BTreeSet;
-        self.remote_bookmarks()
-            .map(|(s, _)| RemoteName::new(s.remote.as_str()))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect()
+        jj_lib::git::get_all_remote_names(self.repo.store())
+            .map(|names| {
+                names
+                    .iter()
+                    .map(|name| RemoteName::new(name.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn workspace_root(&self) -> &Path {
