@@ -11,6 +11,7 @@ use crate::types::{BookmarkName, CommitId as UiCommitId, RemoteName, TagName, Wo
 
 impl JjRepo {
     pub fn workspace_entries(&self) -> Vec<crate::dag::WorkspaceInfo> {
+        let store = self.repo.loader().workspace_store();
         let mut entries = Vec::new();
         for (ws_name, commit_id) in self.repo.view().wc_commit_ids() {
             let is_current = *ws_name == self.workspace_name;
@@ -34,6 +35,7 @@ impl JjRepo {
                 change_id,
                 description,
                 is_current,
+                path: store.get_workspace_path(ws_name).ok().flatten(),
             });
         }
         entries.sort_unstable_by(|a, b| a.name.cmp(&b.name));

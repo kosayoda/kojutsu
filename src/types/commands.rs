@@ -28,6 +28,10 @@ pub enum PendingSelection {
     WorkspaceForget {
         flags: CommandFlags,
     },
+    /// Remove workspaces, once their deletion is confirmed.
+    WorkspaceRemove {
+        flags: CommandFlags,
+    },
     /// Track remote bookmarks.
     BookmarkTrack {
         flags: CommandFlags,

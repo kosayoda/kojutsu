@@ -6,11 +6,12 @@
 use smallvec::smallvec;
 
 use crate::app::{App, AppMode};
-use crate::jj_command::{JJCommand, JJCommandKind};
+use crate::jj_command::{FollowUpAction, FollowUpOption, JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::ActiveView;
 use crate::types::{
     CommandPrompt, CommitId, PendingSelection, RemoteCommand, SmallVec, Str, TargetOperation,
+    WorkspaceName,
 };
 
 use super::Action;
@@ -443,6 +444,72 @@ pub(super) fn workspace_forget(app: &mut App, flags: CommandFlags) -> Action {
     }
 }
 
+/// Remove target workspaces other than this one, asking which when there
+/// are several, and confirming before their directories are deleted.
+pub(super) fn workspace_remove(app: &mut App, flags: CommandFlags) -> Action {
+    let names: SmallVec<WorkspaceName> = app
+        .target_workspaces()
+        .into_iter()
+        .filter(|name| !app.is_current_workspace(name))
+        .collect();
+    match names.len() {
+        0 => {
+            app.set_error("no other workspace here");
+            Action::None
+        }
+        1 => confirm_workspace_remove(app, names, flags),
+        _ => {
+            let items = names.iter().map(|w| w.to_string()).collect();
+            app.mode = AppMode::select_from_list(
+                "remove workspace",
+                items,
+                true,
+                PendingSelection::WorkspaceRemove { flags },
+                false,
+            );
+            Action::None
+        }
+    }
+}
+
+/// Ask before removing `names`: unlike forgetting, it deletes their
+/// directories, so the prompt names what goes.
+pub(super) fn confirm_workspace_remove(
+    app: &mut App,
+    names: SmallVec<WorkspaceName>,
+    flags: CommandFlags,
+) -> Action {
+    let doomed: Vec<String> = names
+        .iter()
+        .map(|name| match app.workspace_path(name) {
+            Some(path) => path.display().to_string(),
+            None => format!("{name} (path unknown)"),
+        })
+        .collect();
+    let remove = FollowUpOption {
+        key: 'y',
+        label: "remove and delete",
+        action: FollowUpAction::Execute(JJCommand {
+            kind: JJCommandKind::WorkspaceRemove { names },
+            flags,
+        }),
+    };
+    match crate::jj_command::offerable(vec![remove], app.jj) {
+        Ok(options) => {
+            app.mode = AppMode::FollowUp {
+                prompt: crate::app::FollowUpPrompt::Text(format!(
+                    "delete {} from disk?",
+                    doomed.join(", ")
+                )),
+                options,
+                origin: None,
+            };
+        }
+        Err(reason) => app.set_error(reason),
+    }
+    Action::None
+}
+
 #[cfg(test)]
 mod tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -596,5 +663,108 @@ mod tests {
         ));
         let message = &app.status_message.as_ref().expect("an error").0;
         assert_eq!(message, "nothing to edit here");
+    }
+}
+
+#[cfg(test)]
+mod workspace_remove_tests {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::app::{App, AppMode, FollowUpPrompt};
+    use crate::dag::WorkspaceInfo;
+    use crate::input::{Action, handle_key};
+    use crate::jj_command::{FollowUpAction, JJCommandKind};
+    use crate::jj_version::{InstalledJj, JjVersion};
+    use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+    use crate::lua::LuaEngine;
+    use crate::types::{ActiveView, WorkspaceName};
+
+    fn workspace(name: &str, is_current: bool) -> WorkspaceInfo {
+        WorkspaceInfo {
+            name: WorkspaceName::new(name),
+            commit_id: None,
+            change_id: None,
+            description: None,
+            is_current,
+            path: Some(format!("/work/{name}").into()),
+        }
+    }
+
+    /// The workspace view on `default` (this one) and `second`, with the
+    /// cursor on `on`.
+    fn workspaces_view(on: usize) -> App {
+        let mut app = App::for_test();
+        app.jj = InstalledJj::known(JjVersion::new(0, 46, 0));
+        app.views.workspace_entries = vec![workspace("default", true), workspace("second", false)];
+        app.switch_view(ActiveView::Workspaces);
+        for _ in 0..on {
+            press(&mut app, 'j');
+        }
+        app
+    }
+
+    fn status(app: &App) -> &str {
+        app.status_message
+            .as_ref()
+            .map_or("", |(msg, _)| msg.as_str())
+    }
+
+    fn press(app: &mut App, c: char) -> Action {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let lua = LuaEngine::for_test();
+        handle_key(
+            app,
+            &keymaps,
+            &lua,
+            KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE),
+        )
+    }
+
+    /// Removing deletes a directory, so it asks first and says which.
+    #[test]
+    fn removing_asks_before_deleting_the_directory() {
+        let mut app = workspaces_view(1);
+        assert!(matches!(press(&mut app, 'x'), Action::None));
+        let AppMode::FollowUp {
+            prompt: FollowUpPrompt::Text(prompt),
+            options,
+            ..
+        } = &app.mode
+        else {
+            panic!("expected a confirmation");
+        };
+        assert_eq!(prompt, "delete /work/second from disk?");
+        let [option] = options.as_slice() else {
+            panic!("expected one option");
+        };
+        let FollowUpAction::Execute(cmd) = &option.action else {
+            panic!("expected a command");
+        };
+        assert!(
+            matches!(&cmd.kind, JJCommandKind::WorkspaceRemove { names } if names[0] == WorkspaceName::new("second"))
+        );
+    }
+
+    /// The workspace kojutsu runs in is never offered: removing it would
+    /// delete the directory out from under it.
+    #[test]
+    fn this_workspace_is_never_removed() {
+        let mut app = workspaces_view(0);
+        press(&mut app, 'x');
+        assert!(matches!(app.mode, AppMode::Normal));
+        assert_eq!(status(&app), "no other workspace here");
+    }
+
+    /// On a jj without `workspace remove`, say so instead of asking.
+    #[test]
+    fn an_older_jj_is_told_rather_than_asked() {
+        let mut app = workspaces_view(1);
+        app.jj = InstalledJj::known(JjVersion::new(0, 45, 1));
+        press(&mut app, 'x');
+        assert!(matches!(app.mode, AppMode::Normal));
+        assert_eq!(
+            status(&app),
+            "jj workspace remove needs jj 0.46.0 or newer; the installed jj is 0.45.1"
+        );
     }
 }

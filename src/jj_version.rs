@@ -88,6 +88,7 @@ pub enum JjFeature {
     UndoCrossWorkspace,
     /// `jj workspace add --colocate` and `--no-colocate`.
     WorkspaceColocation,
+    WorkspaceRemove,
 }
 
 impl JjFeature {
@@ -103,7 +104,9 @@ impl JjFeature {
             | Self::AbsorbLines
             | Self::TagTracking => JjVersion::new(0, 44, 0),
             Self::Converge => JjVersion::new(0, 45, 0),
-            Self::UndoCrossWorkspace | Self::WorkspaceColocation => JjVersion::new(0, 46, 0),
+            Self::UndoCrossWorkspace | Self::WorkspaceColocation | Self::WorkspaceRemove => {
+                JjVersion::new(0, 46, 0)
+            }
         }
     }
 
@@ -121,6 +124,7 @@ impl JjFeature {
             Self::Converge => "jj converge",
             Self::UndoCrossWorkspace => "undoing another workspace's operation",
             Self::WorkspaceColocation => "choosing whether a new workspace is colocated",
+            Self::WorkspaceRemove => "jj workspace remove",
         }
     }
 }

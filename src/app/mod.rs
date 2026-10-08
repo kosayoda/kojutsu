@@ -959,6 +959,26 @@ impl App {
         }
     }
 
+    fn workspace_entry(
+        &self,
+        name: &crate::types::WorkspaceName,
+    ) -> Option<&crate::dag::WorkspaceInfo> {
+        self.views
+            .workspace_entries
+            .iter()
+            .find(|ws| ws.name == *name)
+    }
+
+    /// Whether `name` is the workspace kojutsu runs in.
+    pub fn is_current_workspace(&self, name: &crate::types::WorkspaceName) -> bool {
+        self.workspace_entry(name).is_some_and(|ws| ws.is_current)
+    }
+
+    /// Where workspace `name` lives on disk, when jj recorded it.
+    pub fn workspace_path(&self, name: &crate::types::WorkspaceName) -> Option<&std::path::Path> {
+        self.workspace_entry(name)?.path.as_deref()
+    }
+
     const EXPAND_COUNT: usize = 10;
 
     pub fn expand_ancestors(&mut self, entry_idx: crate::idx::EntryIdx) {

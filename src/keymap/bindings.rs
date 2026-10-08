@@ -465,6 +465,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         ),
         bind("w a", WorkspaceAdd, "add", C, dag()),
         bind("w f", WorkspaceForget, "forget", C, dag()),
+        bind("w x", WorkspaceRemove, "remove (deletes it)", C, dag()),
         bind("w l", WorkspaceList, "list", C, dag()),
         bind("w r", WorkspaceRename, "rename", C, dag()),
     ]);
@@ -519,6 +520,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     specs.extend([
         bind("a", WorkspaceAdd, "add", C, workspace()),
         bind("f", WorkspaceForget, "forget", C, workspace()),
+        bind("x", WorkspaceRemove, "remove (deletes it)", C, workspace()),
         bind("r", WorkspaceRename, "rename", C, workspace()),
         bind("enter", JumpToCommit, "jump to commit", C, workspace()),
     ]);

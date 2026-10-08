@@ -207,6 +207,7 @@ pub enum AppAction {
     ToggleDiffUnderline,
     WorkspaceAdd,
     WorkspaceForget,
+    WorkspaceRemove,
     WorkspaceList,
     WorkspaceRename,
     ToggleSelect,

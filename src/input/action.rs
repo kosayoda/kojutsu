@@ -737,6 +737,7 @@ fn perform(
             Action::None
         }
         AppAction::WorkspaceForget => super::target::workspace_forget(app, flags),
+        AppAction::WorkspaceRemove => super::target::workspace_remove(app, flags),
         AppAction::WorkspaceList => Action::run(JJCommand {
             kind: JJCommandKind::WorkspaceList,
             flags,

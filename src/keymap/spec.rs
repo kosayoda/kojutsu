@@ -233,6 +233,7 @@ impl AppAction {
             ToggleDiffUnderline => ui(ALL),
             WorkspaceAdd => mutate(ALL),
             WorkspaceForget => mutate(ALL),
+            WorkspaceRemove => mutate(ALL).needs(JjFeature::WorkspaceRemove),
             WorkspaceList => ui(ALL),
             WorkspaceRename => mutate(ALL),
             ToggleSelect => ui(ALL),

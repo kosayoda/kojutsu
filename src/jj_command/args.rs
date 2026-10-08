@@ -544,6 +544,14 @@ impl JJCommand {
                 args.extend(names.iter().map(|n| arg(n.as_str())));
                 args
             }
+            JJCommandKind::WorkspaceRemove { names, .. } => {
+                let mut args = vec![
+                    sub("workspace"),
+                    sub("remove").needs(JjFeature::WorkspaceRemove),
+                ];
+                args.extend(names.iter().map(|n| arg(n.as_str())));
+                args
+            }
             JJCommandKind::WorkspaceList => {
                 vec![sub("workspace"), sub("list")]
             }

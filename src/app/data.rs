@@ -945,6 +945,7 @@ mod repo_result_tests {
             change_id: Some(ShortId::new("uunnomkxrqvlypszwlwkvvqnstvzoxrs")),
             description: None,
             is_current: true,
+            path: None,
         });
 
         app.handle_repo_result(RepoResult::BookmarkDetailPrefixLengths {

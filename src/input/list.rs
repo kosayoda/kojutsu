@@ -235,6 +235,10 @@ pub(super) fn resolve_selection(
                 flags,
             })
         }
+        PendingSelection::WorkspaceRemove { flags } => {
+            let names = names.into_iter().map(WorkspaceName::new).collect();
+            super::target::confirm_workspace_remove(app, names, flags)
+        }
         PendingSelection::WorkspaceForget { flags } => {
             let names = names.into_iter().map(WorkspaceName::new).collect();
             Action::run(JJCommand {

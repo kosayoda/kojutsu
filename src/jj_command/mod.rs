@@ -195,6 +195,10 @@ pub enum JJCommandKind {
     WorkspaceForget {
         names: SmallVec<WorkspaceName>,
     },
+    /// Forget workspaces and delete their directories.
+    WorkspaceRemove {
+        names: SmallVec<WorkspaceName>,
+    },
     WorkspaceList,
     WorkspaceRename {
         new_name: WorkspaceName,
@@ -1250,6 +1254,12 @@ mod jj_feature_tests {
             JjFeature::UndoCrossWorkspace => {
                 cmd(JJCommandKind::Redo, CommandFlags::ALLOW_CROSS_WORKSPACE)
             }
+            JjFeature::WorkspaceRemove => cmd(
+                JJCommandKind::WorkspaceRemove {
+                    names: smallvec::smallvec![WorkspaceName::new("second")],
+                },
+                CommandFlags::empty(),
+            ),
             JjFeature::WorkspaceColocation => cmd(
                 JJCommandKind::WorkspaceAdd {
                     path: "../second".into(),

@@ -154,6 +154,8 @@ pub struct WorkspaceInfo {
     pub change_id: Option<ShortId>,
     pub description: Option<String>,
     pub is_current: bool,
+    /// Where the workspace lives on disk, when jj recorded it.
+    pub path: Option<std::path::PathBuf>,
 }
 
 /// Two trees whose difference is shown as a list of changed files, each
