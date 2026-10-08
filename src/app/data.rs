@@ -166,9 +166,6 @@ impl App {
 
         if done {
             self.prune_conflict_ui();
-            self.clear_info_status();
-        } else {
-            self.set_status(format!("loading… {} commits", self.dag.nodes.len()));
         }
         if dropped_selection {
             self.set_status(

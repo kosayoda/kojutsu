@@ -146,6 +146,11 @@ pub fn generate_type_definitions() -> String {
     writeln!(out, "---@field run KojutsuRun").unwrap();
     writeln!(out, "---@field date_format string strftime syntax").unwrap();
     writeln!(out, "---@field glyphs KojutsuGlyphs").unwrap();
+    writeln!(
+        out,
+        "---@field spinner string[] one character per frame; empty for no spinner"
+    )
+    .unwrap();
     writeln!(out, "---@field default_search_scopes KojutsuSearchScopes").unwrap();
     writeln!(out, "---@field tab_width integer").unwrap();
     writeln!(out, "---@field diff KojutsuDiff").unwrap();

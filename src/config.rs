@@ -48,6 +48,10 @@ pub struct Config {
     /// Characters used for commit glyphs in the DAG graph.
     #[serde(default)]
     pub glyphs: GlyphChars,
+    /// Frames of the spinner shown while background work runs; empty for
+    /// none, leaving only the status line's word on it.
+    #[serde(default = "default_spinner")]
+    pub spinner: Vec<char>,
     /// Search scopes enabled by default when starting a new search.
     #[serde(default)]
     pub default_search_scopes: DefaultSearchScopes,
@@ -67,6 +71,7 @@ impl Default for Config {
             run: RunConfig::default(),
             date_format: default_date_format(),
             glyphs: GlyphChars::default(),
+            spinner: default_spinner(),
             default_search_scopes: DefaultSearchScopes::default(),
             tab_width: default_tab_width(),
             diff: DiffConfig::default(),
@@ -181,6 +186,10 @@ impl Default for GlyphChars {
             normal: default_glyph_normal(),
         }
     }
+}
+
+fn default_spinner() -> Vec<char> {
+    "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".chars().collect()
 }
 
 fn default_glyph_working_copy() -> char {

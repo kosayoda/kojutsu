@@ -1,3 +1,4 @@
+mod activity;
 mod carry;
 mod cursor;
 mod data;
@@ -12,6 +13,7 @@ mod test_support;
 mod types;
 mod visual;
 
+pub use activity::{Activity, Indicator};
 pub use file_tree::FileTree;
 pub use types::*;
 
@@ -285,6 +287,8 @@ pub struct App {
     pub repo_root: String,
     /// The `jj` commands run with, which decides what kojutsu may ask of it.
     pub jj: crate::jj_version::InstalledJj,
+    /// When the current stretch of background work began; `None` when idle.
+    activity_since: Option<std::time::Instant>,
     /// Current interaction mode.
     pub mode: AppMode,
     /// Repo requests waiting to be sent to the background service.
@@ -455,6 +459,7 @@ impl App {
             run_jobs: None,
             repo_root,
             jj: crate::jj_version::InstalledJj::default(),
+            activity_since: None,
             mode: AppMode::Normal,
             pending_repo_requests: Vec::new(),
             pending_file_view: None,

@@ -205,6 +205,13 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         crate::types::ActiveView::Interdiff => " Interdiff ".into(),
         crate::types::ActiveView::Annotate => " Annotate ".into(),
     };
+    // The spinner rides on the view title: drawn first, it is the last
+    // left title the right-aligned help hint crowds out.
+    let indicator = app.activity_indicator(std::time::Instant::now());
+    let view_title = match indicator.as_ref().and_then(|i| i.glyph) {
+        Some(glyph) => format!("{}{glyph} ", view_title).into(),
+        None => view_title,
+    };
 
     let mut wc_spans: Vec<Span> = Vec::new();
     if !app.has_working_copy() {
@@ -261,9 +268,87 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
             StatusLevel::Error => theme.error,
         };
         (status.clone(), c)
+    } else if let Some(label) = indicator.and_then(|i| i.label) {
+        // Only on an otherwise empty line: a message or a search matters
+        // more than what is loading, which the spinner still shows.
+        (label, theme.muted)
     } else {
         (String::new(), theme.text)
     };
     let line = Line::from(Span::styled(content, Style::default().fg(color)));
     frame.render_widget(Paragraph::new(line), inner);
+}
+
+#[cfg(test)]
+mod activity_tests {
+    use std::time::{Duration, Instant};
+
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use super::draw_status_bar;
+    use crate::app::{App, Loadable};
+    use crate::theme::Theme;
+
+    /// The status bar's two lines, as drawn `width` columns wide.
+    fn status_bar(app: &App, width: u16) -> [String; 2] {
+        let mut terminal = Terminal::new(TestBackend::new(width, 2)).expect("terminal");
+        terminal
+            .draw(|frame| draw_status_bar(frame, frame.area(), app, &Theme::default()))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        [0, 1].map(|y| {
+            (0..width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+    }
+
+    fn busy_app() -> App {
+        let mut app = App::for_test();
+        app.revset.load_state = Loadable::Loading;
+        // Long enough ago that the indicator is due.
+        app.track_activity(Instant::now() - Duration::from_secs(1));
+        app
+    }
+
+    #[test]
+    fn the_spinner_sits_by_the_view_title_and_the_label_below() {
+        let [border, line] = status_bar(&busy_app(), 100);
+        let spinner = &busy_app().config.spinner;
+        let after_title = border
+            .split(" Log ")
+            .nth(1)
+            .and_then(|rest| rest.chars().next())
+            .expect("a view title");
+        assert!(spinner.contains(&after_title), "{border}");
+        assert_eq!(line, "loading commits…");
+    }
+
+    /// The view title and its spinner are the last thing the right-aligned
+    /// help hint crowds out: still there at 20 columns.
+    #[test]
+    fn a_narrow_terminal_keeps_the_spinner() {
+        let [border, _] = status_bar(&busy_app(), 20);
+        assert!(border.contains(" Log "), "{border}");
+        assert!(
+            busy_app()
+                .config
+                .spinner
+                .iter()
+                .any(|frame| border.contains(*frame)),
+            "{border}"
+        );
+    }
+
+    /// A message outranks what is loading; the spinner still shows.
+    #[test]
+    fn a_message_takes_the_line() {
+        let mut app = busy_app();
+        app.set_error("something broke");
+        let [_, line] = status_bar(&app, 100);
+        assert_eq!(line, "something broke");
+    }
 }

@@ -1,6 +1,7 @@
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::mpsc;
+use std::time::Instant;
 
 use clap::Parser;
 use color_eyre::Result;
@@ -348,9 +349,21 @@ impl Session {
             }
 
             // Block for the first event, then drain the rest so they are
-            // handled as one batch.
-            let Ok(first) = event_rx.recv() else {
-                return Ok(());
+            // handled as one batch. While background work runs, wake for the
+            // activity indicator too: to show it, then for each frame.
+            let first = match self.app.next_activity_redraw(Instant::now()) {
+                None => match event_rx.recv() {
+                    Ok(event) => event,
+                    Err(_) => return Ok(()),
+                },
+                Some(wait) => match event_rx.recv_timeout(wait) {
+                    Ok(event) => event,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        dirty = true;
+                        continue;
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
+                },
             };
             events.clear();
             events.push(first);
@@ -380,6 +393,7 @@ impl Session {
             self.runtime.engine.flush_logs(&mut self.app);
             sync_plugin_config(&mut self.app, &mut self.runtime, &self.repo_requests);
             flush_repo_requests(&mut self.app, &self.repo_requests);
+            self.app.track_activity(Instant::now());
         }
     }
 

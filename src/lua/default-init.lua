@@ -40,6 +40,10 @@ kojutsu.config.glyphs = {
   normal = "○",
 }
 
+-- Frames of the spinner shown while background work runs, one character
+-- each. Set to {} for no spinner; the status line still says what is loading.
+kojutsu.config.spinner = { "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏" }
+
 -- Search scopes enabled when starting a new search.
 kojutsu.config.default_search_scopes = {
   change_id = true,
