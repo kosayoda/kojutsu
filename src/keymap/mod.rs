@@ -64,6 +64,7 @@ bitflags::bitflags! {
         const ALLOW_CONFLICTS     = 1 << 16;
         const ALLOW_EMPTY_DESCRIPTION = 1 << 17;
         const ALLOW_MOVE          = 1 << 18;
+        const ALLOW_CROSS_WORKSPACE = 1 << 19;
     }
 }
 

@@ -99,6 +99,8 @@ impl JJCommand {
             options.push(retry);
         } else if let Some(retry) = self.refused_move_retry(&text) {
             options.push(retry);
+        } else if let Some(retry) = self.cross_workspace_retry(&text) {
+            options.push(retry);
         } else if text.contains("stale")
             && text.contains("working copy")
             && takes.contains(CommandFlags::IGNORE_WORKING_COPY)
@@ -149,6 +151,29 @@ impl JJCommand {
             key: 'r',
             label,
             action: FollowUpAction::Execute(self.clone().with_flag(allow)),
+        })
+    }
+
+    /// An undo or redo jj refused because another workspace performed the
+    /// operation, retried allowing that. jj points at `jj op revert` as
+    /// well, which reverts one chosen operation rather than stepping back.
+    fn cross_workspace_retry(&self, text: &str) -> Option<FollowUpOption> {
+        let label = match self.kind {
+            JJCommandKind::Undo => "undo it anyway (--allow-cross-workspace)",
+            JJCommandKind::Redo => "redo it anyway (--allow-cross-workspace)",
+            _ => return None,
+        };
+        if !text.contains("because it was performed in workspace")
+            || self.flags.contains(CommandFlags::ALLOW_CROSS_WORKSPACE)
+        {
+            return None;
+        }
+        Some(FollowUpOption {
+            key: 'r',
+            label,
+            action: FollowUpAction::Execute(
+                self.clone().with_flag(CommandFlags::ALLOW_CROSS_WORKSPACE),
+            ),
         })
     }
 

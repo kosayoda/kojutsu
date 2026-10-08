@@ -84,6 +84,13 @@ fn remote_symbol(name: &str, remote: &crate::types::RemoteName) -> TaggedArg {
     rev(jj_lib::revset::format_remote_symbol(name, remote.as_str()))
 }
 
+/// The options `jj undo` and `jj redo` both take.
+const UNDO_FLAGS: &[FlagOption] = &[opt(
+    CommandFlags::ALLOW_CROSS_WORKSPACE,
+    "--allow-cross-workspace",
+)
+.needs(JjFeature::UndoCrossWorkspace)];
+
 /// A plain value: message, path, count, remote or workspace name.
 fn arg(text: impl Into<Str>) -> TaggedArg {
     TaggedArg::new(text, CommandPartKind::String)
@@ -319,8 +326,16 @@ impl JJCommand {
                 );
                 args
             }
-            JJCommandKind::Undo => vec![sub("undo")],
-            JJCommandKind::Redo => vec![sub("redo")],
+            JJCommandKind::Undo => {
+                let mut args = vec![sub("undo")];
+                push_flags(&mut args, flags, UNDO_FLAGS);
+                args
+            }
+            JJCommandKind::Redo => {
+                let mut args = vec![sub("redo")];
+                push_flags(&mut args, flags, UNDO_FLAGS);
+                args
+            }
             JJCommandKind::GitFetch {
                 all_remotes,
                 remote,

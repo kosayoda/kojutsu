@@ -1247,6 +1247,9 @@ mod jj_feature_tests {
                 },
                 CommandFlags::empty(),
             ),
+            JjFeature::UndoCrossWorkspace => {
+                cmd(JJCommandKind::Redo, CommandFlags::ALLOW_CROSS_WORKSPACE)
+            }
         }
     }
 
@@ -1381,5 +1384,53 @@ mod jj_feature_tests {
                 .expect("nothing to drop")
                 .is_empty()
         );
+    }
+}
+
+#[cfg(test)]
+mod cross_workspace_tests {
+    use super::*;
+    use crate::jj_version::JjVersion;
+
+    const REFUSED: &[u8] = b"Error: Refusing to undo operation ada452fd2933 because it was performed in workspace second\nHint: Use `--allow-cross-workspace` to undo it anyway, or use `jj op revert` to revert a specific operation\n";
+
+    fn undo(flags: CommandFlags) -> JJCommand {
+        JJCommand {
+            kind: JJCommandKind::Undo,
+            flags,
+        }
+    }
+
+    #[test]
+    fn a_refused_undo_offers_to_undo_anyway() {
+        let jj = InstalledJj::known(JjVersion::new(0, 46, 0));
+        let options = undo(CommandFlags::empty()).retry_options(REFUSED, jj);
+        let [option] = options.as_slice() else {
+            panic!("expected one retry");
+        };
+        let FollowUpAction::Execute(retry) = &option.action else {
+            panic!("expected a command");
+        };
+        assert_eq!(retry.args(), ["undo", "--allow-cross-workspace"]);
+        // Already allowed: the same command would only be refused again.
+        assert!(
+            undo(CommandFlags::ALLOW_CROSS_WORKSPACE)
+                .retry_options(REFUSED, jj)
+                .is_empty()
+        );
+    }
+
+    /// Only an undo or redo takes the flag.
+    #[test]
+    fn nothing_else_is_offered_it() {
+        let jj = InstalledJj::default();
+        let new = JJCommand {
+            kind: JJCommandKind::New {
+                change_ids: SmallVec::new(),
+                insert: None,
+            },
+            flags: CommandFlags::empty(),
+        };
+        assert!(new.retry_options(REFUSED, jj).is_empty());
     }
 }
