@@ -63,6 +63,7 @@ bitflags::bitflags! {
         const NO_INTERACTIVE      = 1 << 15;
         const ALLOW_CONFLICTS     = 1 << 16;
         const ALLOW_EMPTY_DESCRIPTION = 1 << 17;
+        const ALLOW_MOVE          = 1 << 18;
     }
 }
 

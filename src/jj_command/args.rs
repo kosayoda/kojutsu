@@ -481,7 +481,7 @@ impl JJCommand {
                 push_flags(
                     &mut args,
                     flags,
-                    &[(CommandFlags::ALLOW_BACKWARDS, "--allow-backwards")],
+                    &[(CommandFlags::ALLOW_MOVE, "--allow-move")],
                 );
                 args.push(flag("-r"));
                 args.push(rev(change_id));

@@ -981,6 +981,31 @@ mod push_retry_tests {
 }
 
 #[cfg(test)]
+mod ref_move_tests {
+    use super::*;
+
+    fn tag_set(flags: CommandFlags) -> JJCommand {
+        JJCommand {
+            kind: JJCommandKind::TagSet {
+                name: TagName::new("v1"),
+                change_id: RevisionArg::new("x"),
+            },
+            flags,
+        }
+    }
+
+    /// jj's flag for tags is `--allow-move`; `--allow-backwards` is a
+    /// bookmark flag, and `tag set` rejects it as an unexpected argument.
+    #[test]
+    fn tag_set_allows_a_move_with_its_own_flag() {
+        let args = tag_set(CommandFlags::ALLOW_MOVE).args();
+        assert!(args.contains(&"--allow-move".into()), "{args:?}");
+        let args = tag_set(CommandFlags::ALLOW_BACKWARDS).args();
+        assert!(!args.contains(&"--allow-backwards".into()), "{args:?}");
+    }
+}
+
+#[cfg(test)]
 mod global_flag_tests {
     use super::*;
 

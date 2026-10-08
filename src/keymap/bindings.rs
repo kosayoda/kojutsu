@@ -301,12 +301,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("b u", BookmarkUntrack, "untrack", C, dag()),
         // Tag prefix
         prefix("t", "tag", C, dag()),
-        toggle(
-            "t shift-b",
-            CommandFlags::ALLOW_BACKWARDS,
-            "allow backwards",
-            dag(),
-        ),
+        toggle("t shift-m", CommandFlags::ALLOW_MOVE, "allow move", dag()),
         bind("t s", TagSet, "set", C, dag()),
         bind("t d", TagDelete, "delete", C, dag()),
         bind("t t", TagTrack, "track", C, dag()),
