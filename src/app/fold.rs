@@ -121,8 +121,7 @@ impl App {
                     .local_target
                     .as_ref()
                     .map(|lt| &lt.summary.commit_id);
-                for ri in 0..details.remote_targets.len() {
-                    let rt = &details.remote_targets[ri];
+                for (ri, rt) in details.remote_targets.iter().enumerate() {
                     if local_commit == Some(&rt.summary.commit_id) {
                         continue;
                     }
@@ -600,20 +599,26 @@ impl App {
         }
 
         // Find the last child row index below cursor.
-        let mut last_child = self.cursor.raw();
-        for idx in (self.cursor.raw() + 1)..self.rows.len() {
-            match self.rows[idx] {
-                DisplayRow::CommitNode { .. }
-                | DisplayRow::GraphLink { .. }
-                | DisplayRow::EvoLogItem { .. }
-                | DisplayRow::EvoLogGraphLink { .. }
-                | DisplayRow::OpLogItem { .. }
-                | DisplayRow::OpLogGraphLink { .. }
-                | DisplayRow::OpLogLoadMore
-                | DisplayRow::AnnotateLine { .. } => break,
-                _ => last_child = idx,
-            }
-        }
+        let children = self
+            .rows
+            .get(self.cursor.raw() + 1..)
+            .unwrap_or_default()
+            .iter()
+            .take_while(|row| {
+                !matches!(
+                    row,
+                    DisplayRow::CommitNode { .. }
+                        | DisplayRow::GraphLink { .. }
+                        | DisplayRow::EvoLogItem { .. }
+                        | DisplayRow::EvoLogGraphLink { .. }
+                        | DisplayRow::OpLogItem { .. }
+                        | DisplayRow::OpLogGraphLink { .. }
+                        | DisplayRow::OpLogLoadMore
+                        | DisplayRow::AnnotateLine { .. }
+                )
+            })
+            .count();
+        let last_child = self.cursor.raw() + children;
         if last_child == self.cursor.raw() {
             return; // Nothing unfolded (data not loaded yet)
         }

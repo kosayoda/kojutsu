@@ -217,7 +217,7 @@ impl JjRepo {
                 lines.push(OpDetailLine::WorkingCopy(OpDiffWorkingCopy {
                     workspace: WorkspaceName::new(ws.as_str()),
                     new_commit: Some(short_commit_id(new_id)),
-                    old_commit: old_id.map(&short_commit_id),
+                    old_commit: old_id.map(short_commit_id),
                 }));
             }
         }
@@ -253,8 +253,8 @@ impl JjRepo {
                 lines.push(OpDetailLine::SectionHeader("Changed bookmarks:".into()));
                 bm_changed = true;
             }
-            let new_target = cur.and_then(|t| t.as_normal()).map(&short_commit_id);
-            let old_target = prev.and_then(|t| t.as_normal()).map(&short_commit_id);
+            let new_target = cur.and_then(|t| t.as_normal()).map(short_commit_id);
+            let old_target = prev.and_then(|t| t.as_normal()).map(short_commit_id);
             lines.push(OpDetailLine::Bookmark(OpDiffBookmark {
                 name: Str::from(name.as_str()),
                 new_target,

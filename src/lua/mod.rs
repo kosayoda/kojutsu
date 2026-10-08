@@ -295,7 +295,7 @@ struct LuaState {
 impl LuaState {
     /// File the messages logged since the last collection under `header`.
     fn collect_logs(&mut self, header: String, phase: LogPhase) {
-        let messages: Vec<String> = self.pending_logs.drain(..).collect();
+        let messages: Vec<String> = std::mem::take(&mut self.pending_logs);
         if !messages.is_empty() {
             self.log_groups.push(LogGroup {
                 header,
@@ -887,8 +887,8 @@ impl LuaEngine {
             let cell = lua_state!(self.lua);
             let mut state = cell.borrow_mut();
             let status_msg = state.pending_status.take();
-            let groups: Vec<LogGroup> = state.log_groups.drain(..).collect();
-            let stray: Vec<String> = state.pending_logs.drain(..).collect();
+            let groups: Vec<LogGroup> = std::mem::take(&mut state.log_groups);
+            let stray: Vec<String> = std::mem::take(&mut state.pending_logs);
             (status_msg, groups, stray)
         };
         if let Some((msg, level)) = status_msg {

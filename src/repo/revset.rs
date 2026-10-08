@@ -44,9 +44,13 @@ impl JjRepo {
             .wrap_err("failed to evaluate revset")?;
         let mut ids: Vec<BackendCommitId> = revset.stream().try_collect().block_on()?;
         match ids.len() {
-            0 => color_eyre::eyre::bail!("revset `{revset_str}` matched no commits"),
+            0 => Err(color_eyre::eyre::eyre!(
+                "revset `{revset_str}` matched no commits"
+            )),
             1 => Ok(ids.remove(0).hex()),
-            n => color_eyre::eyre::bail!("revset `{revset_str}` matched {n} commits, expected 1"),
+            n => Err(color_eyre::eyre::eyre!(
+                "revset `{revset_str}` matched {n} commits, expected 1"
+            )),
         }
     }
 

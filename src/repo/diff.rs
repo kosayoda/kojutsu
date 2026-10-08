@@ -573,7 +573,7 @@ impl JjRepo {
                 );
                 Ok(result.into())
             }
-            _ => color_eyre::eyre::bail!("path is not a regular file"),
+            _ => Err(color_eyre::eyre::eyre!("path is not a regular file")),
         }
     }
 }
