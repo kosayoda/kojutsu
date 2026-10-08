@@ -520,6 +520,16 @@ impl JJCommand {
                 ..
             } => {
                 let mut args = vec![sub("workspace"), sub("add")];
+                push_flags(
+                    &mut args,
+                    flags,
+                    &[
+                        opt(CommandFlags::COLOCATE, "--colocate")
+                            .needs(JjFeature::WorkspaceColocation),
+                        opt(CommandFlags::NO_COLOCATE, "--no-colocate")
+                            .needs(JjFeature::WorkspaceColocation),
+                    ],
+                );
                 if let Some(n) = name {
                     args.push(flag("--name"));
                     args.push(arg(n.as_str()));

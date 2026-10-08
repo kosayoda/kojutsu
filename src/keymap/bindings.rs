@@ -449,6 +449,20 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("z", Revert, "revert", C, dag()),
         // Workspace prefix
         prefix("w", "workspace", C, dag()),
+        newer_toggle(
+            "w shift-c",
+            CommandFlags::COLOCATE,
+            "colocate",
+            JjFeature::WorkspaceColocation,
+            dag(),
+        ),
+        newer_toggle(
+            "w shift-n",
+            CommandFlags::NO_COLOCATE,
+            "no colocate",
+            JjFeature::WorkspaceColocation,
+            dag(),
+        ),
         bind("w a", WorkspaceAdd, "add", C, dag()),
         bind("w f", WorkspaceForget, "forget", C, dag()),
         bind("w l", WorkspaceList, "list", C, dag()),

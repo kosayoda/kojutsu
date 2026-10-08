@@ -1250,6 +1250,14 @@ mod jj_feature_tests {
             JjFeature::UndoCrossWorkspace => {
                 cmd(JJCommandKind::Redo, CommandFlags::ALLOW_CROSS_WORKSPACE)
             }
+            JjFeature::WorkspaceColocation => cmd(
+                JJCommandKind::WorkspaceAdd {
+                    path: "../second".into(),
+                    name: None,
+                    revision: RevisionArg::new("@"),
+                },
+                CommandFlags::NO_COLOCATE,
+            ),
         }
     }
 

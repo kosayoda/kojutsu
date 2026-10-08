@@ -65,6 +65,30 @@ bitflags::bitflags! {
         const ALLOW_EMPTY_DESCRIPTION = 1 << 17;
         const ALLOW_MOVE          = 1 << 18;
         const ALLOW_CROSS_WORKSPACE = 1 << 19;
+        const COLOCATE            = 1 << 20;
+        const NO_COLOCATE         = 1 << 21;
+    }
+}
+
+impl CommandFlags {
+    /// Flags that say opposite things, so turning one on turns the other off:
+    /// jj rejects a command line carrying both.
+    const OPPOSITES: &[(CommandFlags, CommandFlags)] =
+        &[(CommandFlags::COLOCATE, CommandFlags::NO_COLOCATE)];
+
+    /// These flags with `flag` flipped, as a toggle key flips it.
+    pub fn toggled(self, flag: CommandFlags) -> Self {
+        let mut flags = self.symmetric_difference(flag);
+        if flags.contains(flag) {
+            for &(a, b) in Self::OPPOSITES {
+                if flag == a {
+                    flags.remove(b);
+                } else if flag == b {
+                    flags.remove(a);
+                }
+            }
+        }
+        flags
     }
 }
 
@@ -393,5 +417,37 @@ mod action_label_tests {
                 "{action:?} is labelled {label:?}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod toggled_tests {
+    use super::CommandFlags;
+
+    /// jj takes only one of `--colocate` and `--no-colocate`.
+    #[test]
+    fn turning_one_on_turns_its_opposite_off() {
+        let colocate = CommandFlags::empty().toggled(CommandFlags::COLOCATE);
+        assert_eq!(colocate, CommandFlags::COLOCATE);
+        let flipped = colocate.toggled(CommandFlags::NO_COLOCATE);
+        assert_eq!(flipped, CommandFlags::NO_COLOCATE);
+        // Turning it back off leaves neither: jj's own default.
+        assert_eq!(
+            flipped.toggled(CommandFlags::NO_COLOCATE),
+            CommandFlags::empty()
+        );
+    }
+
+    #[test]
+    fn other_flags_are_left_alone() {
+        let flags = CommandFlags::DEBUG | CommandFlags::COLOCATE;
+        assert_eq!(
+            flags.toggled(CommandFlags::DRY_RUN),
+            CommandFlags::DEBUG | CommandFlags::COLOCATE | CommandFlags::DRY_RUN
+        );
+        assert_eq!(
+            flags.toggled(CommandFlags::NO_COLOCATE),
+            CommandFlags::DEBUG | CommandFlags::NO_COLOCATE
+        );
     }
 }

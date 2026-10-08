@@ -369,7 +369,7 @@ pub(super) fn handle_target_select(app: &mut App, key: KeyEvent) -> Option<Actio
                     .flat_map(|o| o.toggles.iter())
                     .find(|t| t.node == node)
             {
-                flags.toggle(toggle.flag);
+                *flags = flags.toggled(toggle.flag);
                 app.status_message = None;
                 return Some(Action::None);
             }

@@ -249,7 +249,7 @@ pub(super) fn handle_submenu_key(
         }
         LookupResult::Toggle(flag) => {
             if let AppMode::Submenu { flags, .. } = &mut app.mode {
-                flags.toggle(flag);
+                *flags = flags.toggled(flag);
                 app.status_message = None;
             }
             Action::None
