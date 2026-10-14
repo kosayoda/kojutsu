@@ -1084,8 +1084,7 @@ mod command_log_tests {
         );
         engine.flush_logs(&mut app);
         app.command_log
-            .entries
-            .iter()
+            .entries()
             .map(|e| {
                 (
                     e.summary.clone(),
@@ -1123,7 +1122,7 @@ mod command_log_tests {
             std::rc::Rc::new(crate::config::Config::default()),
         );
         engine.flush_logs(&mut app);
-        let entry = app.command_log.entries.first().expect("one entry");
+        let entry = app.command_log.entries().next().expect("one entry");
         assert_eq!(entry.summary, "plugin output");
         assert_eq!(String::from_utf8_lossy(&entry.output), "stray\n");
     }

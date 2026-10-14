@@ -186,9 +186,21 @@ impl EvoLogState {
     }
 }
 
-/// State for the command log view.
+/// State for the command log view: the most recent entries, within
+/// [`Self::MAX_ENTRIES`] and [`Self::MAX_OUTPUT_BYTES`].
+///
+/// Entries are numbered as they are logged, and a [`CommandLogIdx`] is that
+/// number, not a position: dropping the oldest leaves every other entry's
+/// number, and so the rows and folds pointing at it, as they were.
+///
+/// [`CommandLogIdx`]: crate::idx::CommandLogIdx
 pub struct CommandLogState {
-    pub entries: Vec<CommandLogEntry>,
+    /// Oldest first.
+    entries: std::collections::VecDeque<CommandLogEntry>,
+    /// The number of the oldest entry kept.
+    first: usize,
+    /// Output bytes held across the kept entries.
+    output_bytes: usize,
     pub unfolded: HashSet<crate::idx::CommandLogIdx>,
 }
 
@@ -199,10 +211,57 @@ impl Default for CommandLogState {
 }
 
 impl CommandLogState {
+    pub const MAX_ENTRIES: usize = 1000;
+    /// Output is what makes entries big: a few `jj run`s over many commits
+    /// could otherwise hold on to a lot of memory.
+    pub const MAX_OUTPUT_BYTES: usize = 32 << 20;
+
     pub fn new() -> Self {
         Self {
-            entries: Vec::new(),
+            entries: std::collections::VecDeque::new(),
+            first: 0,
+            output_bytes: 0,
             unfolded: HashSet::new(),
+        }
+    }
+
+    pub fn get(&self, idx: crate::idx::CommandLogIdx) -> Option<&CommandLogEntry> {
+        self.entries.get(idx.raw().checked_sub(self.first)?)
+    }
+
+    /// The kept entries' numbers, oldest first.
+    pub fn indices(&self) -> impl DoubleEndedIterator<Item = crate::idx::CommandLogIdx> + use<> {
+        (self.first..self.first + self.entries.len()).map(crate::idx::CommandLogIdx::new)
+    }
+
+    /// The kept entries, oldest first.
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &CommandLogEntry> {
+        self.entries.iter()
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Log `entry`, dropping the oldest entries past the limits. The newest
+    /// is always kept, however big its output.
+    pub fn push(&mut self, entry: CommandLogEntry) {
+        self.output_bytes += entry.output.len();
+        self.entries.push_back(entry);
+        while self.entries.len() > Self::MAX_ENTRIES
+            || (self.output_bytes > Self::MAX_OUTPUT_BYTES && self.entries.len() > 1)
+        {
+            let Some(oldest) = self.entries.pop_front() else {
+                break;
+            };
+            self.output_bytes -= oldest.output.len();
+            self.unfolded
+                .remove(&crate::idx::CommandLogIdx::new(self.first));
+            self.first += 1;
         }
     }
 }

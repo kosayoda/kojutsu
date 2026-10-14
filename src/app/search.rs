@@ -356,7 +356,7 @@ impl App {
                     )
             }
             DisplayRow::CommandLogItem { log_idx } => {
-                let Some(entry) = self.command_log.entries.get(log_idx.raw()) else {
+                let Some(entry) = self.command_log.get(*log_idx) else {
                     return false;
                 };
                 scopes.contains(SearchScopes::DESCRIPTION) && contains(&entry.summary)

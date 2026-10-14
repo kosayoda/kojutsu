@@ -2,9 +2,9 @@ use super::placeholder::SlotState;
 use super::{App, FileTree, Loadable, toggle_membership};
 use crate::dag::DiffTarget;
 use crate::idx::{
-    BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, CommandLogIdx, ConflictHunkIdx,
-    ConflictLineIdx, ConflictTermIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx,
-    FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, RowIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
+    BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, ConflictHunkIdx, ConflictLineIdx,
+    ConflictTermIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx, FileIdx, GraphLineIdx,
+    OpLogDetailIdx, OpLogIdx, RowIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
 use crate::types::ActiveView;
@@ -153,11 +153,12 @@ impl App {
         let prev_cursor = self.rows.get(self.cursor.raw()).copied();
         self.rows.clear();
         // Show entries in reverse chronological order (newest first).
-        for idx in (0..self.command_log.entries.len()).rev() {
-            let li = CommandLogIdx::new(idx);
+        for li in self.command_log.indices().rev() {
             self.rows.push(DisplayRow::CommandLogItem { log_idx: li });
-            if self.command_log.unfolded.contains(&li) {
-                let output = &self.command_log.entries[idx].output;
+            if self.command_log.unfolded.contains(&li)
+                && let Some(entry) = self.command_log.get(li)
+            {
+                let output = &entry.output;
                 if !output.is_empty() {
                     let text = String::from_utf8_lossy(output);
                     let line_count = text.lines().count().max(1);

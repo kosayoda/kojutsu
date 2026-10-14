@@ -820,7 +820,7 @@ mod repo_result_tests {
         app.handle_repo_result(RepoResult::SnapshotFailed {
             message: "Error: permission denied".into(),
         });
-        let entry = app.command_log.entries.last().expect("logged");
+        let entry = app.command_log.entries().next_back().expect("logged");
         assert_eq!(entry.output, b"Error: permission denied");
         assert!(!entry.success);
         assert!(matches!(
@@ -1109,8 +1109,7 @@ mod repo_result_tests {
         let app = loaded_with_warnings(&["first", "second", "third"]);
         let logged = app
             .command_log
-            .entries
-            .iter()
+            .entries()
             .filter(|e| matches!(e.kind, crate::app::CommandLogKind::Warning))
             .count();
         assert_eq!(logged, 3);

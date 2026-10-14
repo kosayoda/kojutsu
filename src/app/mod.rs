@@ -610,7 +610,7 @@ impl App {
         success: bool,
     ) {
         let parsed_lines = parse_ansi_lines(&output);
-        self.command_log.entries.push(CommandLogEntry {
+        self.command_log.push(CommandLogEntry {
             kind,
             summary: summary.into(),
             command_parts,
@@ -2110,5 +2110,72 @@ mod pending_error_tests {
         app.mode = AppMode::Normal;
         app.show_pending_error();
         assert_eq!(overlay_summary(&app), Some("second"));
+    }
+}
+
+#[cfg(test)]
+mod command_log_cap_tests {
+    use super::*;
+    use crate::idx::CommandLogIdx;
+
+    fn log(app: &mut App, summary: &str, output: Vec<u8>) {
+        app.push_command_log(CommandLogKind::Command, summary, None, output, true);
+    }
+
+    /// Past the entry limit the oldest go, and the rest keep their numbers.
+    #[test]
+    fn the_oldest_entries_go_and_the_rest_keep_their_numbers() {
+        let mut app = App::for_test();
+        for i in 0..CommandLogState::MAX_ENTRIES + 3 {
+            log(&mut app, &format!("cmd {i}"), Vec::new());
+        }
+        assert_eq!(app.command_log.len(), CommandLogState::MAX_ENTRIES);
+        assert!(app.command_log.get(CommandLogIdx::new(2)).is_none());
+        assert_eq!(
+            app.command_log
+                .get(CommandLogIdx::new(3))
+                .map(|e| e.summary.as_str()),
+            Some("cmd 3")
+        );
+        assert_eq!(
+            app.command_log.indices().next(),
+            Some(CommandLogIdx::new(3))
+        );
+    }
+
+    /// Output past the size limit pushes out old entries, but never the
+    /// one just logged.
+    #[test]
+    fn big_output_keeps_the_newest_entry() {
+        let mut app = App::for_test();
+        log(&mut app, "small", b"ok".to_vec());
+        log(
+            &mut app,
+            "huge",
+            vec![b'x'; CommandLogState::MAX_OUTPUT_BYTES + 1],
+        );
+        let summaries: Vec<&str> = app
+            .command_log
+            .entries()
+            .map(|e| e.summary.as_str())
+            .collect();
+        assert_eq!(summaries, ["huge"]);
+    }
+
+    /// An open entry stays open when older ones are dropped, since its
+    /// number doesn't change.
+    #[test]
+    fn an_open_entry_stays_open() {
+        let mut app = App::for_test();
+        for i in 0..CommandLogState::MAX_ENTRIES {
+            log(&mut app, &format!("cmd {i}"), b"out\n".to_vec());
+        }
+        let last = CommandLogIdx::new(CommandLogState::MAX_ENTRIES - 1);
+        app.command_log.unfolded.insert(last);
+        app.command_log.unfolded.insert(CommandLogIdx::new(0));
+        log(&mut app, "one more", b"out\n".to_vec());
+        assert!(app.command_log.unfolded.contains(&last));
+        // The dropped entry's fold went with it.
+        assert!(!app.command_log.unfolded.contains(&CommandLogIdx::new(0)));
     }
 }

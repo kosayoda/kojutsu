@@ -277,8 +277,7 @@ mod tests {
         runtime.engine.flush_logs(&mut app);
         assert!(
             app.command_log
-                .entries
-                .iter()
+                .entries()
                 .any(|e| String::from_utf8_lossy(&e.output).contains("oops"))
         );
     }
@@ -318,8 +317,7 @@ mod tests {
             .execute_command(0, &mut app, crate::keymap::CommandFlags::empty());
         assert!(
             app.command_log
-                .entries
-                .iter()
+                .entries()
                 .any(|e| String::from_utf8_lossy(&e.output).contains("kaput"))
         );
     }

@@ -446,18 +446,14 @@ fn render_row(
                 None => vec![Line::raw("")],
             }
         }
-        DisplayRow::CommandLogItem { log_idx } => {
-            match app.command_log.entries.get(log_idx.raw()) {
-                Some(entry) => render_command_log_item(entry, search, theme),
-                None => vec![Line::raw("")],
-            }
-        }
-        DisplayRow::CommandLogDetail { log_idx, line_idx } => {
-            match app.command_log.entries.get(log_idx.raw()) {
-                Some(entry) => render_command_log_detail(entry, line_idx.raw(), theme),
-                None => vec![Line::raw("")],
-            }
-        }
+        DisplayRow::CommandLogItem { log_idx } => match app.command_log.get(log_idx) {
+            Some(entry) => render_command_log_item(entry, search, theme),
+            None => vec![Line::raw("")],
+        },
+        DisplayRow::CommandLogDetail { log_idx, line_idx } => match app.command_log.get(log_idx) {
+            Some(entry) => render_command_log_detail(entry, line_idx.raw(), theme),
+            None => vec![Line::raw("")],
+        },
         DisplayRow::ConflictHeader {
             entry_idx,
             file_idx,
