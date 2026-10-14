@@ -17,7 +17,7 @@ pub use activity::{Activity, Indicator};
 pub use file_tree::FileTree;
 pub use types::*;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 
 /// How much of the row list a batch of repo results invalidated.
@@ -305,6 +305,9 @@ pub struct App {
     /// Mode to restore after an overlay (search/help) is dismissed.
     /// Used when search or help is entered from TargetSelect/CommitSelect.
     pub pre_overlay_mode: Option<AppMode>,
+    /// Background failures waiting for normal mode to be shown in full,
+    /// oldest first: a summary and the error's output.
+    pending_errors: VecDeque<(String, Vec<u8>)>,
     /// Whether to show line numbers in diff views.
     pub show_line_numbers: bool,
     /// Whether to underline changed tokens in word-level diffs.
@@ -467,6 +470,7 @@ impl App {
             diff_format: DiffFormat::ColorWords,
             status_message: None,
             pre_overlay_mode: None,
+            pending_errors: VecDeque::new(),
             show_line_numbers: false,
             diff_underline: true,
             selection: SelectionContext::new(),
@@ -531,8 +535,11 @@ impl App {
         self.set_error(msg);
     }
 
-    /// Log an error and show it as a full-screen CommandOutput overlay.
-    pub fn show_error_overlay(
+    /// Log a background failure and say so in the status bar now; its full
+    /// output opens in an overlay once the app is back in normal mode
+    /// ([`Self::show_pending_error`]), so it never replaces a prompt the
+    /// user is typing in or a command that is running.
+    pub fn report_error(
         &mut self,
         summary: impl Into<String>,
         error: crate::repo_service::RepoError,
@@ -545,8 +552,20 @@ impl App {
             error.message.as_bytes().to_vec(),
             false,
         );
-        self.mode =
-            AppMode::command_output(summary, None, error.message.into_bytes(), false, vec![]);
+        self.set_error(summary.clone());
+        self.pending_errors
+            .push_back((summary, error.message.into_bytes()));
+    }
+
+    /// Open the oldest reported error in an overlay, if the app is in
+    /// normal mode to show it. Called once per batch of events; each
+    /// dismissal returns to normal mode, so the next opens after it.
+    pub fn show_pending_error(&mut self) {
+        if matches!(self.mode, AppMode::Normal)
+            && let Some((summary, output)) = self.pending_errors.pop_front()
+        {
+            self.mode = AppMode::command_output(summary, None, output, false, vec![]);
+        }
     }
 
     /// Enter an overlay mode (search, help) that may need to restore the
@@ -1975,5 +1994,75 @@ mod annotate_request_tests {
         app.annotate_navigate(t.commit_id.clone(), 1);
         assert!(app.take_repo_requests().is_empty());
         assert!(app.annotate.lines.loaded().is_some());
+    }
+}
+
+#[cfg(test)]
+mod pending_error_tests {
+    use super::*;
+    use crate::repo_service::{RepoError, RepoErrorKind};
+    use crate::types::PromptStep;
+
+    fn failure(message: &str) -> RepoError {
+        RepoError::new(RepoErrorKind::Operation, message)
+    }
+
+    fn overlay_summary(app: &App) -> Option<&str> {
+        match &app.mode {
+            AppMode::CommandOutput(state) => Some(state.command.as_str()),
+            _ => None,
+        }
+    }
+
+    /// A failure arriving while a prompt is open leaves the prompt alone,
+    /// says so in the status bar, and opens once the prompt is done.
+    #[test]
+    fn a_failure_waits_for_the_prompt_to_close() {
+        let mut app = App::for_test();
+        app.mode = AppMode::text_input(":", "half typed", PromptStep::RawCommand);
+        app.report_error("load diff for a.rs", failure("boom"));
+        app.show_pending_error();
+        assert!(matches!(app.mode, AppMode::TextInput { .. }));
+        assert!(matches!(
+            &app.status_message,
+            Some((msg, StatusLevel::Error)) if msg == "load diff for a.rs"
+        ));
+
+        app.mode = AppMode::Normal;
+        app.show_pending_error();
+        assert_eq!(overlay_summary(&app), Some("load diff for a.rs"));
+    }
+
+    /// A running command keeps its panel: replacing it would lose the
+    /// handle that cancels it, and the output it is collecting.
+    #[test]
+    fn a_failure_waits_for_a_running_command() {
+        let mut app = App::for_test();
+        let (kill, _) = crate::jj_command::KillHandle::pair();
+        app.mode = AppMode::CommandRunning(CommandRunningState::new(
+            "jj git fetch".into(),
+            Vec::new(),
+            kill,
+        ));
+        app.report_error("load files for x", failure("boom"));
+        app.show_pending_error();
+        assert!(matches!(app.mode, AppMode::CommandRunning(_)));
+    }
+
+    /// Failures landing together are each shown, in order, rather than the
+    /// last replacing the rest.
+    #[test]
+    fn failures_are_shown_one_after_another() {
+        let mut app = App::for_test();
+        app.report_error("first", failure("one"));
+        app.report_error("second", failure("two"));
+        app.show_pending_error();
+        assert_eq!(overlay_summary(&app), Some("first"));
+        // Still showing the first: the second waits.
+        app.show_pending_error();
+        assert_eq!(overlay_summary(&app), Some("first"));
+        app.mode = AppMode::Normal;
+        app.show_pending_error();
+        assert_eq!(overlay_summary(&app), Some("second"));
     }
 }

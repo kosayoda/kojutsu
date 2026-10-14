@@ -249,8 +249,7 @@ impl App {
                     self.revset.draft = Some(revset.into());
                     self.revset.load_state = Loadable::Failed(error.clone());
                     self.drop_cursor_target_for_failed_load();
-                    self.set_error("failed to load revset");
-                    self.show_error_overlay("revset error", error);
+                    self.report_error("failed to load revset", error);
                 }
             },
             // append_entries does its own rebuild_rows.
@@ -473,9 +472,7 @@ impl App {
                             line: request.line,
                         });
                     }
-                    Err(error) => {
-                        self.show_error_overlay(format!("read {path} at {commit_id}"), error)
-                    }
+                    Err(error) => self.report_error(format!("read {path} at {commit_id}"), error),
                 }
             }
             RepoResult::BackgroundError { error } => {
@@ -532,9 +529,7 @@ impl App {
                 self.clear_info_status();
                 deferred.scroll = true;
             }
-            Err(error) => {
-                self.show_error_overlay(format!("load files for {target}"), error.clone())
-            }
+            Err(error) => self.report_error(format!("load files for {target}"), error.clone()),
         }
         let loaded = result.is_ok();
         let Some(tree) = self.file_tree_mut(owner) else {
@@ -576,7 +571,7 @@ impl App {
                 self.clear_info_status();
                 deferred.scroll = true;
             }
-            Err(error) => self.show_error_overlay(format!("load diff for {path}"), error.clone()),
+            Err(error) => self.report_error(format!("load diff for {path}"), error.clone()),
         }
         if let Some(tree) = self.file_tree_mut(owner) {
             tree.set_diff(path, result);

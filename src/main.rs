@@ -393,6 +393,7 @@ impl Session {
             self.runtime.engine.flush_logs(&mut self.app);
             sync_plugin_config(&mut self.app, &mut self.runtime, &self.repo_requests);
             flush_repo_requests(&mut self.app, &self.repo_requests);
+            self.app.show_pending_error();
             self.app.track_activity(Instant::now());
         }
     }
