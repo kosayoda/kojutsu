@@ -491,19 +491,22 @@ impl App {
         }
     }
 
-    /// Map a screen line (relative to the list area top) to a row index,
-    /// accounting for multi-line items.
-    pub fn row_at_screen_line(&self, screen_line: usize) -> RowIdx {
+    /// The row drawn on `screen_line` of the list area (counted from its
+    /// top), accounting for multi-line items. `None` past the list's last
+    /// line or below its last row: nothing is drawn there to pick.
+    pub fn row_at_screen_line(&self, screen_line: usize) -> Option<RowIdx> {
+        if screen_line >= self.last_list_height as usize {
+            return None;
+        }
         let mut lines_consumed = 0;
         for idx in self.scroll..self.rows.len() {
             let height = self.row_display_lines(idx);
             if lines_consumed + height > screen_line {
-                return RowIdx::new(idx);
+                return Some(RowIdx::new(idx));
             }
             lines_consumed += height;
         }
-        // Past the end: clamp to last row.
-        RowIdx::new(self.rows.len().saturating_sub(1))
+        None
     }
 
     /// Select a specific row index (e.g. from mouse click), snapping to the

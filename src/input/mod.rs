@@ -280,11 +280,20 @@ fn select_key(
     }
 }
 
-/// Navigate to a screen position (shared by mouse handlers).
-fn mouse_select_row(app: &mut App, mouse: &MouseEvent, list_offset: u16) {
-    let screen_line = (mouse.row.saturating_sub(list_offset)) as usize;
-    let row = app.row_at_screen_line(screen_line);
-    app.select_row(row);
+/// Put the cursor on the row under the mouse, if it is over one: a click on
+/// the header, the status bar or empty space picks nothing. Returns whether
+/// it picked a row, so a click's follow-up (fold, confirm) acts only then.
+fn mouse_select_row(app: &mut App, mouse: &MouseEvent, list_offset: u16) -> bool {
+    let Some(screen_line) = mouse.row.checked_sub(list_offset) else {
+        return false;
+    };
+    match app.row_at_screen_line(screen_line as usize) {
+        Some(row) => {
+            app.select_row(row);
+            true
+        }
+        None => false,
+    }
 }
 
 /// Handle a mouse event.
@@ -298,8 +307,10 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
                     Action::None
                 }
                 MouseEventKind::Down(MouseButton::Right) => {
-                    // Select and confirm.
-                    mouse_select_row(app, &mouse, list_offset);
+                    // Select and confirm, only on a row.
+                    if !mouse_select_row(app, &mouse, list_offset) {
+                        return Action::None;
+                    }
                     let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
                     // Enter is a key both modes own, so neither declines it
                     // and no keymap fallback is needed here.
@@ -370,8 +381,9 @@ pub fn handle_mouse(app: &mut App, mouse: MouseEvent, list_offset: u16) -> Actio
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 app.mode = AppMode::Normal;
-                mouse_select_row(app, &mouse, list_offset);
-                app.toggle_fold();
+                if mouse_select_row(app, &mouse, list_offset) {
+                    app.toggle_fold();
+                }
                 Action::None
             }
             MouseEventKind::ScrollUp => {
@@ -557,5 +569,68 @@ mod hook_attribution_tests {
 
         let retried = press(&mut app, KeyCode::Char('r'));
         assert_eq!(hook(&retried), None);
+    }
+}
+
+#[cfg(test)]
+mod mouse_tests {
+    use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+    use super::handle_mouse;
+    use crate::app::App;
+    use crate::idx::{EntryIdx, RowIdx};
+
+    /// One header line, then a ten-line list holding three commits' rows.
+    const HEADER: u16 = 1;
+
+    fn app() -> App {
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        for (change, commit) in [("rlvkpnrz", "8ccbb3dc"), ("zsuskuln", "9ddcc4ed")] {
+            app.push_test_commit(crate::dag::CommitInfo::for_test(change, commit));
+        }
+        app.rebuild_rows();
+        app.last_header_height = HEADER;
+        app.last_list_height = 10;
+        app
+    }
+
+    fn click(app: &mut App, button: MouseButton, screen_row: u16) {
+        let event = MouseEvent {
+            kind: MouseEventKind::Down(button),
+            column: 5,
+            row: screen_row,
+            modifiers: KeyModifiers::NONE,
+        };
+        handle_mouse(app, event, HEADER);
+    }
+
+    #[test]
+    fn a_click_on_a_row_selects_it() {
+        let mut app = app();
+        click(&mut app, MouseButton::Left, HEADER);
+        assert_eq!(app.cursor, RowIdx::new(0));
+    }
+
+    /// The header, the status bar and the list's empty space hold no row.
+    #[test]
+    fn a_click_off_the_rows_picks_nothing() {
+        for screen_row in [0, HEADER + 5, HEADER + 10, HEADER + 11] {
+            let mut app = app();
+            // Off row 0, which is where a header click used to land.
+            app.cursor = RowIdx::new(app.rows.len() - 1);
+            let before = app.cursor;
+            click(&mut app, MouseButton::Left, screen_row);
+            assert_eq!(app.cursor, before, "screen row {screen_row}");
+        }
+    }
+
+    /// A right click folds what it is on; on the status bar, nothing.
+    #[test]
+    fn a_right_click_off_the_rows_folds_nothing() {
+        let mut app = app();
+        click(&mut app, MouseButton::Right, HEADER + 10);
+        assert!((0..3).all(|i| !app.is_commit_unfolded(EntryIdx::new(i))));
+        click(&mut app, MouseButton::Right, HEADER);
+        assert!(app.is_commit_unfolded(EntryIdx::new(0)));
     }
 }
