@@ -95,16 +95,6 @@ fn newer_toggle(
     }
 }
 
-fn undo_redo(mk: impl Fn() -> Scope) -> [BindingSpec; 3] {
-    use AppAction::*;
-    use HelpGroup::Commands as C;
-    [
-        prefix("u", "undo/redo", C, mk()),
-        bind("u u", Undo, "undo", C, mk()),
-        bind("u r", Redo, "redo", C, mk()),
-    ]
-}
-
 fn file_prefix_bindings(mk: impl Fn() -> Scope) -> [BindingSpec; 7] {
     use AppAction::*;
     use HelpGroup::Commands as C;
@@ -150,6 +140,10 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     let all = || Scope::All;
     specs.extend([
         bind("?", ShowHelp, "help", G, all()),
+        // Every view: the last operation is the same whichever view shows it.
+        prefix("u", "undo/redo", C, all()),
+        bind("u u", Undo, "undo", C, all()),
+        bind("u r", Redo, "redo", C, all()),
         bind("q", Quit, "quit", G, all()),
         bind("ctrl-c", Quit, "quit", G, all()),
         bind("j", MoveDown, "move down", N, all()),
@@ -504,7 +498,6 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("w l", WorkspaceList, "list", C, dag()),
         bind("w r", WorkspaceRename, "rename", C, dag()),
     ]);
-    specs.extend(undo_redo(dag));
     specs.extend(file_prefix_bindings(dag));
 
     // Bookmark view
@@ -526,7 +519,6 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("shift-f", BookmarkForget, "forget", C, bookmark()),
         bind("i", AppAction::Interdiff, "interdiff", C, bookmark()),
     ]);
-    specs.extend(undo_redo(bookmark));
 
     // Tag view
     let tag = || views(&[Tags]);
@@ -538,7 +530,6 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("e", Edit, "edit (checkout)", C, tag()),
         bind("enter", JumpToCommit, "jump to commit", C, tag()),
     ]);
-    specs.extend(undo_redo(tag));
 
     // Operations view
     let op = || views(&[Operations]);
@@ -548,7 +539,6 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("r", OpLogRevert, "revert op", C, op()),
         bind("shift-r", OpLogRestore, "restore to op", C, op()),
     ]);
-    specs.extend(undo_redo(op));
 
     // Workspaces view
     let workspace = || views(&[Workspaces]);
@@ -563,7 +553,6 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("r", WorkspaceRename, "rename", C, workspace()),
         bind("enter", JumpToCommit, "jump to commit", C, workspace()),
     ]);
-    specs.extend(undo_redo(workspace));
 
     // Evolog view
     let evo = || views(&[Evolog]);
@@ -708,5 +697,39 @@ mod tests {
                 .as_deref(),
             Some("t")
         );
+    }
+
+    /// Undo and redo are the same in every view, so every view has them.
+    #[test]
+    fn every_view_can_undo_and_redo() {
+        use crate::keymap::{ActionRegistry, Keymap, Keymaps, LookupResult, try_parse_key};
+        use strum::IntoEnumIterator;
+
+        fn action_at(keymap: &Keymap, keys: [&str; 2]) -> Option<AppAction> {
+            let LookupResult::Prefix { children, .. } =
+                keymap.lookup(&try_parse_key(keys[0]).expect("key"))
+            else {
+                return None;
+            };
+            match Keymap::lookup_in(&children, &try_parse_key(keys[1]).expect("key")) {
+                LookupResult::Action(ActionId::Builtin(action)) => Some(action),
+                _ => None,
+            }
+        }
+
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        for view in ActiveView::iter() {
+            let keymap = keymaps.for_view(view);
+            assert_eq!(
+                action_at(keymap, ["u", "u"]),
+                Some(AppAction::Undo),
+                "{view}"
+            );
+            assert_eq!(
+                action_at(keymap, ["u", "r"]),
+                Some(AppAction::Redo),
+                "{view}"
+            );
+        }
     }
 }
