@@ -743,6 +743,41 @@ impl App {
         }
     }
 
+    /// After the repo reloads, aim the evolog at its change's current commit
+    /// and load it again: a command may have rewritten the change, or added
+    /// to its history. Loaded now if the evolog is on screen, otherwise when
+    /// it next is; the old entries stay shown until the new ones land.
+    pub(super) fn refresh_evolog(&mut self) {
+        let Some(target) = self.evolog.commit_id.clone() else {
+            return;
+        };
+        let change = self
+            .evolog
+            .entries
+            .iter()
+            .find(|entry| entry.commit_id == target)
+            .map(|entry| entry.change_id.full().to_string());
+        // A divergent change has no one current commit: stay on the one shown.
+        let current = change.and_then(|change| {
+            let mut copies = self
+                .dag
+                .nodes
+                .iter()
+                .filter(|node| node.commit.change_id.full() == change);
+            match (copies.next(), copies.next()) {
+                (Some(only), None) => Some(only.commit.graph_id.clone()),
+                _ => None,
+            }
+        });
+        let commit_id = current.unwrap_or(target);
+        self.evolog.commit_id = Some(commit_id.clone());
+        self.evolog.load_state = Loadable::NotRequested;
+        if self.active_view == ActiveView::Evolog && self.evolog.load_state.begin() {
+            self.pending_repo_requests
+                .push(RepoRequest::EvolutionLog { commit_id });
+        }
+    }
+
     /// Enter the interdiff view comparing two commits.
     pub fn enter_interdiff_view(
         &mut self,

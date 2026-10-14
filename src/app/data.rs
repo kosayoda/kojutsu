@@ -241,6 +241,7 @@ impl App {
                     }
                     // apply_entries does its own rebuild_rows.
                     self.apply_entries(data.entries, data.done);
+                    self.refresh_evolog();
                 }
                 Err(error) => {
                     self.revset.pending = None;
@@ -826,6 +827,55 @@ mod repo_result_tests {
             &app.status_message,
             Some((msg, super::super::StatusLevel::Error)) if msg.starts_with("could not snapshot")
         ));
+    }
+
+    /// The evolog on screen follows its change through a rewrite: aimed at
+    /// the change's new commit and loaded again, with the old history shown
+    /// until the new one lands.
+    #[test]
+    fn the_evolog_follows_its_change_through_a_rewrite() {
+        use super::super::test_support::{change_id, entry, load};
+        use crate::dag::ShortId;
+        use crate::types::ActiveView;
+
+        let mut app = App::for_test();
+        load(&mut app, vec![entry('a', "a1")], true);
+        let mut step = EvoLogEntry::for_test(CommitId::new("a1"), Vec::new());
+        step.change_id = ShortId::new(change_id('a'));
+        app.evolog.commit_id = Some(CommitId::new("a1"));
+        app.evolog.entries = draw_log(vec![step], &app.config.glyphs);
+        app.evolog.load_state = Loadable::Loaded(());
+        app.active_view = ActiveView::Evolog;
+        app.take_repo_requests();
+
+        // The command rewrote change `a` into commit `a2`.
+        load(&mut app, vec![entry('a', "a2")], true);
+
+        assert_eq!(app.evolog.commit_id, Some(CommitId::new("a2")));
+        assert!(app.take_repo_requests().iter().any(|request| matches!(
+            request,
+            RepoRequest::EvolutionLog { commit_id } if *commit_id == CommitId::new("a2")
+        )));
+        assert_eq!(app.evolog.entries.len(), 1);
+    }
+
+    /// Out of view, the evolog is only marked stale; it loads on return.
+    #[test]
+    fn an_evolog_out_of_view_reloads_on_return() {
+        use super::super::test_support::{entry, load};
+
+        let mut app = App::for_test();
+        load(&mut app, vec![entry('a', "a1")], true);
+        app.evolog.commit_id = Some(CommitId::new("a1"));
+        app.evolog.load_state = Loadable::Loaded(());
+        app.take_repo_requests();
+        load(&mut app, vec![entry('a', "a1")], true);
+        assert!(matches!(app.evolog.load_state, Loadable::NotRequested));
+        assert!(
+            !app.take_repo_requests()
+                .iter()
+                .any(|request| matches!(request, RepoRequest::EvolutionLog { .. }))
+        );
     }
 
     /// An app whose evolog holds one step, unfolded so its file list is
