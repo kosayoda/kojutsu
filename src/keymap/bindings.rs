@@ -237,9 +237,19 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("-", ExpandDescendants, "expand descendants", C, dag()),
         // Conflict prefix
         prefix("shift-c", super::CONFLICT_PREFIX, C, dag()),
-        bind("shift-c o", ResolveOurs, "take ours", C, dag()),
-        bind("shift-c t", ResolveTheirs, "take theirs", C, dag()),
+        // Lowercase acts on the hunk under the cursor, the capital on the
+        // whole file, as for edit (`e` / `E`).
+        bind("shift-c o", ConflictPickOurs, "take ours", C, dag()),
+        bind("shift-c t", ConflictPickTheirs, "take theirs", C, dag()),
         bind("shift-c b", ConflictPickBase, "take base", C, dag()),
+        bind("shift-c shift-o", ResolveOurs, "file: take ours", C, dag()),
+        bind(
+            "shift-c shift-t",
+            ResolveTheirs,
+            "file: take theirs",
+            C,
+            dag(),
+        ),
         bind("shift-c u", ConflictUnpick, "unpick hunk", C, dag()),
         bind("shift-c a", ConflictApplyPicks, "apply picks", C, dag()),
         bind("shift-c e", ConflictEditHunk, "edit hunk", C, dag()),
@@ -737,5 +747,29 @@ mod tests {
                 "{view}"
             );
         }
+    }
+
+    /// In the conflict menu the lowercase key picks for the hunk under the
+    /// cursor and the capital takes the side for the whole file.
+    #[test]
+    fn conflict_keys_are_hunk_lowercase_file_capital() {
+        use crate::keymap::{ActionRegistry, Keymap, Keymaps, LookupResult, try_parse_key};
+
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let keymap = keymaps.for_view(ActiveView::Dag);
+        let prefix = try_parse_key("shift-c").expect("key");
+        let LookupResult::Prefix { children, .. } = keymap.lookup(&prefix) else {
+            panic!("shift-c is the conflict menu");
+        };
+        let action =
+            |key: &str| match Keymap::lookup_in(&children, &try_parse_key(key).expect("key")) {
+                LookupResult::Action(ActionId::Builtin(action)) => Some(action),
+                _ => None,
+            };
+        assert_eq!(action("o"), Some(AppAction::ConflictPickOurs));
+        assert_eq!(action("t"), Some(AppAction::ConflictPickTheirs));
+        assert_eq!(action("b"), Some(AppAction::ConflictPickBase));
+        assert_eq!(action("shift-o"), Some(AppAction::ResolveOurs));
+        assert_eq!(action("shift-t"), Some(AppAction::ResolveTheirs));
     }
 }

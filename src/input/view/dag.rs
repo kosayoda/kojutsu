@@ -22,7 +22,7 @@ pub(in crate::input) const ERR_NOT_ON_HUNK: &str = "per-hunk only: use on a conf
 /// Shown when picking a side that deleted the file (assembly can't express
 /// a deletion, only empty content).
 pub(in crate::input) const ERR_SIDE_DELETED: &str =
-    "that side deleted the file: use C,o / C,t to take it whole-file";
+    "that side deleted the file: use C,O / C,T to take it whole-file";
 
 pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: CommandFlags) -> Action {
     match action {
@@ -1235,5 +1235,19 @@ mod converge_input_tests {
             changes(super::converge(&mut app, CommandFlags::empty())),
             [CHANGE]
         );
+    }
+}
+
+#[cfg(test)]
+mod message_tests {
+    use crate::keymap::{display_key, try_parse_key};
+
+    /// The message pointing at the whole-file keys names them as help does.
+    #[test]
+    fn the_deleted_side_message_names_the_whole_file_keys() {
+        let shown = |key| display_key(&try_parse_key(key).expect("key"));
+        let (menu, ours, theirs) = (shown("shift-c"), shown("shift-o"), shown("shift-t"));
+        let named = format!("{menu},{ours} / {menu},{theirs}");
+        assert!(super::ERR_SIDE_DELETED.contains(&named), "{named}");
     }
 }
