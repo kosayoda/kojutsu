@@ -861,6 +861,8 @@ fn perform(
         AppAction::BookmarkUntrack => super::target::bookmark_track(app, flags, false),
         AppAction::GitPushBookmark => super::target::git_push_bookmark(app, flags),
         AppAction::GitFetchBookmark => super::target::git_fetch_bookmark(app, flags),
+        AppAction::GitPushTag => super::target::git_push_tag(app, flags),
+        AppAction::GitFetchTag => super::target::git_fetch_tag(app, flags),
         AppAction::GitFetch => super::target::with_remote(
             app,
             "fetch from remote",

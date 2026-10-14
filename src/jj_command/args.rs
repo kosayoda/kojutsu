@@ -415,6 +415,26 @@ impl JJCommand {
                     arg(remote.as_str()),
                 ]
             }
+            JJCommandKind::GitPushTag { tags, remotes } => {
+                let mut args = vec![sub("git"), sub("push")];
+                for name in tags {
+                    args.push(flag("--tag").needs(JjFeature::TagPush));
+                    args.push(rev(name.as_str()));
+                }
+                push_remotes(&mut args, remotes, Some(JjFeature::PushToRemotes));
+                push_flags(&mut args, flags, PUSH_FLAGS);
+                args
+            }
+            JJCommandKind::GitFetchTag { tag, remotes } => {
+                let mut args = vec![
+                    sub("git"),
+                    sub("fetch"),
+                    flag("--tag").needs(JjFeature::TagFetch),
+                    rev(tag.as_str()),
+                ];
+                push_remotes(&mut args, remotes, None);
+                args
+            }
             JJCommandKind::GitExport => vec![sub("git"), sub("export")],
             JJCommandKind::GitImport => vec![sub("git"), sub("import")],
             JJCommandKind::GitRemoteAdd { name, url } => vec![

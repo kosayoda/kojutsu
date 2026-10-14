@@ -265,6 +265,8 @@ impl AppAction {
             PrevConflict => ui(ALL).repeatable(),
             GitPushBookmark => mutate(C).label("git"),
             GitFetchBookmark => mutate(ALL).label("git"),
+            GitPushTag => mutate(ALL).needs(JjFeature::TagPush).label("git"),
+            GitFetchTag => mutate(ALL).needs(JjFeature::TagFetch).label("git"),
             JumpToCommit => ui(ALL).label("jump"),
             TagSet => mutate(C).label("tag"),
             TagDelete => mutate(C).label("tag"),

@@ -169,6 +169,14 @@ pub enum JJCommandKind {
         bookmark: BookmarkName,
         remote: RemoteName,
     },
+    GitPushTag {
+        tags: SmallVec<TagName>,
+        remotes: SmallVec<RemoteName>,
+    },
+    GitFetchTag {
+        tag: TagName,
+        remotes: SmallVec<RemoteName>,
+    },
     GitExport,
     GitImport,
     GitRemoteAdd {
@@ -417,6 +425,7 @@ impl JJCommand {
         match &self.kind {
             JJCommandKind::GitFetch { .. }
             | JJCommandKind::GitFetchBookmark { .. }
+            | JJCommandKind::GitFetchTag { .. }
             | JJCommandKind::GitImport => true,
             JJCommandKind::Raw { args } => matches!(
                 args.as_slice(),
@@ -571,9 +580,11 @@ impl JJCommand {
             // credentials on stdin.
             JJCommandKind::GitFetch { .. }
             | JJCommandKind::GitFetchBookmark { .. }
+            | JJCommandKind::GitFetchTag { .. }
             | JJCommandKind::GitPush { .. }
             | JJCommandKind::GitPushChange { .. }
-            | JJCommandKind::GitPushBookmark { .. } => TerminalUse::Foreground,
+            | JJCommandKind::GitPushBookmark { .. }
+            | JJCommandKind::GitPushTag { .. } => TerminalUse::Foreground,
             _ => TerminalUse::Background,
         }
     }
@@ -1328,6 +1339,20 @@ mod jj_feature_tests {
             JjFeature::UndoCrossWorkspace => {
                 cmd(JJCommandKind::Redo, CommandFlags::ALLOW_CROSS_WORKSPACE)
             }
+            JjFeature::TagPush => cmd(
+                JJCommandKind::GitPushTag {
+                    tags: smallvec::smallvec![TagName::new("v1")],
+                    remotes: SmallVec::new(),
+                },
+                CommandFlags::empty(),
+            ),
+            JjFeature::TagFetch => cmd(
+                JJCommandKind::GitFetchTag {
+                    tag: TagName::new("v1"),
+                    remotes: SmallVec::new(),
+                },
+                CommandFlags::empty(),
+            ),
             JjFeature::SeparatePushUrl => cmd(
                 JJCommandKind::GitRemoteSetUrl {
                     name: RemoteName::new("origin"),
@@ -1763,5 +1788,44 @@ mod git_remote_tests {
             }),
             ["git", "remote", "set-url", "origin", "--push", "u"]
         );
+    }
+}
+
+#[cfg(test)]
+mod tag_remote_tests {
+    use super::*;
+
+    #[test]
+    fn a_tag_is_pushed_and_fetched_by_name() {
+        let push = JJCommand {
+            kind: JJCommandKind::GitPushTag {
+                tags: smallvec::smallvec![TagName::new("v1")],
+                remotes: smallvec::smallvec![RemoteName::new("origin")],
+            },
+            flags: CommandFlags::DRY_RUN,
+        };
+        assert_eq!(
+            push.args(),
+            [
+                "git",
+                "push",
+                "--tag",
+                "v1",
+                "--remote",
+                "origin",
+                "--dry-run"
+            ]
+        );
+        assert_eq!(push.terminal_use(), TerminalUse::Foreground);
+        let fetch = JJCommand {
+            kind: JJCommandKind::GitFetchTag {
+                tag: TagName::new("v1"),
+                remotes: SmallVec::new(),
+            },
+            flags: CommandFlags::IGNORE_IMMUTABLE,
+        };
+        // A fetch never rewrites what it brings in, so it takes no
+        // --ignore-immutable.
+        assert_eq!(fetch.args(), ["git", "fetch", "--tag", "v1"]);
     }
 }

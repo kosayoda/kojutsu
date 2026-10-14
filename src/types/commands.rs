@@ -105,6 +105,8 @@ pub enum RemoteCommand {
     Push { all: bool },
     PushChange { change_id: RevisionArg },
     PushBookmark { bookmarks: SmallVec<BookmarkName> },
+    PushTag { tags: SmallVec<TagName> },
+    FetchTag { tag: TagName },
 }
 
 impl RemoteCommand {
@@ -121,6 +123,8 @@ impl RemoteCommand {
             Self::PushBookmark { bookmarks } => {
                 JJCommandKind::GitPushBookmark { bookmarks, remotes }
             }
+            Self::PushTag { tags } => JJCommandKind::GitPushTag { tags, remotes },
+            Self::FetchTag { tag } => JJCommandKind::GitFetchTag { tag, remotes },
         }
     }
 
@@ -128,10 +132,11 @@ impl RemoteCommand {
     /// has, a push only lately.
     pub fn takes_several(&self, jj: crate::jj_version::InstalledJj) -> bool {
         match self {
-            Self::Fetch { .. } => true,
-            Self::Push { .. } | Self::PushChange { .. } | Self::PushBookmark { .. } => {
-                jj.supports(crate::jj_version::JjFeature::PushToRemotes)
-            }
+            Self::Fetch { .. } | Self::FetchTag { .. } => true,
+            Self::Push { .. }
+            | Self::PushChange { .. }
+            | Self::PushBookmark { .. }
+            | Self::PushTag { .. } => jj.supports(crate::jj_version::JjFeature::PushToRemotes),
         }
     }
 }

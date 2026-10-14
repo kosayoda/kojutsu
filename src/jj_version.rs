@@ -97,6 +97,10 @@ pub enum JjFeature {
     FileDelete,
     /// `jj git remote add --push-url` and `set-url --push`.
     SeparatePushUrl,
+    /// `jj git fetch --tag`.
+    TagFetch,
+    /// `jj git push --tag`.
+    TagPush,
 }
 
 impl JjFeature {
@@ -104,6 +108,7 @@ impl JjFeature {
     pub const fn since(self) -> JjVersion {
         match self {
             Self::SeparatePushUrl => JjVersion::new(0, 37, 0),
+            Self::TagFetch => JjVersion::new(0, 38, 0),
             Self::BookmarkAdvance => JjVersion::new(0, 39, 0),
             Self::Run => JjVersion::new(0, 43, 0),
             Self::RunPassthrough
@@ -111,7 +116,8 @@ impl JjFeature {
             | Self::RunIgnoreErrors
             | Self::PushAllowConflicts
             | Self::AbsorbLines
-            | Self::TagTracking => JjVersion::new(0, 44, 0),
+            | Self::TagTracking
+            | Self::TagPush => JjVersion::new(0, 44, 0),
             Self::Converge => JjVersion::new(0, 45, 0),
             Self::UndoCrossWorkspace
             | Self::WorkspaceColocation
@@ -143,6 +149,8 @@ impl JjFeature {
             Self::FileEdit => "jj file edit",
             Self::FileDelete => "jj file delete",
             Self::SeparatePushUrl => "a separate push URL",
+            Self::TagFetch => "fetching a tag",
+            Self::TagPush => "pushing a tag",
         }
     }
 }

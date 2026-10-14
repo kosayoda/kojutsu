@@ -346,6 +346,49 @@ pub(super) fn git_fetch_bookmark(app: &mut App, flags: CommandFlags) -> Action {
     })
 }
 
+/// Push the tag under the cursor in the tag view, to the remote picked.
+pub(super) fn git_push_tag(app: &mut App, flags: CommandFlags) -> Action {
+    let Some(entry) = app.selected_tag_entry() else {
+        return nothing_here(app, AppAction::GitPushTag);
+    };
+    let tags = smallvec![entry.name.clone()];
+    with_remote(
+        app,
+        "push tag to remote",
+        RemoteCommand::PushTag { tags },
+        flags,
+    )
+}
+
+/// Fetch the tag under the cursor in the tag view: from the remote whose
+/// row the cursor is on, or from the remote picked.
+pub(super) fn git_fetch_tag(app: &mut App, flags: CommandFlags) -> Action {
+    let Some(entry) = app.selected_tag_entry() else {
+        return nothing_here(app, AppAction::GitFetchTag);
+    };
+    let tag = entry.name.clone();
+    if let Some(DisplayRow::TagRemoteTarget { target_idx, .. }) =
+        app.rows.get(app.cursor.raw()).copied()
+        && let Some(target) = app
+            .views
+            .tag_details
+            .get(&tag)
+            .and_then(|d| d.remote_targets.get(target_idx.raw()))
+    {
+        let remotes = smallvec![target.remote.clone()];
+        return Action::run(JJCommand {
+            kind: JJCommandKind::GitFetchTag { tag, remotes },
+            flags,
+        });
+    }
+    with_remote(
+        app,
+        "fetch tag from remote",
+        RemoteCommand::FetchTag { tag },
+        flags,
+    )
+}
+
 /// Change a remote: the only one there is, or the one picked.
 pub(super) fn edit_remote(app: &mut App, edit: RemoteEdit, flags: CommandFlags) -> Action {
     if edit == RemoteEdit::SetPushUrl

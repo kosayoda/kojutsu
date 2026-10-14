@@ -529,6 +529,11 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("s", TagSet, "set\u{2026}", C, tag()),
         bind("e", Edit, "edit (checkout)", C, tag()),
         bind("i", AppAction::Interdiff, "interdiff", C, tag()),
+        bind("p", GitPushTag, "push", C, tag()),
+        prefix("f", "fetch", C, tag()),
+        bind("f f", GitFetch, "fetch", C, tag()),
+        bind("f t", GitFetchTag, "tag", C, tag()),
+        bind("f a", GitFetchAllRemotes, "all remotes", C, tag()),
         bind("enter", JumpToCommit, "jump to commit", C, tag()),
     ]);
 

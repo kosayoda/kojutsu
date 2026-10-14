@@ -234,6 +234,8 @@ pub enum AppAction {
     PrevConflict,
     GitPushBookmark,
     GitFetchBookmark,
+    GitPushTag,
+    GitFetchTag,
     JumpToCommit,
     TagSet,
     TagDelete,
