@@ -39,7 +39,10 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
     frame.render_widget(Paragraph::new(header), header_area);
     app.last_header_height = header_height;
     app.last_list_height = main_area.height;
-    list::draw_list(frame, main_area, app, config);
+    let retry_key = keymaps
+        .for_view(app.active_view)
+        .key_for(keymap::AppAction::ToggleFold);
+    list::draw_list(frame, main_area, app, config, retry_key);
     layout::draw_status_bar(frame, status_area, app, theme);
 
     // Overlays render on top of the main + status area (bottom-aligned).
@@ -259,5 +262,46 @@ mod narrow_terminal_tests {
         let mut keys = vec![KeyCode::Char(':')];
         keys.extend("éèê日本語".chars().cycle().take(40).map(KeyCode::Char));
         draw_at_every_width(&keys);
+    }
+
+    /// A file list that failed says why, and which key asks again.
+    #[test]
+    fn a_failed_load_reads_as_a_failure_with_its_retry_key() {
+        use crate::dag::DiffTarget;
+        use crate::idx::EntryIdx;
+        use crate::repo_service::{RepoError, RepoErrorKind, RepoResult};
+        use crate::types::CommitId;
+
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        app.toggle_commit_fold(EntryIdx::new(0));
+        app.handle_repo_result(RepoResult::DiffSummary {
+            target: DiffTarget::Commit(CommitId::new("7bbaa2cb")),
+            result: Err(RepoError::new(
+                RepoErrorKind::Operation,
+                "object not found\nmore detail",
+            )),
+        });
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 12)).expect("terminal");
+        terminal
+            .draw(|frame| super::draw(frame, &mut app, &keymaps))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let screen: String = (0..12)
+            .map(|y| {
+                (0..100)
+                    .map(|x| buffer[(x, y)].symbol())
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let key = crate::keymap::display_key(&keymap_parser::parse("tab").expect("a key"));
+        assert!(
+            screen.contains(&format!(
+                "failed to load changed files: object not found  ({key} to retry)"
+            )),
+            "{screen}"
+        );
     }
 }

@@ -6,6 +6,7 @@ mod file_tree;
 mod fold;
 mod list_anchor;
 mod navigation;
+mod placeholder;
 mod search;
 mod selection;
 #[cfg(test)]
@@ -15,6 +16,7 @@ mod visual;
 
 pub use activity::{Activity, Indicator};
 pub use file_tree::FileTree;
+pub use placeholder::SlotState;
 pub use types::*;
 
 use std::collections::{HashMap, HashSet, VecDeque};

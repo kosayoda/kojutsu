@@ -10,10 +10,10 @@ use super::views::*;
 use crate::idx::RowIdx;
 use std::collections::HashMap;
 
-use crate::app::{App, AppMode};
+use crate::app::{App, AppMode, SlotState};
 use crate::config::Config;
 use crate::types::{
-    ActiveView, ConflictHunkRef, DisplayRow, FileOwner, FileSelectionState, LoadingRow,
+    ActiveView, ConflictHunkRef, ContentSlot, DisplayRow, FileOwner, FileSelectionState,
 };
 
 pub(super) fn expand_tabs(s: &str, tab_spaces: &str) -> String {
@@ -52,7 +52,13 @@ pub(super) fn pad_or_truncate(s: &str, width: usize) -> String {
     }
 }
 
-pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &Config) {
+pub(super) fn draw_list(
+    frame: &mut Frame,
+    area: Rect,
+    app: &mut App,
+    config: &Config,
+    retry_key: Option<String>,
+) {
     let theme = &config.theme;
     let tab_spaces: String = " ".repeat(config.tab_width as usize);
 
@@ -111,6 +117,7 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
             })
             .flatten(),
         loading_shown: app.activity_shown(std::time::Instant::now()),
+        retry_key,
     };
     let mut rendered: Vec<RenderedRow> = (vis_start..vis_end)
         .map(|row_idx| {
@@ -195,47 +202,67 @@ pub(super) fn draw_list(frame: &mut Frame, area: Rect, app: &mut App, config: &C
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-/// A placeholder where content is on its way, indented like what it stands
-/// in for, and blank until loading has gone on long enough to mention.
-fn render_loading_row(ctx: &RowContext<'_>, row: LoadingRow) -> Vec<Line<'static>> {
-    if !ctx.loading_shown {
-        return vec![Line::raw("")];
-    }
+/// A placeholder where content belongs, indented like what it stands in
+/// for. Loading, it stays blank until loading has gone on long enough to
+/// mention; failed, it gives the error and how to ask again.
+fn render_placeholder_row(ctx: &RowContext<'_>, slot: ContentSlot) -> Vec<Line<'static>> {
     let app = ctx.app;
-    let (indent, what) = match row {
+    let theme = &ctx.config.theme;
+    let (indent, what) = match slot {
         // Where a file row's fold arrow sits.
-        LoadingRow::Files(_) => ("     ", "loading changed files…"),
+        ContentSlot::Files(_) => ("     ", "changed files"),
         // Under the file, where its diff starts.
-        LoadingRow::Diff(owner, file_idx) => {
+        ContentSlot::Diff(owner, file_idx) => {
             let conflicted = app.file(owner, file_idx).is_some_and(|f| f.has_conflict);
             let what = if conflicted && matches!(owner, FileOwner::Dag(_)) {
-                "loading conflict…"
+                "conflict"
             } else {
-                "loading diff…"
+                "diff"
             };
             ("         ", what)
         }
         // Where an operation's detail lines start.
-        LoadingRow::Operation(_) => ("    ", "loading operation…"),
-        LoadingRow::View => (
+        ContentSlot::Operation(_) => ("    ", "operation"),
+        ContentSlot::View => (
             "  ",
             match app.active_view {
-                ActiveView::Operations => "loading operations…",
-                ActiveView::Evolog => "loading evolution log…",
-                ActiveView::Annotate => "annotating…",
-                _ => "loading commits…",
+                ActiveView::Operations => "operations",
+                ActiveView::Evolog => "evolution log",
+                ActiveView::Annotate => "annotation",
+                _ => "commits",
             },
         ),
     };
-    vec![Line::from(vec![
-        Span::raw(indent),
-        Span::styled(
-            what,
-            Style::default()
-                .fg(ctx.config.theme.muted)
-                .add_modifier(Modifier::ITALIC),
-        ),
-    ])]
+    let spans = match app.slot_state(slot) {
+        SlotState::Loading if ctx.loading_shown => vec![
+            Span::raw(indent),
+            Span::styled(
+                format!("loading {what}…"),
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::ITALIC),
+            ),
+        ],
+        SlotState::Failed(error) => {
+            let reason = error.message.lines().next().unwrap_or_default();
+            let mut spans = vec![
+                Span::raw(indent),
+                Span::styled(
+                    format!("failed to load {what}: {reason}"),
+                    Style::default().fg(theme.error),
+                ),
+            ];
+            if let Some(key) = &ctx.retry_key {
+                spans.push(Span::styled(
+                    format!("  ({key} to retry)"),
+                    Style::default().fg(theme.muted),
+                ));
+            }
+            spans
+        }
+        SlotState::Loading | SlotState::Settled => Vec::new(),
+    };
+    vec![Line::from(spans)]
 }
 
 /// Render one row of whichever view is showing.
@@ -526,7 +553,7 @@ fn render_row(
             line_idx,
             detail_idx,
         } => render_annotate_detail(ctx, line_idx, detail_idx, is_cursor, search),
-        DisplayRow::Loading(row) => render_loading_row(ctx, row),
+        DisplayRow::Placeholder(slot) => render_placeholder_row(ctx, slot),
     };
     lines.into()
 }

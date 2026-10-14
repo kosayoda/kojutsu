@@ -26,9 +26,11 @@ pub enum FileOwner {
     Interdiff,
 }
 
-/// What a placeholder row stands in for while it loads.
+/// The content a placeholder row holds a place for: loading, or failed to
+/// load. Which of the two is read from the content's own state, so the row
+/// stays the same row when a load fails.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoadingRow {
+pub enum ContentSlot {
     /// An unfolded owner's changed files.
     Files(FileOwner),
     /// An unfolded file's diff, or a conflicted DAG file's hunks.
@@ -157,8 +159,8 @@ pub enum DisplayRow {
         line_idx: AnnotateLineIdx,
         detail_idx: AnnotateDetailIdx,
     },
-    /// Where content is on its way.
-    Loading(LoadingRow),
+    /// Where content is loading, or failed to load.
+    Placeholder(ContentSlot),
 }
 
 impl DisplayRow {
@@ -181,9 +183,9 @@ impl DisplayRow {
             | Self::ConflictContext { entry_idx, .. }
             | Self::ConflictGap { entry_idx, .. }
             | Self::ConflictEdited { entry_idx, .. }
-            | Self::Loading(
-                LoadingRow::Files(FileOwner::Dag(entry_idx))
-                | LoadingRow::Diff(FileOwner::Dag(entry_idx), _),
+            | Self::Placeholder(
+                ContentSlot::Files(FileOwner::Dag(entry_idx))
+                | ContentSlot::Diff(FileOwner::Dag(entry_idx), _),
             ) => Some(entry_idx),
             _ => None,
         }
@@ -196,7 +198,7 @@ impl DisplayRow {
             | Self::DiffLine {
                 owner, file_idx, ..
             }
-            | Self::Loading(LoadingRow::Diff(owner, file_idx)) => Some((owner, file_idx)),
+            | Self::Placeholder(ContentSlot::Diff(owner, file_idx)) => Some((owner, file_idx)),
             _ => self.dag_file().map(|(e, f)| (FileOwner::Dag(e), f)),
         }
     }
@@ -239,7 +241,7 @@ impl DisplayRow {
                 file_idx,
                 ..
             }
-            | Self::Loading(LoadingRow::Diff(FileOwner::Dag(entry_idx), file_idx)) => {
+            | Self::Placeholder(ContentSlot::Diff(FileOwner::Dag(entry_idx), file_idx)) => {
                 Some((entry_idx, file_idx))
             }
             _ => None,
@@ -300,7 +302,7 @@ impl DisplayRow {
             Self::OpLogItem { op_log_idx }
             | Self::OpLogDetailLine { op_log_idx, .. }
             | Self::OpLogGraphLink { op_log_idx, .. }
-            | Self::Loading(LoadingRow::Operation(op_log_idx)) => Some(op_log_idx),
+            | Self::Placeholder(ContentSlot::Operation(op_log_idx)) => Some(op_log_idx),
             _ => None,
         }
     }
@@ -318,9 +320,9 @@ impl DisplayRow {
                 ..
             }
             | Self::EvoLogGraphLink { evolog_idx, .. }
-            | Self::Loading(
-                LoadingRow::Files(FileOwner::EvoLog(evolog_idx))
-                | LoadingRow::Diff(FileOwner::EvoLog(evolog_idx), _),
+            | Self::Placeholder(
+                ContentSlot::Files(FileOwner::EvoLog(evolog_idx))
+                | ContentSlot::Diff(FileOwner::EvoLog(evolog_idx), _),
             ) => Some(evolog_idx),
             _ => None,
         }

@@ -79,6 +79,14 @@ impl Keymap {
         }
     }
 
+    /// How the top-level key bound to `action` is shown, if one is.
+    pub fn key_for(&self, action: super::AppAction) -> Option<String> {
+        self.root.iter().find_map(|(node, child)| {
+            matches!(child, TrieNode::Action { id: ActionId::Builtin(a), .. } if *a == action)
+                .then(|| super::display_key(node))
+        })
+    }
+
     /// The shortest key sequence bound to `action`, written the way a user
     /// types it (`"H"`, `"] c"` becomes `"]c"`), or `None` if every binding
     /// for it goes through a key that can't appear in typed text.

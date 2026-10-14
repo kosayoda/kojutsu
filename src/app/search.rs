@@ -279,7 +279,7 @@ impl App {
             | DisplayRow::ConflictContext { .. }
             | DisplayRow::ConflictGap { .. }
             | DisplayRow::ConflictEdited { .. }
-            | DisplayRow::Loading(_) => false,
+            | DisplayRow::Placeholder(_) => false,
             DisplayRow::EvoLogItem { evolog_idx } => {
                 let Some(entry) = self.evolog.entries.get(evolog_idx.raw()) else {
                     return false;

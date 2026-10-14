@@ -153,11 +153,11 @@ impl App {
         }
         let frames = &self.config.spinner;
         let frame = (elapsed.as_millis() / FRAME.as_millis()) as usize;
-        // A placeholder row in the list already says what is loading.
-        let placeholder_shown = self
-            .rows
-            .iter()
-            .any(|row| matches!(row, crate::types::DisplayRow::Loading(_)));
+        // A loading placeholder in the list already says what is loading.
+        let placeholder_shown = self.rows.iter().any(|row| {
+            matches!(row, crate::types::DisplayRow::Placeholder(slot)
+                if matches!(self.slot_state(*slot), super::SlotState::Loading))
+        });
         let activity = self.activity()?;
         Some(Indicator {
             glyph: (!frames.is_empty()).then(|| frames[frame % frames.len()]),

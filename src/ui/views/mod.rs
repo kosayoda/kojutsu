@@ -53,6 +53,8 @@ pub(in crate::ui) struct RowContext<'a> {
     /// Whether loading has gone on long enough to say so: until then a
     /// placeholder row stays blank, so quick loads don't flash it up.
     pub loading_shown: bool,
+    /// The key that asks again for content that failed to load, as shown.
+    pub retry_key: Option<String>,
 }
 
 impl RowContext<'_> {

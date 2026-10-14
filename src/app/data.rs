@@ -248,6 +248,10 @@ impl App {
                     self.revset.load_state = Loadable::Failed(error.clone());
                     self.drop_cursor_target_for_failed_load();
                     self.report_error("failed to load revset", error);
+                    // An empty log shows the failure in its placeholder.
+                    if self.dag.nodes.is_empty() {
+                        deferred.rebuild.set_full();
+                    }
                 }
             },
             // append_entries does its own rebuild_rows.
@@ -343,6 +347,9 @@ impl App {
                     self.op_log.unfolded.clear();
                     let msg = format!("failed to load operation log: {error}");
                     self.log_background_error(msg);
+                    if self.active_view == ActiveView::Operations {
+                        deferred.rebuild.set_full();
+                    }
                 }
             },
             RepoResult::OpDiff { op_id, result } => match result {
@@ -361,6 +368,9 @@ impl App {
                         .insert(op_id, super::Loadable::Failed(error.clone()));
                     let msg = format!("failed to load op diff: {error}");
                     self.log_background_error(msg);
+                    if self.active_view == ActiveView::Operations {
+                        deferred.rebuild.set_full();
+                    }
                 }
             },
             RepoResult::ConflictHunks {
@@ -405,6 +415,9 @@ impl App {
                     self.evolog.load_state = Loadable::Failed(error.clone());
                     let msg = format!("failed to load evolog: {error}");
                     self.log_background_error(msg);
+                    if self.active_view == ActiveView::Evolog {
+                        deferred.rebuild.set_full();
+                    }
                 }
             },
             RepoResult::Annotate {
@@ -433,6 +446,9 @@ impl App {
                     self.annotate.lines = Loadable::Failed(error.clone());
                     let msg = format!("failed to annotate file: {error}");
                     self.log_background_error(msg);
+                    if self.active_view == ActiveView::Annotate {
+                        deferred.rebuild.set_full();
+                    }
                 }
             },
             RepoResult::FileList { commit_id, result } => match result {
@@ -527,7 +543,10 @@ impl App {
                 self.clear_info_status();
                 deferred.scroll = true;
             }
-            Err(error) => self.report_error(format!("load files for {target}"), error.clone()),
+            // The placeholder row under the owner shows it, with a retry.
+            Err(error) => {
+                self.log_background_error(format!("failed to load files for {target}: {error}"))
+            }
         }
         let loaded = result.is_ok();
         let Some(tree) = self.file_tree_mut(owner) else {
@@ -569,7 +588,10 @@ impl App {
                 self.clear_info_status();
                 deferred.scroll = true;
             }
-            Err(error) => self.report_error(format!("load diff for {path}"), error.clone()),
+            // The placeholder row under the file shows it, with a retry.
+            Err(error) => {
+                self.log_background_error(format!("failed to load diff for {path}: {error}"))
+            }
         }
         if let Some(tree) = self.file_tree_mut(owner) {
             tree.set_diff(path, result);
