@@ -271,6 +271,17 @@ impl App {
             RepoResult::WorkspaceUpdatedStale { message } => {
                 self.set_status(message);
             }
+            RepoResult::SnapshotFailed { message } => {
+                let summary = "could not snapshot the working copy: edits since the last snapshot aren't shown";
+                self.push_command_log(
+                    super::CommandLogKind::Background,
+                    summary,
+                    None,
+                    message.into_bytes(),
+                    false,
+                );
+                self.set_error(summary);
+            }
             RepoResult::CommitEmpty { commit_id } => {
                 if let Some(idx) = self.entry_by_commit_id(&commit_id) {
                     self.dag.nodes[idx].commit.is_empty = true;
@@ -798,6 +809,23 @@ mod repo_result_tests {
 
     fn failure() -> RepoError {
         RepoError::new(RepoErrorKind::Operation, "boom")
+    }
+
+    /// A failed snapshot is said in the status bar, with jj's output kept
+    /// in the command log.
+    #[test]
+    fn a_failed_snapshot_is_reported() {
+        let mut app = App::for_test();
+        app.handle_repo_result(RepoResult::SnapshotFailed {
+            message: "Error: permission denied".into(),
+        });
+        let entry = app.command_log.entries.last().expect("logged");
+        assert_eq!(entry.output, b"Error: permission denied");
+        assert!(!entry.success);
+        assert!(matches!(
+            &app.status_message,
+            Some((msg, super::super::StatusLevel::Error)) if msg.starts_with("could not snapshot")
+        ));
     }
 
     /// An app whose evolog holds one step, unfolded so its file list is

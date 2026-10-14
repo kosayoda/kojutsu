@@ -173,6 +173,9 @@ pub enum RepoResult {
     RevsetChunk { entries: Vec<DagEntry>, done: bool },
     /// The workspace was stale and has been (or failed to be) recovered.
     WorkspaceUpdatedStale { message: String },
+    /// The working-copy snapshot failed; the repo was loaded as of the last
+    /// one, so edits made since then aren't in it. `message` is jj's output.
+    SnapshotFailed { message: String },
     /// Background-computed is_empty for a single commit.
     CommitEmpty { commit_id: CommitId },
     DivergenceInfo {
@@ -397,6 +400,11 @@ impl RepoServiceState {
         }
     }
 
+    fn report_snapshot_failure(&self, message: String) {
+        tracing::warn!(%message, "working-copy snapshot failed");
+        let _ = self.result_tx.send(RepoResult::SnapshotFailed { message });
+    }
+
     fn handle_revset(&mut self, epoch: u64, revset: Option<String>, load_kind: RevsetLoadKind) {
         let start = std::time::Instant::now();
         let requested_revset = revset.clone().unwrap_or_default();
@@ -406,16 +414,23 @@ impl RepoServiceState {
         // copy may have changed (e.g. after returning from an external command).
         self.repo = None;
 
-        if matches!(load_kind, RevsetLoadKind::Snapshot)
-            && let Err(err) = JjRepo::snapshot(&self.repo_path)
-            && matches!(err, SnapshotError::Stale(_))
-        {
-            match JjRepo::update_stale(&self.repo_path) {
+        let snapshot = match load_kind {
+            RevsetLoadKind::Snapshot => JjRepo::snapshot(&self.repo_path),
+            RevsetLoadKind::NoSnapshot => Ok(()),
+        };
+        match snapshot {
+            Ok(()) => {}
+            // The last snapshot's state is still worth showing, so load it,
+            // saying it may be behind.
+            Err(SnapshotError::Other(message)) => self.report_snapshot_failure(message),
+            Err(SnapshotError::Stale(_)) => match JjRepo::update_stale(&self.repo_path) {
                 Ok(()) => {
                     let _ = self.result_tx.send(RepoResult::WorkspaceUpdatedStale {
                         message: "workspace was stale: updated".to_string(),
                     });
-                    let _ = JjRepo::snapshot(&self.repo_path);
+                    if let Err(err) = JjRepo::snapshot(&self.repo_path) {
+                        self.report_snapshot_failure(err.to_string());
+                    }
                 }
                 Err(update_err) => {
                     self.send_if_current(
@@ -432,7 +447,7 @@ impl RepoServiceState {
                     );
                     return;
                 }
-            }
+            },
         }
         match JjRepo::open(&self.repo_path) {
             Ok(mut repo) => {
