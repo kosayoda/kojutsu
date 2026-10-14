@@ -526,17 +526,12 @@ impl JjRepo {
             _ => return Ok(placeholder_diff("(binary file)")),
         };
 
-        let contents = Diff::new(before.as_ref(), after.as_ref());
-        let hunks = unified::unified_diff_hunks(
-            contents,
-            3, // context lines
-            Default::default(),
+        let (mut git_lines, mut cw_lines) = diff_lines(
+            before.as_ref(),
+            after.as_ref(),
+            self.diff_context(crate::dag::DiffFormat::Git),
+            self.diff_context(crate::dag::DiffFormat::ColorWords),
         );
-
-        let mut git_lines = Vec::new();
-        hunks_to_diff_lines(&hunks, &mut git_lines);
-        let mut cw_lines = Vec::new();
-        hunks_to_color_words_lines(&hunks, &mut cw_lines);
         mark_conflict_regions(&mut git_lines, &before_regions, &after_regions);
         mark_conflict_regions(&mut cw_lines, &before_regions, &after_regions);
         Ok(DiffResult {
@@ -799,6 +794,32 @@ fn mark_conflict_regions(
         l.conflict_region = l.kind != DiffLineKind::Header
             && (in_regions(before_regions, l.old_line) || in_regions(after_regions, l.new_line));
     }
+}
+
+/// A file's diff lines in both formats, each with its own lines of context
+/// around the changes. One diff serves both when the two agree.
+fn diff_lines(
+    before: &bstr::BStr,
+    after: &bstr::BStr,
+    git_context: usize,
+    color_words_context: usize,
+) -> (Vec<DiffLine>, Vec<DiffLine>) {
+    let hunks_with = |context| {
+        unified::unified_diff_hunks(Diff::new(before, after), context, Default::default())
+    };
+    let git_hunks = hunks_with(git_context);
+    let cw_hunks_own;
+    let cw_hunks = if color_words_context == git_context {
+        &git_hunks
+    } else {
+        cw_hunks_own = hunks_with(color_words_context);
+        &cw_hunks_own
+    };
+    let mut git_lines = Vec::new();
+    hunks_to_diff_lines(&git_hunks, &mut git_lines);
+    let mut cw_lines = Vec::new();
+    hunks_to_color_words_lines(cw_hunks, &mut cw_lines);
+    (git_lines, cw_lines)
 }
 
 fn hunks_to_diff_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut Vec<DiffLine>) {
@@ -1365,5 +1386,23 @@ mod tests {
             panic!("expected text");
         };
         assert!(conflict_regions.is_empty());
+    }
+
+    /// Each format shows the context its own setting asks for: with one
+    /// line, the neighbours of line 10; with five, lines 5 to 15.
+    #[test]
+    fn each_format_takes_its_own_context() {
+        let before: String = (1..=20).map(|n| format!("line {n}\n")).collect();
+        let after = before.replace("line 10\n", "line ten\n");
+        let (before, after) = (bstr::BStr::new(&before), bstr::BStr::new(&after));
+        let shows = |lines: &[DiffLine], n: usize| {
+            let text = format!("line {n}");
+            lines.iter().any(|l| l.content.trim_end() == text)
+        };
+        let (git, color_words) = super::diff_lines(before, after, 1, 5);
+        assert!(shows(&git, 9) && shows(&git, 11));
+        assert!(!shows(&git, 8) && !shows(&git, 12));
+        assert!(shows(&color_words, 5) && shows(&color_words, 15));
+        assert!(!shows(&color_words, 4) && !shows(&color_words, 16));
     }
 }

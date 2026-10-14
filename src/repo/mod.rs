@@ -265,6 +265,21 @@ impl JjRepo {
             })
     }
 
+    /// Lines of unchanged context around each change in `format`'s diffs:
+    /// jj's `diff.git.context` or `diff.color-words.context`, 3 unless set.
+    pub(super) fn diff_context(&self, format: crate::dag::DiffFormat) -> usize {
+        const DEFAULT: usize = 3;
+        let key = match format {
+            crate::dag::DiffFormat::Git => "diff.git.context",
+            crate::dag::DiffFormat::ColorWords => "diff.color-words.context",
+        };
+        self.settings
+            .get::<i64>(key)
+            .ok()
+            .and_then(|lines| usize::try_from(lines).ok())
+            .unwrap_or(DEFAULT)
+    }
+
     /// jj's `run.jobs` setting, if set to a usable value.
     pub fn run_jobs(&self) -> Option<usize> {
         let jobs = self.settings.get::<i64>("run.jobs").ok()?;
