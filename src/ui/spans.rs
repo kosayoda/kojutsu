@@ -122,14 +122,14 @@ pub(super) fn push_short_id(
     }
 }
 
-/// `needle` must already be lowercased when `case_sensitive` is false.
+/// Push a `ShortId` as [`push_short_id`] does, with where `query` matches
+/// in it, and in `extra_suffix` after it, highlighted.
 pub(super) fn push_highlighted_short_id(
     spans: &mut Vec<Span<'static>>,
     id: &ShortId,
     extra_suffix: Option<String>,
     color: Color,
-    needle: &str,
-    case_sensitive: bool,
+    query: &crate::app::SearchQuery,
     theme: &Theme,
 ) {
     use super::search::push_span_with_highlight;
@@ -138,14 +138,7 @@ pub(super) fn push_highlighted_short_id(
     let extra = extra_suffix.unwrap_or_default();
     let text = format!("{prefix}{suffix}{extra}");
 
-    let hay_lower;
-    let hay = if case_sensitive {
-        text.as_str()
-    } else {
-        hay_lower = text.to_lowercase();
-        hay_lower.as_str()
-    };
-    let Some(start) = hay.find(needle) else {
+    let Some(highlight) = query.find(&text) else {
         // No match: render normally.
         push_short_id(spans, id, color, theme);
         if !extra.is_empty() {
@@ -153,7 +146,6 @@ pub(super) fn push_highlighted_short_id(
         }
         return;
     };
-    let highlight = start..start + needle.len();
 
     let prefix_style = Style::default().fg(color).add_modifier(Modifier::BOLD);
     let suffix_style = Style::default().fg(theme.muted);

@@ -14,7 +14,7 @@ use super::{
 };
 use crate::idx::{DescriptionLineIdx, EntryIdx, GraphLineIdx};
 use crate::ui::search::{
-    SearchRender, SearchRowState, contains_query, gutter_span, push_searchable, search_gutter,
+    SearchRender, SearchRowState, gutter_span, push_searchable, search_gutter,
 };
 use crate::ui::spans::{push_highlighted_short_id, push_short_id};
 
@@ -75,15 +75,14 @@ pub(crate) fn render_commit_item(
     match search {
         Some(search)
             if search.scopes.contains(SearchScopes::CHANGE_ID)
-                && contains_query(&change_id_text, search.query_lower, search.case_sensitive) =>
+                && search.query.matches(&change_id_text) =>
         {
             push_highlighted_short_id(
                 &mut line1,
                 &c.change_id,
                 c.change_id_suffix().map(|s| format!("/{s}")),
                 change_color,
-                search.query_lower,
-                search.case_sensitive,
+                search.query,
                 theme,
             );
         }
@@ -127,19 +126,14 @@ pub(crate) fn render_commit_item(
     line1.push(Span::raw(" "));
     if let Some(search) = search {
         if search.scopes.contains(SearchScopes::COMMIT_ID)
-            && contains_query(
-                c.commit_id.display(),
-                search.query_lower,
-                search.case_sensitive,
-            )
+            && search.query.matches(c.commit_id.display())
         {
             push_highlighted_short_id(
                 &mut line1,
                 &c.commit_id,
                 None,
                 theme.commit_id,
-                search.query_lower,
-                search.case_sensitive,
+                search.query,
                 theme,
             );
         } else {

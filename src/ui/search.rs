@@ -1,7 +1,7 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 
-use crate::app::App;
+use crate::app::{App, SearchQuery};
 use crate::idx::RowIdx;
 use crate::theme::Theme;
 use crate::types::SearchScopes;
@@ -15,10 +15,8 @@ pub(super) enum SearchRowState {
 
 #[derive(Clone, Copy)]
 pub(super) struct SearchRender<'a> {
-    /// Pre-lowered query (equals the original query when case-sensitive).
-    pub query_lower: &'a str,
+    pub query: &'a SearchQuery,
     pub scopes: SearchScopes,
-    pub case_sensitive: bool,
     pub row_state: SearchRowState,
 }
 
@@ -58,19 +56,6 @@ pub(super) fn gutter_span<'a>(search: Option<&SearchRender<'_>>, theme: &Theme) 
     )
 }
 
-pub(super) fn contains_query(haystack: &str, needle: &str, case_sensitive: bool) -> bool {
-    if case_sensitive {
-        haystack.contains(needle)
-    } else if needle.is_empty() {
-        true
-    } else {
-        haystack
-            .as_bytes()
-            .windows(needle.len())
-            .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
-    }
-}
-
 /// Push a span that may be search-highlighted, depending on scope and query match.
 pub(super) fn push_searchable(
     out: &mut Vec<Span<'static>>,
@@ -81,40 +66,25 @@ pub(super) fn push_searchable(
 ) {
     if let Some(s) = search
         && s.scopes.contains(scope)
-        && contains_query(text, s.query_lower, s.case_sensitive)
+        && s.query.matches(text)
     {
-        push_highlighted(out, text, s.query_lower, style, s.case_sensitive);
+        push_highlighted(out, text, s.query, style);
         return;
     }
     out.push(Span::styled(text.to_string(), style));
 }
 
-/// `needle` must already be lowercased when `case_sensitive` is false.
+/// Push `text`, with where `query` matches in it highlighted.
 pub(super) fn push_highlighted(
     out: &mut Vec<Span<'static>>,
     text: &str,
-    needle: &str,
+    query: &SearchQuery,
     base: Style,
-    case_sensitive: bool,
 ) {
-    if needle.is_empty() {
-        out.push(Span::styled(text.to_string(), base));
-        return;
+    match query.find(text) {
+        Some(highlight) => push_span_with_highlight(out, text.to_string(), base, &highlight, 0),
+        None => out.push(Span::styled(text.to_string(), base)),
     }
-
-    let hay_lower;
-    let hay = if case_sensitive {
-        text
-    } else {
-        hay_lower = text.to_lowercase();
-        &hay_lower
-    };
-    let Some(start) = hay.find(needle) else {
-        out.push(Span::styled(text.to_string(), base));
-        return;
-    };
-    let highlight = start..start + needle.len();
-    push_span_with_highlight(out, text.to_string(), base, &highlight, 0);
 }
 
 /// Push a single text span, splitting it at a highlight range and applying
@@ -151,17 +121,6 @@ pub(super) fn push_span_with_highlight(
     }
 }
 
-/// Case-insensitive byte-offset search without allocating a lowercased copy.
-fn find_ignore_ascii_case(haystack: &str, needle: &str) -> Option<usize> {
-    if needle.is_empty() || needle.len() > haystack.len() {
-        return None;
-    }
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .position(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
-}
-
 /// Push syntax-colored token spans with search match highlighting overlaid.
 ///
 /// Builds the full content from expanded tokens, finds the match position,
@@ -194,18 +153,39 @@ pub(super) fn push_tokens_with_search(
         .collect();
 
     let full_content: String = expanded.iter().map(|(t, _)| t.as_str()).collect();
-    let Some(start) = find_ignore_ascii_case(&full_content, s.query_lower) else {
+    let Some(highlight) = s.query.find(&full_content).filter(|r| !r.is_empty()) else {
         for (text, style) in expanded {
             out.push(Span::styled(text, style));
         }
         return;
     };
-    let highlight = start..start + s.query_lower.len();
 
     let mut pos = 0usize;
     for (text, style) in expanded {
         let offset = pos;
         pos += text.len();
         push_span_with_highlight(out, text, style, &highlight, offset);
+    }
+}
+
+#[cfg(test)]
+mod highlight_tests {
+    use ratatui::style::{Modifier, Style};
+
+    use super::push_highlighted;
+    use crate::app::SearchQuery;
+
+    /// The match is cut out of the text as it is, even where lowercasing it
+    /// would shift the byte offsets.
+    #[test]
+    fn highlights_land_on_the_match() {
+        let mut spans = Vec::new();
+        push_highlighted(&mut spans, "İé", &SearchQuery::new("é"), Style::default());
+        let highlighted: Vec<&str> = spans
+            .iter()
+            .filter(|s| s.style.add_modifier.contains(Modifier::REVERSED))
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert_eq!(highlighted, ["é"]);
     }
 }

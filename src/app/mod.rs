@@ -17,6 +17,7 @@ mod visual;
 pub use activity::{Activity, Indicator};
 pub use file_tree::FileTree;
 pub use placeholder::SlotState;
+pub use search::SearchQuery;
 pub use types::*;
 
 use std::collections::{HashMap, HashSet, VecDeque};

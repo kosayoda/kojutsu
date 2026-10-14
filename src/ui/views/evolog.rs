@@ -7,7 +7,7 @@ use crate::history::EvoLogEntry;
 use crate::types::SearchScopes;
 
 use super::push_graph_node_spans;
-use crate::ui::search::{SearchRender, contains_query, gutter_span, push_searchable};
+use crate::ui::search::{SearchRender, gutter_span, push_searchable};
 use crate::ui::spans::{dot, push_highlighted_short_id, push_short_id};
 
 pub(crate) fn render_evolog_item(
@@ -29,19 +29,14 @@ pub(crate) fn render_evolog_item(
 
     if let Some(search) = search {
         if search.scopes.contains(SearchScopes::CHANGE_ID)
-            && contains_query(
-                entry.change_id.display(),
-                search.query_lower,
-                search.case_sensitive,
-            )
+            && search.query.matches(entry.change_id.display())
         {
             push_highlighted_short_id(
                 &mut spans,
                 &entry.change_id,
                 None,
                 theme.change_id,
-                search.query_lower,
-                search.case_sensitive,
+                search.query,
                 theme,
             );
         } else {

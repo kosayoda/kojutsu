@@ -74,21 +74,13 @@ pub(super) fn draw_list(
         vis_end += 1;
     }
 
-    let search_case_sensitive = app
+    let search_query = app
         .search
         .as_ref()
-        .is_some_and(|s| s.query().chars().any(|c| c.is_ascii_uppercase()));
-    let query_lowered = app.search.as_ref().map(|s| {
-        if search_case_sensitive {
-            s.query().to_string()
-        } else {
-            s.query().to_lowercase()
-        }
-    });
-    let search_ctx = app.search.as_ref().map(|_| SearchRender {
-        query_lower: query_lowered.as_deref().unwrap_or(""),
+        .map(|s| crate::app::SearchQuery::new(s.query()));
+    let search_ctx = search_query.as_ref().map(|query| SearchRender {
+        query,
         scopes: app.search_scopes(),
-        case_sensitive: search_case_sensitive,
         row_state: SearchRowState::None,
     });
 

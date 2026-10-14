@@ -22,6 +22,79 @@ fn ref_entry_matches(
             && change_id.is_some_and(|c| contains(c.full())))
 }
 
+/// A search query, ready to match: smart-case, so a query with a capital
+/// letter in it matches case, and one without matches either. Folding is
+/// Unicode-aware, and every match is a byte range of the text searched, so
+/// highlighting can cut the original text there.
+pub struct SearchQuery {
+    /// Lowercased unless `case_sensitive`.
+    text: String,
+    case_sensitive: bool,
+}
+
+impl SearchQuery {
+    pub fn new(query: &str) -> Self {
+        let case_sensitive = query.chars().any(char::is_uppercase);
+        let text = if case_sensitive {
+            query.to_string()
+        } else {
+            query.to_lowercase()
+        };
+        Self {
+            text,
+            case_sensitive,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty()
+    }
+
+    /// Whether `haystack` contains the query. An empty query is in
+    /// everything.
+    pub fn matches(&self, haystack: &str) -> bool {
+        self.find(haystack).is_some()
+    }
+
+    /// Where the query first occurs in `haystack`, as a byte range of
+    /// `haystack` itself. An empty query matches an empty range at the start.
+    pub fn find(&self, haystack: &str) -> Option<std::ops::Range<usize>> {
+        let needle = self.text.as_str();
+        if self.case_sensitive || needle.is_empty() {
+            return haystack.find(needle).map(|at| at..at + needle.len());
+        }
+        if haystack.is_ascii() && needle.is_ascii() {
+            return haystack
+                .as_bytes()
+                .windows(needle.len())
+                .position(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+                .map(|at| at..at + needle.len());
+        }
+        haystack
+            .char_indices()
+            .find_map(|(start, _)| Some(start..self.folded_match_end(&haystack[start..])? + start))
+    }
+
+    /// Where a match starting at the beginning of `text` ends, comparing
+    /// each character's lowercase form, which can be more than one character
+    /// long, against the lowercased query. A match ends on a character
+    /// boundary of `text`.
+    fn folded_match_end(&self, text: &str) -> Option<usize> {
+        let mut needle = self.text.chars().peekable();
+        for (offset, c) in text.char_indices() {
+            for lower in c.to_lowercase() {
+                if needle.next() != Some(lower) {
+                    return None;
+                }
+            }
+            if needle.peek().is_none() {
+                return Some(offset + c.len_utf8());
+            }
+        }
+        None
+    }
+}
+
 impl App {
     pub fn begin_search(&mut self) {
         let started_on = self.cursor_row();
@@ -134,7 +207,7 @@ impl App {
         let Some(search) = &self.search else {
             return;
         };
-        let query = search.query().to_string();
+        let query = SearchQuery::new(search.query());
         let scopes = self.search_scopes();
 
         let mut matches = Vec::new();
@@ -166,27 +239,8 @@ impl App {
         }
     }
 
-    fn row_matches(&self, row_idx: usize, query: &str, scopes: SearchScopes) -> bool {
-        let case_sensitive = query.chars().any(|c| c.is_ascii_uppercase());
-        let query_lower;
-        let needle = if case_sensitive {
-            query
-        } else {
-            query_lower = query.to_lowercase();
-            &query_lower
-        };
-        let contains = |haystack: &str| {
-            if case_sensitive {
-                haystack.contains(needle)
-            } else if needle.is_empty() {
-                true
-            } else {
-                haystack
-                    .as_bytes()
-                    .windows(needle.len())
-                    .any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
-            }
-        };
+    fn row_matches(&self, row_idx: usize, query: &SearchQuery, scopes: SearchScopes) -> bool {
+        let contains = |haystack: &str| query.matches(haystack);
 
         match &self.rows[row_idx] {
             DisplayRow::CommitNode { entry_idx } => {
@@ -449,5 +503,45 @@ mod shifting_rows_tests {
         app.search_next();
 
         assert_eq!(app.selected_entry_idx(), Some(EntryIdx::new(2)));
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::SearchQuery;
+
+    fn find(query: &str, haystack: &str) -> Option<std::ops::Range<usize>> {
+        SearchQuery::new(query).find(haystack)
+    }
+
+    #[test]
+    fn lowercase_matches_any_case() {
+        assert_eq!(find("abc", "xABCx"), Some(1..4));
+        assert_eq!(find("über", "ÜBER alles"), Some(0..5));
+        assert_eq!(find("é", "CAFÉ"), Some(3..5));
+    }
+
+    /// A capital, ASCII or not, makes the query match case.
+    #[test]
+    fn a_capital_makes_it_case_sensitive() {
+        assert_eq!(find("Abc", "xabcx"), None);
+        assert_eq!(find("É", "café"), None);
+        assert_eq!(find("É", "CAFÉ"), Some(3..5));
+    }
+
+    /// Lowercasing can change a character's length in bytes (`İ` is two,
+    /// its lowercase three); ranges are of the text searched, not of a
+    /// lowercased copy.
+    #[test]
+    fn ranges_are_of_the_original_text() {
+        assert_eq!(find("é", "İé"), Some(2..4));
+        assert_eq!(find("x", "İstanbul x"), Some(10..11));
+        assert_eq!(find("i\u{307}x", "İx"), Some(0..3));
+    }
+
+    #[test]
+    fn an_empty_query_is_in_everything() {
+        assert!(SearchQuery::new("").matches("anything"));
+        assert_eq!(find("", "abc"), Some(0..0));
     }
 }
