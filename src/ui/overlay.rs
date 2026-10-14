@@ -5,6 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState};
 use unicode_width::UnicodeWidthStr;
 
+use super::spans::truncate_with_ellipsis;
 use crate::app::App;
 use crate::keymap::{self, ActionRegistry, CommandFlags, HelpEntry, HelpGroup, TrieNode};
 use crate::theme::Theme;
@@ -106,11 +107,7 @@ fn render_help_column(
         let desc_width = area.width.saturating_sub(20) as usize;
         let availability = crate::input::availability(app);
         for entry in entries.iter() {
-            let desc = if entry.description.len() > desc_width && desc_width > 1 {
-                format!("{}…", &entry.description[..desc_width - 1])
-            } else {
-                entry.description.clone()
-            };
+            let desc = truncate_with_ellipsis(&entry.description, desc_width);
             let blocked = availability.blocks(entry.gate);
             let key_style = if blocked {
                 key_style
@@ -149,8 +146,8 @@ pub(super) fn draw_submenu(
     key: &str,
     label: &str,
     children: &[(keymap_parser::Node, TrieNode)],
+    lines: Vec<Line<'static>>,
     flags: CommandFlags,
-    registry: &ActionRegistry,
     selection_suffix: Option<String>,
     availability: crate::keymap::Availability,
     theme: &Theme,
@@ -206,20 +203,31 @@ pub(super) fn draw_submenu(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Content: action hints, flowed into lines so (key) desc pairs don't split.
-    let inner_width = inner.width as usize;
-    let mut lines: Vec<Line> = Vec::new();
-    let mut current_spans: Vec<Span> = Vec::new();
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// A submenu's `(key) desc` entries, flowed into lines `width` columns wide
+/// so no pair is split across lines. The panel is sized from the line count,
+/// so the layout is worked out once, here, for both.
+pub(super) fn submenu_lines(
+    children: &[(keymap_parser::Node, TrieNode)],
+    registry: &ActionRegistry,
+    availability: crate::keymap::Availability,
+    width: usize,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut current_spans: Vec<Span<'static>> = Vec::new();
     let mut current_width: usize = 0;
 
     for (key_node, child) in children.iter() {
         let (desc, blocked) = match child {
             TrieNode::Action {
                 id, description, ..
-            } => {
-                let blocked = availability.blocks(registry.gate(*id));
-                (description.as_str(), blocked)
-            }
+            } => (
+                description.as_str(),
+                availability.blocks(registry.gate(*id)),
+            ),
             TrieNode::Prefix { label, .. } => (label.as_str(), false),
             TrieNode::Toggle { .. } => continue,
         };
@@ -241,11 +249,12 @@ pub(super) fn draw_submenu(
             Style::default().fg(theme.text)
         };
 
-        // "(key) desc" as a unit.
-        let pair_width = key_str.len() + 2 + 1 + desc.len(); // "(" + key + ")" + " " + desc
+        let key_text = format!("({key_str})");
+        let desc_text = format!(" {desc}");
+        let pair_width = key_text.width() + desc_text.width();
         let sep_width = if current_spans.is_empty() { 0 } else { 2 };
 
-        if !current_spans.is_empty() && current_width + sep_width + pair_width > inner_width {
+        if !current_spans.is_empty() && current_width + sep_width + pair_width > width {
             lines.push(Line::from(std::mem::take(&mut current_spans)));
             current_width = 0;
         }
@@ -255,15 +264,14 @@ pub(super) fn draw_submenu(
             current_width += 2;
         }
 
-        current_spans.push(Span::styled(format!("({key_str})"), key_style));
-        current_spans.push(Span::styled(format!(" {desc}"), desc_style));
+        current_spans.push(Span::styled(key_text, key_style));
+        current_spans.push(Span::styled(desc_text, desc_style));
         current_width += pair_width;
     }
-    if !current_spans.is_empty() {
+    if !current_spans.is_empty() || lines.is_empty() {
         lines.push(Line::from(current_spans));
     }
-
-    frame.render_widget(Paragraph::new(lines), inner);
+    lines
 }
 
 /// Render a single-line text input with horizontal scrolling and cursor placement.
@@ -278,10 +286,12 @@ fn render_scrollable_input(
     theme: &Theme,
 ) {
     let input_width = area.width.saturating_sub(prefix_width);
+    // Columns scrolled off the left, not bytes: the paragraph scrolls by
+    // display width.
     let scroll = input.visual_scroll(input_width.saturating_sub(1) as usize);
-    let text = Span::styled(&input.value()[scroll..], Style::default().fg(theme.text));
+    let text = Span::styled(input.value(), Style::default().fg(theme.text));
     frame.render_widget(
-        Paragraph::new(Line::from(text)),
+        Paragraph::new(Line::from(text)).scroll((0, scroll as u16)),
         Rect {
             x: area.x + prefix_width,
             y: area.y,
@@ -310,7 +320,7 @@ pub(super) fn draw_text_input(
             .fg(theme.accent)
             .add_modifier(Modifier::BOLD),
     );
-    let prompt_width = prompt.len() as u16;
+    let prompt_width = prompt.width() as u16;
     frame.render_widget(Paragraph::new(Line::from(prompt_span)), inner);
 
     render_scrollable_input(frame, inner, prompt_width, input, theme);
@@ -577,7 +587,7 @@ pub(super) fn draw_select_list(
 
     // Build title: " title [filter: text] (count) "
     let title_prefix = format!(" {title} ");
-    let title_prefix_len = title_prefix.len();
+    let title_prefix_width = title_prefix.width();
     let mut title_spans: Vec<Span> = vec![Span::styled(
         title_prefix,
         Style::default()
@@ -587,7 +597,7 @@ pub(super) fn draw_select_list(
 
     // Always show [filter: ], with a space after the text for the cursor to sit in.
     let filter_label = format!("[filter: {filter} ] ");
-    let filter_cursor_offset = title_prefix_len + "[filter: ".len();
+    let filter_cursor_offset = title_prefix_width + "[filter: ".len();
     let filter_style = if filtering {
         Style::default().fg(theme.text)
     } else if !filter.is_empty() {
@@ -703,7 +713,7 @@ pub(super) fn draw_select_list(
     if filtering {
         // Title border starts at area.x, title text offset by border char.
         // filter_cursor_offset = " title " + "[filter: ", which points just past the colon.
-        let cursor_x = area.x + filter_cursor_offset as u16 + filter.len() as u16;
+        let cursor_x = area.x + (filter_cursor_offset + filter.width()) as u16;
         frame.set_cursor_position((cursor_x, area.y));
     }
 }

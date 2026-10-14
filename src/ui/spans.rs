@@ -66,6 +66,28 @@ pub(super) fn trim_line(line: Line<'static>, skip: usize, max_width: usize) -> L
     Line::from(result)
 }
 
+/// `s` cut to at most `width` display columns, ending in `…` when anything
+/// had to go. Cuts between characters, never inside one.
+pub(super) fn truncate_with_ellipsis(s: &str, width: usize) -> String {
+    let full: usize = s.chars().map(|c| c.width().unwrap_or(0)).sum();
+    if full <= width {
+        return s.to_string();
+    }
+    let Some(room) = width.checked_sub(1) else {
+        return String::new();
+    };
+    let mut used = 0;
+    let mut cut: String = s
+        .chars()
+        .take_while(|c| {
+            used += c.width().unwrap_or(0);
+            used <= room
+        })
+        .collect();
+    cut.push('…');
+    cut
+}
+
 /// Compute the display width of a line (sum of all span character widths).
 pub(super) fn line_width(line: &Line<'_>) -> usize {
     line.spans
@@ -175,4 +197,30 @@ pub(super) fn command_parts_to_spans(
         spans.push(Span::styled(part.text.clone(), style));
     }
     spans
+}
+
+#[cfg(test)]
+mod truncate_tests {
+    use super::truncate_with_ellipsis;
+
+    #[test]
+    fn short_text_is_left_alone() {
+        assert_eq!(truncate_with_ellipsis("interdiff…", 10), "interdiff…");
+    }
+
+    /// Widths are display columns: a 3-byte `…` and a 2-column CJK
+    /// character are cut around, never through.
+    #[test]
+    fn cuts_by_display_width() {
+        assert_eq!(truncate_with_ellipsis("interdiff…", 9), "interdif…");
+        assert_eq!(truncate_with_ellipsis("ファイル一覧", 5), "ファ…");
+        assert_eq!(truncate_with_ellipsis("ファイル一覧", 6), "ファ…");
+        assert_eq!(truncate_with_ellipsis("ファイル一覧", 7), "ファイ…");
+    }
+
+    #[test]
+    fn no_room_leaves_the_ellipsis_or_nothing() {
+        assert_eq!(truncate_with_ellipsis("abc", 1), "…");
+        assert_eq!(truncate_with_ellipsis("abc", 0), "");
+    }
 }

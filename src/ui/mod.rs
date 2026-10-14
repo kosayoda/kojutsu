@@ -62,34 +62,16 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
             children,
             flags,
         } => {
-            // Calculate how many lines we need by simulating the flow layout.
-            let inner_width = overlay_base.width.saturating_sub(2).max(1) as usize;
-            let pair_widths: Vec<usize> = children
-                .iter()
-                .filter(|(_, child)| !matches!(child, keymap::TrieNode::Toggle { .. }))
-                .map(|(key_node, child)| {
-                    let key_str = keymap::display_key(key_node);
-                    let desc = match child {
-                        keymap::TrieNode::Action { description, .. } => description.as_str(),
-                        keymap::TrieNode::Prefix { label, .. } => label.as_str(),
-                        _ => "",
-                    };
-                    // "(key) desc"
-                    key_str.len() + 2 + 1 + desc.len()
-                })
-                .collect();
-            let mut content_lines: usize = 1;
-            let mut line_width: usize = 0;
-            for &pw in &pair_widths {
-                let sep = if line_width == 0 { 0 } else { 2 };
-                if line_width > 0 && line_width + sep + pw > inner_width {
-                    content_lines += 1;
-                    line_width = pw;
-                } else {
-                    line_width += sep + pw;
-                }
-            }
-            let area = overlay_area(overlay_base, content_lines as u16 + 1);
+            // A top border over the entries, which are laid out as wide as
+            // the panel.
+            let lines = overlay::submenu_lines(
+                children,
+                &keymaps.registry,
+                availability,
+                overlay_base.width as usize,
+                theme,
+            );
+            let area = overlay_area(overlay_base, lines.len() as u16 + 1);
             frame.render_widget(ratatui::widgets::Clear, area);
             overlay::draw_submenu(
                 frame,
@@ -97,8 +79,8 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
                 key,
                 label,
                 children,
+                lines,
                 *flags,
-                &keymaps.registry,
                 submenu_suffix,
                 availability,
                 theme,
@@ -222,5 +204,60 @@ fn overlay_area(area: Rect, height: u16) -> Rect {
         y: area.y + area.height - h,
         width: area.width,
         height: h,
+    }
+}
+
+#[cfg(test)]
+mod narrow_terminal_tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::app::App;
+    use crate::input::handle_key;
+    use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+    use crate::lua::LuaEngine;
+
+    fn press(app: &mut App, keymaps: &Keymaps, code: KeyCode) {
+        let lua = LuaEngine::for_test();
+        handle_key(app, keymaps, &lua, KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    /// Draw the whole screen at every width from 1 to 120 columns, after
+    /// `keys` put the app in the mode under test. Help splits into two
+    /// columns, so its cuts land at about half the terminal's width.
+    fn draw_at_every_width(keys: &[KeyCode]) {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        for width in 1..=120 {
+            let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+            for &key in keys {
+                press(&mut app, &keymaps, key);
+            }
+            let mut terminal = Terminal::new(TestBackend::new(width, 24)).expect("terminal");
+            terminal
+                .draw(|frame| super::draw(frame, &mut app, &keymaps))
+                .unwrap_or_else(|e| panic!("drawing at {width} columns: {e}"));
+        }
+    }
+
+    /// Help descriptions end in a multi-byte `…`; cutting them by bytes
+    /// would land inside it at some width.
+    #[test]
+    fn help_draws_at_any_width() {
+        draw_at_every_width(&[KeyCode::Char('?')]);
+    }
+
+    #[test]
+    fn a_submenu_draws_at_any_width() {
+        draw_at_every_width(&[KeyCode::Char('!')]);
+    }
+
+    /// A prompt longer than the panel scrolls by display columns, with text
+    /// whose characters are wider in bytes than in columns.
+    #[test]
+    fn a_scrolled_prompt_draws_at_any_width() {
+        let mut keys = vec![KeyCode::Char(':')];
+        keys.extend("éèê日本語".chars().cycle().take(40).map(KeyCode::Char));
+        draw_at_every_width(&keys);
     }
 }
