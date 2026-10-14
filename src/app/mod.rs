@@ -299,7 +299,7 @@ pub struct App {
     /// Global toggles that persist across commands.
     pub toggles: CommandFlags,
     /// Which diff format to display (git vs color-words).
-    pub diff_format: DiffFormat,
+    diff_format: DiffFormat,
     /// Transient status notice shown in the status bar.
     pub status_message: Option<(String, StatusLevel)>,
     /// Mode to restore after an overlay (search/help) is dismissed.
@@ -1601,6 +1601,17 @@ impl App {
 
     pub fn diff_format(&self) -> DiffFormat {
         self.diff_format
+    }
+
+    /// Switch between git and color-words diffs. The two number their lines
+    /// differently, so visual ranges drawn over diff lines end.
+    pub fn toggle_diff_format(&mut self) {
+        self.diff_format = match self.diff_format {
+            DiffFormat::Git => DiffFormat::ColorWords,
+            DiffFormat::ColorWords => DiffFormat::Git,
+        };
+        self.drop_diff_line_ranges();
+        self.rebuild_rows();
     }
 
     /// Enter jump mode: assign labels to visible jumpable rows.

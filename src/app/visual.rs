@@ -68,6 +68,52 @@ impl App {
 }
 
 impl App {
+    /// The row a line or file visual mode is anchored on, to find again
+    /// once the rows are rebuilt. Commit visual mode is anchored on an
+    /// entry, which a rebuild doesn't move.
+    pub(super) fn visual_anchor_row(&self) -> Option<DisplayRow> {
+        match self.visual.mode.as_ref()? {
+            VisualMode::Lines { anchor } | VisualMode::Files { anchor, .. } => {
+                self.rows.get(anchor.raw()).copied()
+            }
+            VisualMode::Commits { .. } => None,
+        }
+    }
+
+    /// Point the visual anchor at `row` again after the rows were rebuilt,
+    /// wherever it went. A range whose first end is gone ends: anchored on
+    /// whatever row took its place, it would cover lines nobody picked.
+    pub(super) fn reanchor_visual(&mut self, row: Option<DisplayRow>) {
+        let Some(row) = row else {
+            return;
+        };
+        let found = self.rows.iter().position(|r| *r == row).map(RowIdx::new);
+        match (&mut self.visual.mode, found) {
+            (Some(VisualMode::Lines { anchor } | VisualMode::Files { anchor, .. }), Some(at)) => {
+                *anchor = at
+            }
+            (Some(VisualMode::Lines { .. } | VisualMode::Files { .. }), None) => {
+                self.visual.mode = None;
+            }
+            _ => {}
+        }
+    }
+
+    /// Ranges drawn over diff lines, which another diff format numbers
+    /// differently: the active line range and the one it left behind.
+    /// Explicit line selections are kept by file line number and stay.
+    pub(super) fn drop_diff_line_ranges(&mut self) {
+        if matches!(self.visual.mode, Some(VisualMode::Lines { .. })) {
+            self.visual.mode = None;
+        }
+        if matches!(
+            self.visual.persistent,
+            Some(PersistentVisualRange::Lines(_))
+        ) {
+            self.visual.persistent = None;
+        }
+    }
+
     /// Whether any visual mode is active (line or commit).
     pub fn in_visual_mode(&self) -> bool {
         self.visual.mode.is_some()
@@ -766,5 +812,47 @@ mod tests {
         assert!(app.is_in_visual_file_range(EntryIdx::new(0), FileIdx::new(0)));
         assert!(app.is_in_visual_file_range(EntryIdx::new(0), FileIdx::new(1)));
         assert!(!app.is_in_visual_file_range(EntryIdx::new(0), FileIdx::new(2)));
+    }
+
+    /// The rows of `file` in commit `a`'s diff, by line.
+    fn line_row(app: &App, file: usize, line: usize) -> RowIdx {
+        row_where(app, |r| {
+            matches!(r, DisplayRow::DiffLine { file_idx, line_idx, .. }
+                if *file_idx == FileIdx::new(file) && line_idx.raw() == line)
+        })
+    }
+
+    /// Rows arriving above a line range move it; the range stays on the
+    /// lines that were picked rather than on whatever rows took their place.
+    #[test]
+    fn a_line_range_follows_its_lines_when_rows_arrive_above() {
+        let mut app = app();
+        let (a, y, x) = (EntryIdx::new(0), FileIdx::new(1), FileIdx::new(0));
+        app.cursor = line_row(&app, 1, 1);
+        app.enter_visual_mode();
+        app.visual_move(AppAction::MoveDown, 10);
+
+        // Unfolding `x`, above `y`, puts its diff rows ahead of the range.
+        app.toggle_file_fold(FileOwner::Dag(a), x);
+        assert!(app.in_visual_mode());
+        for line in 1..=2 {
+            let row = line_row(&app, 1, line);
+            assert!(app.is_in_visual_range(a, y, crate::idx::DiffLineIdx::new(line), row));
+        }
+        for line in 0..=2 {
+            let row = line_row(&app, 0, line);
+            assert!(!app.is_in_visual_range(a, x, crate::idx::DiffLineIdx::new(line), row));
+        }
+    }
+
+    /// Another diff format numbers its lines differently, so a range drawn
+    /// over the old lines ends instead of landing on others.
+    #[test]
+    fn switching_diff_format_ends_a_line_range() {
+        let mut app = app();
+        app.cursor = line_row(&app, 1, 1);
+        app.enter_visual_mode();
+        app.toggle_diff_format();
+        assert!(!app.in_visual_mode());
     }
 }

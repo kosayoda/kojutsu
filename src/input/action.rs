@@ -508,11 +508,7 @@ fn perform(
             Action::None
         }
         AppAction::ToggleGitDiff => {
-            app.diff_format = match app.diff_format {
-                crate::dag::DiffFormat::Git => crate::dag::DiffFormat::ColorWords,
-                crate::dag::DiffFormat::ColorWords => crate::dag::DiffFormat::Git,
-            };
-            app.rebuild_rows();
+            app.toggle_diff_format();
             Action::None
         }
         AppAction::ToggleLineNumbers => {

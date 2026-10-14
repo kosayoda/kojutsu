@@ -257,8 +257,10 @@ impl App {
     }
 
     fn rebuild_dag_rows(&mut self) {
-        // Remember what the cursor was pointing at so we can restore it.
+        // Remember what the cursor and the visual anchor were on, to find
+        // them again.
         let prev_cursor = self.rows.get(self.cursor.raw()).copied();
+        let visual_anchor = self.visual_anchor_row();
 
         let mut rows = std::mem::take(&mut self.rows);
         rows.clear();
@@ -277,6 +279,7 @@ impl App {
         // was on a diff line that disappeared when the file was folded.
         let fallbacks = cursor_fallbacks(prev_cursor);
         self.cursor = restore_cursor(&self.rows, self.cursor, &fallbacks);
+        self.reanchor_visual(visual_anchor);
     }
 
     /// Emit the display rows for one DAG entry (commit node, description,
@@ -509,6 +512,7 @@ impl App {
         }
 
         let prev_cursor = self.rows.get(self.cursor.raw()).copied();
+        let visual_anchor = self.visual_anchor_row();
 
         let mut new_rows = Vec::with_capacity(end - start);
         self.push_dag_entry_rows(entry_idx, &mut new_rows);
@@ -546,6 +550,7 @@ impl App {
             );
             self.cursor = RowIdx::new(start + relative.raw());
         }
+        self.reanchor_visual(visual_anchor);
     }
 }
 
