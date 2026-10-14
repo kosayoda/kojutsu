@@ -528,6 +528,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("shift-u", TagUntrack, "untrack", C, tag()),
         bind("s", TagSet, "set\u{2026}", C, tag()),
         bind("e", Edit, "edit (checkout)", C, tag()),
+        bind("i", AppAction::Interdiff, "interdiff", C, tag()),
         bind("enter", JumpToCommit, "jump to commit", C, tag()),
     ]);
 
@@ -558,7 +559,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
     let evo = || views(&[Evolog]);
     specs.extend([
         bind("ctrl-e", SwitchToEvoLogView, "evolog", C, evo()),
-        bind("d", AppAction::Interdiff, "interdiff vs current", C, evo()),
+        bind("i", AppAction::Interdiff, "interdiff vs current", C, evo()),
         bind("r", EvoLogRestore, "restore from", C, evo()),
         bind("e", Edit, "edit (checkout)", C, evo()),
         bind("n", New, "new from", C, evo()),

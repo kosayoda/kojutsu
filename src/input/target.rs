@@ -10,8 +10,8 @@ use crate::jj_command::{FollowUpAction, FollowUpOption, JJCommand, JJCommandKind
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::ActiveView;
 use crate::types::{
-    CommandPrompt, CommitId, PendingSelection, RemoteCommand, RemoteEdit, RemoteName, SmallVec,
-    Str, TargetOperation, WorkspaceName,
+    CommandPrompt, CommitId, DisplayRow, PendingSelection, RemoteCommand, RemoteEdit, RemoteName,
+    SmallVec, Str, TargetOperation, WorkspaceName,
 };
 
 use super::Action;
@@ -69,12 +69,13 @@ pub(super) fn jump_to_commit(app: &mut App, flags: CommandFlags) -> Action {
 
 /// Compare the change under the cursor with its natural counterpart: a
 /// commit picked in the DAG, the current version of an evolog step, the
-/// remote side of a bookmark.
+/// remote side of a bookmark or tag.
 pub(super) fn interdiff(app: &mut App, flags: CommandFlags) -> Action {
     match app.active_view {
         ActiveView::Dag => enter_target_select(app, TargetOperation::Interdiff, flags),
         ActiveView::Evolog => evolog_interdiff(app),
         ActiveView::Bookmarks => bookmark_interdiff(app),
+        ActiveView::Tags => tag_interdiff(app),
         _ => nothing_here(app, AppAction::Interdiff),
     }
 }
@@ -103,28 +104,78 @@ fn bookmark_interdiff(app: &mut App) -> Action {
     let Some(entry) = app.selected_bookmark_entry() else {
         return nothing_here(app, AppAction::Interdiff);
     };
-    if !entry.kind.is_dirty() {
-        app.set_error("bookmark is not dirty");
-        return Action::None;
-    }
-    let Some(local_commit) = entry.commit_id.clone() else {
-        app.set_error("bookmark has no local commit");
-        return Action::None;
-    };
-    let name = entry.name.clone();
-    let remote_commit: Option<CommitId> = app
+    let name = entry.name.to_string();
+    let local = entry.commit_id.clone();
+    let remotes = app
         .views
         .bookmark_details
-        .get(&name)
-        .and_then(|d| d.remote_targets.first())
-        .map(|t| t.summary.commit_id.clone());
-    let Some(remote_commit) = remote_commit else {
-        app.set_error("no remote target to diff against");
+        .get(&entry.name)
+        .map(|d| {
+            d.remote_targets
+                .iter()
+                .map(|t| (t.remote.clone(), t.summary.commit_id.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let on_remote = match app.rows.get(app.cursor.raw()) {
+        Some(DisplayRow::BookmarkRemoteTarget { target_idx, .. }) => Some(target_idx.raw()),
+        _ => None,
+    };
+    ref_interdiff(app, &name, local, remotes, on_remote)
+}
+
+fn tag_interdiff(app: &mut App) -> Action {
+    let Some(entry) = app.selected_tag_entry() else {
+        return nothing_here(app, AppAction::Interdiff);
+    };
+    let name = entry.name.to_string();
+    let local = entry.commit_id.clone();
+    let remotes = app
+        .views
+        .tag_details
+        .get(&entry.name)
+        .map(|d| {
+            d.remote_targets
+                .iter()
+                .map(|t| (t.remote.clone(), t.summary.commit_id.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let on_remote = match app.rows.get(app.cursor.raw()) {
+        Some(DisplayRow::TagRemoteTarget { target_idx, .. }) => Some(target_idx.raw()),
+        _ => None,
+    };
+    ref_interdiff(app, &name, local, remotes, on_remote)
+}
+
+/// Compare a bookmark or tag on a remote with the local one: the remote
+/// whose row the cursor is on, or else the first pointing somewhere else.
+fn ref_interdiff(
+    app: &mut App,
+    name: &str,
+    local: Option<CommitId>,
+    remotes: Vec<(RemoteName, CommitId)>,
+    on_remote: Option<usize>,
+) -> Action {
+    let Some(local) = local else {
+        app.set_error(format!("{name} has no local commit"));
         return Action::None;
     };
-    let from_label = Str::from(format!("{name}@remote"));
-    let to_label = Str::from(name.to_string());
-    app.enter_interdiff_view(remote_commit, local_commit, from_label, to_label);
+    let remote = match on_remote {
+        Some(idx) => remotes.into_iter().nth(idx),
+        None => remotes.into_iter().find(|(_, commit)| *commit != local),
+    };
+    let Some((remote, remote_commit)) = remote else {
+        app.set_error(format!("{name} is the same on its remotes"));
+        return Action::None;
+    };
+    if remote_commit == local {
+        app.set_error(format!("{name}@{remote} is the same as {name}"));
+        return Action::None;
+    }
+    let from_label = Str::from(format!("{name}@{remote}"));
+    let to_label = Str::from(name);
+    app.enter_interdiff_view(remote_commit, local, from_label, to_label);
     Action::None
 }
 
@@ -988,5 +1039,94 @@ mod remote_choice_tests {
             CommandFlags::empty(),
         );
         assert!(matches!(app.mode, AppMode::SelectFromList(_)));
+    }
+}
+
+#[cfg(test)]
+mod ref_interdiff_tests {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::app::{App, TagViewEntry};
+    use crate::dag::{
+        CommitSummary, ShortId, TagDetails, TagLocalTarget, TagPresence, TagRemoteTarget,
+    };
+    use crate::input::handle_key;
+    use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+    use crate::lua::LuaEngine;
+    use crate::types::{ActiveView, CommitId, RemoteName, RevisionArg, TagName};
+
+    fn summary(commit: &str) -> CommitSummary {
+        CommitSummary {
+            commit_id: CommitId::new(commit),
+            change_id: ShortId::new("qpvuntsm"),
+            short_commit_id: ShortId::new(commit),
+            description: None,
+            divergence: None,
+        }
+    }
+
+    /// The tag view with tag `v1` here at `local`, and at `remote` on origin.
+    fn tags_view(local: &str, remote: &str) -> App {
+        let mut app = App::for_test();
+        app.views.tag_entries.push(TagViewEntry {
+            name: TagName::new("v1"),
+            commit_id: Some(CommitId::new(local)),
+            change_id: None,
+            short_commit_id: None,
+            revision: Some(RevisionArg::new("qpv")),
+            description: None,
+            presence: TagPresence::Local,
+        });
+        app.views.tag_details.insert(
+            TagName::new("v1"),
+            TagDetails {
+                presence: TagPresence::Local,
+                local_target: Some(TagLocalTarget {
+                    summary: summary(local),
+                }),
+                remote_targets: vec![TagRemoteTarget {
+                    remote: RemoteName::new("origin"),
+                    summary: summary(remote),
+                    is_tracked: true,
+                }],
+            },
+        );
+        app.switch_view(ActiveView::Tags);
+        app
+    }
+
+    fn press_i(app: &mut App) {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        handle_key(
+            app,
+            &keymaps,
+            &LuaEngine::for_test(),
+            KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE),
+        );
+    }
+
+    /// A tag that moved on the remote compares the two, labelled with the
+    /// remote it came from.
+    #[test]
+    fn a_tag_compares_with_its_remote() {
+        let mut app = tags_view("aaaa1111", "bbbb2222");
+        press_i(&mut app);
+        assert_eq!(app.active_view, ActiveView::Interdiff);
+        let interdiff = app.interdiff.as_ref().expect("an interdiff");
+        assert_eq!(
+            (interdiff.from_label.as_str(), interdiff.to_label.as_str()),
+            ("v1@origin", "v1")
+        );
+    }
+
+    #[test]
+    fn a_tag_the_same_everywhere_says_so() {
+        let mut app = tags_view("aaaa1111", "aaaa1111");
+        press_i(&mut app);
+        assert_eq!(app.active_view, ActiveView::Tags);
+        assert!(matches!(
+            &app.status_message,
+            Some((msg, _)) if msg == "v1 is the same on its remotes"
+        ));
     }
 }
