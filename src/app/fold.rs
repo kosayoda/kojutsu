@@ -55,6 +55,8 @@ impl App {
             ActiveView::Interdiff => self.rebuild_interdiff_rows(),
             ActiveView::Annotate => self.rebuild_annotate_rows(),
         }
+        // Matches are row positions, so new rows need them found again.
+        self.refresh_search_matches();
     }
 
     fn rebuild_bookmark_rows(&mut self) {

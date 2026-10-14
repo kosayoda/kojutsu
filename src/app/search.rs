@@ -394,7 +394,7 @@ mod id_match_tests {
 }
 
 #[cfg(test)]
-mod cancel_tests {
+mod shifting_rows_tests {
     use super::super::App;
     use super::super::test_support::{entry, load};
     use crate::dag::{DiffSummary, FileChange, LineStats};
@@ -422,6 +422,31 @@ mod cancel_tests {
             }));
         app.rebuild_rows();
         app.cancel_search();
+
+        assert_eq!(app.selected_entry_idx(), Some(EntryIdx::new(2)));
+    }
+
+    /// Rows can arrive while a query is open; its matches follow them, so
+    /// `n` lands on the matching commit and not on whatever row now has its
+    /// old number.
+    #[test]
+    fn matches_follow_their_rows_through_a_rebuild() {
+        let mut app = App::for_test();
+        let entries = vec![entry('a', "a1"), entry('b', "b1"), entry('c', "c1")];
+        load(&mut app, entries, true);
+        app.begin_search();
+        app.update_search_input(tui_input::Input::new("cc".into()));
+
+        app.dag.unfolded_commits.insert(CommitId::new("a1"));
+        app.dag.nodes[EntryIdx::new(0)]
+            .files
+            .set_summary(Ok(DiffSummary {
+                files: vec![FileChange::for_test("f"), FileChange::for_test("g")],
+                stats: LineStats::default(),
+            }));
+        app.rebuild_rows();
+        app.cursor = app.row_of_commit(EntryIdx::new(0)).unwrap();
+        app.search_next();
 
         assert_eq!(app.selected_entry_idx(), Some(EntryIdx::new(2)));
     }

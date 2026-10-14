@@ -180,8 +180,6 @@ impl App {
         if !done {
             self.dag.stream = Some(stream);
         }
-
-        self.refresh_search_matches();
     }
 
     /// Process a repo result, deferring `rebuild_rows` and `scroll_to_show_children`.
