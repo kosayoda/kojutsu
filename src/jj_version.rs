@@ -143,15 +143,23 @@ impl JjFeature {
     }
 }
 
-/// The `jj` on `PATH`, as far as kojutsu could tell. Unknown when
-/// `jj --version` could not be run or read; nothing is held back then, since
-/// a binary kojutsu can't date is as likely a newer one as anything.
+/// The `jj` on `PATH`, as far as kojutsu could tell.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct InstalledJj(Option<JjVersion>);
+pub enum InstalledJj {
+    /// What `jj --version` reported.
+    Known(JjVersion),
+    /// Not asked yet, or its answer couldn't be read. Nothing is held back:
+    /// a binary kojutsu can't date is as likely a newer one as anything.
+    #[default]
+    Unknown,
+    /// `jj` could not be run at all, so nothing that changes the repo can
+    /// work; reading it goes through jj-lib and still does.
+    Unavailable(std::io::ErrorKind),
+}
 
 impl InstalledJj {
     pub const fn known(version: JjVersion) -> Self {
-        Self(Some(version))
+        Self::Known(version)
     }
 
     /// Ask `jj --version`.
@@ -163,34 +171,40 @@ impl InstalledJj {
         match output {
             Ok(output) if output.status.success() => {
                 let text = String::from_utf8_lossy(&output.stdout);
-                let version = JjVersion::parse(&text);
-                if version.is_none() {
-                    tracing::warn!(output = %text.trim(), "unrecognised `jj --version` output");
+                match JjVersion::parse(&text) {
+                    Some(version) => Self::Known(version),
+                    None => {
+                        tracing::warn!(output = %text.trim(), "unrecognised `jj --version` output");
+                        Self::Unknown
+                    }
                 }
-                Self(version)
             }
             Ok(output) => {
                 tracing::warn!(status = %output.status, "`jj --version` failed");
-                Self(None)
+                Self::Unknown
             }
             Err(e) => {
                 tracing::warn!(error = %e, "could not run `jj --version`");
-                Self(None)
+                Self::Unavailable(e.kind())
             }
         }
     }
 
     pub fn version(self) -> Option<JjVersion> {
-        self.0
+        match self {
+            Self::Known(version) => Some(version),
+            Self::Unknown | Self::Unavailable(_) => None,
+        }
     }
 
     pub fn supports(self, feature: JjFeature) -> bool {
-        self.0.is_none_or(|version| version >= feature.since())
+        self.version()
+            .is_none_or(|version| version >= feature.since())
     }
 
     /// Why `feature` can't be used, for a message.
     pub fn refusal(self, feature: JjFeature) -> Option<String> {
-        let version = self.0.filter(|_| !self.supports(feature))?;
+        let version = self.version().filter(|_| !self.supports(feature))?;
         Some(format!(
             "{} needs jj {} or newer; the installed jj is {version}",
             feature.name(),
@@ -198,12 +212,26 @@ impl InstalledJj {
         ))
     }
 
-    /// What is worth telling the user about this binary at startup: one
-    /// older than kojutsu supports, or one newer than the jj-lib it reads
-    /// the repo with, which may write what that library misreads.
+    /// What is worth telling the user about this binary at startup: none
+    /// to run, one older than kojutsu supports, or one newer than the jj-lib
+    /// it reads the repo with, which may write what that library misreads.
     pub fn concerns(self) -> Vec<String> {
-        let Some(version) = self.0 else {
-            return Vec::new();
+        let version = match self {
+            Self::Known(version) => version,
+            Self::Unknown => return Vec::new(),
+            Self::Unavailable(std::io::ErrorKind::NotFound) => {
+                return vec![
+                    "jj is not on PATH: kojutsu can show the repo, but every change \
+                     goes through jj"
+                        .to_string(),
+                ];
+            }
+            Self::Unavailable(kind) => {
+                return vec![format!(
+                    "could not run jj ({kind}): kojutsu can show the repo, but every \
+                     change goes through jj"
+                )];
+            }
         };
         let linked = JjVersion::linked();
         let mut concerns = Vec::new();
@@ -272,6 +300,20 @@ mod tests {
         assert!(unknown.supports(JjFeature::Converge));
         assert_eq!(unknown.refusal(JjFeature::Converge), None);
         assert!(unknown.concerns().is_empty());
+    }
+
+    /// Without a jj to run, startup says so; nothing is refused, since
+    /// running it fails on its own with the reason.
+    #[test]
+    fn a_missing_jj_is_reported() {
+        let missing = InstalledJj::Unavailable(std::io::ErrorKind::NotFound);
+        assert_eq!(
+            missing.concerns(),
+            ["jj is not on PATH: kojutsu can show the repo, but every change goes through jj"]
+        );
+        assert!(missing.supports(JjFeature::Converge));
+        let denied = InstalledJj::Unavailable(std::io::ErrorKind::PermissionDenied);
+        assert!(denied.concerns()[0].starts_with("could not run jj (permission denied)"));
     }
 
     #[test]
