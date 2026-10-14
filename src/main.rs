@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use clap::Parser;
 use color_eyre::Result;
-use crossterm::event::{Event, KeyEventKind};
+use crossterm::event::{Event, KeyEventKind, MouseEventKind};
 
 use kojutsu::app::{App, AppMode, DeferredWork};
 use kojutsu::input::{self, Action, Completion};
@@ -435,7 +435,11 @@ impl Session {
                     )
                 }
                 Event::Mouse(mouse) => {
-                    *dirty = true;
+                    // Motion isn't reported (see `terminal::init`); should a
+                    // terminal send it anyway, it changes nothing to redraw.
+                    if !matches!(mouse.kind, MouseEventKind::Moved) {
+                        *dirty = true;
+                    }
                     let hdr = self.app.last_header_height;
                     input::handle_mouse(&mut self.app, mouse, hdr)
                 }

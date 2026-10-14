@@ -8,7 +8,7 @@ use crossterm::event::{self, Event};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::cursor::{Hide, Show};
-use ratatui::crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use ratatui::crossterm::event::DisableMouseCapture;
 use ratatui::crossterm::execute;
 use ratatui::crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -16,12 +16,26 @@ use ratatui::crossterm::terminal::{
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 
+/// Mouse reporting for presses, releases and the wheel, without motion.
+/// crossterm's `EnableMouseCapture` also turns on drag (1002) and any-motion
+/// (1003) tracking, and nothing here uses motion: every move would arrive as
+/// an event and redraw the screen. Turned off by `DisableMouseCapture`.
+struct EnableClickCapture;
+
+impl crossterm::Command for EnableClickCapture {
+    fn write_ansi(&self, f: &mut impl std::fmt::Write) -> std::fmt::Result {
+        // 1000: presses, releases and the wheel. 1015 and 1006: coordinates
+        // past column 223, in RXVT and the preferred SGR encoding.
+        f.write_str("\x1b[?1000h\x1b[?1015h\x1b[?1006h")
+    }
+}
+
 /// Enter the alternate screen, enable raw mode and mouse capture, and return
 /// a [`Terminal`] handle ready for drawing.
 pub fn init() -> io::Result<Term> {
     install_panic_hook();
     enable_raw_mode()?;
-    execute!(stdout(), EnterAlternateScreen, EnableMouseCapture, Hide)?;
+    execute!(stdout(), EnterAlternateScreen, EnableClickCapture, Hide)?;
     Terminal::new(CrosstermBackend::new(stdout()))
 }
 
