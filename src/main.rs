@@ -30,6 +30,11 @@ enum AppEvent {
         cmd: Box<JJCommand>,
         completion: Completion,
     },
+    /// jj's shell completions for the command-prompt text `input`.
+    ShellCompletions {
+        input: String,
+        completions: Vec<kojutsu::jj_command::Completion>,
+    },
 }
 
 #[derive(Parser)]
@@ -410,6 +415,10 @@ impl Session {
                 deferred.merge(self.app.handle_repo_result_deferred(*result));
                 Action::None
             }
+            AppEvent::ShellCompletions { input, completions } => {
+                input::apply_completions(&mut self.app, &input, completions);
+                Action::None
+            }
             AppEvent::JjOutput { chunk } => {
                 self.app.append_running_output(&chunk);
                 Action::None
@@ -482,6 +491,14 @@ impl Session {
                         self.execute(next)
                     }
                 };
+            }
+            Action::CompleteCommand { input } => {
+                let repo_path = self.repo_path.clone();
+                let event_tx = self.event_tx.clone();
+                std::thread::spawn(move || {
+                    let completions = kojutsu::jj_command::complete(&repo_path, &input);
+                    let _ = event_tx.send(AppEvent::ShellCompletions { input, completions });
+                });
             }
             Action::Refresh => self.app.refresh(RevsetLoadKind::Snapshot),
             Action::ReloadConfig => {

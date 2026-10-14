@@ -116,50 +116,14 @@ pub(super) fn handle_text_input(
         KeyCode::Tab => {
             if let AppMode::TextInput {
                 input, on_submit, ..
-            } = &mut app.mode
+            } = &app.mode
                 && matches!(on_submit, TextPrompt::Step(PromptStep::RawCommand))
             {
+                // jj answers on another thread; `apply_completions` takes
+                // the answer if the prompt still reads the same.
                 let text = input.to_string();
-                let repo_path = std::path::PathBuf::from(&app.repo_root);
-                let completions = crate::jj_command::complete(&repo_path, &text);
-
-                if completions.len() == 1 {
-                    // Single match: replace and add trailing space.
-                    let new_text = crate::jj_command::replace_current_token(
-                        &text,
-                        &completions[0].value,
-                        true,
-                    );
-                    *input = tui_input::Input::new(new_text);
-                } else if completions.len() > 1 {
-                    // Multiple matches: extend to common prefix if possible.
-                    let prefix = crate::jj_command::common_prefix(&completions);
-                    let (_, current) = crate::jj_command::split_for_completion(&text);
-                    if prefix.len() > current.len() {
-                        let new_text =
-                            crate::jj_command::replace_current_token(&text, prefix, false);
-                        *input = tui_input::Input::new(new_text);
-                    } else {
-                        // Already at common prefix: show completion list.
-                        let items: Vec<String> = completions
-                            .iter()
-                            .map(|c| {
-                                if c.description.is_empty() {
-                                    c.value.clone()
-                                } else {
-                                    format!("{}  {}", c.value, c.description)
-                                }
-                            })
-                            .collect();
-                        app.mode = AppMode::select_from_list(
-                            "completions",
-                            items,
-                            false,
-                            crate::types::PendingSelection::CommandCompletion { input: text },
-                            true,
-                        );
-                    }
-                }
+                app.pending_completion = Some(text.clone());
+                return Action::CompleteCommand { input: text };
             }
             Action::None
         }
@@ -168,6 +132,59 @@ pub(super) fn handle_text_input(
                 input.handle_event(&Event::Key(key));
             }
             Action::None
+        }
+    }
+}
+
+/// Take jj's completions for `asked`, if the command prompt still reads
+/// exactly that: anything typed since makes them stale. One match replaces
+/// the word being typed; several extend it to what they share, or, when
+/// they share nothing more, are listed to pick from.
+pub fn apply_completions(
+    app: &mut App,
+    asked: &str,
+    completions: Vec<crate::jj_command::Completion>,
+) {
+    if app.pending_completion.as_deref() == Some(asked) {
+        app.pending_completion = None;
+    }
+    let AppMode::TextInput {
+        input, on_submit, ..
+    } = &mut app.mode
+    else {
+        return;
+    };
+    if !matches!(on_submit, TextPrompt::Step(PromptStep::RawCommand)) || input.value() != asked {
+        return;
+    }
+    let text = asked.to_string();
+    if completions.len() == 1 {
+        let new_text = crate::jj_command::replace_current_token(&text, &completions[0].value, true);
+        *input = tui_input::Input::new(new_text);
+    } else if completions.len() > 1 {
+        let prefix = crate::jj_command::common_prefix(&completions);
+        let (_, current) = crate::jj_command::split_for_completion(&text);
+        if prefix.len() > current.len() {
+            let new_text = crate::jj_command::replace_current_token(&text, prefix, false);
+            *input = tui_input::Input::new(new_text);
+        } else {
+            let items: Vec<String> = completions
+                .iter()
+                .map(|c| {
+                    if c.description.is_empty() {
+                        c.value.clone()
+                    } else {
+                        format!("{}  {}", c.value, c.description)
+                    }
+                })
+                .collect();
+            app.mode = AppMode::select_from_list(
+                "completions",
+                items,
+                false,
+                crate::types::PendingSelection::CommandCompletion { input: text },
+                true,
+            );
         }
     }
 }
@@ -712,5 +729,67 @@ mod jump_tests {
         }
 
         assert_eq!(app.selected_entry_idx(), Some(EntryIdx::new(2)));
+    }
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::apply_completions;
+    use crate::app::{App, AppMode};
+    use crate::jj_command::Completion;
+    use crate::types::PromptStep;
+
+    fn completion(value: &str) -> Completion {
+        Completion {
+            value: value.into(),
+            description: String::new(),
+        }
+    }
+
+    fn prompt_reading(text: &str) -> App {
+        let mut app = App::for_test();
+        app.mode = AppMode::text_input(":", text, PromptStep::RawCommand);
+        app.pending_completion = Some(text.into());
+        app
+    }
+
+    fn prompt_text(app: &App) -> String {
+        match &app.mode {
+            AppMode::TextInput { input, .. } => input.value().into(),
+            _ => panic!("expected the prompt"),
+        }
+    }
+
+    #[test]
+    fn an_answer_to_what_the_prompt_reads_is_taken() {
+        let mut app = prompt_reading("git pu");
+        apply_completions(&mut app, "git pu", vec![completion("push")]);
+        assert_eq!(prompt_text(&app), "git push ");
+        assert_eq!(app.pending_completion, None);
+    }
+
+    /// Typing on while jj works makes its answer stale.
+    #[test]
+    fn an_answer_to_older_text_is_dropped() {
+        let mut app = prompt_reading("git pu");
+        if let AppMode::TextInput { input, .. } = &mut app.mode {
+            *input = tui_input::Input::new("git pus".into());
+        }
+        app.pending_completion = Some("git pus".into());
+        apply_completions(&mut app, "git pu", vec![completion("push")]);
+        assert_eq!(prompt_text(&app), "git pus");
+        // Still waiting on the newer question.
+        assert_eq!(app.pending_completion.as_deref(), Some("git pus"));
+    }
+
+    /// The prompt closed while jj worked: the answer has nowhere to go, and
+    /// nothing is left waiting on it.
+    #[test]
+    fn an_answer_after_the_prompt_closed_is_dropped() {
+        let mut app = prompt_reading("git pu");
+        app.mode = AppMode::Normal;
+        apply_completions(&mut app, "git pu", vec![completion("push")]);
+        assert!(matches!(app.mode, AppMode::Normal));
+        assert_eq!(app.pending_completion, None);
     }
 }

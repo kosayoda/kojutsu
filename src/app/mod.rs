@@ -292,6 +292,9 @@ pub struct App {
     pub jj: crate::jj_version::InstalledJj,
     /// When the current stretch of background work began; `None` when idle.
     activity_since: Option<std::time::Instant>,
+    /// The command-prompt text jj is being asked to complete, until it
+    /// answers.
+    pub pending_completion: Option<String>,
     /// Current interaction mode.
     pub mode: AppMode,
     /// Repo requests waiting to be sent to the background service.
@@ -466,6 +469,7 @@ impl App {
             repo_root,
             jj: crate::jj_version::InstalledJj::default(),
             activity_since: None,
+            pending_completion: None,
             mode: AppMode::Normal,
             pending_repo_requests: Vec::new(),
             pending_file_view: None,

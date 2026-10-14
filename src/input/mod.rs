@@ -8,6 +8,7 @@ mod view;
 pub use view::dag::{complete_hunk_edit, staged_resolution};
 
 pub use action::{availability, dispatch_action_after_hooks, no_toggles};
+pub use modal::apply_completions;
 
 use ratatui::crossterm::event::{
     KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
@@ -63,6 +64,9 @@ pub enum Action {
     Quit,
     /// No action needed (already handled by mutating App).
     None,
+    /// Ask jj off the UI thread what can complete the command prompt's
+    /// `input`; the answer goes to [`apply_completions`].
+    CompleteCommand { input: String },
     /// Run a jj CLI command. Its `terminal_use` decides whether the TUI
     /// steps aside for it; `completion` what happens once it finishes.
     RunJj {

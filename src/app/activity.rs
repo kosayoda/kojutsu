@@ -21,6 +21,8 @@ pub const FRAME: Duration = Duration::from_millis(100);
 pub enum Activity {
     /// A jj command, which has its own panel saying so.
     RunningCommand,
+    /// jj working out what can complete the command prompt.
+    Completing,
     /// A revset load, before its first commits arrive: the working-copy
     /// snapshot and the evaluation.
     LoadingCommits,
@@ -41,6 +43,7 @@ impl Activity {
     pub fn label(&self) -> Option<String> {
         let label = match self {
             Self::RunningCommand => return None,
+            Self::Completing => "completing…".to_string(),
             Self::LoadingCommits => "loading commits…".to_string(),
             Self::StreamingCommits(count) => format!("loading commits… {count}"),
             Self::LoadingOperations => "loading operations…".to_string(),
@@ -85,6 +88,9 @@ impl App {
     pub fn activity(&self) -> Option<Activity> {
         if matches!(self.mode, AppMode::CommandRunning(_)) {
             return Some(Activity::RunningCommand);
+        }
+        if self.pending_completion.is_some() {
+            return Some(Activity::Completing);
         }
         if self.dag.stream.is_some() {
             return Some(Activity::StreamingCommits(self.dag.nodes.len()));

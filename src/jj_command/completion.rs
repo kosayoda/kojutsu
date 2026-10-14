@@ -24,25 +24,60 @@ pub fn split_for_completion(input: &str) -> (Vec<&str>, &str) {
     }
 }
 
+/// How long jj gets to offer completions before it is given up on: past
+/// this, the answer would come too late to be of use, and a jj stuck on a
+/// lock or a slow filesystem would otherwise hold a process forever.
+const COMPLETION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Ask jj's own shell completion what can follow `input`. Blocks while jj
+/// works, so callers run it off the UI thread.
 pub fn complete(repo_path: &Path, input: &str) -> Vec<Completion> {
+    use std::io::Read as _;
+
     let (completed, current) = split_for_completion(input);
 
     let mut args: Vec<&str> = vec!["--", "jj"];
     args.extend_from_slice(&completed);
     args.push(current);
 
-    let Ok(output) = Command::new("jj")
+    let Ok(mut child) = Command::new("jj")
         .args(&args)
         .env("COMPLETE", "fish")
         .current_dir(repo_path)
         .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .output()
+        .spawn()
     else {
         return Vec::new();
     };
+    // Read while it runs: a long list would fill the pipe and stall jj
+    // before it could exit.
+    let Some(mut stdout) = child.stdout.take() else {
+        return Vec::new();
+    };
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let _ = stdout.read_to_end(&mut out);
+        out
+    });
+    let deadline = std::time::Instant::now() + COMPLETION_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Vec::new();
+            }
+        }
+    }
+    let stdout = reader.join().unwrap_or_default();
 
-    String::from_utf8_lossy(&output.stdout)
+    String::from_utf8_lossy(&stdout)
         .lines()
         .map(|line| {
             let mut parts = line.splitn(2, '\t');
