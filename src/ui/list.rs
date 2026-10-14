@@ -84,12 +84,12 @@ pub(super) fn draw_list(
         row_state: SearchRowState::None,
     });
 
-    let (jump_labels, jump_input_len): (HashMap<RowIdx, &str>, usize) = match &app.mode {
+    let (jump_labels, jump_input_len): (HashMap<DisplayRow, &str>, usize) = match &app.mode {
         AppMode::Jump(state) => (
             state
                 .labels
                 .iter()
-                .map(|(s, idx)| (*idx, s.as_str()))
+                .map(|(s, row)| (*row, s.as_str()))
                 .collect(),
             state.input.len(),
         ),
@@ -124,12 +124,9 @@ pub(super) fn draw_list(
     let label_style = Style::default()
         .fg(theme.warning)
         .add_modifier(Modifier::BOLD);
-    for (row_idx, label) in &jump_labels {
-        let Some(row) = row_idx
-            .raw()
-            .checked_sub(vis_start)
-            .and_then(|i| rendered.get_mut(i))
-        else {
+    // Each label goes on its row wherever that row is drawn now.
+    for (i, row) in rendered.iter_mut().enumerate() {
+        let Some(label) = jump_labels.get(&app.rows[vis_start + i]) else {
             continue;
         };
         if let Some(first_span) = row

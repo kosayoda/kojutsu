@@ -16,7 +16,7 @@ pub struct ConflictHunkRef {
 }
 
 /// The view item a file row and its diff lines hang under.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FileOwner {
     /// A commit in the DAG.
     Dag(EntryIdx),
@@ -29,7 +29,7 @@ pub enum FileOwner {
 /// The content a placeholder row holds a place for: loading, or failed to
 /// load. Which of the two is read from the content's own state, so the row
 /// stays the same row when a load fails.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ContentSlot {
     /// An unfolded owner's changed files.
     Files(FileOwner),
@@ -42,7 +42,7 @@ pub enum ContentSlot {
 }
 
 /// One visual row in the list.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DisplayRow {
     /// A commit node line (graph glyph + commit info).
     CommitNode { entry_idx: EntryIdx },

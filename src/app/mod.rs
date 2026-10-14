@@ -1799,6 +1799,10 @@ impl App {
         }
 
         if !labels.is_empty() {
+            let labels = labels
+                .into_iter()
+                .map(|(label, idx)| (label, self.rows[idx.raw()]))
+                .collect();
             self.enter_overlay(AppMode::Jump(JumpState {
                 labels,
                 input: String::new(),

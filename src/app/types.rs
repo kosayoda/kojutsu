@@ -959,8 +959,9 @@ impl SelectFromListState {
 
 /// State for jump mode: typed-label navigation to a visible row.
 pub struct JumpState {
-    /// (label_string, row_index) for each visible jumpable row.
-    pub labels: Vec<(String, RowIdx)>,
+    /// Each label and the row it jumps to, by the row itself rather than its
+    /// position: rows can be rebuilt while the labels show.
+    pub labels: Vec<(String, DisplayRow)>,
     /// Characters typed so far (for multi-char label matching).
     pub input: String,
 }

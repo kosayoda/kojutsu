@@ -519,8 +519,11 @@ pub(super) fn handle_jump(app: &mut App, key: KeyEvent) -> Action {
     }
 
     // Exact match → jump and exit.
-    if let Some((_, row_idx)) = state.labels.iter().find(|(label, _)| *label == state.input) {
-        app.set_cursor(*row_idx);
+    if let Some((_, row)) = state.labels.iter().find(|(label, _)| *label == state.input) {
+        // Wherever the row is now; a label whose row went away jumps nowhere.
+        if let Some(at) = app.rows.iter().position(|r| r == row) {
+            app.set_cursor(crate::idx::RowIdx::new(at));
+        }
         app.exit_overlay();
     } else {
         // Input is a prefix of remaining labels: stay in jump mode. Assigned
@@ -597,7 +600,9 @@ mod jump_tests {
         app.enter_overlay(AppMode::Jump(JumpState {
             labels: labels
                 .iter()
-                .map(|l| (l.to_string(), RowIdx::new(0)))
+                // These tests are about the mode jump returns to, not the
+                // row it lands on, and their apps show no rows.
+                .map(|l| (l.to_string(), crate::types::DisplayRow::BookmarkSeparator))
                 .collect(),
             input: String::new(),
         }));
@@ -646,5 +651,51 @@ mod jump_tests {
         open_jump(&mut app, &["a"]);
         press(&mut app, KeyCode::Char('a'));
         assert!(matches!(app.mode, AppMode::Normal));
+    }
+
+    /// Rows can change while the labels show; a label still jumps to the
+    /// row it was put on, wherever that row has moved.
+    #[test]
+    fn a_label_follows_its_row_when_rows_arrive_above() {
+        use crate::dag::{CommitInfo, DiffSummary, FileChange, LineStats};
+        use crate::idx::EntryIdx;
+        use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+        use crate::types::{ActiveView, DisplayRow};
+
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        for (change, commit) in [("rlvkpnrz", "8ccbb3dc"), ("zsuskuln", "9ddcc4ed")] {
+            app.push_test_commit(CommitInfo::for_test(change, commit));
+        }
+        app.rebuild_rows();
+        app.last_list_height = 20;
+        app.cursor = RowIdx::new(0);
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        app.enter_jump(keymaps.for_view(ActiveView::Dag));
+        let third = DisplayRow::CommitNode {
+            entry_idx: EntryIdx::new(2),
+        };
+        let label = match &app.mode {
+            AppMode::Jump(state) => state
+                .labels
+                .iter()
+                .find(|(_, row)| *row == third)
+                .map(|(label, _)| label.clone())
+                .expect("the third commit is labelled"),
+            _ => panic!("expected jump mode"),
+        };
+
+        // The first commit's files open above it.
+        app.dag.nodes[EntryIdx::new(0)]
+            .files
+            .set_summary(Ok(DiffSummary {
+                files: vec![FileChange::for_test("a"), FileChange::for_test("b")],
+                stats: LineStats::default(),
+            }));
+        app.toggle_commit_fold(EntryIdx::new(0));
+        for c in label.chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+
+        assert_eq!(app.selected_entry_idx(), Some(EntryIdx::new(2)));
     }
 }
