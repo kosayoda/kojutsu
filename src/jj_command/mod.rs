@@ -77,6 +77,11 @@ pub enum JJCommandKind {
     DescribeInEditor {
         change_id: RevisionArg,
     },
+    /// Change commits' metadata, not their content.
+    Metaedit {
+        change_ids: SmallVec<RevisionArg>,
+        change: MetaeditChange,
+    },
     Diffedit {
         change_id: RevisionArg,
         selection: ChangeSelection,
@@ -296,6 +301,21 @@ impl Colocation {
             Self::Disable => "disable",
         }
     }
+}
+
+/// What `jj metaedit` changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetaeditChange {
+    /// A fresh change ID, as if the commits were new changes.
+    NewChangeId,
+    /// The author becomes the configured user; the timestamp stays.
+    ResetAuthor,
+    /// The author becomes `Name <email>`.
+    Author(String),
+    /// The author timestamp becomes now.
+    AuthorTimestampNow,
+    /// The author timestamp becomes this one, in any format jj reads.
+    AuthorTimestamp(String),
 }
 
 #[derive(Debug, Clone)]
@@ -1597,5 +1617,73 @@ mod cross_workspace_tests {
             flags: CommandFlags::empty(),
         };
         assert!(new.retry_options(REFUSED, jj).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod metaedit_tests {
+    use super::*;
+
+    fn args(change: MetaeditChange) -> Vec<Str> {
+        JJCommand {
+            kind: JJCommandKind::Metaedit {
+                change_ids: smallvec::smallvec![RevisionArg::new("abc"), RevisionArg::new("def")],
+                change,
+            },
+            flags: CommandFlags::empty(),
+        }
+        .args()
+    }
+
+    #[test]
+    fn each_change_is_its_own_flag() {
+        assert_eq!(
+            args(MetaeditChange::NewChangeId),
+            ["metaedit", "--update-change-id", "abc", "def"]
+        );
+        assert_eq!(
+            args(MetaeditChange::ResetAuthor),
+            ["metaedit", "--update-author", "abc", "def"]
+        );
+        assert_eq!(
+            args(MetaeditChange::Author("Ann Lee <ann@example.com>".into())),
+            [
+                "metaedit",
+                "--author",
+                "Ann Lee <ann@example.com>",
+                "abc",
+                "def"
+            ]
+        );
+        assert_eq!(
+            args(MetaeditChange::AuthorTimestampNow),
+            ["metaedit", "--update-author-timestamp", "abc", "def"]
+        );
+        assert_eq!(
+            args(MetaeditChange::AuthorTimestamp(
+                "2026-01-02T03:04:05+00:00".into()
+            )),
+            [
+                "metaedit",
+                "--author-timestamp",
+                "2026-01-02T03:04:05+00:00",
+                "abc",
+                "def"
+            ]
+        );
+    }
+
+    /// It rewrites commits in place: no editor, nothing to wait on.
+    #[test]
+    fn it_runs_in_the_background() {
+        let cmd = JJCommand {
+            kind: JJCommandKind::Metaedit {
+                change_ids: smallvec::smallvec![RevisionArg::new("abc")],
+                change: MetaeditChange::NewChangeId,
+            },
+            flags: CommandFlags::empty(),
+        };
+        assert_eq!(cmd.terminal_use(), TerminalUse::Background);
+        assert_eq!(cmd.features().count(), 0);
     }
 }

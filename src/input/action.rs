@@ -777,6 +777,11 @@ fn perform(
         | AppAction::Commit
         | AppAction::CommitWithMessage
         | AppAction::Describe
+        | AppAction::MetaeditChangeId
+        | AppAction::MetaeditResetAuthor
+        | AppAction::MetaeditAuthor
+        | AppAction::MetaeditTimestampNow
+        | AppAction::MetaeditTimestamp
         | AppAction::DescribeInEditor
         | AppAction::Diffedit
         | AppAction::NewInsertAfter

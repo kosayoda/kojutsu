@@ -354,6 +354,17 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         prefix("d", "describe", C, dag()),
         bind("d d", Describe, "describe", C, dag()),
         bind("d shift-d", DescribeInEditor, "in $EDITOR", C, dag()),
+        bind("d i", MetaeditChangeId, "new change id", C, dag()),
+        bind("d a", MetaeditResetAuthor, "author: me", C, dag()),
+        bind("d shift-a", MetaeditAuthor, "author\u{2026}", C, dag()),
+        bind("d t", MetaeditTimestampNow, "author time: now", C, dag()),
+        bind(
+            "d shift-t",
+            MetaeditTimestamp,
+            "author time\u{2026}",
+            C,
+            dag(),
+        ),
         // Edit
         bind("e", Edit, "edit", C, dag()),
         // Git prefix

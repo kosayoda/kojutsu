@@ -5,7 +5,7 @@ use crate::jj_version::JjFeature;
 use crate::keymap::CommandFlags;
 use crate::types::{ChangeSelection, GLOBAL_TOGGLES, Str};
 
-use super::{CommandPartKind, JJCommand, JJCommandKind, ResolveTool};
+use super::{CommandPartKind, JJCommand, JJCommandKind, MetaeditChange, ResolveTool};
 
 /// A CLI argument together with its display kind, assigned at construction
 /// so the command log never has to guess what an argument is, and the jj
@@ -145,6 +145,26 @@ impl JJCommand {
             }
             JJCommandKind::DescribeInEditor { change_id, .. } => {
                 vec![sub("describe"), rev(change_id)]
+            }
+            JJCommandKind::Metaedit { change_ids, change } => {
+                let mut args = vec![sub("metaedit")];
+                match change {
+                    MetaeditChange::NewChangeId => args.push(flag("--update-change-id")),
+                    MetaeditChange::ResetAuthor => args.push(flag("--update-author")),
+                    MetaeditChange::Author(author) => {
+                        args.push(flag("--author"));
+                        args.push(arg(author.as_str()));
+                    }
+                    MetaeditChange::AuthorTimestampNow => {
+                        args.push(flag("--update-author-timestamp"));
+                    }
+                    MetaeditChange::AuthorTimestamp(timestamp) => {
+                        args.push(flag("--author-timestamp"));
+                        args.push(arg(timestamp.as_str()));
+                    }
+                }
+                args.extend(change_ids.iter().map(rev));
+                args
             }
             JJCommandKind::Diffedit {
                 change_id,

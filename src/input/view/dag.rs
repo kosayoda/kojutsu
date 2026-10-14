@@ -1,7 +1,7 @@
 use smallvec::smallvec;
 
 use crate::app::{App, AppMode};
-use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind};
+use crate::jj_command::{InsertPosition, JJCommand, JJCommandKind, MetaeditChange};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::{
     ArrangeDirection, ChangeSelection, CommandPrompt, FollowUpAction, FollowUpOption, MessageMode,
@@ -282,6 +282,13 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             Action::None
         }
         AppAction::Describe => enter_describe_input(app, flags),
+        AppAction::MetaeditChangeId => metaedit(app, MetaeditChange::NewChangeId, flags),
+        AppAction::MetaeditResetAuthor => metaedit(app, MetaeditChange::ResetAuthor, flags),
+        AppAction::MetaeditTimestampNow => metaedit(app, MetaeditChange::AuthorTimestampNow, flags),
+        AppAction::MetaeditAuthor => enter_metaedit_input(app, MetaeditField::Author, flags),
+        AppAction::MetaeditTimestamp => {
+            enter_metaedit_input(app, MetaeditField::AuthorTimestamp, flags)
+        }
         AppAction::DescribeInEditor => make_command(app, |id| JJCommand {
             kind: JJCommandKind::DescribeInEditor { change_id: id },
             flags,
@@ -585,6 +592,58 @@ fn enter_describe_input(app: &mut App, flags: CommandFlags) -> Action {
             flags,
         },
     );
+    Action::None
+}
+
+/// Change the selected commits' metadata, or the cursor's commit's.
+fn metaedit(app: &mut App, change: MetaeditChange, flags: CommandFlags) -> Action {
+    let change_ids = app.selected_change_ids();
+    if change_ids.is_empty() {
+        return Action::None;
+    }
+    Action::run(JJCommand {
+        kind: JJCommandKind::Metaedit { change_ids, change },
+        flags,
+    })
+}
+
+/// The metadata `jj metaedit` sets from typed text.
+enum MetaeditField {
+    Author,
+    AuthorTimestamp,
+}
+
+/// Ask for an author or author timestamp for the selected commits,
+/// starting from the commit's own when there is just one.
+fn enter_metaedit_input(app: &mut App, field: MetaeditField, flags: CommandFlags) -> Action {
+    let change_ids = app.selected_change_ids();
+    if change_ids.is_empty() {
+        return Action::None;
+    }
+    let author = (change_ids.len() == 1)
+        .then(|| app.selected_entry_idx())
+        .flatten()
+        .map(|entry| &app.dag.nodes[entry].commit.author);
+    let (prompt, prefill, on_submit) = match field {
+        MetaeditField::Author => (
+            "author (Name <email>): ",
+            author.map_or_else(String::new, |a| format!("{} <{}>", a.name, a.email)),
+            CommandPrompt::MetaeditAuthor { change_ids, flags },
+        ),
+        MetaeditField::AuthorTimestamp => (
+            "author time: ",
+            author.map_or_else(String::new, |a| {
+                let offset = jiff::tz::Offset::from_seconds(a.tz_offset_seconds)
+                    .unwrap_or(jiff::tz::Offset::UTC);
+                a.timestamp
+                    .to_zoned(jiff::tz::TimeZone::fixed(offset))
+                    .strftime("%Y-%m-%dT%H:%M:%S%:z")
+                    .to_string()
+            }),
+            CommandPrompt::MetaeditAuthorTimestamp { change_ids, flags },
+        ),
+    };
+    app.mode = AppMode::text_input(prompt, prefill, on_submit);
     Action::None
 }
 

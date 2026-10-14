@@ -165,6 +165,16 @@ pub enum CommandPrompt {
         change_ids: SmallVec<RevisionArg>,
         flags: CommandFlags,
     },
+    /// Text is the author, as `Name <email>`.
+    MetaeditAuthor {
+        change_ids: SmallVec<RevisionArg>,
+        flags: CommandFlags,
+    },
+    /// Text is the author timestamp.
+    MetaeditAuthorTimestamp {
+        change_ids: SmallVec<RevisionArg>,
+        flags: CommandFlags,
+    },
     /// Text is the squashed commit's message.
     SquashWithMessage {
         builder: ReadyCommand,
@@ -215,6 +225,20 @@ impl CommandPrompt {
                 JJCommandKind::Describe {
                     change_ids,
                     message: text,
+                },
+                flags,
+            ),
+            Self::MetaeditAuthor { change_ids, flags } => (
+                JJCommandKind::Metaedit {
+                    change_ids,
+                    change: crate::jj_command::MetaeditChange::Author(text),
+                },
+                flags,
+            ),
+            Self::MetaeditAuthorTimestamp { change_ids, flags } => (
+                JJCommandKind::Metaedit {
+                    change_ids,
+                    change: crate::jj_command::MetaeditChange::AuthorTimestamp(text),
                 },
                 flags,
             ),
