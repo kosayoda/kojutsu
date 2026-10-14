@@ -7,7 +7,7 @@ use std::thread;
 
 use crate::dag::{DagEntry, DiffSummary, DiffTarget, DivergenceInfo, PrefixLengthUpdate};
 use crate::repo::{CancellationToken, JjRepo, SnapshotError};
-use crate::types::{BookmarkName, CommitId, OperationId, RemoteName, RepoPath, TagName};
+use crate::types::{BookmarkName, CommitId, OperationId, RepoPath, TagName};
 
 pub struct RepoService;
 
@@ -150,7 +150,7 @@ pub struct RevsetData {
     pub repo_root: String,
     pub entries: Vec<DagEntry>,
     pub remote_bookmarks: Vec<crate::dag::RemoteBookmarkRef>,
-    pub remotes: Vec<RemoteName>,
+    pub remotes: Vec<crate::dag::GitRemote>,
     pub all_tags: Vec<TagName>,
     pub tag_details: std::collections::HashMap<TagName, crate::dag::TagDetails>,
     pub bookmark_details: std::collections::HashMap<BookmarkName, crate::dag::BookmarkDetails>,

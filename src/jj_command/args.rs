@@ -417,6 +417,38 @@ impl JJCommand {
             }
             JJCommandKind::GitExport => vec![sub("git"), sub("export")],
             JJCommandKind::GitImport => vec![sub("git"), sub("import")],
+            JJCommandKind::GitRemoteAdd { name, url } => vec![
+                sub("git"),
+                sub("remote"),
+                sub("add"),
+                arg(name.as_str()),
+                arg(url.as_str()),
+            ],
+            JJCommandKind::GitRemoteRemove { name } => {
+                vec![sub("git"), sub("remote"), sub("remove"), arg(name.as_str())]
+            }
+            JJCommandKind::GitRemoteRename { old, new } => vec![
+                sub("git"),
+                sub("remote"),
+                sub("rename"),
+                arg(old.as_str()),
+                arg(new.as_str()),
+            ],
+            JJCommandKind::GitRemoteSetUrl { name, url, push } => {
+                let mut args = vec![
+                    sub("git"),
+                    sub("remote"),
+                    sub("set-url"),
+                    arg(name.as_str()),
+                ];
+                // The bare URL sets where it fetches from, and, with no
+                // separate push URL, where it pushes to as well.
+                if *push {
+                    args.push(flag("--push").needs(JjFeature::SeparatePushUrl));
+                }
+                args.push(arg(url.as_str()));
+                args
+            }
             JJCommandKind::GitColocation {
                 command,
                 secondary_workspace,

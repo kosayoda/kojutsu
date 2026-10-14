@@ -171,6 +171,24 @@ pub enum JJCommandKind {
     },
     GitExport,
     GitImport,
+    GitRemoteAdd {
+        name: RemoteName,
+        url: String,
+    },
+    /// Remove a remote, and forget its bookmarks.
+    GitRemoteRemove {
+        name: RemoteName,
+    },
+    GitRemoteRename {
+        old: RemoteName,
+        new: RemoteName,
+    },
+    GitRemoteSetUrl {
+        name: RemoteName,
+        url: String,
+        /// Whether this is the push URL, kept apart from the fetch one.
+        push: bool,
+    },
     GitColocation {
         command: Colocation,
         /// Run from a workspace other than the main one, which jj only
@@ -1310,6 +1328,14 @@ mod jj_feature_tests {
             JjFeature::UndoCrossWorkspace => {
                 cmd(JJCommandKind::Redo, CommandFlags::ALLOW_CROSS_WORKSPACE)
             }
+            JjFeature::SeparatePushUrl => cmd(
+                JJCommandKind::GitRemoteSetUrl {
+                    name: RemoteName::new("origin"),
+                    url: "git@example.com:repo".into(),
+                    push: true,
+                },
+                CommandFlags::empty(),
+            ),
             JjFeature::FileEdit => cmd(
                 JJCommandKind::FileEdit {
                     change_id: RevisionArg::new("x"),
@@ -1685,5 +1711,57 @@ mod metaedit_tests {
         };
         assert_eq!(cmd.terminal_use(), TerminalUse::Background);
         assert_eq!(cmd.features().count(), 0);
+    }
+}
+
+#[cfg(test)]
+mod git_remote_tests {
+    use super::*;
+
+    fn args(kind: JJCommandKind) -> Vec<Str> {
+        JJCommand {
+            kind,
+            flags: CommandFlags::empty(),
+        }
+        .args()
+    }
+
+    #[test]
+    fn each_remote_change_is_its_subcommand() {
+        let origin = || RemoteName::new("origin");
+        assert_eq!(
+            args(JJCommandKind::GitRemoteAdd {
+                name: origin(),
+                url: "git@example.com:a/b".into()
+            }),
+            ["git", "remote", "add", "origin", "git@example.com:a/b"]
+        );
+        assert_eq!(
+            args(JJCommandKind::GitRemoteRename {
+                old: origin(),
+                new: RemoteName::new("upstream")
+            }),
+            ["git", "remote", "rename", "origin", "upstream"]
+        );
+        assert_eq!(
+            args(JJCommandKind::GitRemoteRemove { name: origin() }),
+            ["git", "remote", "remove", "origin"]
+        );
+        assert_eq!(
+            args(JJCommandKind::GitRemoteSetUrl {
+                name: origin(),
+                url: "u".into(),
+                push: false
+            }),
+            ["git", "remote", "set-url", "origin", "u"]
+        );
+        assert_eq!(
+            args(JJCommandKind::GitRemoteSetUrl {
+                name: origin(),
+                url: "u".into(),
+                push: true
+            }),
+            ["git", "remote", "set-url", "origin", "--push", "u"]
+        );
     }
 }

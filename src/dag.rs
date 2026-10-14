@@ -468,6 +468,15 @@ pub struct AuthorInfo {
     pub tz_offset_seconds: i32,
 }
 
+/// A remote configured in git, with where it fetches from and pushes to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitRemote {
+    pub name: RemoteName,
+    pub fetch_url: Option<String>,
+    /// Where pushes go: the fetch URL, unless a separate push URL is set.
+    pub push_url: Option<String>,
+}
+
 /// A single entry in the DAG: a commit plus its edges to parents.
 pub struct DagEntry {
     pub commit: CommitInfo,

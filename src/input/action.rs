@@ -734,6 +734,26 @@ fn perform(
         }
         AppAction::WorkspaceForget => super::target::workspace_forget(app, flags),
         AppAction::WorkspaceRemove => super::target::workspace_remove(app, flags),
+        AppAction::GitRemoteAdd => {
+            app.mode = AppMode::text_input(
+                "remote name: ",
+                "",
+                crate::types::PromptStep::GitRemoteAddName { flags },
+            );
+            Action::None
+        }
+        AppAction::GitRemoteRename => {
+            super::target::edit_remote(app, crate::types::RemoteEdit::Rename, flags)
+        }
+        AppAction::GitRemoteSetUrl => {
+            super::target::edit_remote(app, crate::types::RemoteEdit::SetUrl, flags)
+        }
+        AppAction::GitRemoteSetPushUrl => {
+            super::target::edit_remote(app, crate::types::RemoteEdit::SetPushUrl, flags)
+        }
+        AppAction::GitRemoteRemove => {
+            super::target::edit_remote(app, crate::types::RemoteEdit::Remove, flags)
+        }
         AppAction::GitColocationStatus => colocation(app, Colocation::Status, flags),
         AppAction::GitColocationEnable => colocation(app, Colocation::Enable, flags),
         AppAction::GitColocationDisable => colocation(app, Colocation::Disable, flags),

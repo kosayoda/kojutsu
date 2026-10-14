@@ -266,6 +266,10 @@ pub(super) fn resolve_selection(
             },
             flags,
         ),
+        PendingSelection::RemoteToEdit { edit, flags } => match names.into_iter().next() {
+            Some(name) => super::target::edit_named_remote(app, RemoteName::new(name), edit, flags),
+            None => Action::None,
+        },
         PendingSelection::GitRemote { command, flags } => {
             let remotes = names.into_iter().map(RemoteName::new).collect();
             Action::run(JJCommand {

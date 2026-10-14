@@ -71,6 +71,11 @@ pub enum PendingSelection {
         command: RemoteCommand,
         flags: CommandFlags,
     },
+    /// Select the remote to change.
+    RemoteToEdit {
+        edit: RemoteEdit,
+        flags: CommandFlags,
+    },
     /// Pick a `jj run` command from presets and history; the list's custom
     /// entry opens a free-text input instead.
     RunCommand {
@@ -83,6 +88,15 @@ pub enum PendingSelection {
     LuaResume {
         multi: bool,
     },
+}
+
+/// A change to one remote, waiting to learn which.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteEdit {
+    Rename,
+    SetUrl,
+    SetPushUrl,
+    Remove,
 }
 
 /// A git command that talks to remotes, waiting to learn which.
@@ -214,6 +228,22 @@ pub enum CommandPrompt {
     TagSetByName { name: TagName, flags: CommandFlags },
     /// Text is the current workspace's new name.
     WorkspaceRename { flags: CommandFlags },
+    /// Text is the URL of a remote being added as `name`.
+    GitRemoteAdd {
+        name: RemoteName,
+        flags: CommandFlags,
+    },
+    /// Text is the remote's new name.
+    GitRemoteRename {
+        old: RemoteName,
+        flags: CommandFlags,
+    },
+    /// Text is the remote's new fetch URL, or push URL.
+    GitRemoteSetUrl {
+        name: RemoteName,
+        push: bool,
+        flags: CommandFlags,
+    },
 }
 
 impl CommandPrompt {
@@ -298,6 +328,24 @@ impl CommandPrompt {
                 },
                 flags,
             ),
+            Self::GitRemoteAdd { name, flags } => {
+                (JJCommandKind::GitRemoteAdd { name, url: text }, flags)
+            }
+            Self::GitRemoteRename { old, flags } => (
+                JJCommandKind::GitRemoteRename {
+                    old,
+                    new: RemoteName::new(text),
+                },
+                flags,
+            ),
+            Self::GitRemoteSetUrl { name, push, flags } => (
+                JJCommandKind::GitRemoteSetUrl {
+                    name,
+                    url: text,
+                    push,
+                },
+                flags,
+            ),
         };
         JJCommand { kind, flags }
     }
@@ -313,6 +361,8 @@ pub enum PromptStep {
     WorkspaceAddPath { flags: CommandFlags },
     /// Workspace add, step 2: text is the name (empty for jj's default).
     WorkspaceAddName { path: String, flags: CommandFlags },
+    /// Remote add, step 1: text is the remote's name.
+    GitRemoteAddName { flags: CommandFlags },
     /// Run, step 1: text is the command line to run over the revisions.
     RunCommand {
         change_ids: SmallVec<RevisionArg>,

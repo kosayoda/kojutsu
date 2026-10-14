@@ -186,6 +186,13 @@ impl AppAction {
             GitPushAll => mutate(C).label("git"),
             GitPushChange => mutate(C).label("git"),
             GitExport => mutate(C).label("git"),
+            GitRemoteAdd => mutate(ALL).label("remote"),
+            GitRemoteRename => mutate(ALL).label("remote"),
+            GitRemoteSetUrl => mutate(ALL).label("remote"),
+            GitRemoteSetPushUrl => mutate(ALL)
+                .needs(JjFeature::SeparatePushUrl)
+                .label("remote"),
+            GitRemoteRemove => mutate(ALL).label("remote"),
             GitImport => mutate(C).label("git"),
             Duplicate => mutate(C).repeatable(),
             DuplicateOnto => mutate(C).label("duplicate"),

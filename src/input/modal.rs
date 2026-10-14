@@ -49,6 +49,21 @@ fn submit_step(
             };
             Action::None
         }
+        PromptStep::GitRemoteAddName { flags } => {
+            if text.trim().is_empty() {
+                app.set_error("a remote needs a name");
+                return Action::None;
+            }
+            app.mode = AppMode::text_input(
+                format!("URL for {text}: "),
+                "",
+                crate::types::CommandPrompt::GitRemoteAdd {
+                    name: crate::types::RemoteName::new(text),
+                    flags,
+                },
+            );
+            Action::None
+        }
         PromptStep::RunCommand { change_ids, flags } => {
             submit_run_command(app, change_ids, flags, text)
         }

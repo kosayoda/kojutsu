@@ -217,18 +217,36 @@ impl JjRepo {
             .collect()
     }
 
-    /// The remotes configured in git, sorted: every one a fetch or push can
-    /// name, including those with no bookmarks yet. None when the repo isn't
-    /// backed by git.
-    pub fn git_remotes(&self) -> Vec<RemoteName> {
-        jj_lib::git::get_all_remote_names(self.repo.store())
-            .map(|names| {
-                names
-                    .iter()
-                    .map(|name| RemoteName::new(name.as_str()))
-                    .collect()
+    /// The remotes configured in git, sorted, with their URLs: every one a
+    /// fetch or push can name, including those with no bookmarks yet. None
+    /// when the repo isn't backed by git.
+    pub fn git_remotes(&self) -> Vec<crate::dag::GitRemote> {
+        let store = self.repo.store();
+        let Ok(names) = jj_lib::git::get_all_remote_names(store) else {
+            return Vec::new();
+        };
+        let git_repo = jj_lib::git::get_git_repo(store).ok();
+        names
+            .iter()
+            .map(|name| {
+                let remote = git_repo.as_ref().and_then(|repo| {
+                    jj_lib::git::try_find_active_remote(repo, name)
+                        .ok()
+                        .flatten()
+                });
+                let url = |direction| {
+                    remote
+                        .as_ref()
+                        .and_then(|remote| remote.url(direction))
+                        .map(|url| url.to_bstring().to_string())
+                };
+                crate::dag::GitRemote {
+                    name: RemoteName::new(name.as_str()),
+                    fetch_url: url(gix::remote::Direction::Fetch),
+                    push_url: url(gix::remote::Direction::Push),
+                }
             })
-            .unwrap_or_default()
+            .collect()
     }
 
     pub fn workspace_root(&self) -> &Path {

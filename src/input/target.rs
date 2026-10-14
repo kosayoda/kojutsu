@@ -10,8 +10,8 @@ use crate::jj_command::{FollowUpAction, FollowUpOption, JJCommand, JJCommandKind
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::ActiveView;
 use crate::types::{
-    CommandPrompt, CommitId, PendingSelection, RemoteCommand, SmallVec, Str, TargetOperation,
-    WorkspaceName,
+    CommandPrompt, CommitId, PendingSelection, RemoteCommand, RemoteEdit, RemoteName, SmallVec,
+    Str, TargetOperation, WorkspaceName,
 };
 
 use super::Action;
@@ -295,6 +295,98 @@ pub(super) fn git_fetch_bookmark(app: &mut App, flags: CommandFlags) -> Action {
     })
 }
 
+/// Change a remote: the only one there is, or the one picked.
+pub(super) fn edit_remote(app: &mut App, edit: RemoteEdit, flags: CommandFlags) -> Action {
+    if edit == RemoteEdit::SetPushUrl
+        && let Some(reason) = app
+            .jj
+            .refusal(crate::jj_version::JjFeature::SeparatePushUrl)
+    {
+        app.set_error(reason);
+        return Action::None;
+    }
+    match app.views.remotes.as_slice() {
+        [] => {
+            app.set_error("no remotes");
+            Action::None
+        }
+        [only] => {
+            let name = only.name.clone();
+            edit_named_remote(app, name, edit, flags)
+        }
+        remotes => {
+            let items = remotes.iter().map(|r| r.name.to_string()).collect();
+            let title = match edit {
+                RemoteEdit::Rename => "rename remote",
+                RemoteEdit::SetUrl => "set url of remote",
+                RemoteEdit::SetPushUrl => "set push url of remote",
+                RemoteEdit::Remove => "remove remote",
+            };
+            app.mode = AppMode::select_from_list(
+                title,
+                items,
+                false,
+                PendingSelection::RemoteToEdit { edit, flags },
+                false,
+            );
+            Action::None
+        }
+    }
+}
+
+/// Ask for what changing `name` takes: a new name, a URL starting from the
+/// current one, or a confirmation, since removing forgets its bookmarks.
+pub(super) fn edit_named_remote(
+    app: &mut App,
+    name: RemoteName,
+    edit: RemoteEdit,
+    flags: CommandFlags,
+) -> Action {
+    let remote = app.views.remotes.iter().find(|r| r.name == name);
+    let fetch_url = remote.and_then(|r| r.fetch_url.clone()).unwrap_or_default();
+    let push_url = remote.and_then(|r| r.push_url.clone()).unwrap_or_default();
+    app.mode = match edit {
+        RemoteEdit::Rename => AppMode::text_input(
+            format!("rename {name} to: "),
+            name.to_string(),
+            CommandPrompt::GitRemoteRename { old: name, flags },
+        ),
+        RemoteEdit::SetUrl => AppMode::text_input(
+            format!("{name} url: "),
+            fetch_url,
+            CommandPrompt::GitRemoteSetUrl {
+                name,
+                push: false,
+                flags,
+            },
+        ),
+        RemoteEdit::SetPushUrl => AppMode::text_input(
+            format!("{name} push url: "),
+            push_url,
+            CommandPrompt::GitRemoteSetUrl {
+                name,
+                push: true,
+                flags,
+            },
+        ),
+        RemoteEdit::Remove => AppMode::FollowUp {
+            prompt: crate::app::FollowUpPrompt::Text(format!(
+                "remove remote {name} and forget its bookmarks?"
+            )),
+            options: vec![FollowUpOption {
+                key: 'y',
+                label: "remove",
+                action: FollowUpAction::Execute(JJCommand {
+                    kind: JJCommandKind::GitRemoteRemove { name },
+                    flags,
+                }),
+            }],
+            origin: None,
+        },
+    };
+    Action::None
+}
+
 /// Run a git command against the only remote, or ask which first: several
 /// at once where jj takes them.
 pub(super) fn with_remote(
@@ -304,7 +396,12 @@ pub(super) fn with_remote(
     flags: CommandFlags,
 ) -> Action {
     if app.views.remotes.len() > 1 {
-        let items = app.views.remotes.iter().map(|r| r.to_string()).collect();
+        let items = app
+            .views
+            .remotes
+            .iter()
+            .map(|r| r.name.to_string())
+            .collect();
         let multi = command.takes_several(app.jj);
         app.mode = AppMode::select_from_list(
             prompt,
@@ -783,7 +880,13 @@ mod remote_choice_tests {
     fn chooses_several(command: RemoteCommand, minor: u32) -> bool {
         let mut app = App::for_test();
         app.jj = InstalledJj::known(JjVersion::new(0, minor, 0));
-        app.views.remotes = vec![RemoteName::new("origin"), RemoteName::new("upstream")];
+        app.views.remotes = ["origin", "upstream"]
+            .map(|name| crate::dag::GitRemote {
+                name: RemoteName::new(name),
+                fetch_url: None,
+                push_url: None,
+            })
+            .into();
         with_remote(&mut app, "remote", command, CommandFlags::empty());
         match &app.mode {
             AppMode::SelectFromList(state) => state.multi,
@@ -806,5 +909,84 @@ mod remote_choice_tests {
             RemoteCommand::Fetch { all_remotes: false },
             36
         ));
+    }
+
+    fn remote(name: &str, url: &str) -> crate::dag::GitRemote {
+        crate::dag::GitRemote {
+            name: RemoteName::new(name),
+            fetch_url: Some(url.into()),
+            push_url: Some(url.into()),
+        }
+    }
+
+    fn prompt(app: &App) -> (&str, String) {
+        match &app.mode {
+            AppMode::TextInput { prompt, input, .. } => (prompt.as_str(), input.value().into()),
+            _ => panic!("expected a prompt"),
+        }
+    }
+
+    /// With one remote there is nothing to pick: straight to what it needs,
+    /// starting from what it has.
+    #[test]
+    fn the_only_remote_is_edited_without_a_pick() {
+        let mut app = App::for_test();
+        app.views.remotes = vec![remote("origin", "git@example.com:a/b")];
+        super::edit_remote(
+            &mut app,
+            crate::types::RemoteEdit::Rename,
+            CommandFlags::empty(),
+        );
+        assert_eq!(prompt(&app), ("rename origin to: ", "origin".into()));
+        super::edit_remote(
+            &mut app,
+            crate::types::RemoteEdit::SetUrl,
+            CommandFlags::empty(),
+        );
+        assert_eq!(prompt(&app), ("origin url: ", "git@example.com:a/b".into()));
+    }
+
+    /// Removing a remote forgets its bookmarks, so it asks first.
+    #[test]
+    fn removing_a_remote_asks_first() {
+        let mut app = App::for_test();
+        app.views.remotes = vec![remote("origin", "u")];
+        super::edit_remote(
+            &mut app,
+            crate::types::RemoteEdit::Remove,
+            CommandFlags::empty(),
+        );
+        assert!(matches!(
+            &app.mode,
+            AppMode::FollowUp { prompt: crate::app::FollowUpPrompt::Text(text), .. }
+                if text == "remove remote origin and forget its bookmarks?"
+        ));
+    }
+
+    /// A separate push URL needs jj 0.37: said before asking for it.
+    #[test]
+    fn a_push_url_on_an_older_jj_is_refused_before_the_prompt() {
+        let mut app = App::for_test();
+        app.jj = InstalledJj::known(JjVersion::new(0, 36, 0));
+        app.views.remotes = vec![remote("origin", "u")];
+        super::edit_remote(
+            &mut app,
+            crate::types::RemoteEdit::SetPushUrl,
+            CommandFlags::empty(),
+        );
+        assert!(matches!(app.mode, AppMode::Normal));
+    }
+
+    /// Several remotes: pick which first.
+    #[test]
+    fn several_remotes_are_picked_from() {
+        let mut app = App::for_test();
+        app.views.remotes = vec![remote("origin", "a"), remote("upstream", "b")];
+        super::edit_remote(
+            &mut app,
+            crate::types::RemoteEdit::Rename,
+            CommandFlags::empty(),
+        );
+        assert!(matches!(app.mode, AppMode::SelectFromList(_)));
     }
 }

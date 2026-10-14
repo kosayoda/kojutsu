@@ -95,12 +95,15 @@ pub enum JjFeature {
     PushToRemotes,
     FileEdit,
     FileDelete,
+    /// `jj git remote add --push-url` and `set-url --push`.
+    SeparatePushUrl,
 }
 
 impl JjFeature {
     /// The release that introduced it. The only place a version is written.
     pub const fn since(self) -> JjVersion {
         match self {
+            Self::SeparatePushUrl => JjVersion::new(0, 37, 0),
             Self::BookmarkAdvance => JjVersion::new(0, 39, 0),
             Self::Run => JjVersion::new(0, 43, 0),
             Self::RunPassthrough
@@ -139,6 +142,7 @@ impl JjFeature {
             Self::PushToRemotes => "pushing to several remotes at once",
             Self::FileEdit => "jj file edit",
             Self::FileDelete => "jj file delete",
+            Self::SeparatePushUrl => "a separate push URL",
         }
     }
 }

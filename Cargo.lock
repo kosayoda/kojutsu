@@ -2344,6 +2344,7 @@ dependencies = [
  "etcetera",
  "futures",
  "fuzzy-matcher",
+ "gix",
  "itertools 0.14.0",
  "jiff",
  "jj-lib",
