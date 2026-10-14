@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use super::spans::push_short_id;
 use crate::app::{App, StatusLevel};
@@ -163,32 +163,125 @@ fn push_crumb(spans: &mut Vec<Span<'static>>, change_id: &ShortId, theme: &Theme
     }
 }
 
+/// How much of the status border the toggles take.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ToggleForm {
+    /// ` [I] ignore-immutable `.
+    Full,
+    /// ` [I] `, lit while on.
+    Short,
+    Hidden,
+}
+
+/// What goes on the status border. Built in full, then laid out by
+/// [`border_line`] to whatever fits.
+struct BorderParts<'a> {
+    /// The view's name, with the activity spinner: always shown.
+    title: Span<'a>,
+    toggles_full: Vec<Span<'a>>,
+    toggles_short: Vec<Span<'a>>,
+    selection: Option<Span<'a>>,
+    /// Things wrong with the view: `@` out of it, conflicts.
+    warnings: Vec<Span<'a>>,
+    /// Right-aligned.
+    help: Span<'a>,
+}
+
+fn spans_width(spans: &[Span<'_>]) -> usize {
+    spans.iter().map(Span::width).sum()
+}
+
+/// The status border at `width` columns: parts joined by `─`, the help
+/// hint at the right. When everything doesn't fit, parts give way in order
+/// of how much they matter: the toggles shrink to their keys and then go,
+/// then the selection, the warnings, and the help hint. The title stays.
+fn border_line<'a>(parts: BorderParts<'a>, width: usize, rule: Style) -> Line<'a> {
+    // (toggles, selection, warnings, help), richest first.
+    const LAYOUTS: [(ToggleForm, bool, bool, bool); 6] = [
+        (ToggleForm::Full, true, true, true),
+        (ToggleForm::Short, true, true, true),
+        (ToggleForm::Hidden, true, true, true),
+        (ToggleForm::Hidden, false, true, true),
+        (ToggleForm::Hidden, false, false, true),
+        (ToggleForm::Hidden, false, false, false),
+    ];
+    let left_groups = |(toggles, selection, warnings, _): (ToggleForm, bool, bool, bool)| {
+        let mut groups: Vec<Vec<Span<'a>>> = vec![vec![parts.title.clone()]];
+        match toggles {
+            ToggleForm::Full => groups.push(parts.toggles_full.clone()),
+            ToggleForm::Short => groups.push(parts.toggles_short.clone()),
+            ToggleForm::Hidden => {}
+        }
+        if selection && let Some(span) = &parts.selection {
+            groups.push(vec![span.clone()]);
+        }
+        if warnings && !parts.warnings.is_empty() {
+            groups.push(parts.warnings.clone());
+        }
+        groups
+    };
+    // `─` before each group and once more before the help hint, which a
+    // `─` closes off.
+    let needed = |groups: &[Vec<Span<'a>>], help: bool| {
+        groups.iter().map(|g| 1 + spans_width(g)).sum::<usize>()
+            + if help { 1 + parts.help.width() + 1 } else { 0 }
+    };
+    let (groups, help) = LAYOUTS
+        .iter()
+        .map(|&layout| (left_groups(layout), layout.3))
+        .find(|(groups, help)| needed(groups, *help) <= width)
+        .unwrap_or_else(|| (vec![vec![parts.title.clone()]], false));
+
+    let mut spans: Vec<Span<'a>> = Vec::new();
+    for group in groups {
+        spans.push(Span::styled("─", rule));
+        spans.extend(group);
+    }
+    let used = spans_width(&spans) + if help { parts.help.width() + 1 } else { 0 };
+    spans.push(Span::styled("─".repeat(width.saturating_sub(used)), rule));
+    if help {
+        spans.push(parts.help.clone());
+        spans.push(Span::styled("─", rule));
+    }
+    Line::from(spans)
+}
+
 pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &Theme) {
-    // Build toggle indicators for the title bar.
-    let mut toggle_spans: Vec<Span> = Vec::new();
-    for toggle in GLOBAL_TOGGLES {
-        let active = app.toggles.contains(toggle.flag);
-        let style = if active {
+    let toggle_style = |active: bool| {
+        if active {
             Style::default()
                 .fg(theme.selection)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(theme.muted)
-        };
-        toggle_spans.push(Span::styled(
-            format!(" [{}] {} ", toggle.hint, toggle.label),
-            style,
-        ));
-    }
+        }
+    };
+    // The badges as one group, a space between and around them.
+    let toggle_group = |text: &dyn Fn(&crate::types::GlobalToggle) -> String| {
+        let mut spans = vec![Span::raw(" ")];
+        for (i, toggle) in GLOBAL_TOGGLES.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::raw(" "));
+            }
+            spans.push(Span::styled(
+                text(toggle),
+                toggle_style(app.toggles.contains(toggle.flag)),
+            ));
+        }
+        spans.push(Span::raw(" "));
+        spans
+    };
+    let toggles_full = toggle_group(&|toggle| format!("[{}] {}", toggle.hint, toggle.label));
+    let toggles_short = toggle_group(&|toggle| format!("[{}]", toggle.hint));
 
-    if let Some(text) = app.selection.display_text() {
-        toggle_spans.push(Span::styled(
+    let selection = app.selection.display_text().map(|text| {
+        Span::styled(
             format!(" {text} "),
             Style::default()
                 .fg(theme.selection)
                 .add_modifier(Modifier::BOLD),
-        ));
-    }
+        )
+    });
 
     let view_title: std::borrow::Cow<'static, str> = match app.active_view {
         crate::types::ActiveView::Dag => " Log ".into(),
@@ -205,17 +298,15 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         crate::types::ActiveView::Interdiff => " Interdiff ".into(),
         crate::types::ActiveView::Annotate => " Annotate ".into(),
     };
-    // The spinner rides on the view title: drawn first, it is the last
-    // left title the right-aligned help hint crowds out.
     let indicator = app.activity_indicator(std::time::Instant::now());
     let view_title = match indicator.as_ref().and_then(|i| i.glyph) {
         Some(glyph) => format!("{}{glyph} ", view_title).into(),
         None => view_title,
     };
 
-    let mut wc_spans: Vec<Span> = Vec::new();
+    let mut warnings: Vec<Span> = Vec::new();
     if !app.has_working_copy() {
-        wc_spans.push(Span::styled(
+        warnings.push(Span::styled(
             " @ not visible ",
             Style::default().fg(theme.warning),
         ));
@@ -223,7 +314,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
     let conflicted = app.conflicted_commit_count();
     if conflicted > 0 {
         let noun = crate::pluralize!(conflicted, "conflict", "conflicts");
-        wc_spans.push(Span::styled(
+        warnings.push(Span::styled(
             format!(" {conflicted} {noun} "),
             Style::default()
                 .fg(theme.error)
@@ -231,25 +322,30 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         ));
     }
 
-    let block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(theme.muted))
-        .title("")
-        .title(view_title.as_ref())
-        .title_style(
+    let parts = BorderParts {
+        title: Span::styled(
+            view_title,
             Style::default()
                 .fg(theme.accent)
                 .add_modifier(Modifier::BOLD),
-        )
-        .title(Line::from(toggle_spans))
-        .title(Line::from(wc_spans))
-        .title(
-            Line::from(Span::styled(" ? Help ", Style::default().fg(theme.text))).right_aligned(),
-        )
-        .title(Line::from("").right_aligned());
-
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+        ),
+        toggles_full,
+        toggles_short,
+        selection,
+        warnings,
+        help: Span::styled(" ? Help ", Style::default().fg(theme.text)),
+    };
+    let rule = Style::default().fg(theme.muted);
+    let border = Rect { height: 1, ..area };
+    let inner = Rect {
+        y: area.y + 1,
+        height: area.height.saturating_sub(1),
+        ..area
+    };
+    frame.render_widget(
+        Paragraph::new(border_line(parts, area.width as usize, rule)),
+        border,
+    );
 
     let (content, color) = if let Some(search) = &app.search {
         let pos = search.current_match.map(|i| i + 1).unwrap_or(0);
@@ -280,7 +376,7 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
 }
 
 #[cfg(test)]
-mod activity_tests {
+mod status_bar_tests {
     use std::time::{Duration, Instant};
 
     use ratatui::Terminal;
@@ -327,8 +423,8 @@ mod activity_tests {
         assert_eq!(line, "loading commits…");
     }
 
-    /// The view title and its spinner are the last thing the right-aligned
-    /// help hint crowds out: still there at 20 columns.
+    /// The view title and its spinner stay when everything else on the
+    /// border gives way.
     #[test]
     fn a_narrow_terminal_keeps_the_spinner() {
         let [border, _] = status_bar(&busy_app(), 20);
@@ -341,6 +437,68 @@ mod activity_tests {
                 .any(|frame| border.contains(*frame)),
             "{border}"
         );
+    }
+
+    /// A commit off `@`, selected: every part of the border has something
+    /// to show.
+    fn crowded_app() -> App {
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        app.toggle_commit_selection(crate::idx::EntryIdx::new(0));
+        app
+    }
+
+    /// At any width the border fills it exactly, the title first and the
+    /// help hint, when there's room for it, closing it off: parts never run
+    /// into each other.
+    #[test]
+    fn the_border_fills_any_width_without_overlap() {
+        let app = crowded_app();
+        for width in 1..=160u16 {
+            let mut terminal = Terminal::new(TestBackend::new(width, 2)).expect("terminal");
+            terminal
+                .draw(|frame| draw_status_bar(frame, frame.area(), &app, &Theme::default()))
+                .expect("draw");
+            let buffer = terminal.backend().buffer();
+            let border: String = (0..width).map(|x| buffer[(x, 0)].symbol()).collect();
+            if width >= 6 {
+                assert!(border.starts_with("─ Log "), "{width}: {border}");
+            }
+            if border.contains("? Help") {
+                assert!(border.ends_with(" ? Help ─"), "{width}: {border}");
+            }
+        }
+    }
+
+    fn border_at(width: u16) -> String {
+        let [border, _] = status_bar(&crowded_app(), width);
+        border
+    }
+
+    /// Room runs out: the toggles shrink to their keys, then go, then the
+    /// selection, the warning, and the help hint, in that order.
+    #[test]
+    fn parts_give_way_in_order() {
+        let full = border_at(140);
+        assert!(full.contains("[I] ignore-immutable [W] ignore-working-copy [D] debug"));
+        assert!(full.contains("1 commit selected") && full.contains("@ not visible"));
+
+        let short = border_at(80);
+        assert!(short.contains("─ [I] [W] [D] ─"), "{short}");
+        assert!(short.contains("1 commit selected") && short.contains("? Help"));
+
+        let no_toggles = border_at(55);
+        assert!(!no_toggles.contains("[I]"), "{no_toggles}");
+        assert!(no_toggles.contains("1 commit selected") && no_toggles.contains("@ not visible"));
+
+        let no_selection = border_at(40);
+        assert!(!no_selection.contains("selected"), "{no_selection}");
+        assert!(no_selection.contains("@ not visible") && no_selection.contains("? Help"));
+
+        let help_only = border_at(20);
+        assert!(!help_only.contains("@ not visible") && help_only.contains("? Help"));
+
+        let title_only = border_at(12);
+        assert!(title_only.starts_with("─ Log") && !title_only.contains("Help"));
     }
 
     /// A message outranks what is loading; the spinner still shows.
