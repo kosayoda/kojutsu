@@ -76,29 +76,9 @@ fn materialize_diff_side(
     let materialized = materialize_tree_value(store, path, value, labels).block_on()?;
     match materialized {
         MaterializedTreeValue::File(mut file) => {
-            let read_err = |e: futures::io::Error| {
+            read_diff_file(&mut file.reader, limit).map_err(|e| {
                 color_eyre::eyre::eyre!("failed to read `{}`: {e}", path.as_internal_file_string())
-            };
-            // Sniff the first 8k for a null byte (git's binary heuristic) so
-            // binary blobs are detected without reading their full content.
-            let mut contents = Vec::new();
-            (&mut file.reader)
-                .take(BINARY_SNIFF_SIZE as u64)
-                .read_to_end(&mut contents)
-                .block_on()
-                .map_err(read_err)?;
-            if contents.contains(&0) {
-                return Ok(DiffSideContent::Binary);
-            }
-            (&mut file.reader)
-                .take(limit.saturating_add(1).saturating_sub(contents.len()) as u64)
-                .read_to_end(&mut contents)
-                .block_on()
-                .map_err(read_err)?;
-            if contents.len() > limit {
-                return Ok(DiffSideContent::TooLarge);
-            }
-            Ok(DiffSideContent::text(contents))
+            })
         }
         MaterializedTreeValue::FileConflict(conflict) => {
             Ok(materialize_conflict_with_regions(&conflict.contents))
@@ -119,6 +99,33 @@ fn materialize_diff_side(
             path.as_internal_file_string()
         )),
     }
+}
+
+/// Read a regular file's side of a diff, reading no more than the binary
+/// sniff and `limit + 1` bytes: the first 8k are sniffed for a null byte
+/// (git's binary heuristic) so binary blobs are detected without reading
+/// their full content, and one byte past `limit` tells an oversized file
+/// from one that fits exactly.
+fn read_diff_file(
+    mut reader: impl futures::AsyncRead + Unpin,
+    limit: usize,
+) -> futures::io::Result<DiffSideContent> {
+    let mut contents = Vec::new();
+    (&mut reader)
+        .take(BINARY_SNIFF_SIZE as u64)
+        .read_to_end(&mut contents)
+        .block_on()?;
+    if contents.contains(&0) {
+        return Ok(DiffSideContent::Binary);
+    }
+    (&mut reader)
+        .take(limit.saturating_add(1).saturating_sub(contents.len()) as u64)
+        .read_to_end(&mut contents)
+        .block_on()?;
+    if contents.len() > limit {
+        return Ok(DiffSideContent::TooLarge);
+    }
+    Ok(DiffSideContent::text(contents))
 }
 
 /// Materialize a conflicted file the same way jj does (per-hunk markers),
@@ -1546,6 +1553,74 @@ mod tests {
                     "new side of {before:?} -> {after:?}"
                 );
             }
+        }
+    }
+
+    /// Markers are 7 or more of one marker character opening a line; a
+    /// shorter run, a run further in, or a mix of characters is content.
+    #[test]
+    fn conflict_markers_are_seven_marker_characters_at_line_start() {
+        let cases: [(&[u8], bool); 14] = [
+            (b"<<<<<<< side 1\n", true),
+            (b"|||||||\n", true),
+            (b"=======", true),
+            (b">>>>>>>>>>> side 2\n", true),
+            (b"text\n=======\nmore\n", true),
+            (b"text\r\n>>>>>>>\r\nmore\r\n", true),
+            (b"caf\xe9\n<<<<<<<\n", true),
+            (b"======\n", false),
+            (b" <<<<<<<\n", false),
+            (b"text =======\n", false),
+            (b"<<< quoted\n", false),
+            (b"<<<<<<>\n", false),
+            (b"+++++++\n", false),
+            (b"", false),
+        ];
+        for (content, markers) in cases {
+            assert_eq!(
+                has_conflict_markers(content),
+                markers,
+                "{:?}",
+                bstr::BStr::new(content)
+            );
+        }
+    }
+
+    /// A file is binary when a null byte falls within the first
+    /// `BINARY_SNIFF_SIZE` bytes, however large it is, and too large when
+    /// it holds even one byte past the limit.
+    #[test]
+    fn a_diff_file_is_sniffed_for_binary_then_capped_at_the_limit() {
+        let with_null_at = |len: usize, at: usize| {
+            let mut bytes = vec![b'a'; len];
+            bytes[at] = 0;
+            bytes
+        };
+        let limit = 2 * BINARY_SNIFF_SIZE;
+        let cases = [
+            (vec![b'a'; limit], limit, "text"),
+            (vec![b'a'; limit + 1], limit, "too large"),
+            (Vec::new(), 0, "text"),
+            (vec![b'a'], 0, "too large"),
+            (with_null_at(limit, BINARY_SNIFF_SIZE - 1), limit, "binary"),
+            (with_null_at(limit, BINARY_SNIFF_SIZE), limit, "text"),
+            (
+                with_null_at(limit + 1, BINARY_SNIFF_SIZE),
+                limit,
+                "too large",
+            ),
+            (with_null_at(BINARY_SNIFF_SIZE, 10), 5, "binary"),
+        ];
+        for (bytes, limit, expected) in cases {
+            let read = match read_diff_file(futures::io::Cursor::new(&bytes), limit).unwrap() {
+                DiffSideContent::Text { content, .. } => {
+                    assert_eq!(content, bytes);
+                    "text"
+                }
+                DiffSideContent::Binary => "binary",
+                DiffSideContent::TooLarge => "too large",
+            };
+            assert_eq!(read, expected, "{} bytes, limit {limit}", bytes.len());
         }
     }
 }

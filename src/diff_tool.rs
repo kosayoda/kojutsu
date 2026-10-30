@@ -418,6 +418,24 @@ mod tests {
         }
     }
 
+    /// A whole-file selection keeps the file's change, an addition or a
+    /// deletion included; without one the file goes back to how it was,
+    /// so an unselected new file disappears and an unselected deleted one
+    /// returns, into its directory if that went with it.
+    #[test]
+    fn each_file_keeps_its_change_only_when_selected() {
+        let full = || Some(FileSelection::Full);
+        check([
+            (("f", file(b"a\n"), file(b"b\n")), full(), file(b"b\n")),
+            (("f", file(b"a\n"), file(b"b\n")), None, file(b"a\n")),
+            (("f", None, file(b"new\n")), full(), file(b"new\n")),
+            (("f", None, file(b"new\n")), None, None),
+            (("f", file(b"old\n"), None), full(), None),
+            (("f", file(b"old\n"), None), None, file(b"old\n")),
+            (("gone/f", file(b"old\n"), None), None, file(b"old\n")),
+        ]);
+    }
+
     /// Links follow the same rules as files, dangling or not, and a line
     /// selection takes a link's change whole. Restoring replaces whatever
     /// took the path's place rather than writing through it.
