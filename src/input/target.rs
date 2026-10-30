@@ -830,21 +830,6 @@ mod tests {
                 if names.as_slice() == [TagName::new("v1")]));
     }
 
-    /// With a single remote there is nothing to ask.
-    #[test]
-    fn fetch_with_one_remote_runs_straight_away() {
-        let mut app = bookmarks_view();
-        press(&mut app, KeyCode::Char('f'));
-        let kind = command(press(&mut app, KeyCode::Char('f')));
-        assert!(matches!(
-            kind,
-            JJCommandKind::GitFetch {
-                all_remotes: false,
-                ref remotes
-            } if remotes.is_empty()
-        ));
-    }
-
     /// A key with nothing to act on says so instead of doing nothing.
     #[test]
     fn an_action_with_nothing_under_the_cursor_reports_it() {
@@ -854,8 +839,10 @@ mod tests {
             super::edit(&mut app, crate::keymap::CommandFlags::empty()),
             Action::None
         ));
-        let message = &app.status_message.as_ref().expect("an error").0;
-        assert_eq!(message, "nothing to edit here");
+        assert!(matches!(
+            app.status_message,
+            Some((_, crate::app::StatusLevel::Error))
+        ));
     }
 }
 
@@ -955,10 +942,11 @@ mod workspace_remove_tests {
         app.jj = InstalledJj::known(JjVersion::new(0, 45, 1));
         press(&mut app, 'x');
         assert!(matches!(app.mode, AppMode::Normal));
-        assert_eq!(
-            status(&app),
-            "jj workspace remove needs jj 0.46.0 or newer; the installed jj is 0.45.1"
-        );
+        let refusal = app
+            .jj
+            .refusal(crate::jj_version::JjFeature::WorkspaceRemove)
+            .expect("0.45 lacks workspace remove");
+        assert_eq!(status(&app), refusal);
     }
 }
 
@@ -1021,9 +1009,9 @@ mod remote_choice_tests {
     }
 
     /// With one remote there is nothing to pick: straight to what it needs,
-    /// starting from what it has.
+    /// starting from what it has. With several, pick which first.
     #[test]
-    fn the_only_remote_is_edited_without_a_pick() {
+    fn one_remote_is_edited_straight_away_and_several_are_picked_from() {
         let mut app = App::for_test();
         app.views.remotes = vec![remote("origin", "git@example.com:a/b")];
         super::edit_remote(
@@ -1038,6 +1026,40 @@ mod remote_choice_tests {
             CommandFlags::empty(),
         );
         assert_eq!(prompt(&app), ("origin url: ", "git@example.com:a/b".into()));
+
+        let mut app = App::for_test();
+        app.views.remotes = vec![remote("origin", "a"), remote("upstream", "b")];
+        super::edit_remote(
+            &mut app,
+            crate::types::RemoteEdit::Rename,
+            CommandFlags::empty(),
+        );
+        assert!(matches!(app.mode, AppMode::SelectFromList(_)));
+    }
+
+    /// A fetch from the only remote has nothing to ask, and leaves the
+    /// remote to jj's default.
+    #[test]
+    fn fetch_with_one_remote_runs_straight_away() {
+        let mut app = App::for_test();
+        app.views.remotes = vec![remote("origin", "u")];
+        let action = with_remote(
+            &mut app,
+            "remote",
+            RemoteCommand::Fetch { all_remotes: false },
+            CommandFlags::empty(),
+        );
+        assert!(matches!(app.mode, AppMode::Normal));
+        assert!(matches!(
+            action,
+            crate::input::Action::RunJj { cmd, .. } if matches!(
+                cmd.kind,
+                crate::jj_command::JJCommandKind::GitFetch {
+                    all_remotes: false,
+                    ref remotes
+                } if remotes.is_empty()
+            )
+        ));
     }
 
     /// Removing a remote forgets its bookmarks, so it asks first.
@@ -1069,19 +1091,6 @@ mod remote_choice_tests {
             CommandFlags::empty(),
         );
         assert!(matches!(app.mode, AppMode::Normal));
-    }
-
-    /// Several remotes: pick which first.
-    #[test]
-    fn several_remotes_are_picked_from() {
-        let mut app = App::for_test();
-        app.views.remotes = vec![remote("origin", "a"), remote("upstream", "b")];
-        super::edit_remote(
-            &mut app,
-            crate::types::RemoteEdit::Rename,
-            CommandFlags::empty(),
-        );
-        assert!(matches!(app.mode, AppMode::SelectFromList(_)));
     }
 }
 

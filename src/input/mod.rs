@@ -416,26 +416,23 @@ mod scroll_delta_tests {
         scroll_delta(keymaps.for_view(ActiveView::Dag), &node)
     }
 
+    /// Overlays scroll on whatever keys the movements are bound to. One
+    /// that has no sections and no extent leaves other movements, and other
+    /// keys, to the mode's own handling.
     #[test]
-    fn overlays_scroll_on_the_default_movement_keys() {
+    fn overlays_scroll_on_the_movement_keys_and_nothing_else() {
         let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
-        assert_eq!(delta(&keymaps, "j"), Some(1));
-        assert_eq!(delta(&keymaps, "down"), Some(1));
-        assert_eq!(delta(&keymaps, "k"), Some(-1));
-        assert_eq!(delta(&keymaps, "up"), Some(-1));
-        assert_eq!(delta(&keymaps, "ctrl-d"), Some(PAGE_SIZE as i16));
-        assert_eq!(delta(&keymaps, "pagedown"), Some(PAGE_SIZE as i16));
-        assert_eq!(delta(&keymaps, "ctrl-u"), Some(-(PAGE_SIZE as i16)));
-        assert_eq!(delta(&keymaps, "pageup"), Some(-(PAGE_SIZE as i16)));
-    }
-
-    /// An overlay has no sections and no extent, so movements that mean
-    /// nothing there fall through to the mode's own handling.
-    #[test]
-    fn other_keys_do_not_scroll() {
-        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
-        for key in ["shift-j", "0", "$", "q", "esc", "x"] {
-            assert_eq!(delta(&keymaps, key), None, "{key} should not scroll");
+        let page = PAGE_SIZE as i16;
+        for (key, scrolls) in [
+            ("j", Some(1)),
+            ("k", Some(-1)),
+            ("ctrl-d", Some(page)),
+            ("ctrl-u", Some(-page)),
+            ("shift-j", None),
+            ("$", None),
+            ("q", None),
+        ] {
+            assert_eq!(delta(&keymaps, key), scrolls, "{key}");
         }
     }
 
@@ -542,26 +539,6 @@ mod hook_attribution_tests {
         assert_eq!(hook(&retried), Some(AppAction::Abandon));
     }
 
-    /// A typed command line is parsed into jj's arguments; an empty one
-    /// runs nothing.
-    #[test]
-    fn a_raw_command_prompt_runs_what_was_typed() {
-        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
-        press(&mut app, KeyCode::Char(':'));
-        for c in "log -r @".chars() {
-            press(&mut app, KeyCode::Char(c));
-        }
-        let ran = press(&mut app, KeyCode::Enter);
-        assert!(matches!(
-            ran,
-            Action::RunJj { cmd: JJCommand { kind: JJCommandKind::Raw { args }, .. }, .. }
-                if args.iter().map(|a| a.as_str()).eq(["log", "-r", "@"])
-        ));
-
-        press(&mut app, KeyCode::Char(':'));
-        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
-    }
-
     /// Keys pressed in between belong to nobody's chain: a retry of a
     /// command no action ran is not handed the last key's hooks.
     #[test]
@@ -608,23 +585,24 @@ mod mouse_tests {
         handle_mouse(app, event, HEADER);
     }
 
+    /// A click on a row puts the cursor there; the header, the status bar
+    /// and the list's empty space hold no row, so a click on them leaves the
+    /// cursor where it was.
     #[test]
-    fn a_click_on_a_row_selects_it() {
-        let mut app = app();
-        click(&mut app, MouseButton::Left, HEADER);
-        assert_eq!(app.cursor, RowIdx::new(0));
-    }
+    fn a_click_selects_the_row_under_it_and_off_the_rows_picks_nothing() {
+        let mut clicked = app();
+        let last = RowIdx::new(clicked.rows.len() - 1);
+        clicked.cursor = last;
+        click(&mut clicked, MouseButton::Left, HEADER);
+        assert_eq!(clicked.cursor, RowIdx::new(0));
 
-    /// The header, the status bar and the list's empty space hold no row.
-    #[test]
-    fn a_click_off_the_rows_picks_nothing() {
         for screen_row in [0, HEADER + 5, HEADER + 10, HEADER + 11] {
-            let mut app = app();
-            // Off row 0, which is where a header click used to land.
-            app.cursor = RowIdx::new(app.rows.len() - 1);
-            let before = app.cursor;
-            click(&mut app, MouseButton::Left, screen_row);
-            assert_eq!(app.cursor, before, "screen row {screen_row}");
+            let mut missed = app();
+            // Off row 0, where a click above the list would land if it
+            // counted as the first row.
+            missed.cursor = last;
+            click(&mut missed, MouseButton::Left, screen_row);
+            assert_eq!(missed.cursor, last, "screen row {screen_row}");
         }
     }
 

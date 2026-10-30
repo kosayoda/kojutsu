@@ -405,34 +405,25 @@ mod lua_selection_tests {
         items.iter().map(|s| s.to_string()).collect()
     }
 
+    /// A multi-select answers with a list, empty when nothing was ticked;
+    /// a single select answers with its one name, or nothing if dismissed.
     #[test]
-    fn multi_select_keeps_every_ticked_item() {
+    fn multi_select_gives_a_list_and_single_select_gives_one_name_or_none() {
         let ResumeValue::List(items) =
             lua_selection_value(true, names(&["feature-a", "feature-b", "feature-c"]))
         else {
             panic!("expected a list");
         };
         assert_eq!(items, ["feature-a", "feature-b", "feature-c"]);
-    }
-
-    #[test]
-    fn multi_select_with_nothing_ticked_stays_a_list() {
         let ResumeValue::List(items) = lua_selection_value(true, names(&[])) else {
             panic!("expected a list");
         };
         assert!(items.is_empty());
-    }
 
-    #[test]
-    fn single_select_takes_the_first_name() {
         let ResumeValue::Text(item) = lua_selection_value(false, names(&["feature-a"])) else {
             panic!("expected a string");
         };
         assert_eq!(item, "feature-a");
-    }
-
-    #[test]
-    fn single_select_with_no_name_is_a_dismissal() {
         assert!(matches!(
             lua_selection_value(false, names(&[])),
             ResumeValue::None
@@ -446,11 +437,11 @@ mod list_navigation_tests {
     use crate::keymap::{ActionRegistry, Keymaps, default_bindings, try_parse_key};
     use ratatui::crossterm::event::KeyModifiers;
 
-    fn app_with_list(filtering: bool) -> App {
+    fn app_with_list(items: &[&str], filtering: bool) -> App {
         let mut app = App::for_test();
         app.mode = AppMode::select_from_list(
             "pick",
-            vec!["a".into(), "b".into(), "c".into()],
+            items.iter().map(|item| item.to_string()).collect(),
             false,
             PendingSelection::PresetSelect,
             false,
@@ -501,7 +492,7 @@ mod list_navigation_tests {
     #[test]
     fn the_list_moves_on_the_bound_movement_keys() {
         let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
-        let mut app = app_with_list(false);
+        let mut app = app_with_list(&["a", "b", "c"], false);
 
         press(&mut app, &keymaps, "j");
         assert_eq!(cursor(&app), 1);
@@ -520,7 +511,7 @@ mod list_navigation_tests {
     #[test]
     fn ctrl_n_and_ctrl_p_step_the_list() {
         let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
-        let mut app = app_with_list(false);
+        let mut app = app_with_list(&["a", "b", "c"], false);
         press(&mut app, &keymaps, "ctrl-n");
         assert_eq!(cursor(&app), 1);
         press(&mut app, &keymaps, "ctrl-p");
@@ -532,7 +523,7 @@ mod list_navigation_tests {
     #[test]
     fn filtering_types_letters_and_still_navigates_on_chords() {
         let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
-        let mut app = app_with_list(true);
+        let mut app = app_with_list(&["j1", "j2", "k"], true);
 
         press(&mut app, &keymaps, "j");
         assert_eq!(filter(&app), "j");
@@ -540,5 +531,6 @@ mod list_navigation_tests {
 
         press(&mut app, &keymaps, "ctrl-n");
         assert_eq!(filter(&app), "j", "a chord must not reach the filter");
+        assert_eq!(cursor(&app), 1);
     }
 }

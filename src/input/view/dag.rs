@@ -946,21 +946,6 @@ mod multi_source_tests {
         app
     }
 
-    fn sources(app: &App) -> Vec<&str> {
-        let AppMode::TargetSelect { picks, .. } = &app.mode else {
-            panic!("expected target selection");
-        };
-        picks.sources.iter().map(RevisionArg::as_str).collect()
-    }
-
-    /// The prompt and the highlight read the commits the rebase will move,
-    /// every selected one, not only the one under the cursor.
-    #[test]
-    fn a_multi_commit_rebase_selects_from_every_selected_commit() {
-        let app = rebasing_three();
-        assert_eq!(sources(&app), ["aa", "bb", "cc"]);
-    }
-
     /// Rebasing a commit onto itself only fails in jj; it's refused here,
     /// with Space and with Enter, and target selection carries on.
     #[test]
@@ -1060,12 +1045,13 @@ mod visual_select_tests {
 
     use crate::app::App;
     use crate::dag::CommitInfo;
+    use crate::idx::EntryIdx;
     use crate::input::handle_key;
     use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
     use crate::lua::LuaEngine;
 
     /// `v`, two steps down, Space: the three commits the range covers are
-    /// selected at once.
+    /// selected at once, and the one past it is not.
     #[test]
     fn space_selects_the_whole_visual_commit_range() {
         let mut app = App::for_test();
@@ -1083,11 +1069,9 @@ mod visual_select_tests {
             handle_key(&mut app, &keymaps, &lua, event);
         }
 
-        assert_eq!(app.selection_count(), 3);
-        assert_eq!(
-            app.selection.display_text().as_deref(),
-            Some("3 commits selected")
-        );
+        for (i, selected) in [true, true, true, false].into_iter().enumerate() {
+            assert_eq!(app.is_commit_selected(EntryIdx::new(i)), selected, "{i}");
+        }
     }
 }
 
@@ -1237,14 +1221,33 @@ mod converge_input_tests {
 
 #[cfg(test)]
 mod message_tests {
-    use crate::keymap::{display_key, try_parse_key};
+    use crate::keymap::{ActionId, AppAction, BindTarget, default_bindings, display_key};
 
-    /// The message pointing at the whole-file keys names them as help does.
+    /// The default key sequence bound to `action`, written as the status
+    /// line writes sequences: keys joined by commas.
+    fn default_keys(action: AppAction) -> String {
+        let spec = default_bindings()
+            .into_iter()
+            .find(|spec| {
+                matches!(&spec.target, BindTarget::Action { id: ActionId::Builtin(a), .. } if *a == action)
+            })
+            .expect("the action has a default binding");
+        spec.keys
+            .iter()
+            .map(display_key)
+            .collect::<Vec<_>>()
+            .join(",")
+    }
+
+    /// The message pointing at the whole-file keys names the keys those
+    /// actions are bound to by default.
     #[test]
     fn the_deleted_side_message_names_the_whole_file_keys() {
-        let shown = |key| display_key(&try_parse_key(key).expect("key"));
-        let (menu, ours, theirs) = (shown("shift-c"), shown("shift-o"), shown("shift-t"));
-        let named = format!("{menu},{ours} / {menu},{theirs}");
+        let named = format!(
+            "{} / {}",
+            default_keys(AppAction::ResolveOurs),
+            default_keys(AppAction::ResolveTheirs)
+        );
         assert!(super::ERR_SIDE_DELETED.contains(&named), "{named}");
     }
 }

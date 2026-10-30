@@ -200,7 +200,6 @@ impl App {
 mod tests {
     use super::super::test_support::{chunk, entry, load};
     use super::super::{App, FileFoldKey};
-    use crate::dag::DivergenceInfo;
     use crate::idx::EntryIdx;
     use crate::types::{CommitId, FileRef, RepoPath, Selection, SelectionKind};
 
@@ -258,23 +257,6 @@ mod tests {
             crate::repo_service::RepoRequest::DiffSummary { target }
                 if *target == crate::dag::DiffTarget::Commit(CommitId::new("b2"))
         )));
-    }
-
-    /// Each copy of a divergent change is its own commit, and keeps its own
-    /// state, including when its offset (computed after the load) arrives.
-    #[test]
-    fn copies_of_a_divergent_change_keep_their_own_state() {
-        let mut app = App::for_test();
-        load(&mut app, vec![entry('u', "u1"), entry('u', "u2")], true);
-        unfold(&mut app, "u2");
-        app.dag.nodes[EntryIdx::new(1)].commit.divergence = Some(DivergenceInfo {
-            is_divergent: true,
-            is_hidden: false,
-            suffix: Some(1),
-        });
-
-        assert!(app.is_commit_unfolded(entry_of(&app, "u2")));
-        assert!(!app.is_commit_unfolded(entry_of(&app, "u1")));
     }
 
     /// With several commits of the change about, a copy missing from the

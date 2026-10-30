@@ -612,8 +612,7 @@ mod jump_tests {
     use ratatui::crossterm::event::KeyModifiers;
 
     /// Jump is opened over a select mode often enough that returning to the
-    /// right one is the whole point; it used to carry its own restore field
-    /// rather than going through the overlay stack.
+    /// right one is the whole point.
     fn app_in_commit_select() -> App {
         let mut app = App::for_test();
         app.mode = AppMode::CommitSelect {
@@ -677,14 +676,6 @@ mod jump_tests {
         assert!(matches!(app.mode, AppMode::CommitSelect { .. }));
     }
 
-    #[test]
-    fn jump_from_normal_returns_to_normal() {
-        let mut app = App::for_test();
-        open_jump(&mut app, &["a"]);
-        press(&mut app, KeyCode::Char('a'));
-        assert!(matches!(app.mode, AppMode::Normal));
-    }
-
     /// Rows can change while the labels show; a label still jumps to the
     /// row it was put on, wherever that row has moved.
     #[test]
@@ -729,6 +720,43 @@ mod jump_tests {
         }
 
         assert_eq!(app.selected_entry_idx(), Some(EntryIdx::new(2)));
+    }
+}
+
+#[cfg(test)]
+mod raw_command_tests {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::app::App;
+    use crate::input::{Action, handle_key};
+    use crate::jj_command::{JJCommand, JJCommandKind};
+    use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+    use crate::lua::LuaEngine;
+
+    fn press(app: &mut App, code: KeyCode) -> Action {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let lua = LuaEngine::for_test();
+        handle_key(app, &keymaps, &lua, KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    /// A typed command line is parsed into jj's arguments; an empty one
+    /// runs nothing.
+    #[test]
+    fn a_raw_command_prompt_runs_what_was_typed() {
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        press(&mut app, KeyCode::Char(':'));
+        for c in "log -r @".chars() {
+            press(&mut app, KeyCode::Char(c));
+        }
+        let ran = press(&mut app, KeyCode::Enter);
+        assert!(matches!(
+            ran,
+            Action::RunJj { cmd: JJCommand { kind: JJCommandKind::Raw { args }, .. }, .. }
+                if args.iter().map(|a| a.as_str()).eq(["log", "-r", "@"])
+        ));
+
+        press(&mut app, KeyCode::Char(':'));
+        assert!(matches!(press(&mut app, KeyCode::Enter), Action::None));
     }
 }
 

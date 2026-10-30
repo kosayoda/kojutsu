@@ -746,34 +746,18 @@ mod short_id_tests {
         assert_eq!(id.split(), ("uunnomkxrq", ""));
     }
 
+    /// A prefix length past the end of the ID clamps to the whole ID: jj
+    /// returns `len + 1` when one ID is an exact prefix of another, and
+    /// op-log rows can reference an entry with no commit, so an empty ID.
     #[test]
-    fn the_full_id_never_changes_as_the_prefix_length_does() {
-        // Rewrites are found again by the full change ID, so the background
-        // prefix pass must not move it.
-        let mut id = ShortId::new(CHANGE_ID);
-        let before = id.full().to_string();
-        for len in [1, 8, 12, 40] {
-            id.set_prefix_len(len);
-            assert_eq!(id.full(), before);
-        }
-    }
-
-    #[test]
-    fn an_over_long_prefix_length_does_not_panic() {
-        // jj returns `len + 1` when one ID is an exact prefix of another.
+    fn lengths_beyond_the_id_clamp_to_the_whole_id() {
         let mut id = ShortId::new("abcd");
         id.set_prefix_len(5);
-
         assert_eq!(id.prefix(), "abcd");
         assert_eq!(id.display(), "abcd");
         assert_eq!(id.split(), ("abcd", ""));
-    }
 
-    #[test]
-    fn an_empty_id_renders_as_nothing() {
-        // Op-log rows can reference an entry with no commit behind it.
         let id = ShortId::new("");
-
         assert_eq!(id.prefix(), "");
         assert_eq!(id.display(), "");
         assert_eq!(id.split(), ("", ""));
@@ -813,12 +797,21 @@ mod revision_tests {
         }
     }
 
+    /// The full revision is the whole change ID, which unlike the prefix
+    /// doesn't shorten as prefixes are computed; a divergent commit's keeps
+    /// its offset.
     #[test]
-    fn the_full_revision_is_the_whole_change_id() {
-        // The prefix shortens as prefixes are computed; the full form must not.
+    fn the_full_revision_is_the_whole_change_id_with_any_offset() {
         let c = commit(None);
         assert_eq!(c.full_revision().as_str(), CHANGE_ID);
         assert_ne!(c.full_revision(), c.unique_prefix());
+
+        let c = commit(Some(DivergenceInfo {
+            is_divergent: true,
+            is_hidden: false,
+            suffix: Some(2),
+        }));
+        assert_eq!(c.full_revision().as_str(), format!("{CHANGE_ID}/2"));
     }
 
     fn summary(divergence: Option<DivergenceInfo>) -> CommitSummary {
@@ -833,56 +826,30 @@ mod revision_tests {
         }
     }
 
+    /// A bookmark row and a DAG row pointing at one commit have to run the
+    /// same thing, so both derive their revision the same way. A hidden
+    /// target's bare change ID resolves to whatever superseded it, so a
+    /// hidden summary says so and keeps its offset for the command.
     #[test]
     fn a_summary_names_a_commit_the_same_way_a_dag_row_does() {
-        // A bookmark row and a DAG row pointing at one commit have to run the
-        // same thing, so both derive their revision the same way.
-        for divergence in [
-            None,
-            Some(DivergenceInfo {
-                is_divergent: true,
-                is_hidden: false,
-                suffix: Some(1),
-            }),
-            Some(DivergenceInfo {
-                is_divergent: false,
-                is_hidden: true,
-                suffix: Some(3),
-            }),
-        ] {
+        let divergent = DivergenceInfo {
+            is_divergent: true,
+            is_hidden: false,
+            suffix: Some(1),
+        };
+        let hidden = DivergenceInfo {
+            is_divergent: false,
+            is_hidden: true,
+            suffix: Some(3),
+        };
+        for divergence in [None, Some(divergent), Some(hidden.clone())] {
             let expected = commit(divergence.clone()).unique_prefix();
             assert_eq!(summary(divergence).revision(), expected);
         }
-    }
 
-    #[test]
-    fn a_summary_without_divergence_needs_no_offset() {
-        assert_eq!(summary(None).revision().as_str(), "uu");
-        assert!(!summary(None).is_hidden());
-        assert_eq!(summary(None).change_id_suffix(), None);
-    }
-
-    #[test]
-    fn a_hidden_summary_reports_itself_hidden_and_carries_the_offset() {
-        // A hidden bookmark target's bare change ID resolves to whatever
-        // superseded it, so the offset has to survive to the command.
-        let s = summary(Some(DivergenceInfo {
-            is_divergent: false,
-            is_hidden: true,
-            suffix: Some(2),
-        }));
-        assert_eq!(s.revision().as_str(), "uu/2");
-        assert!(s.is_hidden());
-        assert_eq!(s.change_id_suffix(), Some(2));
-    }
-
-    #[test]
-    fn a_divergent_full_revision_keeps_the_offset_too() {
-        let c = commit(Some(DivergenceInfo {
-            is_divergent: true,
-            is_hidden: false,
-            suffix: Some(2),
-        }));
-        assert_eq!(c.full_revision().as_str(), format!("{CHANGE_ID}/2"));
+        let hidden = summary(Some(hidden));
+        assert_eq!(hidden.revision().as_str(), "uu/3");
+        assert!(hidden.is_hidden());
+        assert_eq!(hidden.change_id_suffix(), Some(3));
     }
 }

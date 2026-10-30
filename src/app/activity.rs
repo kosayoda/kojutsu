@@ -241,22 +241,29 @@ mod tests {
         assert_eq!(app.activity_indicator(start + SHOW_AFTER * 2), None);
     }
 
+    /// Each frame period shows the next glyph, and after the last the
+    /// spinner starts over.
     #[test]
     fn the_spinner_steps_through_its_frames() {
         let mut app = loading_app();
+        let config = crate::config::Config {
+            spinner: vec!['a', 'b', 'c'],
+            ..Default::default()
+        };
+        app.config = std::rc::Rc::new(config);
         let start = Instant::now();
         app.track_activity(start);
-        let glyph = |at: Duration| {
-            app.activity_indicator(start + at)
+        let glyph = |frames_in: u32| {
+            app.activity_indicator(start + SHOW_AFTER + FRAME * frames_in)
                 .and_then(|indicator| indicator.glyph)
+                .expect("a frame is shown")
         };
-        let frames = &app.config.spinner;
-        let first = (SHOW_AFTER.as_millis() / FRAME.as_millis()) as usize;
-        assert_eq!(glyph(SHOW_AFTER), Some(frames[first % frames.len()]));
-        assert_eq!(
-            glyph(SHOW_AFTER + FRAME),
-            Some(frames[(first + 1) % frames.len()])
-        );
+        let cycle = [glyph(0), glyph(1), glyph(2)];
+        let mut seen = cycle.to_vec();
+        seen.sort_unstable();
+        assert_eq!(seen, ['a', 'b', 'c'], "one cycle shows every frame once");
+        assert_eq!(glyph(3), cycle[0]);
+        assert_eq!(glyph(4), cycle[1]);
     }
 
     /// With a placeholder in the list saying it, the status line doesn't

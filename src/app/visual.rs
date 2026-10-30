@@ -652,7 +652,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{App, DagNode, FileFoldKey};
+    use super::super::{App, DagNode, FileFoldKey, PersistentVisualRange};
     use crate::dag::{
         CommitInfo, DiffLine, DiffLineKind, DiffResult, DiffSummary, FileChange, FileStatus,
         LineStats,
@@ -846,10 +846,22 @@ mod tests {
     }
 
     /// Another diff format numbers its lines differently, so a range drawn
-    /// over the old lines ends instead of landing on others.
+    /// over the old lines ends instead of landing on others, whether it is
+    /// still being drawn or was left behind by leaving visual mode.
     #[test]
     fn switching_diff_format_ends_a_line_range() {
         let mut app = app();
+        app.cursor = line_row(&app, 1, 1);
+        app.enter_visual_mode();
+        app.visual_move(AppAction::MoveDown, 10);
+        app.exit_visual_mode();
+        assert!(matches!(
+            app.visual.persistent,
+            Some(PersistentVisualRange::Lines(_))
+        ));
+        app.toggle_diff_format();
+        assert!(app.visual.persistent.is_none());
+
         app.cursor = line_row(&app, 1, 1);
         app.enter_visual_mode();
         app.toggle_diff_format();

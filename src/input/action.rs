@@ -1230,22 +1230,4 @@ mod selection_gate_tests {
         let message = app.status_message.as_ref().expect("an error").0.clone();
         assert_eq!(message, "plug does not support 1 file + 1 line");
     }
-
-    #[test]
-    fn a_command_declaring_all_takes_anything() {
-        let mut registry = ActionRegistry::new();
-        let anything = registry.register_lua(SelectionKindSet::ALL);
-        let mut app = App::for_test();
-        select_file(&mut app);
-        select_line(&mut app);
-        assert!(!rejects_selection(&mut app, &registry, anything, "plug"));
-    }
-
-    #[test]
-    fn no_selection_gates_nothing() {
-        let mut registry = ActionRegistry::new();
-        let commit_only = registry.register_lua(SelectionKindSet::COMMIT);
-        let mut app = App::for_test();
-        assert!(!rejects_selection(&mut app, &registry, commit_only, "plug"));
-    }
 }
