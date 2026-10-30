@@ -445,6 +445,243 @@ mod tests {
         assert!(run_command(&runtime).expect("a change").is_err());
     }
 
+    fn rewrite(dir: &tempfile::TempDir, init: &str) {
+        std::fs::write(dir.path().join("init.lua"), init).expect("write init.lua");
+    }
+
+    /// The runtime `dir` holds, and an app pointed at its config.
+    fn running(dir: &tempfile::TempDir) -> (LuaRuntime, crate::app::App) {
+        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        assert_eq!(runtime.init_error(), None);
+        let app = crate::app::App::new(String::new(), String::new(), runtime.config.clone());
+        (runtime, app)
+    }
+
+    fn reload(runtime: &mut LuaRuntime, app: &mut crate::app::App) {
+        runtime.reload(app, crate::jj_version::InstalledJj::default);
+    }
+
+    fn command_names(runtime: &LuaRuntime) -> Vec<&str> {
+        runtime
+            .engine
+            .commands
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect()
+    }
+
+    fn logged(app: &crate::app::App, kind: crate::app::CommandLogKind, text: &str) -> bool {
+        app.command_log
+            .entries()
+            .any(|e| e.kind == kind && String::from_utf8_lossy(&e.output).contains(text))
+    }
+
+    fn error_status(app: &crate::app::App) -> Option<&str> {
+        match &app.status_message {
+            Some((msg, crate::app::StatusLevel::Error)) => Some(msg),
+            _ => None,
+        }
+    }
+
+    /// Registering appends, so the same script loaded over the running
+    /// engine would bind everything twice.
+    #[test]
+    fn reloading_an_unchanged_script_registers_nothing_twice() {
+        let dir = config_dir_with(
+            r#"
+            kojutsu.bind { action = "abandon", key = "ctrl-y" }
+            kojutsu.command("c", function() end, { key = "ctrl-l" })
+            "#,
+        );
+        let (mut runtime, mut app) = running(&dir);
+        let bindings = binding_count(&runtime);
+
+        reload(&mut runtime, &mut app);
+
+        assert_eq!(binding_count(&runtime), bindings);
+        assert_eq!(command_names(&runtime), ["c"]);
+    }
+
+    #[test]
+    fn a_reload_picks_up_edits_and_drops_what_the_script_no_longer_registers() {
+        let dir = config_dir_with(
+            r#"
+            kojutsu.config.tab_width = 2
+            kojutsu.bind { action = "abandon", key = "ctrl-y" }
+            kojutsu.command("c", function() end, { key = "ctrl-l" })
+            "#,
+        );
+        let (mut runtime, mut app) = running(&dir);
+        rewrite(
+            &dir,
+            r#"
+            kojutsu.config.tab_width = 3
+            kojutsu.command("d", function() end, { key = "ctrl-l" })
+            "#,
+        );
+
+        reload(&mut runtime, &mut app);
+
+        assert_eq!(runtime.init_error(), None);
+        assert_eq!(runtime.config.tab_width, 3);
+        assert!(std::rc::Rc::ptr_eq(&app.config, &runtime.config));
+        assert_eq!(command_names(&runtime), ["d"]);
+        let clean = LuaRuntime::load_from(config_dir_with("").path(), std::path::Path::new("."));
+        assert_eq!(binding_count(&runtime), binding_count(&clean) + 1);
+    }
+
+    /// A fresh Lua has an empty `package.loaded`, so an edited module is
+    /// read again rather than served from the cache.
+    #[test]
+    fn a_reload_reads_required_modules_again() {
+        let dir = config_dir_with(r#"kojutsu.config.tab_width = require("width")"#);
+        let module = dir.path().join("lua").join("width.lua");
+        std::fs::create_dir(module.parent().unwrap()).unwrap();
+        std::fs::write(&module, "return 2").unwrap();
+        let (mut runtime, mut app) = running(&dir);
+        std::fs::write(&module, "return 5").unwrap();
+
+        reload(&mut runtime, &mut app);
+
+        assert_eq!(runtime.config.tab_width, 5);
+    }
+
+    /// The reload starts from `init.lua` alone: what a plugin wrote to
+    /// `kojutsu.config` since is not carried over.
+    #[test]
+    fn a_reload_drops_what_a_plugin_wrote_to_the_config() {
+        let dir = config_dir_with(
+            r#"kojutsu.command("wide", function() kojutsu.config.tab_width = 8 end, {})"#,
+        );
+        let (mut runtime, mut app) = running(&dir);
+        let change = run_command(&runtime).expect("a change").expect("valid");
+        runtime.config = std::rc::Rc::new(change);
+
+        reload(&mut runtime, &mut app);
+
+        assert_eq!(*runtime.config, crate::config::Config::default());
+    }
+
+    #[test]
+    fn a_broken_script_leaves_the_running_config_in_place_and_says_why() {
+        let dir = config_dir_with(
+            r#"
+            kojutsu.config.tab_width = 2
+            kojutsu.command("c", function() end, { key = "ctrl-l" })
+            "#,
+        );
+        let (mut runtime, mut app) = running(&dir);
+        let config = runtime.config.clone();
+        let bindings = binding_count(&runtime);
+        rewrite(
+            &dir,
+            r#"
+            kojutsu.config.tab_width = 9
+            kojutsu.bind { action = "abandon", key = "ctrl-y" }
+            error("boom")
+            "#,
+        );
+
+        reload(&mut runtime, &mut app);
+
+        assert_eq!(runtime.init_error(), None);
+        assert!(std::rc::Rc::ptr_eq(&runtime.config, &config));
+        assert!(std::rc::Rc::ptr_eq(&app.config, &config));
+        assert_eq!(binding_count(&runtime), bindings);
+        assert_eq!(command_names(&runtime), ["c"]);
+        assert!(error_status(&app).is_some_and(|msg| msg.contains("boom")));
+        assert!(logged(&app, crate::app::CommandLogKind::Warning, "boom"));
+    }
+
+    /// The prompt's thread lives in the running engine, so replacing it
+    /// would strand the prompt; once answered, the reload goes ahead.
+    #[test]
+    fn a_reload_is_refused_while_a_plugin_prompt_is_open() {
+        let dir = config_dir_with(
+            r#"kojutsu.command("ask", function() kojutsu.ui.input("name: ") end, {})"#,
+        );
+        let (mut runtime, mut app) = running(&dir);
+        runtime
+            .engine
+            .execute_command(0, &mut app, crate::keymap::CommandFlags::empty());
+        assert!(runtime.engine.has_suspended_thread());
+        rewrite(&dir, "kojutsu.config.tab_width = 3");
+
+        reload(&mut runtime, &mut app);
+
+        assert!(runtime.engine.has_suspended_thread());
+        assert_eq!(command_names(&runtime), ["ask"]);
+        assert!(error_status(&app).is_some_and(|msg| msg.contains("plugin prompt")));
+
+        runtime
+            .engine
+            .resume_suspended(&mut app, crate::lua::ResumeValue::None);
+        reload(&mut runtime, &mut app);
+
+        assert_eq!(runtime.config.tab_width, 3);
+    }
+
+    #[test]
+    fn a_reload_adopts_the_jj_found_by_probing_again_and_warns_about_it_once() {
+        use crate::jj_version::{FLOOR, InstalledJj, JjVersion};
+
+        let dir = config_dir_with("");
+        let (mut runtime, mut app) = running(&dir);
+        app.set_installed_jj(InstalledJj::known(FLOOR));
+        let downgraded = InstalledJj::known(JjVersion::new(FLOOR.major, FLOOR.minor - 1, 0));
+        let concerns = downgraded.concerns();
+        assert!(!concerns.is_empty());
+        let warnings = |app: &crate::app::App| {
+            app.command_log
+                .entries()
+                .filter(|e| concerns.contains(&e.summary))
+                .count()
+        };
+
+        runtime.reload(&mut app, || downgraded);
+        assert_eq!(app.jj, downgraded);
+        assert_eq!(warnings(&app), concerns.len());
+
+        runtime.reload(&mut app, || downgraded);
+        assert_eq!(warnings(&app), concerns.len());
+    }
+
+    /// The repo service holds its own copy of the diff limit.
+    #[test]
+    fn a_reload_hands_the_repo_service_the_new_diff_limit() {
+        let dir = config_dir_with("");
+        let (mut runtime, mut app) = running(&dir);
+        rewrite(&dir, "kojutsu.config.diff.max_file_size_mib = 3");
+        app.take_repo_requests();
+
+        reload(&mut runtime, &mut app);
+
+        let bytes = runtime.config.diff.max_file_size_bytes();
+        assert_ne!(
+            bytes,
+            crate::config::Config::default().diff.max_file_size_bytes()
+        );
+        assert!(app.take_repo_requests().iter().any(|request| matches!(
+            request,
+            crate::repo_service::RepoRequest::SetDiffSizeLimit { bytes: sent } if *sent == bytes
+        )));
+    }
+
+    #[test]
+    fn a_reload_reports_what_the_new_script_registered_wrongly() {
+        let dir = config_dir_with("");
+        let (mut runtime, mut app) = running(&dir);
+        rewrite(
+            &dir,
+            r#"kojutsu.bind { action = "bookmark_view_edit", key = "ctrl-y" }"#,
+        );
+
+        reload(&mut runtime, &mut app);
+
+        let warning = &runtime.init_warnings()[0];
+        assert!(logged(&app, crate::app::CommandLogKind::Warning, warning));
+    }
+
     /// What Lua logged and has yet to be shown is held by the engine the
     /// reload drops, so it must be shown first.
     #[test]
