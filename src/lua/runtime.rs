@@ -82,6 +82,8 @@ impl LuaRuntime {
             return;
         }
 
+        // What Lua logged and has yet to be shown would go with the engine.
+        self.engine.flush_logs(app);
         *self = reloaded;
         app.apply_reloaded_config(self.config.clone());
         app.push_command_log(
@@ -441,6 +443,34 @@ mod tests {
         );
         let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
         assert!(run_command(&runtime).expect("a change").is_err());
+    }
+
+    /// What Lua logged and has yet to be shown is held by the engine the
+    /// reload drops, so it must be shown first.
+    #[test]
+    fn what_a_hook_logged_before_a_reload_is_still_shown() {
+        let dir = config_dir_with(
+            r#"kojutsu.hook("reload_config", "pre", function() kojutsu.log("saving state") end)"#,
+        );
+        let mut runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let mut app = crate::app::App::for_test();
+        assert!(matches!(
+            runtime.engine.run_pre_hooks(
+                crate::keymap::AppAction::ReloadConfig,
+                crate::keymap::CommandFlags::empty(),
+                &mut app,
+            ),
+            crate::lua::HookOutcome::Proceed
+        ));
+
+        runtime.reload(&mut app, crate::jj_version::InstalledJj::default);
+        runtime.engine.flush_logs(&mut app);
+
+        assert!(
+            app.command_log
+                .entries()
+                .any(|e| String::from_utf8_lossy(&e.output).contains("saving state"))
+        );
     }
 
     /// No init.lua at all is the common case, not an error.
