@@ -146,14 +146,11 @@ fn tag_interdiff(app: &mut App) -> Action {
         return nothing_here(app, AppAction::Interdiff);
     };
     let name = entry.name.to_string();
-    let local = entry
-        .commit_id
-        .clone()
-        .map_or(RefTarget::Absent, RefTarget::Commit);
-    let remote_targets = app
-        .views
-        .tag_details
-        .get(&entry.name)
+    let details = app.views.tag_details.get(&entry.name);
+    let local = details.map_or(RefTarget::Absent, |d| {
+        d.local.map(|summary| summary.commit_id.clone())
+    });
+    let remote_targets = details
         .map(|d| d.remote_targets.as_slice())
         .unwrap_or_default();
     let remote = |t: &crate::dag::TagRemoteTarget| {
@@ -201,7 +198,7 @@ fn ref_interdiff(
             .or_else(|| {
                 remotes
                     .iter()
-                    .position(|(_, target)| *target == RefTarget::Conflicted)
+                    .position(|(_, target)| target.is_conflicted())
             })?;
         remotes.into_iter().nth(idx)
     });
@@ -810,6 +807,7 @@ mod tests {
             revision: Some(RevisionArg::new("qpv")),
             description: None,
             presence: crate::dag::TagPresence::Local,
+            is_conflicted: false,
         });
         app.switch_view(ActiveView::Tags);
         app
@@ -1152,7 +1150,7 @@ mod ref_interdiff_tests {
     use crate::app::{App, BookmarkKind, BookmarkViewEntry, TagViewEntry};
     use crate::dag::{
         BookmarkDetails, BookmarkRemoteTarget, CommitSummary, RefTarget, RemoteBookmarkRef,
-        ShortId, TagDetails, TagLocalTarget, TagPresence, TagRemoteTarget,
+        ShortId, TagDetails, TagPresence, TagRemoteTarget,
     };
     use crate::idx::{BookmarkDetailIdx, BookmarkIdx, TagDetailIdx, TagIdx};
     use crate::input::handle_key;
@@ -1189,14 +1187,13 @@ mod ref_interdiff_tests {
             revision: Some(RevisionArg::new("qpv")),
             description: None,
             presence: TagPresence::Local,
+            is_conflicted: false,
         });
         app.views.tag_details.insert(
             TagName::new("v1"),
             TagDetails {
                 presence: TagPresence::Local,
-                local_target: Some(TagLocalTarget {
-                    summary: summary(local),
-                }),
+                local: RefTarget::Commit(summary(local)),
                 remote_targets: remotes
                     .iter()
                     .map(|&(remote, commit)| TagRemoteTarget {
@@ -1349,6 +1346,19 @@ mod ref_interdiff_tests {
         press_i(&mut app);
         assert_eq!(app.active_view, ActiveView::Tags);
         assert_eq!(status(&app), "v1 is the same on its remotes");
+    }
+
+    /// A conflicted tag listed on one of its commits has no one commit to
+    /// compare.
+    #[test]
+    fn a_conflicted_local_tag_says_so() {
+        let mut app = tags_view("aaaa1111", "bbbb2222");
+        if let Some(details) = app.views.tag_details.get_mut(&TagName::new("v1")) {
+            details.local = RefTarget::Conflicted;
+        }
+        press_i(&mut app);
+        assert_eq!(app.active_view, ActiveView::Tags);
+        assert_eq!(status(&app), "v1 is conflicted");
     }
 
     /// A remote bookmark listed on its own row is the remote side: it

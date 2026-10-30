@@ -53,7 +53,7 @@ impl JjRepo {
 
     /// Extract rich tag details: local target + remote tracking info.
     pub fn extract_tag_details(&self) -> HashMap<TagName, crate::dag::TagDetails> {
-        use crate::dag::{TagDetails, TagLocalTarget, TagPresence, TagRemoteTarget};
+        use crate::dag::{RefTarget, TagDetails, TagPresence, TagRemoteTarget};
 
         let repo = self.repo.as_ref();
         let view = repo.view();
@@ -102,15 +102,13 @@ impl JjRepo {
 
         let mut result: HashMap<TagName, TagDetails> = HashMap::new();
         for (name, target) in view.local_tags() {
-            let local_target = target.as_normal().map(|commit_id| TagLocalTarget {
-                summary: summary_of(commit_id),
-            });
+            let local = super::ref_target_with(target, summary_of);
             let remote_targets = remotes_by_name.remove(name.as_str()).unwrap_or_default();
             result.insert(
                 TagName::new(name.as_str()),
                 TagDetails {
                     presence: TagPresence::Local,
-                    local_target,
+                    local,
                     remote_targets,
                 },
             );
@@ -128,7 +126,7 @@ impl JjRepo {
                 TagName::new(&name),
                 TagDetails {
                     presence,
-                    local_target: None,
+                    local: RefTarget::Absent,
                     remote_targets,
                 },
             );

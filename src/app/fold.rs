@@ -120,10 +120,7 @@ impl App {
             if !self.views.folded_tags.contains(name)
                 && let Some(details) = self.views.tag_details.get(name)
             {
-                let local_commit = details
-                    .local_target
-                    .as_ref()
-                    .map(|lt| &lt.summary.commit_id);
+                let local_commit = details.local.commit().map(|summary| &summary.commit_id);
                 for (ri, rt) in details.remote_targets.iter().enumerate() {
                     if local_commit == Some(&rt.summary.commit_id) {
                         continue;

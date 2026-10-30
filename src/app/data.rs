@@ -321,10 +321,10 @@ impl App {
                     }
                 }
                 for details in self.views.tag_details.values_mut() {
-                    if let Some(lt) = &mut details.local_target
-                        && let Some(u) = update_map.get(&lt.summary.commit_id)
+                    if let crate::dag::RefTarget::Commit(summary) = &mut details.local
+                        && let Some(u) = update_map.get(&summary.commit_id)
                     {
-                        u.apply(&mut lt.summary);
+                        u.apply(summary);
                     }
                     for rt in &mut details.remote_targets {
                         if let Some(u) = update_map.get(&rt.summary.commit_id) {
@@ -721,11 +721,7 @@ impl App {
         for node in self.dag.nodes.iter() {
             for tag in &node.commit.tags {
                 if seen.insert(tag.clone()) {
-                    let presence = self
-                        .views
-                        .tag_details
-                        .get(tag)
-                        .map_or(TagPresence::Local, |d| d.presence);
+                    let details = self.views.tag_details.get(tag);
                     entries.push(TagViewEntry {
                         name: tag.clone(),
                         commit_id: Some(node.commit.graph_id.clone()),
@@ -733,7 +729,8 @@ impl App {
                         short_commit_id: Some(node.commit.commit_id.clone()),
                         revision: Some(node.commit.unique_prefix()),
                         description: node.commit.description.clone(),
-                        presence,
+                        presence: details.map_or(TagPresence::Local, |d| d.presence),
+                        is_conflicted: details.is_some_and(|d| d.local.is_conflicted()),
                     });
                 }
             }
@@ -745,13 +742,13 @@ impl App {
                 let details = self.views.tag_details.get(tag);
                 // Use local target info from tag_details if available.
                 let (commit_id, change_id, short_commit_id, revision, description) =
-                    if let Some(lt) = details.and_then(|d| d.local_target.as_ref()) {
+                    if let Some(summary) = details.and_then(|d| d.local.commit()) {
                         (
-                            Some(lt.summary.commit_id.clone()),
-                            Some(lt.summary.change_id.clone()),
-                            Some(lt.summary.short_commit_id.clone()),
-                            Some(lt.summary.revision()),
-                            lt.summary.description.clone(),
+                            Some(summary.commit_id.clone()),
+                            Some(summary.change_id.clone()),
+                            Some(summary.short_commit_id.clone()),
+                            Some(summary.revision()),
+                            summary.description.clone(),
                         )
                     } else {
                         (None, None, None, None, None)
@@ -764,6 +761,7 @@ impl App {
                     revision,
                     description,
                     presence: TagPresence::Local,
+                    is_conflicted: details.is_some_and(|d| d.local.is_conflicted()),
                 });
             }
         }
@@ -779,6 +777,7 @@ impl App {
                     revision: None,
                     description: None,
                     presence: details.presence,
+                    is_conflicted: false,
                 });
             }
         }
@@ -1106,7 +1105,7 @@ mod repo_result_tests {
 #[cfg(test)]
 mod view_entry_revision_tests {
     use super::super::App;
-    use crate::dag::{CommitSummary, DivergenceInfo, ShortId, TagDetails, TagLocalTarget};
+    use crate::dag::{CommitSummary, DivergenceInfo, RefTarget, ShortId, TagDetails};
     use crate::types::{CommitId, TagName};
 
     const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
@@ -1123,14 +1122,12 @@ mod view_entry_revision_tests {
             tag,
             TagDetails {
                 presence: crate::dag::TagPresence::Local,
-                local_target: Some(TagLocalTarget {
-                    summary: CommitSummary {
-                        commit_id: CommitId::new(COMMIT_ID),
-                        change_id,
-                        short_commit_id: ShortId::new(COMMIT_ID),
-                        description: None,
-                        divergence: Some(divergence),
-                    },
+                local: RefTarget::Commit(CommitSummary {
+                    commit_id: CommitId::new(COMMIT_ID),
+                    change_id,
+                    short_commit_id: ShortId::new(COMMIT_ID),
+                    description: None,
+                    divergence: Some(divergence),
                 }),
                 remote_targets: Vec::new(),
             },
@@ -1154,22 +1151,68 @@ mod view_entry_revision_tests {
 }
 
 #[cfg(test)]
+mod conflicted_tag_tests {
+    use super::super::App;
+    use crate::dag::{CommitInfo, RefTarget, TagDetails, TagPresence};
+    use crate::types::TagName;
+
+    fn conflicted(app: &mut App, tag: &str) {
+        app.views.tag_details.insert(
+            TagName::new(tag),
+            TagDetails {
+                presence: TagPresence::Local,
+                local: RefTarget::Conflicted,
+                remote_targets: Vec::new(),
+            },
+        );
+    }
+
+    /// Listed on one of its commits or on none, a conflicted tag's entry
+    /// says it is conflicted; off the revset it has no commit to show.
+    #[test]
+    fn a_conflicted_tag_is_listed_as_conflicted() {
+        let mut app = App::for_test();
+        let mut commit = CommitInfo::for_test("qpvuntsm", "7bbaa2cb");
+        commit.tags.push(TagName::new("on-dag"));
+        app.push_test_commit(commit);
+        conflicted(&mut app, "on-dag");
+        app.views.all_tags.push(TagName::new("off-dag"));
+        conflicted(&mut app, "off-dag");
+        app.rebuild_tag_entries();
+
+        let listed: Vec<(&str, bool, bool)> = app
+            .views
+            .tag_entries
+            .iter()
+            .map(|e| (e.name.as_str(), e.is_conflicted, e.commit_id.is_some()))
+            .collect();
+        assert_eq!(listed, [("off-dag", true, false), ("on-dag", true, true)]);
+    }
+}
+
+#[cfg(test)]
 mod tag_tracking_tests {
     use super::super::App;
-    use crate::dag::{CommitSummary, ShortId, TagDetails, TagPresence, TagRef, TagRemoteTarget};
+    use crate::dag::{
+        CommitSummary, RefTarget, ShortId, TagDetails, TagPresence, TagRef, TagRemoteTarget,
+    };
     use crate::idx::{TagDetailIdx, TagIdx};
     use crate::types::{ActiveView, CommitId, DisplayRow, RemoteName, TagName};
+
+    fn summary(commit: &str) -> CommitSummary {
+        CommitSummary {
+            commit_id: CommitId::new(commit),
+            change_id: ShortId::new(""),
+            short_commit_id: ShortId::new(commit),
+            description: None,
+            divergence: None,
+        }
+    }
 
     fn remote(name: &str, commit: &str, is_tracked: bool) -> TagRemoteTarget {
         TagRemoteTarget {
             remote: RemoteName::new(name),
-            summary: CommitSummary {
-                commit_id: CommitId::new(commit),
-                change_id: ShortId::new(""),
-                short_commit_id: ShortId::new(commit),
-                description: None,
-                divergence: None,
-            },
+            summary: summary(commit),
             is_tracked,
         }
     }
@@ -1183,7 +1226,7 @@ mod tag_tracking_tests {
             TagName::new("v1"),
             TagDetails {
                 presence: TagPresence::Local,
-                local_target: None,
+                local: RefTarget::Commit(summary("l1")),
                 remote_targets: vec![
                     remote("origin", "o1", true),
                     remote("upstream", "u1", false),
@@ -1194,7 +1237,7 @@ mod tag_tracking_tests {
             TagName::new("v2"),
             TagDetails {
                 presence: TagPresence::RemoteOnly,
-                local_target: None,
+                local: RefTarget::Absent,
                 remote_targets: vec![remote("origin", "o2", false)],
             },
         );

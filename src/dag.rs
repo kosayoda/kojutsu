@@ -298,22 +298,36 @@ pub struct RemoteBookmarkInfo {
     pub is_tracked: bool,
 }
 
-/// Where a bookmark or tag points, here or on one remote.
+/// Where a bookmark or tag points, here or on one remote, with the commit
+/// as `C`: its ID, or whatever of it the view shows.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RefTarget {
+pub enum RefTarget<C = CommitId> {
     /// Nowhere: deleted, or a tracked remote it was never pushed to.
     Absent,
-    Commit(CommitId),
+    Commit(C),
     /// Several commits at once, until the conflict is resolved.
     Conflicted,
 }
 
-impl RefTarget {
+impl<C> RefTarget<C> {
     /// The one commit it points at, if it points at exactly one.
-    pub fn commit(&self) -> Option<&CommitId> {
+    pub fn commit(&self) -> Option<&C> {
         match self {
             Self::Commit(commit) => Some(commit),
             Self::Absent | Self::Conflicted => None,
+        }
+    }
+
+    pub fn is_conflicted(&self) -> bool {
+        matches!(self, Self::Conflicted)
+    }
+
+    /// The same target, with its commit read through `f`.
+    pub fn map<D>(&self, f: impl FnOnce(&C) -> D) -> RefTarget<D> {
+        match self {
+            Self::Absent => RefTarget::Absent,
+            Self::Commit(commit) => RefTarget::Commit(f(commit)),
+            Self::Conflicted => RefTarget::Conflicted,
         }
     }
 }
@@ -419,16 +433,10 @@ pub enum TagPresence {
 /// Rich data for a single tag (local target + remote tracking).
 pub struct TagDetails {
     pub presence: TagPresence,
-    /// Commit info for the local target (if present).
-    pub local_target: Option<TagLocalTarget>,
+    /// Where the local tag points.
+    pub local: RefTarget<CommitSummary>,
     /// Remote tracking info.
     pub remote_targets: Vec<TagRemoteTarget>,
-}
-
-/// Local target info for a tag.
-pub struct TagLocalTarget {
-    /// Commit metadata.
-    pub summary: CommitSummary,
 }
 
 impl CommitInfo {

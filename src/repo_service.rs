@@ -701,8 +701,8 @@ fn stream_revset(
                 }
             }
             for details in tag_details.values() {
-                if let Some(lt) = &details.local_target {
-                    ids.insert(lt.summary.commit_id.clone());
+                if let Some(summary) = details.local.commit() {
+                    ids.insert(summary.commit_id.clone());
                 }
                 for rt in &details.remote_targets {
                     ids.insert(rt.summary.commit_id.clone());

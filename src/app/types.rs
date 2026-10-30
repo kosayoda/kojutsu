@@ -848,6 +848,8 @@ pub struct TagViewEntry {
     pub revision: Option<RevisionArg>,
     pub description: Option<String>,
     pub presence: crate::dag::TagPresence,
+    /// The local tag points at several commits at once.
+    pub is_conflicted: bool,
 }
 
 /// A log entry with its graph drawn. The repo supplies the entry; the

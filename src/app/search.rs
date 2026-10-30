@@ -406,7 +406,7 @@ impl App {
 mod id_match_tests {
     use super::super::App;
     use crate::dag::{
-        CommitInfo, CommitSummary, DivergenceInfo, ShortId, TagDetails, TagLocalTarget, TagPresence,
+        CommitInfo, CommitSummary, DivergenceInfo, RefTarget, ShortId, TagDetails, TagPresence,
     };
     use crate::types::{ActiveView, CommitId, SearchScopes, TagName};
 
@@ -434,14 +434,12 @@ mod id_match_tests {
             tag,
             TagDetails {
                 presence: TagPresence::Local,
-                local_target: Some(TagLocalTarget {
-                    summary: CommitSummary {
-                        commit_id: CommitId::new(TAG_COMMIT_ID),
-                        change_id: ShortId::new(TAG_CHANGE_ID),
-                        short_commit_id: ShortId::new(TAG_COMMIT_ID),
-                        description: None,
-                        divergence: None,
-                    },
+                local: RefTarget::Commit(CommitSummary {
+                    commit_id: CommitId::new(TAG_COMMIT_ID),
+                    change_id: ShortId::new(TAG_CHANGE_ID),
+                    short_commit_id: ShortId::new(TAG_COMMIT_ID),
+                    description: None,
+                    divergence: None,
                 }),
                 remote_targets: Vec::new(),
             },

@@ -36,6 +36,12 @@ pub(crate) fn render_tag_item(
     if let Some(note) = note {
         spans.push(Span::styled(note, Style::default().fg(theme.muted)));
     }
+    if entry.is_conflicted {
+        spans.push(Span::styled(
+            " (conflicted)",
+            Style::default().fg(theme.error),
+        ));
+    }
 
     use crate::ui::spans::dot;
     if let Some(cid) = &entry.change_id {
@@ -105,4 +111,37 @@ pub(crate) fn render_tag_remote_target(
     }
 
     vec![Line::from(spans)]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_tag_item;
+    use crate::app::TagViewEntry;
+    use crate::dag::TagPresence;
+    use crate::theme::Theme;
+    use crate::types::TagName;
+
+    fn rendered(is_conflicted: bool) -> String {
+        let entry = TagViewEntry {
+            name: TagName::new("v1"),
+            commit_id: None,
+            change_id: None,
+            short_commit_id: None,
+            revision: None,
+            description: None,
+            presence: TagPresence::Local,
+            is_conflicted,
+        };
+        render_tag_item(&entry, None, &Theme::default())
+            .iter()
+            .flat_map(|line| &line.spans)
+            .map(|span| span.content.as_ref())
+            .collect()
+    }
+
+    #[test]
+    fn a_conflicted_tag_is_marked_as_such() {
+        assert!(rendered(true).ends_with("v1 (conflicted)"));
+        assert!(rendered(false).ends_with("v1"));
+    }
 }

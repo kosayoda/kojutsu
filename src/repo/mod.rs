@@ -426,9 +426,17 @@ fn short_prefixes_revset(config: &StackedConfig) -> Result<Option<String>> {
 
 /// Where a ref points, in the UI's terms.
 pub(super) fn ref_target(target: &jj_lib::op_store::RefTarget) -> crate::dag::RefTarget {
+    ref_target_with(target, |id| crate::types::CommitId::new(id.hex()))
+}
+
+/// Where a ref points, with its commit read through `commit`.
+pub(super) fn ref_target_with<C>(
+    target: &jj_lib::op_store::RefTarget,
+    commit: impl FnOnce(&jj_lib::backend::CommitId) -> C,
+) -> crate::dag::RefTarget<C> {
     use crate::dag::RefTarget;
     match target.as_normal() {
-        Some(id) => RefTarget::Commit(crate::types::CommitId::new(id.hex())),
+        Some(id) => RefTarget::Commit(commit(id)),
         None if target.is_absent() => RefTarget::Absent,
         None => RefTarget::Conflicted,
     }
