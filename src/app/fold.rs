@@ -869,7 +869,8 @@ impl App {
     }
 
     /// Expand a trimmed resolved section to its full content (tab on the
-    /// gap row).
+    /// gap row), leaving the cursor on the first line the gap hid, which
+    /// takes the gap's place.
     pub(crate) fn expand_conflict_context(
         &mut self,
         entry_idx: EntryIdx,
@@ -881,13 +882,17 @@ impl App {
             file_idx,
             hunk_idx,
         };
-        if matches!(
-            self.conflict_hunk(hunk),
-            Some(crate::conflict::ConflictHunkKind::Resolved { .. })
-        ) {
-            self.update_hunk_ui(hunk, |s| s.expanded = true);
-            self.rebuild_entry_rows(entry_idx);
-        }
+        let Some(trim) = self.hunk_trimmed_context(hunk) else {
+            return;
+        };
+        self.update_hunk_ui(hunk, |s| s.expanded = true);
+        self.rebuild_entry_rows(entry_idx);
+        self.return_to_row(Some(DisplayRow::ConflictContext {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+            line_idx: ConflictLineIdx::new(trim.head),
+        }));
     }
 
     /// Toggle the base block of a conflict hunk between its one-line stub
@@ -1379,5 +1384,29 @@ mod cursor_fallback_tests {
         app.toggle_fold();
         assert!(app.position_of(term_row(BASE, 1)).is_some());
         assert!(app.is_file_unfolded(FileOwner::Dag(ENTRY), CONFLICTED));
+    }
+
+    /// Expanding a gap puts the cursor on the first line it hid, in the
+    /// gap's place, rather than back up on the file. After the conflict
+    /// that is the fourth line, the three before it having been shown.
+    #[test]
+    fn expanding_a_gap_lands_on_the_first_line_it_hid() {
+        let mut app = app();
+        let gap = DisplayRow::ConflictGap {
+            entry_idx: ENTRY,
+            file_idx: CONFLICTED,
+            hunk_idx: ConflictHunkIdx::new(2),
+        };
+        put_cursor_on(&mut app, gap);
+        let at = app.cursor;
+
+        app.toggle_fold();
+
+        assert!(app.position_of(gap).is_none());
+        assert_eq!(app.cursor, at);
+        assert!(matches!(
+            app.cursor_row(),
+            Some(DisplayRow::ConflictContext { line_idx, .. }) if line_idx.raw() == 3
+        ));
     }
 }
