@@ -22,11 +22,7 @@ pub(super) fn header_lines<'a>(app: &'a App, theme: &Theme, width: u16) -> Vec<L
         Span::styled("repository: ", muted),
         Span::styled(app.repo_root.as_str(), Style::default().fg(theme.text)),
     ];
-    let revset_label = match app
-        .revset
-        .active_preset
-        .and_then(|i| app.config.revsets.presets.get(i))
-    {
+    let revset_label = match app.active_preset() {
         Some(preset) => format!("revset ({}): ", preset.name),
         None => "revset: ".to_string(),
     };

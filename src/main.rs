@@ -215,7 +215,7 @@ fn main() -> Result<()> {
     let (requested_revset, active_preset) = kojutsu::app::initial_revset(
         &config.revsets.presets,
         cli.revisions.clone(),
-        persisted.active_preset,
+        persisted.active_preset_name.as_deref(),
     );
     let mut app = App::new(
         requested_revset.clone().unwrap_or_default(),

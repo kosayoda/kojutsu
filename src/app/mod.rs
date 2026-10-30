@@ -362,18 +362,41 @@ mod reload_tests {
     use crate::history::{EvoLogEntry, OpLogEntry};
     use crate::types::CommitId;
 
-    fn with_presets(count: usize) -> Rc<Config> {
+    fn with_presets(presets: &[(&str, &str)]) -> Rc<Config> {
         Rc::new(Config {
             revsets: RevsetsConfig {
-                presets: (0..count)
-                    .map(|i| Preset {
-                        name: i.to_string(),
-                        revset: String::new(),
+                presets: presets
+                    .iter()
+                    .map(|&(name, revset)| Preset {
+                        name: name.into(),
+                        revset: revset.into(),
                     })
                     .collect(),
             },
             ..Config::default()
         })
+    }
+
+    /// An app showing preset `mine`, the second of two.
+    fn showing_mine() -> App {
+        let mut app = App::new(
+            "mine()".into(),
+            String::new(),
+            with_presets(&[("all", "all()"), ("mine", "mine()")]),
+        );
+        app.revset.active_preset = Some(1);
+        app.take_repo_requests();
+        app
+    }
+
+    fn revset_loads(app: &mut App) -> Vec<Option<String>> {
+        app.take_repo_requests()
+            .into_iter()
+            .filter_map(|request| match request {
+                RepoRequest::Revset { revset, .. } => Some(revset),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Scopes are seeded from config once and toggled by the user after.
@@ -395,15 +418,42 @@ mod reload_tests {
     }
 
     #[test]
-    fn a_reload_keeps_an_active_preset_only_while_its_index_is_in_range() {
-        let mut app = App::new(String::new(), String::new(), with_presets(3));
-        app.revset.active_preset = Some(2);
+    fn a_reload_follows_the_active_preset_to_its_new_place() {
+        let mut app = showing_mine();
 
-        app.apply_reloaded_config(with_presets(3));
-        assert_eq!(app.revset.active_preset, Some(2));
+        app.apply_reloaded_config(with_presets(&[("mine", "mine()"), ("all", "all()")]));
 
-        app.apply_reloaded_config(with_presets(2));
+        assert_eq!(app.revset.active_preset, Some(0));
+        assert!(revset_loads(&mut app).is_empty());
+    }
+
+    #[test]
+    fn a_reload_drops_an_active_preset_no_longer_under_its_name() {
+        let mut app = showing_mine();
+        app.apply_reloaded_config(with_presets(&[("all", "all()"), ("me", "mine()")]));
         assert_eq!(app.revset.active_preset, None);
+
+        let mut app = showing_mine();
+        app.apply_reloaded_config(with_presets(&[("all", "all()")]));
+        assert_eq!(app.revset.active_preset, None);
+    }
+
+    /// The header names the preset, so the revset shown must be the one the
+    /// preset now has.
+    #[test]
+    fn a_reload_that_changes_the_active_presets_revset_loads_it() {
+        let mut app = showing_mine();
+
+        app.apply_reloaded_config(with_presets(&[
+            ("all", "all()"),
+            ("mine", "mine() & ~empty()"),
+        ]));
+
+        assert_eq!(app.revset.active_preset, Some(1));
+        assert_eq!(
+            revset_loads(&mut app),
+            [Some("mine() & ~empty()".to_string())]
+        );
     }
 
     fn with_normal_glyph(normal: char) -> Rc<Config> {
@@ -1896,7 +1946,7 @@ impl App {
             ignore_working_copy: self.toggles.contains(CommandFlags::IGNORE_WORKING_COPY),
             debug: self.toggles.contains(CommandFlags::DEBUG),
             view_search_scopes,
-            active_preset: self.revset.active_preset,
+            active_preset_name: self.active_preset().map(|p| p.name.clone()),
             git_diff: self.diff_format == DiffFormat::Git,
             annotate_separators: self.annotate.show_commit_separators,
             bookmark_separators: self.views.show_bookmark_separators,
@@ -1935,23 +1985,42 @@ impl App {
     ///
     /// Search scopes are deliberately not re-seeded: they start from
     /// `default_search_scopes` but the user toggles them at runtime. The
-    /// active preset is re-clamped, since the new list may be shorter. The
-    /// repo service keeps its own copy of the diff limit, so it is queued a
-    /// request to replace it.
+    /// active preset is followed by name, since the new list may be
+    /// reordered or shortened, and its revset is loaded again if the new
+    /// config changed it, so the header never names a preset over another
+    /// revset. The repo service keeps its own copy of the diff limit, so it
+    /// is queued a request to replace it.
     pub fn apply_reloaded_config(&mut self, config: Rc<crate::config::Config>) {
         self.pending_repo_requests
             .push(RepoRequest::SetDiffSizeLimit {
                 bytes: config.diff.max_file_size_bytes(),
             });
         let glyphs_changed = config.glyphs != self.config.glyphs;
+        let old_preset = self.active_preset().cloned();
         self.config = config;
-        self.revset.active_preset = self
-            .revset
-            .active_preset
-            .filter(|&i| i < self.config.revsets.presets.len());
+        self.revset.active_preset = old_preset.as_ref().and_then(|old| {
+            self.config
+                .revsets
+                .presets
+                .iter()
+                .position(|p| p.name == old.name)
+        });
+        if let (Some(old), Some(new)) = (old_preset, self.active_preset())
+            && new.revset != old.revset
+        {
+            let revset = new.revset.clone();
+            self.request_revset_load(Some(revset), RevsetLoadKind::NoSnapshot);
+        }
         if glyphs_changed {
             self.redraw_graphs();
         }
+    }
+
+    /// The preset the shown revset came from, if it came from one.
+    pub fn active_preset(&self) -> Option<&crate::config::Preset> {
+        self.revset
+            .active_preset
+            .and_then(|i| self.config.revsets.presets.get(i))
     }
 
     /// Draw every graph again with the configured glyphs, which are baked in

@@ -647,7 +647,9 @@ pub struct PersistedState {
     /// Per-view search scope bitflags, indexed by `ActiveView::idx()`.
     #[serde(default, alias = "search_scopes")]
     pub view_search_scopes: [u8; <ActiveView as strum::EnumCount>::COUNT],
-    pub active_preset: Option<usize>,
+    /// By name: an index would name another preset once the list is
+    /// reordered.
+    pub active_preset_name: Option<String>,
     pub git_diff: bool,
     pub annotate_separators: bool,
     pub bookmark_separators: bool,
@@ -664,7 +666,7 @@ impl Default for PersistedState {
             ignore_working_copy: false,
             debug: false,
             view_search_scopes: [0; <ActiveView as strum::EnumCount>::COUNT],
-            active_preset: None,
+            active_preset_name: None,
             git_diff: false,
             annotate_separators: false,
             bookmark_separators: false,
@@ -680,13 +682,13 @@ impl Default for PersistedState {
 pub fn initial_revset(
     presets: &[crate::config::Preset],
     requested: Option<String>,
-    remembered: Option<usize>,
+    remembered: Option<&str>,
 ) -> (Option<String>, Option<usize>) {
     if requested.is_some() {
         return (requested, None);
     }
     let preset = remembered
-        .filter(|&i| i < presets.len())
+        .and_then(|name| presets.iter().position(|p| p.name == name))
         .or((!presets.is_empty()).then_some(0));
     (preset.map(|i| presets[i].revset.clone()), preset)
 }
@@ -1348,16 +1350,19 @@ mod initial_revset_tests {
     #[test]
     fn a_command_line_revset_belongs_to_no_preset() {
         assert_eq!(
-            initial_revset(&presets(), Some("@".into()), Some(1)),
+            initial_revset(&presets(), Some("@".into()), Some("all")),
             (Some("@".into()), None)
         );
     }
 
+    /// Remembered by name, so reordering the list in between keeps it.
     #[test]
-    fn the_remembered_preset_opens() {
+    fn the_remembered_preset_opens_wherever_it_now_is() {
+        let mut presets = presets();
+        presets.reverse();
         assert_eq!(
-            initial_revset(&presets(), None, Some(1)),
-            (Some("all()".into()), Some(1))
+            initial_revset(&presets, None, Some("mine")),
+            (Some("mine()".into()), Some(1))
         );
     }
 
@@ -1365,13 +1370,13 @@ mod initial_revset_tests {
     #[test]
     fn a_vanished_preset_falls_back_to_the_first() {
         assert_eq!(
-            initial_revset(&presets(), None, Some(7)),
+            initial_revset(&presets(), None, Some("gone")),
             (Some("mine()".into()), Some(0))
         );
     }
 
     #[test]
     fn without_presets_jj_decides() {
-        assert_eq!(initial_revset(&[], None, Some(0)), (None, None));
+        assert_eq!(initial_revset(&[], None, Some("mine")), (None, None));
     }
 }
