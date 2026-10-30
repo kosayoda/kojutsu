@@ -960,124 +960,31 @@ impl ColorWordBuilder {
 
         // Word-diff once, use for both alternation check and rendering.
         let can_inline = !self.removed_lines.is_empty() && !self.added_lines.is_empty();
-        let diff = if can_inline {
-            Some(jj_lib::diff::ContentDiff::by_word([
-                removed_block.as_bytes(),
-                added_block.as_bytes(),
-            ]))
-        } else {
-            None
-        };
+        let inline_diff = can_inline
+            .then(|| {
+                jj_lib::diff::ContentDiff::by_word([
+                    removed_block.as_bytes(),
+                    added_block.as_bytes(),
+                ])
+            })
+            .filter(|d| count_alternations(d) <= MAX_ALTERNATION);
 
-        let should_inline = diff
-            .as_ref()
-            .is_some_and(|d| count_alternations(d) <= MAX_ALTERNATION);
-
-        if should_inline {
-            let diff = diff.unwrap();
-            let mut tokens: Vec<DiffToken> = Vec::new();
-            let mut content = String::new();
-            let base_old = self.old_line;
-            let base_new = self.new_line;
-
+        if let Some(diff) = inline_diff {
+            let mut lines = InlineLines::new(out, self.old_line, self.new_line);
             for h in diff.hunks() {
                 match h.kind {
                     jj_lib::diff::DiffHunkKind::Matching => {
-                        let text = String::from_utf8_lossy(h.contents[0]);
-                        for (i, part) in text.split('\n').enumerate() {
-                            if i > 0 {
-                                out.push(DiffLine {
-                                    kind: DiffLineKind::Context,
-                                    content: std::mem::take(&mut content),
-                                    tokens: std::mem::take(&mut tokens),
-                                    old_line: Some(self.old_line),
-                                    new_line: Some(self.new_line),
-                                    conflict_region: false,
-                                });
-                                self.old_line += 1;
-                                self.new_line += 1;
-                            }
-                            if !part.is_empty() {
-                                content.push_str(part);
-                                tokens.push(DiffToken {
-                                    text: part.to_string(),
-                                    kind: DiffTokenKind::Unchanged,
-                                });
-                            }
-                        }
+                        lines.push(h.contents[0], DiffTokenKind::Unchanged, true, true);
                     }
                     jj_lib::diff::DiffHunkKind::Different => {
-                        let removed = String::from_utf8_lossy(h.contents[0]);
-                        let added = String::from_utf8_lossy(h.contents[1]);
-
-                        for (i, part) in removed.split('\n').enumerate() {
-                            if i > 0 {
-                                out.push(DiffLine {
-                                    kind: DiffLineKind::Context,
-                                    content: std::mem::take(&mut content),
-                                    tokens: std::mem::take(&mut tokens),
-                                    old_line: Some(self.old_line),
-                                    new_line: None,
-                                    conflict_region: false,
-                                });
-                                self.old_line += 1;
-                            }
-                            if !part.is_empty() {
-                                content.push_str(part);
-                                tokens.push(DiffToken {
-                                    text: part.to_string(),
-                                    kind: DiffTokenKind::Removed,
-                                });
-                            }
-                        }
-
-                        for (i, part) in added.split('\n').enumerate() {
-                            if i > 0 {
-                                out.push(DiffLine {
-                                    kind: DiffLineKind::Context,
-                                    content: std::mem::take(&mut content),
-                                    tokens: std::mem::take(&mut tokens),
-                                    old_line: None,
-                                    new_line: Some(self.new_line),
-                                    conflict_region: false,
-                                });
-                                self.new_line += 1;
-                            }
-                            if !part.is_empty() {
-                                content.push_str(part);
-                                tokens.push(DiffToken {
-                                    text: part.to_string(),
-                                    kind: DiffTokenKind::Added,
-                                });
-                            }
-                        }
+                        lines.push(h.contents[0], DiffTokenKind::Removed, true, false);
+                        lines.push(h.contents[1], DiffTokenKind::Added, false, true);
                     }
                 }
             }
-
-            if !content.is_empty() || !tokens.is_empty() {
-                let has_removed = tokens.iter().any(|t| t.kind == DiffTokenKind::Removed);
-                let has_added = tokens.iter().any(|t| t.kind == DiffTokenKind::Added);
-                out.push(DiffLine {
-                    kind: DiffLineKind::Context,
-                    content,
-                    tokens,
-                    old_line: if self.old_line > base_old || has_removed || !has_added {
-                        Some(self.old_line)
-                    } else {
-                        None
-                    },
-                    new_line: if self.new_line > base_new || has_added || !has_removed {
-                        Some(self.new_line)
-                    } else {
-                        None
-                    },
-                    conflict_region: false,
-                });
-            }
-
-            self.old_line = base_old + self.removed_count;
-            self.new_line = base_new + self.added_count;
+            lines.finish();
+            self.old_line += self.removed_count;
+            self.new_line += self.added_count;
         } else {
             for line in self.removed_lines.drain(..) {
                 out.push(DiffLine {
@@ -1113,6 +1020,83 @@ impl ColorWordBuilder {
         self.added_lines.clear();
         self.removed_count = 0;
         self.added_count = 0;
+    }
+}
+
+/// The display lines of an inline colour-words block. Each old and each
+/// new line is numbered once: on the first display line holding some of
+/// its content or, when it has none, on the line where it ends.
+struct InlineLines<'a> {
+    out: &'a mut Vec<DiffLine>,
+    content: String,
+    tokens: Vec<DiffToken>,
+    old_line: u32,
+    new_line: u32,
+    old_numbered: bool,
+    new_numbered: bool,
+}
+
+impl<'a> InlineLines<'a> {
+    fn new(out: &'a mut Vec<DiffLine>, old_line: u32, new_line: u32) -> Self {
+        Self {
+            out,
+            content: String::new(),
+            tokens: Vec::new(),
+            old_line,
+            new_line,
+            old_numbered: false,
+            new_numbered: false,
+        }
+    }
+
+    /// Add a word-diff span of `kind`. Its newlines end the display line
+    /// and, as `ends_old`/`ends_new` say, the old line, the new line, or
+    /// both.
+    fn push(&mut self, bytes: &[u8], kind: DiffTokenKind, ends_old: bool, ends_new: bool) {
+        for (i, part) in String::from_utf8_lossy(bytes).split('\n').enumerate() {
+            if i > 0 {
+                self.end_line(ends_old, ends_new);
+            }
+            if !part.is_empty() {
+                self.content.push_str(part);
+                self.tokens.push(DiffToken {
+                    text: part.to_string(),
+                    kind,
+                });
+            }
+        }
+    }
+
+    fn end_line(&mut self, ends_old: bool, ends_new: bool) {
+        let number_old = !self.old_numbered
+            && (ends_old || self.tokens.iter().any(|t| t.kind != DiffTokenKind::Added));
+        let number_new = !self.new_numbered
+            && (ends_new || self.tokens.iter().any(|t| t.kind != DiffTokenKind::Removed));
+        self.out.push(DiffLine {
+            kind: DiffLineKind::Context,
+            content: std::mem::take(&mut self.content),
+            tokens: std::mem::take(&mut self.tokens),
+            old_line: number_old.then_some(self.old_line),
+            new_line: number_new.then_some(self.new_line),
+            conflict_region: false,
+        });
+        if ends_old {
+            self.old_line += 1;
+        }
+        self.old_numbered = !ends_old && (self.old_numbered || number_old);
+        if ends_new {
+            self.new_line += 1;
+        }
+        self.new_numbered = !ends_new && (self.new_numbered || number_new);
+    }
+
+    /// End the block, where its last old line and last new line both end.
+    /// Nothing is left to show when the last display line is empty and
+    /// both lines were already numbered.
+    fn finish(mut self) {
+        if !self.tokens.is_empty() || !self.old_numbered || !self.new_numbered {
+            self.end_line(true, true);
+        }
     }
 }
 
@@ -1445,5 +1429,123 @@ mod tests {
         assert!(!shows(&git, 8) && !shows(&git, 12));
         assert!(shows(&color_words, 5) && shows(&color_words, 15));
         assert!(!shows(&color_words, 4) && !shows(&color_words, 16));
+    }
+
+    /// A colour-words diff (one line of context) as each line's shape:
+    /// `-`/`+` for a split removed or added line, `~` for an inline line
+    /// holding changed words, ` ` for plain context; then its old and new
+    /// line numbers.
+    fn color_words(before: &str, after: &str) -> Vec<(char, Option<u32>, Option<u32>)> {
+        let (_, lines) = diff_lines(bstr::BStr::new(before), bstr::BStr::new(after), 1, 1);
+        lines
+            .into_iter()
+            .filter(|l| l.kind != DiffLineKind::Header)
+            .map(|l| {
+                let changed = l.tokens.iter().any(|t| t.kind != DiffTokenKind::Unchanged);
+                let shape = match l.kind {
+                    DiffLineKind::Removed => '-',
+                    DiffLineKind::Added => '+',
+                    _ if changed => '~',
+                    _ => ' ',
+                };
+                (shape, l.old_line, l.new_line)
+            })
+            .collect()
+    }
+
+    /// A line with a few words changed reads inline, numbered on both
+    /// sides; past three switches between removed and added words it
+    /// splits into the removed line and the added one.
+    #[test]
+    fn a_light_word_change_is_inline_and_a_heavy_one_splits() {
+        let cases = [
+            ("let x = 1;", "let x = 2;", true),
+            ("a b c", "a b X c", true),
+            ("a b c d", "x b d", true),
+            ("a b c d e", "x b d y", false),
+            ("one two three four five", "uno two tres four cinco", false),
+        ];
+        for (old, new, inline) in cases {
+            let expected = if inline {
+                vec![('~', Some(1), Some(1)), (' ', Some(2), Some(2))]
+            } else {
+                vec![
+                    ('-', Some(1), None),
+                    ('+', None, Some(1)),
+                    (' ', Some(2), Some(2)),
+                ]
+            };
+            assert_eq!(
+                color_words(&format!("{old}\nend\n"), &format!("{new}\nend\n")),
+                expected,
+                "{old:?} -> {new:?}"
+            );
+        }
+    }
+
+    /// A whole line added or removed has no number on the side it is
+    /// missing from, and the lines after it keep counting on both sides.
+    #[test]
+    fn a_whole_line_change_is_numbered_on_its_own_side() {
+        assert_eq!(
+            color_words("a\nc\n", "a\nb\nc\n"),
+            [
+                (' ', Some(1), Some(1)),
+                ('+', None, Some(2)),
+                (' ', Some(2), Some(3)),
+            ]
+        );
+        assert_eq!(
+            color_words("a\nb\nc\n", "a\nc\n"),
+            [
+                (' ', Some(1), Some(1)),
+                ('-', Some(2), None),
+                (' ', Some(3), Some(2)),
+            ]
+        );
+    }
+
+    /// Colour-words numbers every old and every new line of a hunk exactly
+    /// once and in order, as the git format does, however the changed
+    /// words fall across the lines of a block, and with the offsets that
+    /// earlier hunks leave.
+    #[test]
+    fn color_words_numbers_each_line_once_like_the_git_format() {
+        let filler: String = (1..=8).map(|n| format!("filler {n}\n")).collect();
+        let cases = [
+            ("a c\n", "a b c\n"),
+            ("a b c\n", "a c\n"),
+            ("a\n", "a x\nnew line\n"),
+            ("old line\na\n", "a\n"),
+            ("foo(a,\nb)\n", "foo(a, b)\n"),
+            ("x\n\n", "y\n"),
+            ("x", "x\n\n"),
+            ("one\ntwo\n", "one\n\ntwo\n"),
+            ("k = 1\n", "k = 2\n\nmore\n"),
+        ];
+        for (old, new) in cases {
+            for (before, after) in [
+                (old.to_string(), new.to_string()),
+                (
+                    format!("first\n{filler}{old}{filler}{old}"),
+                    format!("first\ninserted\n{filler}{new}{filler}{new}"),
+                ),
+            ] {
+                let (git, cw) = diff_lines(bstr::BStr::new(&before), bstr::BStr::new(&after), 1, 1);
+                let numbers = |lines: &[DiffLine], side: fn(&DiffLine) -> Option<u32>| {
+                    lines.iter().filter_map(side).collect::<Vec<_>>()
+                };
+                assert_eq!(
+                    numbers(&cw, |l| l.old_line),
+                    numbers(&git, |l| l.old_line),
+                    "old side of {before:?} -> {after:?}"
+                );
+                assert_eq!(
+                    numbers(&cw, |l| l.new_line),
+                    numbers(&git, |l| l.new_line),
+                    "new side of {before:?} -> {after:?}"
+                );
+            }
+        }
     }
 }
