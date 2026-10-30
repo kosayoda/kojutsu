@@ -665,8 +665,12 @@ impl Session {
     /// Open the revset in `$EDITOR` and load what comes back.
     fn edit_revset(&mut self) {
         let text = format!("{}\n", self.app.revset_input_text());
-        match self.screen.suspended(|| edit_in_editor(&text, "revset")) {
+        match self
+            .screen
+            .suspended(|| edit_in_editor(text.as_bytes(), "revset"))
+        {
             EditOutcome::Edited(edited) => {
+                let edited = String::from_utf8_lossy(&edited);
                 let revset = edited.trim();
                 if !revset.is_empty() {
                     update_revset(&mut self.app, revset.to_string());
@@ -963,7 +967,7 @@ fn temp_file_like(path: &str, content: &[u8]) -> std::io::Result<tempfile::Named
 /// Outcome of editing content in `$EDITOR`.
 enum EditOutcome {
     /// Saved with changed content.
-    Edited(String),
+    Edited(Vec<u8>),
     /// Saved, but the content was unchanged.
     Unchanged,
     /// Editor exited non-zero (user cancelled, e.g. `:cq`).
@@ -975,13 +979,13 @@ enum EditOutcome {
 
 /// Open `content` in `$EDITOR` (in a temp file named like `path`) and
 /// report what happened. The caller hands it the terminal.
-fn edit_in_editor(content: &str, path: &str) -> EditOutcome {
-    let file = match temp_file_like(path, content.as_bytes()) {
+fn edit_in_editor(content: &[u8], path: &str) -> EditOutcome {
+    let file = match temp_file_like(path, content) {
         Ok(f) => f,
         Err(e) => return EditOutcome::Failed(format!("temp file: {e}")),
     };
     match run_editor(&[file.path().as_os_str()]) {
-        Ok(s) if s.success() => match std::fs::read_to_string(file.path()) {
+        Ok(s) if s.success() => match std::fs::read(file.path()) {
             Ok(edited) if edited != content => EditOutcome::Edited(edited),
             Ok(_) => EditOutcome::Unchanged,
             Err(e) => EditOutcome::Failed(format!("read: {e}")),

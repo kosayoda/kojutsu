@@ -89,7 +89,7 @@ pub enum Action {
     EditConflictFile {
         change_id: crate::types::RevisionArg,
         path: crate::types::RepoPath,
-        content: String,
+        content: bstr::BString,
         flags: crate::keymap::CommandFlags,
     },
     /// Suspend TUI, edit one conflict hunk's resolution in $EDITOR; store
@@ -99,7 +99,7 @@ pub enum Action {
         commit_id: crate::types::CommitId,
         path: crate::types::RepoPath,
         hunk_idx: crate::idx::ConflictHunkIdx,
-        seed: String,
+        seed: bstr::BString,
         flags: crate::keymap::CommandFlags,
     },
     /// Pre-hooks completed after yielding; dispatch the deferred action.

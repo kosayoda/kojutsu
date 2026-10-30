@@ -591,16 +591,16 @@ pub(crate) fn render_conflict_term(
         ConflictHunkKind::Conflict { terms } => {
             let term = terms.get(term_idx.raw())?;
             let line = if !term.kind.is_side() && base_folded {
-                let n = term.text.lines.len();
+                let n = term.text.line_count();
                 TermLine::Note(if term.absent {
                     "(file deleted)".to_string()
                 } else {
                     format!("… {n} {} (tab)", crate::pluralize!(n, "line", "lines"))
                 })
             } else {
-                match term.text.lines.get(line_idx.raw()) {
+                match term.text.display_line(line_idx.raw()) {
                     Some(l) => TermLine::Text(
-                        l.clone(),
+                        l,
                         term.token_lines
                             .get(line_idx.raw())
                             .cloned()
@@ -670,7 +670,7 @@ pub(crate) fn render_conflict_context(
     let text = app
         .conflict_hunk(hunk)
         .and_then(|h| match h {
-            ConflictHunkKind::Resolved { text } => text.lines.get(line_idx.raw()).cloned(),
+            ConflictHunkKind::Resolved { text } => text.display_line(line_idx.raw()),
             _ => None,
         })
         .unwrap_or_default();
@@ -707,7 +707,7 @@ pub(crate) fn render_conflict_edited(
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let line = match app.hunk_pick(hunk) {
-        Some(ConflictPick::Edited(text)) => Some(text.lines.get(line_idx.raw()).cloned()),
+        Some(ConflictPick::Edited(text)) => Some(text.display_line(line_idx.raw())),
         _ => None,
     };
     // Selection color: an edited block is the user's chosen content and

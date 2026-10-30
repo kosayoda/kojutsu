@@ -5,6 +5,8 @@
 
 use crate::dag::DiffToken;
 
+use bstr::{BString, ByteSlice as _};
+
 use jj_lib::conflicts::ConflictMarkerStyle;
 
 /// The marker style kojutsu materializes conflicts with, and the name jj
@@ -54,41 +56,49 @@ impl ConflictTermKind {
     }
 }
 
-/// Text content stored as display lines. `str::lines` drops the final
-/// newline, so whether the content ended with one is kept separately for
-/// faithful reassembly.
+/// File content split into lines. Each line keeps its own terminator
+/// (`\n`, `\r\n`, or none on an unterminated last line) and its bytes
+/// as stored, so writing the lines back reproduces the content exactly:
+/// a resolution must not change line endings or encoding of the parts
+/// the user didn't touch.
 #[derive(Clone, PartialEq, Eq)]
 pub struct ConflictText {
-    pub lines: Vec<String>,
-    pub trailing_newline: bool,
+    lines: Vec<BString>,
 }
 
 impl ConflictText {
     pub fn from_bytes(bytes: &[u8]) -> Self {
         Self {
-            lines: String::from_utf8_lossy(bytes)
-                .lines()
-                .map(String::from)
+            lines: bytes
+                .split_inclusive(|&b| b == b'\n')
+                .map(BString::from)
                 .collect(),
-            trailing_newline: bytes.ends_with(b"\n"),
         }
     }
 
-    /// Append the content to `out`, restoring line terminators.
-    pub fn write_to(&self, out: &mut String) {
-        for (i, line) in self.lines.iter().enumerate() {
-            out.push_str(line);
-            if i + 1 < self.lines.len() || self.trailing_newline {
-                out.push('\n');
-            }
+    pub fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+
+    /// Line `idx` for display: terminator dropped, invalid UTF-8 replaced.
+    pub fn display_line(&self, idx: usize) -> Option<String> {
+        let line = self.lines.get(idx)?;
+        let line = line.strip_suffix(b"\n").unwrap_or(line);
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        Some(line.to_str_lossy().into_owned())
+    }
+
+    /// Append the content to `out`.
+    pub fn write_to(&self, out: &mut BString) {
+        for line in &self.lines {
+            out.extend_from_slice(line);
         }
     }
 
-    /// The content as an owned string, with line terminators restored.
-    pub fn to_content(&self) -> String {
-        let mut s = String::new();
-        self.write_to(&mut s);
-        s
+    pub fn to_bytes(&self) -> BString {
+        let mut out = BString::default();
+        self.write_to(&mut out);
+        out
     }
 }
 
@@ -102,8 +112,8 @@ pub struct ConflictTerm {
     pub absent: bool,
     pub text: ConflictText,
     /// Word-level tokens per line, highlighting what this side changed
-    /// relative to its base. Empty for base and absent terms. Parallel to
-    /// `text.lines` when present.
+    /// relative to its base. Empty for base and absent terms; otherwise one
+    /// list per line of `text`.
     pub token_lines: Vec<Vec<DiffToken>>,
 }
 
@@ -145,7 +155,7 @@ impl ConflictPick {
 /// when false the content still carries markers for the unpicked hunks (jj
 /// parses those back into a conflicted state).
 pub struct Resolution {
-    pub content: String,
+    pub content: BString,
     pub complete: bool,
 }
 
@@ -189,7 +199,7 @@ impl ConflictHunkKind {
         if expanded {
             return None;
         }
-        let n = text.lines.len();
+        let n = text.line_count();
         let head = if first { 0 } else { CONFLICT_CONTEXT_LINES };
         let tail = if last { 0 } else { CONFLICT_CONTEXT_LINES };
         let hidden = n.saturating_sub(head + tail);
@@ -207,12 +217,35 @@ mod tests {
 
     #[test]
     fn conflict_text_round_trips_content() {
-        for content in ["a\nb\n", "a\nb", "", "\n", "a\n\n", "no newline"] {
-            let text = ConflictText::from_bytes(content.as_bytes());
-            let mut out = String::new();
-            text.write_to(&mut out);
-            assert_eq!(out, content, "round trip failed for {content:?}");
+        let contents: [&[u8]; 10] = [
+            b"a\nb\n",
+            b"a\nb",
+            b"",
+            b"\n",
+            b"a\n\n",
+            b"no newline",
+            b"a\r\nb\r\n",
+            b"a\r\nb",
+            b"mixed\r\nendings\n",
+            b"latin-1 \xe9\n",
+        ];
+        for content in contents {
+            let text = ConflictText::from_bytes(content);
+            assert_eq!(
+                text.to_bytes(),
+                content,
+                "round trip failed for {content:?}"
+            );
         }
+    }
+
+    #[test]
+    fn a_line_displays_without_its_terminator() {
+        let text = ConflictText::from_bytes(b"crlf\r\nlf\n\nlast \xe9");
+        let shown: Vec<_> = (0..text.line_count())
+            .map(|i| text.display_line(i).unwrap())
+            .collect();
+        assert_eq!(shown, ["crlf", "lf", "", "last \u{fffd}"]);
     }
 }
 

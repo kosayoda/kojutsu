@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use bstr::ByteSlice as _;
 use color_eyre::Result;
 use color_eyre::eyre::Context;
 use futures::AsyncReadExt as _;
@@ -653,7 +654,8 @@ fn side_token_lines(base: &[u8], side: &[u8]) -> Vec<Vec<DiffToken>> {
                 })
                 .collect();
             if let Some(last) = diff_tokens.last_mut() {
-                last.text = last.text.trim_end_matches('\n').to_string();
+                let text = last.text.strip_suffix('\n').unwrap_or(&last.text);
+                last.text = text.strip_suffix('\r').unwrap_or(text).to_string();
             }
             lines.push(diff_tokens);
         }
@@ -683,8 +685,8 @@ fn default_materialize_options() -> ConflictMaterializeOptions {
 /// text jj would produce). The `Merge` is rebuilt by term kind: sides as
 /// adds, bases as removes, each ordered by ordinal, rather than trusting
 /// the Vec's position, so markers are correct regardless of storage order.
-pub fn hunk_markers(terms: &[crate::conflict::ConflictTerm]) -> String {
-    let term_bytes = |t: &crate::conflict::ConflictTerm| bstr::BString::from(t.text.to_content());
+pub fn hunk_markers(terms: &[crate::conflict::ConflictTerm]) -> bstr::BString {
+    let term_bytes = |t: &crate::conflict::ConflictTerm| t.text.to_bytes();
     let mut sides: Vec<(usize, bstr::BString)> = Vec::new();
     let mut bases: Vec<(usize, bstr::BString)> = Vec::new();
     for t in terms {
@@ -699,24 +701,23 @@ pub fn hunk_markers(terms: &[crate::conflict::ConflictTerm]) -> String {
         bases.into_iter().map(|(_, b)| b),
         sides.into_iter().map(|(_, s)| s),
     );
-    let materialized = jj_lib::conflicts::materialize_merge_result_to_bytes(
+    jj_lib::conflicts::materialize_merge_result_to_bytes(
         &merge,
         &ConflictLabels::unlabeled(),
         &default_materialize_options(),
-    );
-    String::from_utf8_lossy(&materialized).into_owned()
+    )
 }
 
 /// Whether any line looks like a git-style conflict marker (7+ repeats of
 /// a marker character at line start). Used to reject hand-edited hunk
 /// resolutions that still contain markers.
-pub fn has_conflict_markers(content: &str) -> bool {
+pub fn has_conflict_markers(content: &[u8]) -> bool {
     content.lines().any(|l| {
-        let mut chars = l.chars();
-        let Some(first) = chars.next() else {
+        let Some((&first, rest)) = l.split_first() else {
             return false;
         };
-        matches!(first, '<' | '>' | '=' | '|') && chars.take_while(|c| *c == first).count() >= 6
+        matches!(first, b'<' | b'>' | b'=' | b'|')
+            && rest.iter().take_while(|&&b| b == first).count() >= 6
     })
 }
 
@@ -730,7 +731,7 @@ pub fn assemble_resolution(
     hunks: &[crate::conflict::ConflictHunkKind],
     picks: &std::collections::HashMap<crate::idx::ConflictHunkIdx, crate::conflict::ConflictPick>,
 ) -> crate::conflict::Resolution {
-    let mut content = String::new();
+    let mut content = bstr::BString::default();
     let mut complete = true;
     for (i, hunk) in hunks.iter().enumerate() {
         match hunk {
@@ -746,14 +747,14 @@ pub fn assemble_resolution(
                         // rather than silently vanishing from the file.
                         None => {
                             complete = false;
-                            content.push_str(&hunk_markers(terms));
+                            content.extend_from_slice(&hunk_markers(terms));
                         }
                     }
                 }
                 Some(crate::conflict::ConflictPick::Edited(text)) => text.write_to(&mut content),
                 None => {
                     complete = false;
-                    content.push_str(&hunk_markers(terms));
+                    content.extend_from_slice(&hunk_markers(terms));
                 }
             },
         }
@@ -1190,13 +1191,13 @@ mod tests {
     fn conflict_terms_tags_sides_and_bases() {
         let hunk = Merge::from_removes_adds(vec!["base\n"], vec!["ours\n", "theirs\n"]);
         let terms = conflict_terms(&hunk, &[false; 3]);
-        let tagged: Vec<(ConflictTermKind, &str)> = terms
+        let tagged: Vec<(ConflictTermKind, String)> = terms
             .iter()
-            .map(|t| (t.kind, t.text.lines[0].as_str()))
+            .map(|t| (t.kind, t.text.display_line(0).unwrap()))
             .collect();
-        assert!(tagged.contains(&(ConflictTermKind::Side(0), "ours")));
-        assert!(tagged.contains(&(ConflictTermKind::Side(1), "theirs")));
-        assert!(tagged.contains(&(ConflictTermKind::Base(0), "base")));
+        assert!(tagged.contains(&(ConflictTermKind::Side(0), "ours".into())));
+        assert!(tagged.contains(&(ConflictTermKind::Side(1), "theirs".into())));
+        assert!(tagged.contains(&(ConflictTermKind::Base(0), "base".into())));
     }
 
     #[test]
@@ -1207,15 +1208,15 @@ mod tests {
         );
         let terms = conflict_terms(&hunk, &[false; 5]);
         assert_eq!(terms.len(), 5);
-        let sides: Vec<&str> = terms
+        let sides: Vec<String> = terms
             .iter()
             .filter(|t| matches!(t.kind, ConflictTermKind::Side(_)))
-            .map(|t| t.text.lines[0].as_str())
+            .map(|t| t.text.display_line(0).unwrap())
             .collect();
-        let bases: Vec<&str> = terms
+        let bases: Vec<String> = terms
             .iter()
             .filter(|t| matches!(t.kind, ConflictTermKind::Base(_)))
-            .map(|t| t.text.lines[0].as_str())
+            .map(|t| t.text.display_line(0).unwrap())
             .collect();
         assert_eq!(sides, ["side1", "side2", "side3"]);
         assert_eq!(bases, ["base1", "base2"]);
@@ -1232,7 +1233,7 @@ mod tests {
             match t.kind {
                 ConflictTermKind::Side(0) => {
                     assert!(t.absent);
-                    assert!(t.text.lines.is_empty());
+                    assert_eq!(t.text.line_count(), 0);
                 }
                 _ => assert!(!t.absent),
             }
@@ -1264,10 +1265,10 @@ mod tests {
         )]);
         let res = assemble_resolution(&hunks, &picks);
         assert!(!res.complete);
-        assert!(res.content.starts_with("ctx1\ntheirs\nctx2\n<<<<<<<"));
-        assert!(res.content.contains("|||||||"));
-        assert!(res.content.contains("======="));
-        assert!(res.content.contains(">>>>>>>"));
+        assert!(res.content.starts_with(b"ctx1\ntheirs\nctx2\n<<<<<<<"));
+        assert!(res.content.contains_str("|||||||"));
+        assert!(res.content.contains_str("======="));
+        assert!(res.content.contains_str(">>>>>>>"));
         assert!(has_conflict_markers(&res.content));
 
         // Fully picked (ours).
@@ -1300,6 +1301,37 @@ mod tests {
         assert!(has_conflict_markers(&res.content));
     }
 
+    /// Resolving keeps the file's bytes: CRLF endings and non-UTF-8 text in
+    /// both the picked side and the untouched context come out as they
+    /// went in.
+    #[test]
+    fn a_resolution_keeps_line_endings_and_encoding() {
+        use crate::conflict::{ConflictHunkKind, ConflictPick, ConflictText};
+        use crate::idx::ConflictHunkIdx;
+        use std::collections::HashMap;
+        let hunks = vec![
+            ConflictHunkKind::Resolved {
+                text: ConflictText::from_bytes(b"caf\xe9\r\n"),
+            },
+            ConflictHunkKind::Conflict {
+                terms: conflict_terms(
+                    &Merge::from_removes_adds(
+                        vec![&b"base\r\n"[..]],
+                        vec![&b"ours\r\n"[..], &b"theirs\r\n"[..]],
+                    ),
+                    &[false; 3],
+                ),
+            },
+        ];
+        let picks = HashMap::from([(
+            ConflictHunkIdx::new(1),
+            ConflictPick::Term(ConflictTermKind::Side(1)),
+        )]);
+        let res = assemble_resolution(&hunks, &picks);
+        assert!(res.complete);
+        assert_eq!(res.content, &b"caf\xe9\r\ntheirs\r\n"[..]);
+    }
+
     /// `hunk_markers` rebuilds by term kind, so a reordered `terms` Vec
     /// still produces jj's canonical interleaved marker layout.
     #[test]
@@ -1330,7 +1362,7 @@ mod tests {
         for t in &terms {
             match t.kind {
                 ConflictTermKind::Side(_) => {
-                    assert_eq!(t.token_lines.len(), t.text.lines.len());
+                    assert_eq!(t.token_lines.len(), t.text.line_count());
                     let first = &t.token_lines[0];
                     assert!(first.iter().any(|tok| tok.kind == DiffTokenKind::Added));
                     assert!(

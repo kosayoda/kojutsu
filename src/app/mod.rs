@@ -1460,7 +1460,7 @@ impl App {
         &self,
         entry_idx: EntryIdx,
         file_idx: FileIdx,
-    ) -> Option<(RepoPath, String)> {
+    ) -> Option<(RepoPath, bstr::BString)> {
         let hunks = self.conflict_hunks_loaded(entry_idx, file_idx)?;
         let path = self.dag.nodes[entry_idx]
             .files

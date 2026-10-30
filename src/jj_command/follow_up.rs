@@ -31,7 +31,7 @@ pub enum FollowUpAction {
     ResolveConflict {
         change_id: RevisionArg,
         path: RepoPath,
-        content: String,
+        content: bstr::BString,
         flags: CommandFlags,
     },
     EnterInterdiff {

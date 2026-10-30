@@ -157,11 +157,11 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             let pick = app.hunk_pick(hunk).cloned();
             let seed = app.conflict_hunk(hunk).and_then(|h| match h {
                 crate::conflict::ConflictHunkKind::Conflict { terms } => Some(match pick {
-                    Some(crate::conflict::ConflictPick::Edited(text)) => text.to_content(),
+                    Some(crate::conflict::ConflictPick::Edited(text)) => text.to_bytes(),
                     Some(crate::conflict::ConflictPick::Term(kind)) => terms
                         .iter()
                         .find(|t| t.kind == kind)
-                        .map(|t| t.text.to_content())
+                        .map(|t| t.text.to_bytes())
                         .unwrap_or_default(),
                     None => crate::repo::hunk_markers(terms),
                 }),
@@ -698,7 +698,7 @@ pub fn complete_hunk_edit(
     commit_id: &crate::types::CommitId,
     path: &crate::types::RepoPath,
     hunk_idx: crate::idx::ConflictHunkIdx,
-    edited: &str,
+    edited: &[u8],
     flags: CommandFlags,
 ) {
     if crate::repo::has_conflict_markers(edited) {
@@ -709,10 +709,7 @@ pub fn complete_hunk_edit(
         app.set_error("commit changed while editing: edit not applied");
         return;
     };
-    app.set_conflict_edited(
-        hunk,
-        crate::conflict::ConflictText::from_bytes(edited.as_bytes()),
-    );
+    app.set_conflict_edited(hunk, crate::conflict::ConflictText::from_bytes(edited));
     maybe_offer_apply(app, hunk.entry_idx, hunk.file_idx, flags);
 }
 
@@ -759,7 +756,7 @@ pub fn staged_resolution(
     app: &mut App,
     change_id: RevisionArg,
     path: &crate::types::RepoPath,
-    content: &str,
+    content: &[u8],
     flags: CommandFlags,
 ) -> Option<JJCommand> {
     match persist_resolved_content(content) {
@@ -788,7 +785,7 @@ fn apply_conflict_resolution(
     app: &mut App,
     entry_idx: crate::idx::EntryIdx,
     path: crate::types::RepoPath,
-    content: String,
+    content: bstr::BString,
     flags: CommandFlags,
 ) -> Action {
     let change_id = app.revision(entry_idx);
@@ -800,10 +797,10 @@ fn apply_conflict_resolution(
 
 /// Persist resolved file content to a temp file for the
 /// `--apply-resolution` merge tool, which removes it after applying.
-fn persist_resolved_content(content: &str) -> std::io::Result<std::path::PathBuf> {
+fn persist_resolved_content(content: &[u8]) -> std::io::Result<std::path::PathBuf> {
     use std::io::Write as _;
     let mut tmp = tempfile::NamedTempFile::new()?;
-    tmp.write_all(content.as_bytes())?;
+    tmp.write_all(content)?;
     tmp.flush()?;
     let (_, path) = tmp.keep().map_err(|e| e.error)?;
     Ok(path)

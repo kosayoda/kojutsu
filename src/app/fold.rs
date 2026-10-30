@@ -377,7 +377,7 @@ impl App {
                             line_idx: ConflictLineIdx::new(li),
                         });
                     };
-                    let n = text.lines.len();
+                    let n = text.line_count();
                     if let Some(trim) = self.hunk_trimmed_context(hunk_ref) {
                         for li in 0..trim.head {
                             push_ctx(li, rows);
@@ -407,7 +407,7 @@ impl App {
                     if let Some(crate::conflict::ConflictPick::Edited(text)) =
                         self.hunk_pick(hunk_ref)
                     {
-                        for li in 0..text.lines.len().max(1) {
+                        for li in 0..text.line_count().max(1) {
                             rows.push(DisplayRow::ConflictEdited {
                                 entry_idx,
                                 file_idx,
@@ -436,7 +436,7 @@ impl App {
                             // emptied file) still get one
                             // row so the side is visible
                             // and pickable.
-                            term.text.lines.len().max(1)
+                            term.text.line_count().max(1)
                         };
                         for li in 0..n {
                             rows.push(DisplayRow::ConflictTerm {
