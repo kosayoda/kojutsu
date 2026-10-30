@@ -312,16 +312,19 @@ pub fn convert_modifiers(mods: &KeyModifiers) -> keymap_parser::Modifiers {
 }
 
 pub fn key_event_to_node(key: &KeyEvent) -> Option<Node> {
+    let mut modifiers = key.modifiers;
     let k = match key.code {
         KeyCode::BackTab => Key::BackTab,
         KeyCode::Backspace => Key::Backspace,
         KeyCode::Char(' ') => Key::Space,
-        KeyCode::Char(c)
-            if key.modifiers.contains(KeyModifiers::SHIFT) && c.is_ascii_uppercase() =>
-        {
+        // A typed character already says whether shift was held, and
+        // terminals disagree on also reporting SHIFT: some send `?` with
+        // it, and Caps Lock sends `K` without it. Shift is read off the
+        // character instead, the way `try_parse_key` reads a binding.
+        KeyCode::Char(c) => {
+            modifiers.set(KeyModifiers::SHIFT, c.is_ascii_uppercase());
             Key::Char(c.to_ascii_lowercase())
         }
-        KeyCode::Char(c) => Key::Char(c),
         KeyCode::Delete => Key::Delete,
         KeyCode::Down => Key::Down,
         KeyCode::End => Key::End,
@@ -339,8 +342,7 @@ pub fn key_event_to_node(key: &KeyEvent) -> Option<Node> {
         _ => return None,
     };
 
-    let modifiers = convert_modifiers(&key.modifiers);
-    Some(Node::new(modifiers, k))
+    Some(Node::new(convert_modifiers(&modifiers), k))
 }
 
 pub fn display_key(node: &Node) -> String {
@@ -466,6 +468,36 @@ mod toggled_tests {
         assert_eq!(
             flags.toggled(CommandFlags::NO_COLOCATE),
             CommandFlags::DEBUG | CommandFlags::NO_COLOCATE
+        );
+    }
+}
+
+#[cfg(test)]
+mod key_event_tests {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::{key_event_to_node, try_parse_key};
+
+    fn node(c: char, modifiers: KeyModifiers) -> keymap_parser::Node {
+        key_event_to_node(&KeyEvent::new(KeyCode::Char(c), modifiers)).unwrap()
+    }
+
+    /// A key matches its binding whether or not the terminal also reports
+    /// SHIFT for it.
+    #[test]
+    fn shift_is_read_off_the_character() {
+        let shift_k = try_parse_key("K").unwrap();
+        assert_eq!(node('K', KeyModifiers::SHIFT), shift_k);
+        assert_eq!(node('K', KeyModifiers::NONE), shift_k);
+
+        let question = try_parse_key("?").unwrap();
+        assert_eq!(node('?', KeyModifiers::NONE), question);
+        assert_eq!(node('?', KeyModifiers::SHIFT), question);
+
+        assert_eq!(node('k', KeyModifiers::NONE), try_parse_key("k").unwrap());
+        assert_eq!(
+            node('K', KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            try_parse_key("ctrl-K").unwrap()
         );
     }
 }
