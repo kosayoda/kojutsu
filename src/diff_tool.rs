@@ -95,10 +95,10 @@ pub fn apply(selection_path: &Path, left_dir: &Path, right_dir: &Path) -> Result
     let file_map: HashMap<String, FileSelection> =
         serde_json::from_str(&json).wrap_err("failed to parse selection JSON")?;
 
-    // Process files in right_dir (the "after" state).
+    // Files and links in right_dir (the "after" state).
     for entry in WalkDir::new(right_dir) {
         let entry = entry?;
-        if !entry.file_type().is_file() {
+        if entry.file_type().is_dir() {
             continue;
         }
         let rel_path = entry
@@ -106,15 +106,18 @@ pub fn apply(selection_path: &Path, left_dir: &Path, right_dir: &Path) -> Result
             .strip_prefix(right_dir)
             .wrap_err("failed to strip right_dir prefix")?;
         let rel_str = rel_path.to_string_lossy();
+        let left_path = left_dir.join(rel_path);
 
         match file_map.get(rel_str.as_ref()) {
             Some(FileSelection::Full) => {
                 // Keep right as-is (all changes included).
             }
+            // A link's change is whole: selecting any of it selects all of it.
+            Some(FileSelection::Lines { .. })
+                if entry.file_type().is_symlink() || is_link(&left_path) => {}
             Some(FileSelection::Lines { selected }) => {
                 // Partial: reconstruct file with only selected changes.
-                let left_path = left_dir.join(rel_path);
-                let left_content = if left_path.exists() {
+                let left_content = if present(&left_path) {
                     fs::read(&left_path)?
                 } else {
                     Vec::new() // new file -- left doesn't exist
@@ -123,23 +126,17 @@ pub fn apply(selection_path: &Path, left_dir: &Path, right_dir: &Path) -> Result
                 let output = apply_partial(&left_content, &right_content, selected);
                 fs::write(entry.path(), output)?;
             }
-            None => {
-                // Not selected: revert to left (no changes).
-                let left_path = left_dir.join(rel_path);
-                if left_path.exists() {
-                    fs::copy(&left_path, entry.path())?;
-                } else {
-                    // File was added but not selected -- delete from right.
-                    fs::remove_file(entry.path())?;
-                }
-            }
+            // Not selected: revert to left (no changes).
+            None if present(&left_path) => restore(&left_path, entry.path())?,
+            // Added but not selected: delete from right.
+            None => fs::remove_file(entry.path())?,
         }
     }
 
-    // Files in left_dir but not right_dir (deletions).
+    // Files and links in left_dir but not right_dir (deletions).
     for entry in WalkDir::new(left_dir) {
         let entry = entry?;
-        if !entry.file_type().is_file() {
+        if entry.file_type().is_dir() {
             continue;
         }
         let rel_path = entry
@@ -147,13 +144,14 @@ pub fn apply(selection_path: &Path, left_dir: &Path, right_dir: &Path) -> Result
             .strip_prefix(left_dir)
             .wrap_err("failed to strip left_dir prefix")?;
         let right_path = right_dir.join(rel_path);
-        if right_path.exists() {
+        if present(&right_path) {
             continue;
         }
         match file_map.get(rel_path.to_string_lossy().as_ref()) {
             Some(FileSelection::Full) => {
                 // Deletion was selected -- keep it deleted.
             }
+            Some(FileSelection::Lines { .. }) if entry.file_type().is_symlink() => {}
             Some(FileSelection::Lines { selected }) => {
                 // The file comes back without its selected lines; with every
                 // line selected, nothing of it is left and it stays deleted.
@@ -170,12 +168,30 @@ pub fn apply(selection_path: &Path, left_dir: &Path, right_dir: &Path) -> Result
     Ok(())
 }
 
-/// Put `from` at `to`, creating the directory it goes in.
+/// Whether anything, a dangling link included, is at `path`.
+fn present(path: &Path) -> bool {
+    path.symlink_metadata().is_ok()
+}
+
+fn is_link(path: &Path) -> bool {
+    path.symlink_metadata()
+        .is_ok_and(|m| m.file_type().is_symlink())
+}
+
+/// Put `from`, a file or a link, at `to` in place of whatever is there.
+/// What is there is removed first, so a link at `to` is replaced rather
+/// than written through.
 fn restore(from: &Path, to: &Path) -> Result<()> {
-    if let Some(parent) = to.parent() {
+    if present(to) {
+        fs::remove_file(to)?;
+    } else if let Some(parent) = to.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::copy(from, to)?;
+    if is_link(from) {
+        std::os::unix::fs::symlink(fs::read_link(from)?, to)?;
+    } else {
+        fs::copy(from, to)?;
+    }
     Ok(())
 }
 
@@ -260,6 +276,7 @@ fn apply_partial(left: &[u8], right: &[u8], selected: &[SelectedLine]) -> Vec<u8
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::path::PathBuf;
 
     use super::{FileSelection, SelectedLine, apply, apply_partial, selection_map};
     use crate::types::{ChangeId, CommitId, CommitRef, FileRef, RepoPath, Selection};
@@ -337,10 +354,15 @@ mod tests {
     #[derive(Debug, PartialEq)]
     enum Entry {
         File(Vec<u8>),
+        Link(PathBuf),
     }
 
     fn file(content: &[u8]) -> Option<Entry> {
         Some(Entry::File(content.to_vec()))
+    }
+
+    fn link(target: &str) -> Option<Entry> {
+        Some(Entry::Link(target.into()))
     }
 
     /// A path and what is at it before and after the change.
@@ -355,8 +377,10 @@ mod tests {
             for (root, entry) in [(&left, before), (&right, after)] {
                 let at = root.join(path);
                 std::fs::create_dir_all(at.parent().unwrap()).unwrap();
-                if let Some(Entry::File(content)) = entry {
-                    std::fs::write(at, content).unwrap();
+                match entry {
+                    Some(Entry::File(content)) => std::fs::write(at, content).unwrap(),
+                    Some(Entry::Link(target)) => std::os::unix::fs::symlink(target, at).unwrap(),
+                    None => {}
                 }
             }
         }
@@ -365,7 +389,15 @@ mod tests {
         apply(&selection_path, &left, &right).unwrap();
         files
             .iter()
-            .map(|(path, _, _)| std::fs::read(right.join(path)).ok().map(Entry::File))
+            .map(|(path, _, _)| {
+                let at = right.join(path);
+                let meta = at.symlink_metadata().ok()?;
+                Some(if meta.file_type().is_symlink() {
+                    Entry::Link(std::fs::read_link(at).unwrap())
+                } else {
+                    Entry::File(std::fs::read(at).unwrap())
+                })
+            })
             .collect()
     }
 
@@ -384,6 +416,28 @@ mod tests {
                 .unwrap_or_default();
             assert_eq!(apply_to(&[sides], &selection), [expected], "{name}");
         }
+    }
+
+    /// Links follow the same rules as files, dangling or not, and a line
+    /// selection takes a link's change whole. Restoring replaces whatever
+    /// took the path's place rather than writing through it.
+    #[test]
+    fn each_link_keeps_its_change_only_when_selected() {
+        let full = || Some(FileSelection::Full);
+        let a_line = || lines([SelectedLine::Added { new_line: 1 }]);
+        check([
+            (("l", None, link("t")), full(), link("t")),
+            (("l", None, link("t")), None, None),
+            (("l", link("a"), link("b")), full(), link("b")),
+            (("l", link("a"), link("b")), a_line(), link("b")),
+            (("l", link("a"), link("b")), None, link("a")),
+            (("l", link("a"), None), full(), None),
+            (("l", link("a"), None), a_line(), None),
+            (("l", link("a"), None), None, link("a")),
+            (("l", file(b"x\n"), link("t")), None, file(b"x\n")),
+            (("l", file(b"x\n"), link("t")), a_line(), link("t")),
+            (("l", link("t"), file(b"x\n")), None, link("t")),
+        ]);
     }
 
     /// A new file holds only its selected lines, and a modified one only
