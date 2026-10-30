@@ -1,6 +1,6 @@
 use super::registry::{ActionId, ActionRegistry, Gate};
 use super::trie::{Keymap, TrieNode};
-use super::{Requires, SelectionKindSet, display_key, toggle_hint};
+use super::{Requires, SelectionKindSet, display_key};
 use crate::jj_version::JjFeature;
 use keymap_parser::Node;
 
@@ -86,13 +86,7 @@ pub fn help_entries(
                 description,
                 group,
             } => {
-                let key_str = if let ActionId::Builtin(action) = id {
-                    toggle_hint(*action)
-                        .map(|h| h.to_string())
-                        .unwrap_or_else(|| display_key(node))
-                } else {
-                    display_key(node)
-                };
+                let key_str = display_key(node);
                 if let Some(existing) = action_keys.iter_mut().find(|(a, _, _, _)| a == id) {
                     existing.1.push(key_str);
                 } else {
@@ -273,5 +267,49 @@ mod prefix_gate_tests {
     #[test]
     fn a_prefix_with_anything_runnable_stays_available() {
         assert!(!prefix_blocked("t", 36));
+    }
+}
+
+#[cfg(test)]
+mod help_entries_tests {
+    use super::*;
+    use crate::keymap::{AppAction, BindTarget, BindingSpec, Keymaps, Scope, parse_sequence};
+    use crate::types::ActiveView;
+
+    fn bind(seq: &str, action: AppAction, description: &str) -> BindingSpec {
+        BindingSpec {
+            keys: parse_sequence(seq).expect("valid key sequence"),
+            target: BindTarget::Action {
+                id: ActionId::Builtin(action),
+                description: description.into(),
+                group: HelpGroup::Commands,
+            },
+            scope: Scope::All,
+        }
+    }
+
+    /// The help for `specs`, as each entry's keys and description in order.
+    fn listing(specs: Vec<BindingSpec>) -> Vec<(String, String)> {
+        let keymaps = Keymaps::build(specs, ActionRegistry::new());
+        help_entries(keymaps.for_view(ActiveView::Dag), &keymaps.registry, &[])
+            .into_iter()
+            .flat_map(|(_, entries)| entries)
+            .map(|entry| (entry.keys, entry.description))
+            .collect()
+    }
+
+    /// A toggle's status-bar badge letter is no key: rebound, help shows
+    /// the key that toggles it.
+    #[test]
+    fn a_rebound_toggle_lists_the_key_it_is_bound_to() {
+        let listed = listing(vec![bind(
+            "ctrl-x",
+            AppAction::ToggleIgnoreImmutable,
+            "toggle ignore-immutable",
+        )]);
+        assert_eq!(
+            listed,
+            [("ctrl-x".into(), "toggle ignore-immutable".into())]
+        );
     }
 }

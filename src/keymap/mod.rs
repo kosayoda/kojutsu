@@ -13,8 +13,6 @@ pub use registry::{ActionId, ActionRegistry, Availability, Gate};
 pub use spec::{ActionSpec, Effect, Requires};
 pub use trie::{Keymap, Keymaps, LookupResult, TrieNode};
 
-use crate::types::GLOBAL_TOGGLES;
-
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct SelectionKindSet: u8 {
@@ -382,19 +380,6 @@ pub fn parse_sequence(seq: &str) -> Result<Keys, String> {
         return Err("empty key sequence".into());
     }
     Ok(keys)
-}
-
-pub fn toggle_hint(action: AppAction) -> Option<&'static str> {
-    let flag = match action {
-        AppAction::ToggleIgnoreImmutable => CommandFlags::IGNORE_IMMUTABLE,
-        AppAction::ToggleIgnoreWorkingCopy => CommandFlags::IGNORE_WORKING_COPY,
-        AppAction::ToggleDebug => CommandFlags::DEBUG,
-        _ => return None,
-    };
-    GLOBAL_TOGGLES
-        .iter()
-        .find(|t| t.flag == flag)
-        .map(|t| t.hint)
 }
 
 #[cfg(test)]
