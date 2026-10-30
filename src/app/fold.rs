@@ -176,6 +176,15 @@ impl App {
 
     fn rebuild_op_log_rows(&mut self) {
         let prev_cursor = self.rows.get(self.cursor.raw()).copied();
+        // "Load more" lands on the first entry it brought: the first shown
+        // after the last one shown before.
+        let last_shown = match prev_cursor {
+            Some(DisplayRow::OpLogLoadMore) => self.rows.iter().rev().find_map(|row| match row {
+                DisplayRow::OpLogItem { op_log_idx } => Some(*op_log_idx),
+                _ => None,
+            }),
+            _ => None,
+        };
         self.rows.clear();
         for idx in 0..self.op_log.entries.len() {
             // Apply workspace filter (operations with no workspace always pass).
@@ -222,17 +231,22 @@ impl App {
         if self.op_log.entries.is_empty() && self.slot_state(ContentSlot::View).needs_row() {
             self.rows.push(DisplayRow::Placeholder(ContentSlot::View));
         }
-        // Don't follow the LoadMore sentinel: keep the numeric position so
-        // the cursor lands on the first newly loaded entry.
-        let prev_cursor = prev_cursor.filter(|k| *k != DisplayRow::OpLogLoadMore);
-        let fallback = match prev_cursor {
+        let fallbacks = match prev_cursor {
+            Some(DisplayRow::OpLogLoadMore) => {
+                let first_new = last_shown.and_then(|last| {
+                    self.rows.iter().copied().find(|row| {
+                        matches!(row, DisplayRow::OpLogItem { op_log_idx } if *op_log_idx > last)
+                    })
+                });
+                [first_new, prev_cursor]
+            }
             Some(
                 DisplayRow::OpLogDetailLine { op_log_idx, .. }
                 | DisplayRow::Placeholder(ContentSlot::Operation(op_log_idx)),
-            ) => Some(DisplayRow::OpLogItem { op_log_idx }),
-            _ => None,
+            ) => [prev_cursor, Some(DisplayRow::OpLogItem { op_log_idx })],
+            _ => [prev_cursor, None],
         };
-        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor, fallback]);
+        self.cursor = restore_cursor(&self.rows, self.cursor, &fallbacks);
     }
 
     fn rebuild_evolog_rows(&mut self) {
@@ -1408,5 +1422,55 @@ mod cursor_fallback_tests {
             app.cursor_row(),
             Some(DisplayRow::ConflictContext { line_idx, .. }) if line_idx.raw() == 3
         ));
+    }
+}
+
+#[cfg(test)]
+mod op_log_row_tests {
+    use super::*;
+    use crate::history::OpLogEntry;
+    use crate::repo_service::RepoResult;
+
+    /// The op log on screen, given `ops` and whether there are more.
+    fn deliver(app: &mut App, ops: Vec<OpLogEntry>, has_more: bool) {
+        app.handle_repo_result(RepoResult::Operations {
+            limit: app.op_log.limit,
+            result: Ok((ops, has_more)),
+        });
+    }
+
+    fn op_at_cursor(app: &App) -> Option<&str> {
+        match app.cursor_row()? {
+            DisplayRow::OpLogItem { op_log_idx } => {
+                Some(app.op_log.entries[op_log_idx.raw()].id.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    /// The graph of a cut-off log ends in link rows for the edges it cuts,
+    /// which the longer log draws differently (here `o1`'s two parents,
+    /// side by side, then joined), so "load more" can't keep the cursor's
+    /// old position: it lands on the first entry the load brought.
+    #[test]
+    fn loading_more_lands_on_the_first_entry_it_brought() {
+        let ops = || {
+            vec![
+                OpLogEntry::for_test("o0", &["o1"], None),
+                OpLogEntry::for_test("o1", &["o2", "o3"], None),
+                OpLogEntry::for_test("o2", &["o4"], None),
+                OpLogEntry::for_test("o3", &["o4"], None),
+                OpLogEntry::for_test("o4", &[], None),
+            ]
+        };
+        let mut app = App::for_test();
+        app.switch_view(ActiveView::Operations);
+        deliver(&mut app, ops().into_iter().take(2).collect(), true);
+        app.cursor = app.position_of(DisplayRow::OpLogLoadMore).unwrap();
+
+        app.toggle_fold();
+        deliver(&mut app, ops(), false);
+
+        assert_eq!(op_at_cursor(&app), Some("o2"));
     }
 }

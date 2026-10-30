@@ -26,6 +26,24 @@ pub struct OpLogEntry {
     pub is_current: bool,
 }
 
+#[cfg(test)]
+impl OpLogEntry {
+    /// An operation carrying only its identity, ancestry and workspace.
+    pub fn for_test(id: &str, parent_ids: &[&str], workspace: Option<&str>) -> Self {
+        Self {
+            id: OperationId::new(id),
+            parent_ids: parent_ids.iter().map(|p| OperationId::new(*p)).collect(),
+            description: Str::default(),
+            relative_time: Str::default(),
+            workspace: workspace.map(WorkspaceName::new),
+            user: Str::default(),
+            args: None,
+            is_snapshot: false,
+            is_current: false,
+        }
+    }
+}
+
 /// One version of a change in its evolution log.
 pub struct EvoLogEntry {
     /// Full hex commit ID.
