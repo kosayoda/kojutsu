@@ -273,7 +273,10 @@ mod prefix_gate_tests {
 #[cfg(test)]
 mod help_entries_tests {
     use super::*;
-    use crate::keymap::{AppAction, BindTarget, BindingSpec, Keymaps, Scope, parse_sequence};
+    use crate::config::Preset;
+    use crate::keymap::{
+        AppAction, BindTarget, BindingSpec, CommandFlags, Keymaps, Scope, parse_sequence,
+    };
     use crate::types::ActiveView;
 
     fn bind(seq: &str, action: AppAction, description: &str) -> BindingSpec {
@@ -288,12 +291,22 @@ mod help_entries_tests {
         }
     }
 
+    fn entries(specs: Vec<BindingSpec>, presets: &[Preset]) -> Vec<HelpEntry> {
+        let keymaps = Keymaps::build(specs, ActionRegistry::new());
+        help_entries(
+            keymaps.for_view(ActiveView::Dag),
+            &keymaps.registry,
+            presets,
+        )
+        .into_iter()
+        .flat_map(|(_, entries)| entries)
+        .collect()
+    }
+
     /// The help for `specs`, as each entry's keys and description in order.
     fn listing(specs: Vec<BindingSpec>) -> Vec<(String, String)> {
-        let keymaps = Keymaps::build(specs, ActionRegistry::new());
-        help_entries(keymaps.for_view(ActiveView::Dag), &keymaps.registry, &[])
+        entries(specs, &[])
             .into_iter()
-            .flat_map(|(_, entries)| entries)
             .map(|entry| (entry.keys, entry.description))
             .collect()
     }
@@ -311,5 +324,100 @@ mod help_entries_tests {
             listed,
             [("ctrl-x".into(), "toggle ignore-immutable".into())]
         );
+    }
+
+    #[test]
+    fn an_action_on_several_keys_is_one_entry() {
+        let listed = listing(vec![
+            bind("j", AppAction::MoveDown, "move down"),
+            bind("down", AppAction::MoveDown, "move down"),
+        ]);
+        assert_eq!(listed, [("j / down".into(), "move down".into())]);
+    }
+
+    #[test]
+    fn a_capital_sorts_right_after_its_lowercase() {
+        let listed = listing(vec![
+            bind("b", AppAction::Squash, "squash"),
+            bind("shift-a", AppAction::Abandon, "abandon"),
+            bind("a", AppAction::Absorb, "absorb"),
+        ]);
+        let keys: Vec<&str> = listed.iter().map(|(keys, _)| keys.as_str()).collect();
+        assert_eq!(keys, ["a", "A", "b"]);
+    }
+
+    /// A slot with no preset configured keeps its plain description.
+    #[test]
+    fn a_switch_preset_entry_names_its_preset() {
+        let presets = ["mine", "all"].map(|name| Preset {
+            name: name.into(),
+            revset: format!("{name}()"),
+        });
+        let listed: Vec<String> = entries(
+            vec![
+                bind("!", AppAction::SwitchPreset2, "preset 2"),
+                bind("#", AppAction::SwitchPreset3, "preset 3"),
+            ],
+            &presets,
+        )
+        .into_iter()
+        .map(|entry| entry.description)
+        .collect();
+        assert_eq!(listed, ["preset 2 (all)", "preset 3"]);
+    }
+
+    /// Toggle-select picks a conflict side on a conflict row, so help lists
+    /// that too, under whatever key toggle-select is bound to.
+    #[test]
+    fn the_conflict_pick_entry_follows_toggle_selects_key() {
+        let listed = entries(
+            vec![bind("x", AppAction::ToggleSelect, "toggle select")],
+            &[],
+        );
+        let pick = listed
+            .iter()
+            .find(|entry| entry.description == "pick conflict side at cursor")
+            .expect("a conflict pick entry");
+        assert_eq!(pick.keys, "x");
+        assert_eq!(pick.gate.requires, Requires::Conflict);
+    }
+
+    /// A prefix needs the cursor somewhere only when everything it runs
+    /// does. Toggles run nothing and don't count; a nested prefix might
+    /// hold anything.
+    #[test]
+    fn a_prefix_requires_a_context_only_when_all_it_runs_agrees() {
+        let pick_ours = || bind("p o", AppAction::ConflictPickOurs, "take ours");
+        let cases: [(BindingSpec, Requires); 4] = [
+            (
+                bind("p t", AppAction::ConflictPickTheirs, "take theirs"),
+                Requires::Conflict,
+            ),
+            (bind("p s", AppAction::Squash, "squash"), Requires::Nothing),
+            (
+                BindingSpec {
+                    keys: parse_sequence("p d").expect("valid key sequence"),
+                    target: BindTarget::Toggle {
+                        flag: CommandFlags::DEBUG,
+                        description: "debug".into(),
+                        jj: None,
+                    },
+                    scope: Scope::All,
+                },
+                Requires::Conflict,
+            ),
+            (
+                bind("p n t", AppAction::ConflictPickTheirs, "take theirs"),
+                Requires::Nothing,
+            ),
+        ];
+        for (case, (sibling, requires)) in cases.into_iter().enumerate() {
+            let listed = entries(vec![pick_ours(), sibling], &[]);
+            let prefix = listed
+                .iter()
+                .find(|entry| entry.keys == "p \u{2026}")
+                .expect("the prefix entry");
+            assert_eq!(prefix.gate.requires, requires, "case {case}");
+        }
     }
 }

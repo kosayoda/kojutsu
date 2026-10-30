@@ -762,9 +762,14 @@ mod raw_command_tests {
 
 #[cfg(test)]
 mod completion_tests {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
     use super::apply_completions;
     use crate::app::{App, AppMode};
+    use crate::input::handle_key;
     use crate::jj_command::Completion;
+    use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+    use crate::lua::LuaEngine;
     use crate::types::PromptStep;
 
     fn completion(value: &str) -> Completion {
@@ -803,6 +808,39 @@ mod completion_tests {
         let candidates = vec![completion("café"), completion("cafè")];
         apply_completions(&mut app, "bookmark set ca", candidates);
         assert_eq!(prompt_text(&app), "bookmark set caf");
+    }
+
+    /// Unlike a single match, a shared prefix may not be the whole word, so
+    /// no space follows it.
+    #[test]
+    fn several_candidates_extend_the_prompt_to_what_they_share() {
+        let mut app = prompt_reading("git p");
+        apply_completions(
+            &mut app,
+            "git p",
+            vec![completion("push"), completion("pull")],
+        );
+        assert_eq!(prompt_text(&app), "git pu");
+    }
+
+    /// Picking from the list takes the candidate, not its description.
+    #[test]
+    fn candidates_sharing_nothing_more_are_listed_to_pick_from() {
+        let mut app = prompt_reading("git pu");
+        let push = Completion {
+            value: "push".into(),
+            description: "Push to a Git remote".into(),
+        };
+        apply_completions(&mut app, "git pu", vec![push, completion("pull")]);
+        let AppMode::SelectFromList(list) = &app.mode else {
+            panic!("expected the completions list");
+        };
+        assert_eq!(list.items, ["push  Push to a Git remote", "pull"]);
+
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        handle_key(&mut app, &keymaps, &LuaEngine::for_test(), enter);
+        assert_eq!(prompt_text(&app), "git push ");
     }
 
     /// Typing on while jj works makes its answer stale.

@@ -1120,7 +1120,7 @@ mod ref_interdiff_tests {
         BookmarkDetails, BookmarkRemoteTarget, CommitSummary, ShortId, TagDetails, TagLocalTarget,
         TagPresence, TagRemoteTarget,
     };
-    use crate::idx::BookmarkIdx;
+    use crate::idx::{BookmarkDetailIdx, BookmarkIdx, TagDetailIdx, TagIdx};
     use crate::input::handle_key;
     use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
     use crate::lua::LuaEngine;
@@ -1140,6 +1140,12 @@ mod ref_interdiff_tests {
 
     /// The tag view with tag `v1` here at `local`, and at `remote` on origin.
     fn tags_view(local: &str, remote: &str) -> App {
+        tags_view_with(local, &[("origin", remote)])
+    }
+
+    /// The tag view with tag `v1` here at `local`, and at each commit on
+    /// its remote in `remotes`.
+    fn tags_view_with(local: &str, remotes: &[(&str, &str)]) -> App {
         let mut app = App::for_test();
         app.views.tag_entries.push(TagViewEntry {
             name: TagName::new("v1"),
@@ -1157,11 +1163,14 @@ mod ref_interdiff_tests {
                 local_target: Some(TagLocalTarget {
                     summary: summary(local),
                 }),
-                remote_targets: vec![TagRemoteTarget {
-                    remote: RemoteName::new("origin"),
-                    summary: summary(remote),
-                    is_tracked: true,
-                }],
+                remote_targets: remotes
+                    .iter()
+                    .map(|&(remote, commit)| TagRemoteTarget {
+                        remote: RemoteName::new(remote),
+                        summary: summary(commit),
+                        is_tracked: true,
+                    })
+                    .collect(),
             },
         );
         app.switch_view(ActiveView::Tags);
@@ -1318,5 +1327,62 @@ mod ref_interdiff_tests {
         press_i(&mut app);
         assert_eq!(app.active_view, ActiveView::Bookmarks);
         assert_eq!(status(&app), "main has no local commit");
+    }
+
+    /// On a remote's row, that remote is compared, not the first that
+    /// differs.
+    #[test]
+    fn a_bookmark_compares_with_the_remote_under_the_cursor() {
+        let mut app = bookmarks_view(
+            vec![bookmark("main", "aaaa1111", tracking())],
+            vec![
+                bookmark_remote("origin", "bbbb2222"),
+                bookmark_remote("upstream", "cccc3333"),
+            ],
+            DisplayRow::BookmarkRemoteTarget {
+                bookmark_idx: BookmarkIdx::new(0),
+                target_idx: BookmarkDetailIdx::new(1),
+            },
+        );
+        press_i(&mut app);
+        assert_eq!(
+            compared(&app),
+            (
+                "main@upstream".into(),
+                "main".into(),
+                "cccc3333".into(),
+                "aaaa1111".into()
+            )
+        );
+    }
+
+    /// A remote where the tag is unchanged has no row, so the rows shown
+    /// are not the remotes' positions: the row still names its remote.
+    #[test]
+    fn a_tag_compares_with_the_remote_under_the_cursor() {
+        let mut app = tags_view_with(
+            "aaaa1111",
+            &[
+                ("origin", "aaaa1111"),
+                ("upstream", "cccc3333"),
+                ("backup", "dddd4444"),
+            ],
+        );
+        app.cursor = app
+            .position_of(DisplayRow::TagRemoteTarget {
+                tag_idx: TagIdx::new(0),
+                target_idx: TagDetailIdx::new(2),
+            })
+            .expect("row is shown");
+        press_i(&mut app);
+        assert_eq!(
+            compared(&app),
+            (
+                "v1@backup".into(),
+                "v1".into(),
+                "dddd4444".into(),
+                "aaaa1111".into()
+            )
+        );
     }
 }

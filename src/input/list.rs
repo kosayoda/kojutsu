@@ -492,13 +492,22 @@ mod list_navigation_tests {
         }
     }
 
-    fn press(app: &mut App, keymaps: &Keymaps, key: &str) {
+    fn list(app: &mut App) -> &mut crate::app::SelectFromListState {
+        match &mut app.mode {
+            AppMode::SelectFromList(s) => s,
+            _ => panic!("list dismissed"),
+        }
+    }
+
+    fn press(app: &mut App, keymaps: &Keymaps, key: &str) -> Action {
         let node = try_parse_key(key).expect("parsable key");
         let event = KeyEvent::new(
             match node.key {
                 keymap_parser::Key::Char(c) => ratatui::crossterm::event::KeyCode::Char(c),
                 keymap_parser::Key::Down => ratatui::crossterm::event::KeyCode::Down,
                 keymap_parser::Key::Backspace => ratatui::crossterm::event::KeyCode::Backspace,
+                keymap_parser::Key::Enter => ratatui::crossterm::event::KeyCode::Enter,
+                keymap_parser::Key::Space => ratatui::crossterm::event::KeyCode::Char(' '),
                 _ => panic!("unhandled test key: {key}"),
             },
             if node.modifiers & keymap_parser::Modifier::Ctrl as u8 != 0 {
@@ -513,7 +522,7 @@ mod list_navigation_tests {
             &lua,
             keymaps.for_view(crate::types::ActiveView::Dag),
             event,
-        );
+        )
     }
 
     #[test]
@@ -572,5 +581,82 @@ mod list_navigation_tests {
         press(&mut app, &keymaps, "ctrl-n");
         assert_eq!(filter(&app), "j", "a chord must not reach the filter");
         assert_eq!(cursor(&app), 1);
+    }
+
+    /// The free-input row is pinned above the matches even when it doesn't
+    /// match itself, but typing lands on the best match, not on it.
+    #[test]
+    fn a_filter_keeps_the_custom_row_on_top_and_lands_on_the_best_match() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let mut app = app_with_custom_list(&["build", "lint"]);
+        press(&mut app, &keymaps, "l");
+        press(&mut app, &keymaps, "i");
+        assert_eq!(list(&mut app).filtered_indices, [0, 2]);
+        assert_eq!(cursor_item(&app), "lint");
+    }
+
+    #[test]
+    fn enter_on_the_custom_row_opens_the_input_with_the_filter_text() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let mut app = app_with_custom_list(&["build", "lint"]);
+        press(&mut app, &keymaps, "l");
+        press(&mut app, &keymaps, "i");
+        press(&mut app, &keymaps, "ctrl-p");
+        press(&mut app, &keymaps, "enter");
+        let AppMode::TextInput { prompt, input, .. } = &app.mode else {
+            panic!("expected the input");
+        };
+        assert_eq!((prompt.as_str(), input.value()), ("run: ", "li"));
+    }
+
+    /// Whatever order they were ticked in.
+    #[test]
+    fn a_multi_select_returns_the_marked_items_in_list_order() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let mut app = App::for_test();
+        app.mode = AppMode::select_from_list(
+            "delete",
+            ["feature-c", "feature-a", "feature-b", "feature-d"]
+                .map(String::from)
+                .to_vec(),
+            true,
+            PendingSelection::BookmarkDelete {
+                flags: crate::keymap::CommandFlags::empty(),
+            },
+            false,
+        );
+        press(&mut app, &keymaps, "$");
+        press(&mut app, &keymaps, "space");
+        press(&mut app, &keymaps, "0");
+        press(&mut app, &keymaps, "space");
+        press(&mut app, &keymaps, "j");
+        press(&mut app, &keymaps, "j");
+        press(&mut app, &keymaps, "space");
+        let Action::RunJj { cmd, .. } = press(&mut app, &keymaps, "enter") else {
+            panic!("expected a jj command");
+        };
+        let JJCommandKind::BookmarkDelete { names } = cmd.kind else {
+            panic!("expected a bookmark delete");
+        };
+        assert!(
+            names
+                .iter()
+                .map(|n| n.as_str())
+                .eq(["feature-c", "feature-b", "feature-d"])
+        );
+    }
+
+    #[test]
+    fn space_does_not_mark_the_custom_row() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let mut app = app_with_custom_list(&["build", "lint"]);
+        let state = list(&mut app);
+        state.filtering = false;
+        state.multi = true;
+        press(&mut app, &keymaps, "space");
+        assert!(list(&mut app).marked.is_empty());
+        press(&mut app, &keymaps, "j");
+        press(&mut app, &keymaps, "space");
+        assert_eq!(list(&mut app).marked.len(), 1);
     }
 }

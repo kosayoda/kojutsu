@@ -156,4 +156,20 @@ mod availability_tests {
         let unknown = ctx(SelectionKindSet::empty(), false);
         assert!(!blocks(&unknown, AppAction::Converge));
     }
+
+    /// A Lua action is gated by the selection it registered and nothing
+    /// else; one the registry doesn't know takes any selection.
+    #[test]
+    fn a_lua_action_is_gated_only_by_its_selection() {
+        let mut registry = ActionRegistry::new();
+        let id = registry.register_lua(SelectionKindSet::FILE | SelectionKindSet::LINE);
+        assert_eq!(
+            registry.gate(id),
+            Gate {
+                selection: SelectionKindSet::FILE | SelectionKindSet::LINE,
+                ..Gate::OPEN
+            }
+        );
+        assert_eq!(registry.gate(ActionId::Lua(1)), Gate::OPEN);
+    }
 }
