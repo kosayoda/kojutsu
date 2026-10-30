@@ -547,18 +547,18 @@ impl App {
 
 /// Cursor fallback chain for row rebuilds: the row itself, then what it
 /// folds into, nearest first.
-fn cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>; 4] {
+fn cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>; 5] {
     let Some(row) = prev_cursor else {
-        return [None; 4];
+        return [None; 5];
     };
-    let [a, b, c] = folds_into(row);
-    [Some(row), a, b, c]
+    let [a, b, c, d] = folds_into(row);
+    [Some(row), a, b, c, d]
 }
 
 /// Where a row goes when it is folded away, nearest first: a diff line
-/// into its file, a file into the row it hangs under, and a conflict's
-/// rows into its header.
-fn folds_into(row: DisplayRow) -> [Option<DisplayRow>; 3] {
+/// into its file, a file into the row it hangs under, a base's lines into
+/// the stub it folds to, and a conflict's rows into its header.
+fn folds_into(row: DisplayRow) -> [Option<DisplayRow>; 4] {
     match row {
         DisplayRow::DiffLine {
             owner, file_idx, ..
@@ -567,13 +567,31 @@ fn folds_into(row: DisplayRow) -> [Option<DisplayRow>; 3] {
             Some(DisplayRow::FileChange { owner, file_idx }),
             Some(owner_row(owner)),
             None,
+            None,
         ],
         DisplayRow::FileChange { owner, .. }
         | DisplayRow::Placeholder(ContentSlot::Files(owner)) => {
-            [Some(owner_row(owner)), None, None]
+            [Some(owner_row(owner)), None, None, None]
         }
         DisplayRow::DescriptionLine { entry_idx, .. } | DisplayRow::GraphLink { entry_idx, .. } => {
-            [Some(DisplayRow::CommitNode { entry_idx }), None, None]
+            [Some(DisplayRow::CommitNode { entry_idx }), None, None, None]
+        }
+        DisplayRow::ConflictTerm {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+            term_idx,
+            line_idx,
+        } if line_idx.raw() > 0 => {
+            let [header, file, commit] = hunk_folds_into(entry_idx, file_idx, hunk_idx);
+            let stub = DisplayRow::ConflictTerm {
+                entry_idx,
+                file_idx,
+                hunk_idx,
+                term_idx,
+                line_idx: ConflictLineIdx::new(0),
+            };
+            [Some(stub), header, file, commit]
         }
         DisplayRow::ConflictTerm {
             entry_idx,
@@ -597,7 +615,10 @@ fn folds_into(row: DisplayRow) -> [Option<DisplayRow>; 3] {
             file_idx,
             hunk_idx,
             ..
-        } => hunk_folds_into(entry_idx, file_idx, hunk_idx),
+        } => {
+            let [header, file, commit] = hunk_folds_into(entry_idx, file_idx, hunk_idx);
+            [header, file, commit, None]
+        }
         DisplayRow::ConflictHeader {
             entry_idx,
             file_idx,
@@ -609,8 +630,9 @@ fn folds_into(row: DisplayRow) -> [Option<DisplayRow>; 3] {
             }),
             Some(DisplayRow::CommitNode { entry_idx }),
             None,
+            None,
         ],
-        _ => [None; 3],
+        _ => [None; 4],
     }
 }
 
@@ -1220,6 +1242,9 @@ mod cursor_fallback_tests {
     const ENTRY: EntryIdx = EntryIdx::new(0);
     const CONFLICTED: FileIdx = FileIdx::new(1);
     const HUNK: ConflictHunkIdx = ConflictHunkIdx::new(1);
+    /// Where the base lands among the conflict's terms, which are stored
+    /// side, base, side.
+    const BASE: ConflictTermIdx = ConflictTermIdx::new(1);
     const OURS: ConflictTermIdx = ConflictTermIdx::new(0);
 
     fn term(kind: ConflictTermKind, text: &str) -> ConflictTerm {
@@ -1338,5 +1363,21 @@ mod cursor_fallback_tests {
 
             assert!(app.cursor_row() == Some(row));
         }
+    }
+
+    /// Folding a base from any of its lines leaves the cursor on the stub
+    /// it folds to, where the same key unfolds it again.
+    #[test]
+    fn folding_a_base_lands_on_its_stub_and_unfolds_from_there() {
+        let mut app = app();
+        put_cursor_on(&mut app, term_row(BASE, 1));
+
+        app.toggle_fold();
+        assert!(app.cursor_row() == Some(term_row(BASE, 0)));
+        assert!(app.position_of(term_row(BASE, 1)).is_none());
+
+        app.toggle_fold();
+        assert!(app.position_of(term_row(BASE, 1)).is_some());
+        assert!(app.is_file_unfolded(FileOwner::Dag(ENTRY), CONFLICTED));
     }
 }
