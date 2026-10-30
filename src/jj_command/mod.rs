@@ -569,7 +569,7 @@ impl JJCommand {
     /// decides whether the TUI steps aside for it.
     pub fn terminal_use(&self) -> TerminalUse {
         // Read off the args for the same reason as `--interactive`.
-        if self.args().iter().any(|a| a.as_str() == "--passthrough") {
+        if self.passes_jj_flag("--passthrough") {
             return TerminalUse::Passthrough;
         }
         if self.is_interactive() {
@@ -602,7 +602,7 @@ impl JJCommand {
     /// listed; a miss there is milder, because captured runs set
     /// `JJ_EDITOR=:` and the edit is simply skipped.
     fn is_interactive(&self) -> bool {
-        if self.args().iter().any(|a| a.as_str() == "--interactive") {
+        if self.passes_jj_flag("--interactive") {
             return true;
         }
         match &self.kind {
@@ -620,6 +620,14 @@ impl JJCommand {
             JJCommandKind::Raw { .. } => true,
             _ => false,
         }
+    }
+
+    /// Whether jj is handed `flag` on this command line. A foreign program's
+    /// arguments are its own grammar, so an `Exec` passes jj nothing: a
+    /// `--interactive` meant for git says nothing about how kojutsu runs it.
+    fn passes_jj_flag(&self, flag: &str) -> bool {
+        !matches!(self.kind, JJCommandKind::Exec { .. })
+            && self.args().iter().any(|a| a.as_str() == flag)
     }
 }
 
@@ -699,13 +707,20 @@ mod exec_tests {
         );
     }
 
-    /// Nothing foreign should be assumed to want the terminal, and nothing
-    /// about it tells the DAG where to move the cursor.
+    /// How a foreign program runs is decided by its kind, never by its argv:
+    /// jj's `--interactive` and `--passthrough` are jj's words, and the same
+    /// spelling in another program's arguments means something else. Nothing
+    /// about it tells the DAG where to move the cursor either.
     #[test]
     fn an_exec_neither_takes_the_terminal_nor_moves_the_cursor() {
-        let cmd = exec(&["git", "status"]);
-        assert!(!cmd.is_interactive());
-        assert!(cmd.jump_target().is_none());
+        for argv in [
+            ["git", "add", "--interactive"],
+            ["tool", "--passthrough", "x"],
+        ] {
+            let cmd = exec(&argv);
+            assert_eq!(cmd.terminal_use(), TerminalUse::Background, "{argv:?}");
+            assert!(cmd.jump_target().is_none(), "{argv:?}");
+        }
     }
 }
 
