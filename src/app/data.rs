@@ -685,7 +685,7 @@ impl App {
                 let kind = BookmarkKind::remote_only(rb.remote.clone(), rb.is_tracked);
                 entries.push(BookmarkViewEntry {
                     name: rb.name.clone(),
-                    commit_id: rb.commit_id.clone(),
+                    commit_id: rb.target.commit().cloned(),
                     change_id: None,
                     short_commit_id: None,
                     revision: None,
@@ -1298,7 +1298,7 @@ mod bookmark_entry_tests {
         RemoteBookmarkRef {
             name: BookmarkName::new(name),
             remote: RemoteName::new(remote),
-            commit_id: Some(CommitId::new("z1")),
+            target: crate::dag::RefTarget::Commit(CommitId::new("z1")),
             is_tracked,
         }
     }

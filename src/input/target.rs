@@ -6,12 +6,13 @@
 use smallvec::smallvec;
 
 use crate::app::{App, AppMode};
+use crate::dag::RefTarget;
 use crate::jj_command::{FollowUpAction, FollowUpOption, JJCommand, JJCommandKind};
 use crate::keymap::{AppAction, CommandFlags};
 use crate::types::ActiveView;
 use crate::types::{
-    CommandPrompt, CommitId, DisplayRow, PendingSelection, RemoteCommand, RemoteEdit, RemoteName,
-    SmallVec, Str, TargetOperation, WorkspaceName,
+    CommandPrompt, DisplayRow, PendingSelection, RemoteCommand, RemoteEdit, RemoteName, SmallVec,
+    Str, TargetOperation, WorkspaceName,
 };
 
 use super::Action;
@@ -104,41 +105,40 @@ fn bookmark_interdiff(app: &mut App) -> Action {
     let Some(entry) = app.selected_bookmark_entry() else {
         return nothing_here(app, AppAction::Interdiff);
     };
-    let name = entry.name.to_string();
-    // A remote-only row is the remote side itself, so it compares with the
-    // bookmark's local row, if it has one.
-    if let Some(remote) = entry.kind.remote() {
-        let remotes = entry
-            .commit_id
-            .clone()
-            .map(|commit| (remote.clone(), commit))
-            .into_iter()
-            .collect();
-        let local = app
-            .views
-            .bookmark_entries
-            .iter()
-            .find(|e| e.name == entry.name && e.kind.remote().is_none())
-            .and_then(|e| e.commit_id.clone());
-        return ref_interdiff(app, &name, local, remotes, Some(0));
-    }
-    let local = entry.commit_id.clone();
-    let remotes = app
+    let name = entry.name.clone();
+    let remotes: Vec<(RemoteName, RefTarget)> = app
+        .views
+        .remote_bookmarks
+        .iter()
+        .filter(|rb| rb.name == name)
+        .map(|rb| (rb.remote.clone(), rb.target.clone()))
+        .collect();
+    // A remote-only row is the remote side itself. Its commit, when it has
+    // one, is the row's; without one, the remote says why.
+    let on_remote = match entry.kind.remote() {
+        Some(remote) => {
+            let target = match &entry.commit_id {
+                Some(commit) => RefTarget::Commit(commit.clone()),
+                None => remotes
+                    .iter()
+                    .find(|(r, _)| r == remote)
+                    .map_or(RefTarget::Absent, |(_, target)| target.clone()),
+            };
+            Some((remote.clone(), target))
+        }
+        None => app.selected_remote_target().map(|(_, target)| {
+            (
+                target.remote.clone(),
+                RefTarget::Commit(target.summary.commit_id.clone()),
+            )
+        }),
+    };
+    let local = app
         .views
         .bookmark_details
-        .get(&entry.name)
-        .map(|d| {
-            d.remote_targets
-                .iter()
-                .map(|t| (t.remote.clone(), t.summary.commit_id.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-    let on_remote = match app.rows.get(app.cursor.raw()) {
-        Some(DisplayRow::BookmarkRemoteTarget { target_idx, .. }) => Some(target_idx.raw()),
-        _ => None,
-    };
-    ref_interdiff(app, &name, local, remotes, on_remote)
+        .get(&name)
+        .map_or(RefTarget::Absent, |details| details.local.clone());
+    ref_interdiff(app, name.as_str(), local, remotes, on_remote)
 }
 
 fn tag_interdiff(app: &mut App) -> Action {
@@ -146,50 +146,84 @@ fn tag_interdiff(app: &mut App) -> Action {
         return nothing_here(app, AppAction::Interdiff);
     };
     let name = entry.name.to_string();
-    let local = entry.commit_id.clone();
-    let remotes = app
+    let local = entry
+        .commit_id
+        .clone()
+        .map_or(RefTarget::Absent, RefTarget::Commit);
+    let remote_targets = app
         .views
         .tag_details
         .get(&entry.name)
-        .map(|d| {
-            d.remote_targets
-                .iter()
-                .map(|t| (t.remote.clone(), t.summary.commit_id.clone()))
-                .collect()
-        })
+        .map(|d| d.remote_targets.as_slice())
         .unwrap_or_default();
+    let remote = |t: &crate::dag::TagRemoteTarget| {
+        (
+            t.remote.clone(),
+            RefTarget::Commit(t.summary.commit_id.clone()),
+        )
+    };
+    let remotes = remote_targets.iter().map(remote).collect();
     let on_remote = match app.rows.get(app.cursor.raw()) {
-        Some(DisplayRow::TagRemoteTarget { target_idx, .. }) => Some(target_idx.raw()),
+        Some(DisplayRow::TagRemoteTarget { target_idx, .. }) => {
+            remote_targets.get(target_idx.raw()).map(remote)
+        }
         _ => None,
     };
     ref_interdiff(app, &name, local, remotes, on_remote)
 }
 
 /// Compare a bookmark or tag on a remote with the local one: the remote
-/// whose row the cursor is on, or else the first pointing somewhere else.
+/// whose row the cursor is on, or else the first of `remotes` pointing at
+/// another commit, or failing that, one that is conflicted.
 fn ref_interdiff(
     app: &mut App,
     name: &str,
-    local: Option<CommitId>,
-    remotes: Vec<(RemoteName, CommitId)>,
-    on_remote: Option<usize>,
+    local: RefTarget,
+    remotes: Vec<(RemoteName, RefTarget)>,
+    on_remote: Option<(RemoteName, RefTarget)>,
 ) -> Action {
-    let Some(local) = local else {
-        app.set_error(format!("{name} has no local commit"));
-        return Action::None;
+    let local = match local {
+        RefTarget::Commit(commit) => commit,
+        RefTarget::Absent => {
+            app.set_error(format!("{name} has no local commit"));
+            return Action::None;
+        }
+        RefTarget::Conflicted => {
+            app.set_error(format!("{name} is conflicted"));
+            return Action::None;
+        }
     };
-    let remote = match on_remote {
-        Some(idx) => remotes.into_iter().nth(idx),
-        None => remotes.into_iter().find(|(_, commit)| *commit != local),
-    };
-    let Some((remote, remote_commit)) = remote else {
+    let remote = on_remote.or_else(|| {
+        let elsewhere = |target: &RefTarget| target.commit().is_some_and(|c| *c != local);
+        let idx = remotes
+            .iter()
+            .position(|(_, target)| elsewhere(target))
+            .or_else(|| {
+                remotes
+                    .iter()
+                    .position(|(_, target)| *target == RefTarget::Conflicted)
+            })?;
+        remotes.into_iter().nth(idx)
+    });
+    let Some((remote, target)) = remote else {
         app.set_error(format!("{name} is the same on its remotes"));
         return Action::None;
     };
-    if remote_commit == local {
-        app.set_error(format!("{name}@{remote} is the same as {name}"));
-        return Action::None;
-    }
+    let remote_commit = match target {
+        RefTarget::Commit(commit) if commit == local => {
+            app.set_error(format!("{name}@{remote} is the same as {name}"));
+            return Action::None;
+        }
+        RefTarget::Commit(commit) => commit,
+        RefTarget::Conflicted => {
+            app.set_error(format!("{name}@{remote} is conflicted"));
+            return Action::None;
+        }
+        RefTarget::Absent => {
+            app.set_error(format!("{name} is not on {remote}"));
+            return Action::None;
+        }
+    };
     let from_label = Str::from(format!("{name}@{remote}"));
     let to_label = Str::from(name);
     app.enter_interdiff_view(remote_commit, local, from_label, to_label);
@@ -1117,8 +1151,8 @@ mod ref_interdiff_tests {
 
     use crate::app::{App, BookmarkKind, BookmarkViewEntry, TagViewEntry};
     use crate::dag::{
-        BookmarkDetails, BookmarkRemoteTarget, CommitSummary, ShortId, TagDetails, TagLocalTarget,
-        TagPresence, TagRemoteTarget,
+        BookmarkDetails, BookmarkRemoteTarget, CommitSummary, RefTarget, RemoteBookmarkRef,
+        ShortId, TagDetails, TagLocalTarget, TagPresence, TagRemoteTarget,
     };
     use crate::idx::{BookmarkDetailIdx, BookmarkIdx, TagDetailIdx, TagIdx};
     use crate::input::handle_key;
@@ -1177,10 +1211,11 @@ mod ref_interdiff_tests {
         app
     }
 
-    fn bookmark(name: &str, commit: &str, kind: BookmarkKind) -> BookmarkViewEntry {
+    /// A listed bookmark, on `commit` if it is on the one.
+    fn bookmark(name: &str, commit: Option<&str>, kind: BookmarkKind) -> BookmarkViewEntry {
         BookmarkViewEntry {
             name: BookmarkName::new(name),
-            commit_id: Some(CommitId::new(commit)),
+            commit_id: commit.map(CommitId::new),
             change_id: None,
             short_commit_id: None,
             revision: Some(RevisionArg::new("qpv")),
@@ -1189,35 +1224,62 @@ mod ref_interdiff_tests {
         }
     }
 
-    fn bookmark_remote(remote: &str, commit: &str) -> BookmarkRemoteTarget {
-        BookmarkRemoteTarget {
-            remote: RemoteName::new(remote),
-            summary: summary(commit),
-            is_tracked: true,
-            behind_count: None,
-            ahead_count: None,
-        }
+    fn commit(id: &str) -> RefTarget {
+        RefTarget::Commit(CommitId::new(id))
     }
 
-    /// The bookmark view showing `entries`, `main`'s remote rows from
-    /// `main_remotes`, with the cursor on `row`.
+    /// The bookmark view listing `entries`, with `main` at `local` here and
+    /// at each of `remotes`, and the cursor on `row`. As the repo has it, a
+    /// remote gets a row under `main` only where it points at another commit.
     fn bookmarks_view(
+        local: RefTarget,
+        remotes: &[(&str, RefTarget)],
         entries: Vec<BookmarkViewEntry>,
-        main_remotes: Vec<BookmarkRemoteTarget>,
         row: DisplayRow,
     ) -> App {
         let mut app = App::for_test();
+        app.views.remote_bookmarks = remotes
+            .iter()
+            .map(|(remote, target)| RemoteBookmarkRef {
+                name: BookmarkName::new("main"),
+                remote: RemoteName::new(*remote),
+                target: target.clone(),
+                is_tracked: true,
+            })
+            .collect();
+        if local != RefTarget::Absent {
+            let remote_targets = remotes
+                .iter()
+                .filter_map(|(remote, target)| {
+                    let commit = target.commit().filter(|&c| Some(c) != local.commit())?;
+                    Some(BookmarkRemoteTarget {
+                        remote: RemoteName::new(*remote),
+                        summary: summary(commit.as_str()),
+                        is_tracked: true,
+                        behind_count: None,
+                        ahead_count: None,
+                    })
+                })
+                .collect();
+            app.views.bookmark_details.insert(
+                BookmarkName::new("main"),
+                BookmarkDetails {
+                    local,
+                    conflict_targets: Vec::new(),
+                    remote_targets,
+                },
+            );
+        }
         app.views.bookmark_entries = entries;
-        app.views.bookmark_details.insert(
-            BookmarkName::new("main"),
-            BookmarkDetails {
-                conflict_targets: Vec::new(),
-                remote_targets: main_remotes,
-            },
-        );
         app.switch_view(ActiveView::Bookmarks);
         app.cursor = app.position_of(row).expect("row is shown");
         app
+    }
+
+    fn item(idx: usize) -> DisplayRow {
+        DisplayRow::BookmarkItem {
+            bookmark_idx: BookmarkIdx::new(idx),
+        }
     }
 
     fn tracking() -> BookmarkKind {
@@ -1294,14 +1356,35 @@ mod ref_interdiff_tests {
     #[test]
     fn a_remote_bookmark_row_compares_with_its_local_bookmark() {
         let mut app = bookmarks_view(
+            commit("aaaa1111"),
+            &[("origin", commit("bbbb2222"))],
             vec![
-                bookmark("main", "aaaa1111", tracking()),
-                bookmark("main", "bbbb2222", origin()),
+                bookmark("main", Some("aaaa1111"), tracking()),
+                bookmark("main", Some("bbbb2222"), origin()),
             ],
-            vec![bookmark_remote("origin", "bbbb2222")],
-            DisplayRow::BookmarkItem {
-                bookmark_idx: BookmarkIdx::new(1),
-            },
+            item(1),
+        );
+        press_i(&mut app);
+        assert_eq!(
+            compared(&app),
+            (
+                "main@origin".into(),
+                "main".into(),
+                "bbbb2222".into(),
+                "aaaa1111".into()
+            )
+        );
+    }
+
+    /// The view lists local bookmarks on the revset's commits only; the
+    /// local side is still where the bookmark points.
+    #[test]
+    fn a_remote_bookmark_row_compares_with_a_local_bookmark_outside_the_revset() {
+        let mut app = bookmarks_view(
+            commit("aaaa1111"),
+            &[("origin", commit("bbbb2222"))],
+            vec![bookmark("main", Some("bbbb2222"), origin())],
+            item(0),
         );
         press_i(&mut app);
         assert_eq!(
@@ -1318,15 +1401,72 @@ mod ref_interdiff_tests {
     #[test]
     fn a_bookmark_only_on_a_remote_has_no_local_side() {
         let mut app = bookmarks_view(
-            vec![bookmark("main", "bbbb2222", origin())],
-            Vec::new(),
-            DisplayRow::BookmarkItem {
-                bookmark_idx: BookmarkIdx::new(0),
-            },
+            RefTarget::Absent,
+            &[("origin", commit("bbbb2222"))],
+            vec![bookmark("main", Some("bbbb2222"), origin())],
+            item(0),
         );
         press_i(&mut app);
         assert_eq!(app.active_view, ActiveView::Bookmarks);
         assert_eq!(status(&app), "main has no local commit");
+    }
+
+    /// From its own row or a remote's, a conflicted bookmark has no one
+    /// commit to compare.
+    #[test]
+    fn a_conflicted_local_bookmark_says_so() {
+        for row in [item(0), item(1)] {
+            let mut app = bookmarks_view(
+                RefTarget::Conflicted,
+                &[("origin", commit("bbbb2222"))],
+                vec![
+                    bookmark("main", Some("aaaa1111"), tracking()),
+                    bookmark("main", Some("bbbb2222"), origin()),
+                ],
+                row,
+            );
+            press_i(&mut app);
+            assert_eq!(status(&app), "main is conflicted");
+        }
+    }
+
+    /// A remote row without a commit is a remote that is conflicted, or
+    /// one tracked but without the bookmark.
+    #[test]
+    fn a_remote_without_one_commit_says_why() {
+        for (target, says) in [
+            (RefTarget::Conflicted, "main@origin is conflicted"),
+            (RefTarget::Absent, "main is not on origin"),
+        ] {
+            let mut app = bookmarks_view(
+                commit("aaaa1111"),
+                &[("origin", target)],
+                vec![
+                    bookmark("main", Some("aaaa1111"), tracking()),
+                    bookmark("main", None, origin()),
+                ],
+                item(1),
+            );
+            press_i(&mut app);
+            assert_eq!(status(&app), says);
+        }
+    }
+
+    /// With no remote elsewhere to compare, a conflicted one is why, not
+    /// the remotes all agreeing.
+    #[test]
+    fn a_bookmark_with_only_a_conflicted_remote_apart_says_so() {
+        let mut app = bookmarks_view(
+            commit("aaaa1111"),
+            &[
+                ("origin", commit("aaaa1111")),
+                ("upstream", RefTarget::Conflicted),
+            ],
+            vec![bookmark("main", Some("aaaa1111"), tracking())],
+            item(0),
+        );
+        press_i(&mut app);
+        assert_eq!(status(&app), "main@upstream is conflicted");
     }
 
     /// On a remote's row, that remote is compared, not the first that
@@ -1334,11 +1474,12 @@ mod ref_interdiff_tests {
     #[test]
     fn a_bookmark_compares_with_the_remote_under_the_cursor() {
         let mut app = bookmarks_view(
-            vec![bookmark("main", "aaaa1111", tracking())],
-            vec![
-                bookmark_remote("origin", "bbbb2222"),
-                bookmark_remote("upstream", "cccc3333"),
+            commit("aaaa1111"),
+            &[
+                ("origin", commit("bbbb2222")),
+                ("upstream", commit("cccc3333")),
             ],
+            vec![bookmark("main", Some("aaaa1111"), tracking())],
             DisplayRow::BookmarkRemoteTarget {
                 bookmark_idx: BookmarkIdx::new(0),
                 target_idx: BookmarkDetailIdx::new(1),

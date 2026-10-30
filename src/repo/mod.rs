@@ -206,12 +206,11 @@ impl JjRepo {
 
     /// All remote bookmarks (tracked and untracked) with structured data.
     pub fn all_remote_bookmark_refs(&self) -> Vec<crate::dag::RemoteBookmarkRef> {
-        use crate::types::CommitId as UiCommitId;
         self.remote_bookmarks()
             .map(|(s, r)| crate::dag::RemoteBookmarkRef {
                 name: BookmarkName::new(s.name.as_str()),
                 remote: RemoteName::new(s.remote.as_str()),
-                commit_id: r.target.as_normal().map(|id| UiCommitId::new(id.hex())),
+                target: ref_target(&r.target),
                 is_tracked: r.is_tracked(),
             })
             .collect()
@@ -425,6 +424,16 @@ fn short_prefixes_revset(config: &StackedConfig) -> Result<Option<String>> {
     Ok((!revset.is_empty()).then_some(revset))
 }
 
+/// Where a ref points, in the UI's terms.
+pub(super) fn ref_target(target: &jj_lib::op_store::RefTarget) -> crate::dag::RefTarget {
+    use crate::dag::RefTarget;
+    match target.as_normal() {
+        Some(id) => RefTarget::Commit(crate::types::CommitId::new(id.hex())),
+        None if target.is_absent() => RefTarget::Absent,
+        None => RefTarget::Conflicted,
+    }
+}
+
 /// The remote that `remote_bookmarks()` skips by default. Git-backed repos
 /// expose a synthetic `git` remote mirroring the colocated git repo's refs,
 /// which jj hides unless it is named explicitly. Mirrors jj-cli's
@@ -503,5 +512,27 @@ mod tests {
         // config keeps defining `revsets.log`.
         let config = config(config::DEFAULT_REVSETS_TOML);
         assert!(short_prefixes_revset(&config).unwrap().is_some());
+    }
+
+    /// Not pointing at one commit is two different things: nowhere, or
+    /// several commits at once.
+    #[test]
+    fn a_ref_with_no_single_commit_is_told_apart_as_absent_or_conflicted() {
+        use crate::dag::RefTarget;
+        use jj_lib::backend::CommitId;
+        use jj_lib::op_store::RefTarget as JjRefTarget;
+
+        let a = CommitId::from_hex("aa11");
+        let b = CommitId::from_hex("bb22");
+        let base = CommitId::from_hex("cc33");
+        assert_eq!(
+            ref_target(&JjRefTarget::normal(a.clone())),
+            RefTarget::Commit(crate::types::CommitId::new("aa11"))
+        );
+        assert_eq!(ref_target(&JjRefTarget::absent()), RefTarget::Absent);
+        assert_eq!(
+            ref_target(&JjRefTarget::from_legacy_form([base], [a, b])),
+            RefTarget::Conflicted
+        );
     }
 }

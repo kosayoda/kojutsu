@@ -298,12 +298,32 @@ pub struct RemoteBookmarkInfo {
     pub is_tracked: bool,
 }
 
+/// Where a bookmark or tag points, here or on one remote.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RefTarget {
+    /// Nowhere: deleted, or a tracked remote it was never pushed to.
+    Absent,
+    Commit(CommitId),
+    /// Several commits at once, until the conflict is resolved.
+    Conflicted,
+}
+
+impl RefTarget {
+    /// The one commit it points at, if it points at exactly one.
+    pub fn commit(&self) -> Option<&CommitId> {
+        match self {
+            Self::Commit(commit) => Some(commit),
+            Self::Absent | Self::Conflicted => None,
+        }
+    }
+}
+
 /// A remote bookmark reference with full metadata (for off-DAG bookmarks).
 #[derive(Clone)]
 pub struct RemoteBookmarkRef {
     pub name: BookmarkName,
     pub remote: RemoteName,
-    pub commit_id: Option<crate::types::CommitId>,
+    pub target: RefTarget,
     pub is_tracked: bool,
 }
 
@@ -367,8 +387,10 @@ pub struct BookmarkRemoteTarget {
     pub ahead_count: Option<usize>,
 }
 
-/// Expanded detail data for a bookmark (conflict targets + remote tracking).
+/// A local bookmark: where it points, and its expanded detail rows
+/// (conflict targets + remote tracking).
 pub struct BookmarkDetails {
+    pub local: RefTarget,
     pub conflict_targets: Vec<BookmarkConflictTarget>,
     pub remote_targets: Vec<BookmarkRemoteTarget>,
 }

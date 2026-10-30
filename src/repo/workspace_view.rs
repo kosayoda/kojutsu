@@ -137,7 +137,8 @@ impl JjRepo {
         result
     }
 
-    /// Extract rich bookmark details: conflict targets and remote tracking info.
+    /// Extract rich bookmark details for every local bookmark: where it
+    /// points, its conflict targets and its remote tracking info.
     /// Called during revset load in the background service thread.
     pub fn extract_bookmark_details(&self) -> HashMap<BookmarkName, crate::dag::BookmarkDetails> {
         use crate::dag::{BookmarkDetails, DiffKind};
@@ -165,6 +166,7 @@ impl JjRepo {
         for (name, target) in view.local_bookmarks() {
             let bm_name = BookmarkName::new(name.as_str());
             let mut details = BookmarkDetails {
+                local: super::ref_target(target),
                 conflict_targets: Vec::new(),
                 remote_targets: Vec::new(),
             };
@@ -218,10 +220,7 @@ impl JjRepo {
                 }
             }
 
-            // Only store if there's something to show.
-            if !details.conflict_targets.is_empty() || !details.remote_targets.is_empty() {
-                result.insert(bm_name, details);
-            }
+            result.insert(bm_name, details);
         }
 
         result
