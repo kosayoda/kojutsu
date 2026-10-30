@@ -1113,14 +1113,6 @@ mod placeholder_tests {
         assert!(loading_rows(&app).is_empty());
     }
 
-    /// Entering the op log for the first time shows it loading.
-    #[test]
-    fn an_empty_op_log_holds_a_place_while_loading() {
-        let mut app = App::for_test();
-        app.switch_view(ActiveView::Operations);
-        assert!(app.rows == [DisplayRow::Placeholder(ContentSlot::View)]);
-    }
-
     /// Folding on the placeholder folds the commit it is loading for.
     #[test]
     fn folding_on_a_placeholder_folds_its_owner() {
@@ -1173,12 +1165,18 @@ mod placeholder_tests {
         assert!(app.rows[app.cursor.raw()] == DisplayRow::Placeholder(slot));
     }
 
-    /// An op log that failed to load shows the failure where the log would
-    /// be, rather than an empty view.
+    /// The op log's place is held while it first loads, and, if it fails,
+    /// by the failure rather than an empty view; the fold key there asks
+    /// again.
     #[test]
-    fn a_failed_op_log_holds_its_place() {
+    fn the_op_log_holds_its_place_while_loading_and_after_failing() {
         let mut app = App::for_test();
         app.switch_view(ActiveView::Operations);
+        assert!(app.rows == [DisplayRow::Placeholder(ContentSlot::View)]);
+        assert!(matches!(
+            app.slot_state(ContentSlot::View),
+            SlotState::Loading
+        ));
         app.take_repo_requests();
         app.handle_repo_result(RepoResult::Operations {
             limit: app.op_log.limit,

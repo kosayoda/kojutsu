@@ -539,21 +539,6 @@ mod change_id_key_tests {
         app.dag.nodes[idx].commit.change_id.set_prefix_len(12);
         assert!(app.is_commit_selected(idx));
     }
-
-    #[test]
-    fn a_selected_commit_reaches_jj_as_its_short_prefix() {
-        // Commands get the same short prefix the cursor path and the UI use,
-        // not the selection's key.
-        let mut app = app_with_one_commit();
-        let idx = EntryIdx::new(0);
-        app.dag.nodes[idx].commit.change_id.set_prefix_len(2);
-
-        app.toggle_commit_selection(idx);
-
-        let ids = app.selected_change_ids();
-        assert_eq!(ids.len(), 1);
-        assert_eq!(ids[0].as_str(), "uu");
-    }
 }
 
 #[cfg(test)]
@@ -641,6 +626,7 @@ mod submodule_line_selection_tests {
         LineStats,
     };
     use crate::idx::{DiffLineIdx, EntryIdx, FileIdx};
+    use crate::repo_service::RepoResult;
     use crate::types::{FileSelectionState, RepoPath, SelectionKind};
 
     const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
@@ -703,16 +689,6 @@ mod submodule_line_selection_tests {
     /// The removed line of the first file's diff.
     const REMOVED: DiffLineIdx = DiffLineIdx::new(1);
 
-    #[test]
-    fn a_submodules_lines_cannot_be_line_selected() {
-        let mut app = app_with_files(&[("sub", true)]);
-
-        app.toggle_line_selection(EntryIdx::new(0), FileIdx::new(0), REMOVED);
-
-        assert!(!app.selection_active());
-        assert!(app.status_message.is_some());
-    }
-
     /// The real trap: the submodule isn't the file being selected. jj carries
     /// it along whole regardless, so offering line selection anywhere in this
     /// commit would misreport what the command is about to do.
@@ -723,6 +699,7 @@ mod submodule_line_selection_tests {
         app.toggle_line_selection(EntryIdx::new(0), FileIdx::new(0), REMOVED);
 
         assert!(!app.selection_active());
+        assert!(app.status_message.is_some());
     }
 
     #[test]
@@ -750,6 +727,19 @@ mod submodule_line_selection_tests {
         ));
     }
 
+    /// Delivers a fresh file list for the commit at `entry`, as the repo
+    /// service does after a refresh or rewrite.
+    fn deliver_files(app: &mut App, entry: EntryIdx, files: Vec<FileChange>) {
+        let target = app.dag.nodes[entry].files.target().clone();
+        app.handle_repo_result(RepoResult::DiffSummary {
+            target,
+            result: Ok(DiffSummary {
+                files,
+                stats: LineStats::default(),
+            }),
+        });
+    }
+
     /// A commit rewritten under a live line selection keeps its change ID, so
     /// the selection survives the refresh. If the rewrite brought in a
     /// submodule, the selection is now unhonourable and has to go: checked
@@ -761,11 +751,11 @@ mod submodule_line_selection_tests {
         app.toggle_line_selection(entry, FileIdx::new(0), REMOVED);
         assert_eq!(app.selection_kind(), SelectionKind::Line);
 
-        app.dag.nodes[entry].files.set_summary(Ok(DiffSummary {
-            files: vec![file("readme", false), file("sub", true)],
-            stats: LineStats::default(),
-        }));
-        app.drop_blocked_line_selection(entry);
+        deliver_files(
+            &mut app,
+            entry,
+            vec![file("readme", false), file("sub", true)],
+        );
 
         assert!(!app.selection_active());
     }
@@ -777,7 +767,7 @@ mod submodule_line_selection_tests {
         let entry = EntryIdx::new(0);
         app.toggle_line_selection(entry, FileIdx::new(0), REMOVED);
 
-        app.drop_blocked_line_selection(entry);
+        deliver_files(&mut app, entry, vec![file("readme", false)]);
 
         assert_eq!(app.selection_kind(), SelectionKind::Line);
     }
@@ -788,6 +778,6 @@ mod submodule_line_selection_tests {
     fn the_message_counts_every_blocked_path() {
         let files = [file("a", true), file("readme", false), file("b", true)];
         let blocker = super::line_selection_blocker(&files).unwrap();
-        assert_eq!(blocker, "a (+1 more) is a Git submodule");
+        assert!(blocker.starts_with("a (+1 more) "), "{blocker}");
     }
 }

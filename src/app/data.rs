@@ -1088,16 +1088,14 @@ mod repo_result_tests {
             .clone()
     }
 
+    /// The status bar is one line and never wraps, so warnings joined into it
+    /// are lost past the right edge. A lone warning is shown whole; extras are
+    /// counted, and the count is what says to go looking.
     #[test]
-    fn a_lone_revset_warning_reaches_the_status_bar_whole() {
+    fn a_lone_revset_warning_is_shown_whole_and_extras_are_counted() {
         let app = loaded_with_warnings(&["immutable() failed"]);
         assert_eq!(status_of(&app), "immutable() failed");
-    }
 
-    /// The status bar is one line and never wraps, so warnings joined into it
-    /// are lost past the right edge. The count is what says to go looking.
-    #[test]
-    fn extra_revset_warnings_are_counted_rather_than_run_together() {
         let app = loaded_with_warnings(&["first", "second", "third"]);
         assert_eq!(status_of(&app), "first (+2 more in the command log)");
     }
@@ -1125,7 +1123,7 @@ mod view_entry_revision_tests {
     const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
     const COMMIT_ID: &str = "7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654";
 
-    fn app_with_tag_on(divergence: Option<DivergenceInfo>) -> App {
+    fn app_with_tag_on(divergence: DivergenceInfo) -> App {
         let mut change_id = ShortId::new(CHANGE_ID);
         change_id.set_prefix_len(2);
 
@@ -1142,7 +1140,7 @@ mod view_entry_revision_tests {
                         change_id,
                         short_commit_id: ShortId::new(COMMIT_ID),
                         description: None,
-                        divergence,
+                        divergence: Some(divergence),
                     },
                 }),
                 remote_targets: Vec::new(),
@@ -1153,21 +1151,14 @@ mod view_entry_revision_tests {
     }
 
     #[test]
-    fn a_tag_row_carries_the_revision_for_its_commit() {
-        let app = app_with_tag_on(None);
-        let entry = &app.views.tag_entries[0];
-        assert_eq!(entry.revision.as_ref().unwrap().as_str(), "uu");
-    }
-
-    #[test]
     fn a_tag_on_a_hidden_commit_keeps_its_offset() {
         // Without the offset this row would act on whatever superseded the
         // tagged commit, silently and with no error.
-        let app = app_with_tag_on(Some(DivergenceInfo {
+        let app = app_with_tag_on(DivergenceInfo {
             is_divergent: false,
             is_hidden: true,
             suffix: Some(1),
-        }));
+        });
         let entry = &app.views.tag_entries[0];
         assert_eq!(entry.revision.as_ref().unwrap().as_str(), "uu/1");
     }

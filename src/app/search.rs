@@ -404,46 +404,99 @@ impl App {
 
 #[cfg(test)]
 mod id_match_tests {
-    use super::*;
-    use crate::dag::ShortId;
+    use super::super::App;
+    use crate::dag::{
+        CommitInfo, CommitSummary, DivergenceInfo, ShortId, TagDetails, TagLocalTarget, TagPresence,
+    };
+    use crate::types::{ActiveView, CommitId, SearchScopes, TagName};
 
-    const CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
+    const COMMIT_CHANGE_ID: &str = "kkmpptxzrspxrzommnulwmwkkqwworpl";
+    const COMMIT_ID: &str = "4d3a9c8b7a6e5d4c3b2a190876547bbaa2cb1f0e";
+    const TAG_CHANGE_ID: &str = "uunnomkxrqvlypszwlwkvvqnstvzoxrs";
+    const TAG_COMMIT_ID: &str = "7bbaa2cb1f0e4d3a9c8b7a6e5d4c3b2a19087654";
 
-    fn matches(query: &str) -> bool {
-        let id = ShortId::new(CHANGE_ID);
-        let contains = |haystack: &str| haystack.contains(query);
-        ref_entry_matches(None, Some(&id), SearchScopes::CHANGE_ID, &contains)
+    /// A DAG holding one divergent commit (offset 2), and a tag on another
+    /// commit.
+    fn app() -> App {
+        let mut app = App::for_test();
+        let mut commit = CommitInfo::for_test(COMMIT_CHANGE_ID, COMMIT_ID);
+        commit.divergence = Some(DivergenceInfo {
+            is_divergent: true,
+            is_hidden: false,
+            suffix: Some(2),
+        });
+        app.push_test_commit(commit);
+        app.rebuild_rows();
+
+        let tag = TagName::new("v1.0");
+        app.views.all_tags.push(tag.clone());
+        app.views.tag_details.insert(
+            tag,
+            TagDetails {
+                presence: TagPresence::Local,
+                local_target: Some(TagLocalTarget {
+                    summary: CommitSummary {
+                        commit_id: CommitId::new(TAG_COMMIT_ID),
+                        change_id: ShortId::new(TAG_CHANGE_ID),
+                        short_commit_id: ShortId::new(TAG_COMMIT_ID),
+                        description: None,
+                        divergence: None,
+                    },
+                }),
+                remote_targets: Vec::new(),
+            },
+        );
+        app.rebuild_tag_entries();
+        app
     }
 
-    #[test]
-    fn a_query_longer_than_the_displayed_id_still_matches() {
-        // The displayed form is 8 chars; a copied ID is 32.
-        assert!(matches("uunnomkx"));
-        assert!(matches("uunnomkxrqvlyp"));
-        assert!(matches(CHANGE_ID));
+    /// How many rows of the active view a search for `query` finds with only
+    /// `scopes` on.
+    fn match_count(app: &mut App, scopes: SearchScopes, query: &str) -> usize {
+        *app.search_scopes_mut() = scopes;
+        app.begin_search();
+        app.update_search_input(tui_input::Input::new(query.into()));
+        let count = app.search.as_ref().map_or(0, |s| s.matches.len());
+        app.cancel_search();
+        count
     }
 
+    /// IDs are matched against their whole text rather than the few characters
+    /// on screen, so a pasted or copied ID finds its row; a prefix of what is
+    /// displayed still matches, and the scope still decides whether IDs are
+    /// looked at at all.
     #[test]
-    fn a_short_query_matches_as_it_always_did() {
-        assert!(matches("uu"));
-        assert!(matches("nnom"));
-    }
+    fn an_id_matches_by_its_full_text_within_its_scope() {
+        let mut app = app();
 
-    #[test]
-    fn an_unrelated_query_does_not_match() {
-        assert!(!matches("zzzz"));
-    }
+        assert_eq!(match_count(&mut app, SearchScopes::CHANGE_ID, "kk"), 1);
+        assert_eq!(
+            match_count(&mut app, SearchScopes::CHANGE_ID, COMMIT_CHANGE_ID),
+            1
+        );
+        let with_offset = format!("{COMMIT_CHANGE_ID}/2");
+        assert_eq!(
+            match_count(&mut app, SearchScopes::CHANGE_ID, &with_offset),
+            1
+        );
+        assert_eq!(match_count(&mut app, SearchScopes::COMMIT_ID, COMMIT_ID), 1);
+        assert_eq!(match_count(&mut app, SearchScopes::CHANGE_ID, "zzzz"), 0);
+        assert_eq!(
+            match_count(&mut app, SearchScopes::DESCRIPTION, COMMIT_CHANGE_ID),
+            0
+        );
 
-    #[test]
-    fn the_change_id_scope_still_gates_the_match() {
-        let id = ShortId::new(CHANGE_ID);
-        let contains = |haystack: &str| haystack.contains("uu");
-        assert!(!ref_entry_matches(
-            None,
-            Some(&id),
-            SearchScopes::DESCRIPTION,
-            &contains
-        ));
+        app.switch_view(ActiveView::Tags);
+        assert_eq!(match_count(&mut app, SearchScopes::CHANGE_ID, "nnom"), 1);
+        assert_eq!(
+            match_count(&mut app, SearchScopes::CHANGE_ID, TAG_CHANGE_ID),
+            1
+        );
+        assert_eq!(match_count(&mut app, SearchScopes::CHANGE_ID, "zzzz"), 0);
+        assert_eq!(
+            match_count(&mut app, SearchScopes::DESCRIPTION, TAG_CHANGE_ID),
+            0
+        );
     }
 }
 

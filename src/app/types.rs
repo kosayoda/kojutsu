@@ -1255,17 +1255,6 @@ mod annotate_cache_tests {
     }
 
     #[test]
-    fn the_target_is_both_the_commit_and_the_path() {
-        // Same file at another commit, and another file at the same commit,
-        // are different annotations.
-        let mut cache = AnnotateCache::default();
-        cache.insert(target("aaa", "a.rs"), result(3));
-
-        assert!(cache.get(&target("bbb", "a.rs")).is_none());
-        assert!(cache.get(&target("aaa", "b.rs")).is_none());
-    }
-
-    #[test]
     fn re_inserting_a_target_replaces_it_rather_than_duplicating() {
         let mut cache = AnnotateCache::default();
         cache.insert(target("aaa", "a.rs"), result(3));

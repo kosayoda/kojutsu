@@ -393,23 +393,15 @@ mod reload_tests {
     }
 
     #[test]
-    fn a_reload_drops_an_active_preset_the_new_config_no_longer_has() {
-        let mut app = App::new(String::new(), String::new(), with_presets(3));
-        app.revset.active_preset = Some(2);
-
-        app.apply_reloaded_config(with_presets(1));
-
-        assert_eq!(app.revset.active_preset, None);
-    }
-
-    #[test]
-    fn a_reload_keeps_an_active_preset_that_still_exists() {
+    fn a_reload_keeps_an_active_preset_only_while_its_index_is_in_range() {
         let mut app = App::new(String::new(), String::new(), with_presets(3));
         app.revset.active_preset = Some(2);
 
         app.apply_reloaded_config(with_presets(3));
-
         assert_eq!(app.revset.active_preset, Some(2));
+
+        app.apply_reloaded_config(with_presets(2));
+        assert_eq!(app.revset.active_preset, None);
     }
 }
 
@@ -1974,6 +1966,7 @@ mod annotate_request_tests {
     use super::*;
     use crate::app::types::AnnotateTarget;
     use crate::dag::AnnotateResult;
+    use crate::repo_service::RepoResult;
     use crate::types::RepoPath;
 
     fn target() -> AnnotateTarget {
@@ -1999,47 +1992,29 @@ mod annotate_request_tests {
         }
     }
 
-    #[test]
-    fn a_first_visit_asks_the_repo() {
-        let mut app = App::for_test();
-        let t = target();
-        app.enter_annotate_view(t.commit_id.clone(), t.path.clone());
-
-        assert!(matches!(app.annotate.lines, Loadable::Loading));
-        assert_eq!(app.take_repo_requests().len(), 1);
-    }
-
-    #[test]
-    fn a_revisit_is_served_without_asking_the_repo() {
-        // Recomputing costs most of a second on a large repo, and time travel
-        // walks back and forth over the same targets.
-        let mut app = App::for_test();
-        let t = target();
-        app.annotate.cache.insert(t.clone(), result());
-
-        app.enter_annotate_view(t.commit_id.clone(), t.path.clone());
-
-        assert!(app.take_repo_requests().is_empty());
-        let lines = app.annotate.lines.loaded().expect("served from cache");
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].content, "fn main() {}");
-    }
-
+    /// Recomputing an annotation costs most of a second on a large repo, and
+    /// time travel walks back and forth over the same targets.
     #[test]
     fn time_travel_back_to_a_visited_commit_is_free() {
         let mut app = App::for_test();
         let t = target();
-        app.annotate.cache.insert(t.clone(), result());
         app.enter_annotate_view(t.commit_id.clone(), t.path.clone());
-        let _ = app.take_repo_requests();
+        assert!(matches!(app.annotate.lines, Loadable::Loading));
+        assert_eq!(app.take_repo_requests().len(), 1);
+        app.handle_repo_result(RepoResult::Annotate {
+            commit_id: t.commit_id.clone(),
+            path: t.path.clone(),
+            result: Ok(result()),
+        });
 
-        // Hop away (uncached, so it asks) and back (cached, so it does not).
         app.annotate_navigate(CommitId::new("deadbeef"), 1);
         assert_eq!(app.take_repo_requests().len(), 1);
 
         app.annotate_navigate(t.commit_id.clone(), 1);
         assert!(app.take_repo_requests().is_empty());
-        assert!(app.annotate.lines.loaded().is_some());
+        let lines = app.annotate.lines.loaded().expect("served from cache");
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].content, "fn main() {}");
     }
 }
 
