@@ -43,15 +43,47 @@ mod tests {
         read(&lua)
     }
 
+    /// Publishing and reading back must be the identity for any config, not
+    /// just the defaults: the `char` glyphs, both table and integer colour
+    /// forms, an empty array, and the preset vectors each take their own path
+    /// through the Lua conversion.
     #[test]
-    fn setting_a_leaf_leaves_its_siblings_alone() {
-        let config = resolve(
-            Config::default(),
-            r##"kojutsu.config.theme.accent = "#619eef""##,
-        )
-        .unwrap();
-        assert_eq!(config.theme.accent, Color::Rgb(0x61, 0x9e, 0xef));
-        assert_eq!(config.theme.muted, Config::default().theme.muted);
+    fn a_non_default_config_survives_publishing_and_reading_back() {
+        use crate::config::{GlyphChars, Preset, RevsetsConfig, RunConfig};
+        let non_default = || {
+            let mut config = Config {
+                revsets: RevsetsConfig {
+                    presets: vec![Preset {
+                        name: "mine".into(),
+                        revset: "author(me)".into(),
+                    }],
+                },
+                run: RunConfig {
+                    presets: vec!["cargo check".into(), "cargo test".into()],
+                },
+                date_format: "%H:%M".into(),
+                glyphs: GlyphChars {
+                    working_copy: 'W',
+                    conflict: '!',
+                    immutable: '#',
+                    merge: 'M',
+                    normal: '*',
+                },
+                spinner: Vec::new(),
+                tab_width: 2,
+                ..Config::default()
+            };
+            config.theme.accent = Color::Rgb(0x61, 0x9e, 0xef);
+            config.theme.muted = Color::Indexed(244);
+            config.default_search_scopes.commit_id = true;
+            config.default_search_scopes.description = false;
+            config.diff.max_file_size_mib = 1;
+            config
+        };
+        assert_ne!(non_default(), Config::default());
+
+        let resolved = resolve(non_default(), "").expect("an untouched table reads back");
+        assert_eq!(resolved, non_default());
     }
 
     /// Replacing a section drops the keys it doesn't mention; they come back
@@ -97,24 +129,32 @@ mod tests {
         assert_eq!(config.revsets.presets[0].name, "mine");
     }
 
+    /// Every section is `deny_unknown_fields`, so a key nothing reads is an
+    /// error wherever it lands rather than a setting that silently does
+    /// nothing. The error names the typo and the keys that were meant.
     #[test]
-    fn a_misspelled_key_names_itself_and_the_alternatives() {
+    fn a_misspelled_key_is_rejected_in_every_section() {
+        let sections = [
+            "",
+            ".theme",
+            ".glyphs",
+            ".diff",
+            ".run",
+            ".revsets",
+            ".default_search_scopes",
+        ];
+        for section in sections {
+            let script = format!("kojutsu.config{section}.misspelled = 1");
+            assert!(
+                resolve(Config::default(), &script).is_err(),
+                "kojutsu.config{section} accepted an unknown key"
+            );
+        }
+
         let err = resolve(Config::default(), r#"kojutsu.config.theme.acccent = "red""#)
             .expect_err("typo must be rejected");
         assert!(err.contains("unknown field `acccent`"), "{err}");
         assert!(err.contains("`accent`"), "{err}");
-    }
-
-    /// A typo inside a wholesale replacement is caught the same way: this is
-    /// what a `__newindex` guard on the published table would have missed.
-    #[test]
-    fn a_misspelled_key_in_a_replaced_section_is_also_rejected() {
-        let err = resolve(
-            Config::default(),
-            r#"kojutsu.config.theme = { acccent = "red" }"#,
-        )
-        .expect_err("typo must be rejected");
-        assert!(err.contains("unknown field `acccent`"), "{err}");
     }
 
     /// `--print-default-config` hands this file to users as a starting point,

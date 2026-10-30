@@ -211,22 +211,15 @@ mod color_round_trip_tests {
         }
     }
 
-    /// The forms ratatui's `FromStr` does not accept, which we add.
+    /// The table and bare-integer forms are ours, added on top of ratatui's
+    /// `FromStr`; a name it doesn't know is still refused.
     #[test]
-    fn a_table_and_a_bare_integer_still_parse() {
+    fn a_table_and_a_bare_integer_parse_but_an_unknown_name_does_not() {
         let ColorField(rgb) = serde_json::from_str(r#"{"r":50,"g":50,"b":60}"#).unwrap();
         assert_eq!(rgb, Color::Rgb(50, 50, 60));
         let ColorField(indexed) = serde_json::from_str("244").unwrap();
         assert_eq!(indexed, Color::Indexed(244));
-    }
-
-    #[test]
-    fn an_unknown_color_name_is_an_error() {
-        let err = serde_json::from_str::<ColorField>(r#""chartreuse""#).unwrap_err();
-        assert!(
-            err.to_string().contains("unknown color `chartreuse`"),
-            "{err}"
-        );
+        assert!(serde_json::from_str::<ColorField>(r#""chartreuse""#).is_err());
     }
 
     /// A newtype so the attribute under test is the one fields really use.

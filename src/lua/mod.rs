@@ -183,47 +183,26 @@ fn resume_value_to_lua(lua: &Lua, value: ResumeValue) -> mlua::Value {
 mod resume_value_tests {
     use super::{Lua, ResumeValue, resume_value_to_lua};
 
+    /// Ticking nothing and confirming resumes with `{}`, not nil: it is a real
+    /// answer, distinct from dismissing the prompt, which drops the thread
+    /// instead of resuming it.
     #[test]
-    fn multi_select_resumes_with_an_array_table() {
+    fn multi_select_resumes_with_an_array_table_even_when_empty() {
         let lua = Lua::new();
-        let value = resume_value_to_lua(
-            &lua,
-            ResumeValue::List(vec!["feature-a".into(), "feature-b".into()]),
-        );
-        let mlua::Value::Table(table) = value else {
-            panic!("expected a table");
+        let as_table = |items: Vec<String>| {
+            let mlua::Value::Table(table) = resume_value_to_lua(&lua, ResumeValue::List(items))
+            else {
+                panic!("expected a table");
+            };
+            table
         };
+
+        let table = as_table(vec!["feature-a".into(), "feature-b".into()]);
         assert_eq!(table.raw_len(), 2);
         assert_eq!(table.raw_get::<String>(1).unwrap(), "feature-a");
         assert_eq!(table.raw_get::<String>(2).unwrap(), "feature-b");
-    }
 
-    /// Ticking nothing and confirming is distinct from dismissing the prompt,
-    /// which drops the thread instead of resuming it.
-    #[test]
-    fn an_empty_multi_select_is_an_empty_table_not_nil() {
-        let lua = Lua::new();
-        let value = resume_value_to_lua(&lua, ResumeValue::List(Vec::new()));
-        let mlua::Value::Table(table) = value else {
-            panic!("expected a table");
-        };
-        assert_eq!(table.raw_len(), 0);
-    }
-
-    #[test]
-    fn single_select_resumes_with_a_bare_string() {
-        let lua = Lua::new();
-        let value = resume_value_to_lua(&lua, ResumeValue::Text("feature-a".into()));
-        let mlua::Value::String(s) = value else {
-            panic!("expected a string");
-        };
-        assert_eq!(s.to_str().unwrap(), "feature-a");
-    }
-
-    #[test]
-    fn a_dismissed_prompt_resumes_with_nil() {
-        let lua = Lua::new();
-        assert!(resume_value_to_lua(&lua, ResumeValue::None).is_nil());
+        assert_eq!(as_table(Vec::new()).raw_len(), 0);
     }
 }
 

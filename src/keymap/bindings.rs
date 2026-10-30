@@ -668,6 +668,25 @@ mod tests {
                 .typeable_keys(AppAction::NextConflict),
             None
         );
+
+        // Rebinding a movement key relabels its jump target.
+        let rebound = Keymaps::build(
+            vec![bind(
+                "t",
+                AppAction::MoveToScreenTop,
+                "screen top",
+                HelpGroup::Navigation,
+                Scope::All,
+            )],
+            ActionRegistry::new(),
+        );
+        assert_eq!(
+            rebound
+                .for_view(ActiveView::Dag)
+                .typeable_keys(AppAction::MoveToScreenTop)
+                .as_deref(),
+            Some("t")
+        );
     }
 
     /// The select-mode help and the select-mode key handling read the same
@@ -691,28 +710,6 @@ mod tests {
         for key in ["v", ":", "ctrl-r"] {
             assert!(!lists(key), "select-mode help must not list {key}");
         }
-    }
-
-    #[test]
-    fn a_rebound_movement_key_relabels_its_jump_target() {
-        use crate::keymap::{ActionRegistry, Keymaps};
-        use HelpGroup::Navigation as N;
-
-        let specs = vec![bind(
-            "t",
-            AppAction::MoveToScreenTop,
-            "screen top",
-            N,
-            Scope::All,
-        )];
-        let keymaps = Keymaps::build(specs, ActionRegistry::new());
-        assert_eq!(
-            keymaps
-                .for_view(ActiveView::Dag)
-                .typeable_keys(AppAction::MoveToScreenTop)
-                .as_deref(),
-            Some("t")
-        );
     }
 
     /// Undo and redo are the same in every view, so every view has them.

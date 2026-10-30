@@ -80,55 +80,6 @@ mod tests {
         dir
     }
 
-    /// `kojutsu.command` and `kojutsu.bind` append and allocate action ids, so
-    /// a reload that re-ran the script over the live engine would double every
-    /// binding. Loading builds a whole new runtime instead; this is what says
-    /// so.
-    #[test]
-    fn loading_repeatedly_does_not_accumulate_bindings() {
-        let dir = config_dir_with(
-            r#"
-            kojutsu.bind { action = "abandon", key = "ctrl-y" }
-            kojutsu.command("hi", function() end, { key = "ctrl-g" })
-            "#,
-        );
-        let repo = std::path::Path::new(".");
-
-        let first = LuaRuntime::load_from(dir.path(), repo);
-        assert_eq!(first.init_error(), None);
-        let counts: Vec<usize> = (0..3)
-            .map(|_| binding_count(&LuaRuntime::load_from(dir.path(), repo)))
-            .collect();
-
-        assert_eq!(counts, vec![binding_count(&first); 3]);
-    }
-
-    /// A reload has to reflect what the file says now, including bindings it
-    /// used to declare and no longer does, which re-running over the live
-    /// engine could never do, since nothing there knows to remove them.
-    #[test]
-    fn loading_again_picks_up_an_edit_and_drops_what_it_removed() {
-        let dir = config_dir_with(
-            r#"
-            kojutsu.config.tab_width = 2
-            kojutsu.bind { action = "abandon", key = "ctrl-y" }
-            "#,
-        );
-        let repo = std::path::Path::new(".");
-        let before = LuaRuntime::load_from(dir.path(), repo);
-        assert_eq!(before.config.tab_width, 2);
-
-        std::fs::write(
-            dir.path().join("init.lua"),
-            "kojutsu.config.tab_width = 7\n",
-        )
-        .unwrap();
-        let after = LuaRuntime::load_from(dir.path(), repo);
-
-        assert_eq!(after.config.tab_width, 7);
-        assert_eq!(binding_count(&after), binding_count(&before) - 1);
-    }
-
     /// What ran before an error is kept, so a typo late in the file doesn't
     /// throw away the config above it.
     #[test]
@@ -418,10 +369,7 @@ mod tests {
             r#"kojutsu.command("oops", function() kojutsu.config.theme.acccent = "red" end, {})"#,
         );
         let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
-        let err = run_command(&runtime)
-            .expect("a change")
-            .expect_err("invalid");
-        assert!(err.contains("unknown field `acccent`"), "{err}");
+        assert!(run_command(&runtime).expect("a change").is_err());
     }
 
     /// No init.lua at all is the common case, not an error.

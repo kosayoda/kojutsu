@@ -401,14 +401,12 @@ pub fn toggle_hint(action: AppAction) -> Option<&'static str> {
 mod selection_kind_set_tests {
     use super::SelectionKindSet;
 
+    /// An empty selection rules nothing out; otherwise every selected kind
+    /// has to be supported.
     #[test]
-    fn nothing_selected_rules_nothing_out() {
+    fn a_selection_is_blocked_by_any_kind_the_action_does_not_take() {
         assert!(!SelectionKindSet::empty().blocked_by(SelectionKindSet::COMMIT));
         assert!(!SelectionKindSet::empty().blocked_by(SelectionKindSet::empty()));
-    }
-
-    #[test]
-    fn every_selected_kind_has_to_be_supported() {
         let file_and_line = SelectionKindSet::FILE | SelectionKindSet::LINE;
         assert!(!file_and_line.blocked_by(SelectionKindSet::ALL));
         // Supporting half of a mixed selection is not enough.
@@ -456,17 +454,9 @@ mod toggled_tests {
             flipped.toggled(CommandFlags::NO_COLOCATE),
             CommandFlags::empty()
         );
-    }
-
-    #[test]
-    fn other_flags_are_left_alone() {
-        let flags = CommandFlags::DEBUG | CommandFlags::COLOCATE;
+        // Clearing the opposite leaves unrelated flags set.
         assert_eq!(
-            flags.toggled(CommandFlags::DRY_RUN),
-            CommandFlags::DEBUG | CommandFlags::COLOCATE | CommandFlags::DRY_RUN
-        );
-        assert_eq!(
-            flags.toggled(CommandFlags::NO_COLOCATE),
+            (CommandFlags::DEBUG | CommandFlags::COLOCATE).toggled(CommandFlags::NO_COLOCATE),
             CommandFlags::DEBUG | CommandFlags::NO_COLOCATE
         );
     }

@@ -314,18 +314,3 @@ pub fn superseded_toml_config() -> Option<PathBuf> {
     let path = kojutsu_config_dir()?.join("config.toml");
     path.is_file().then_some(path)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::Config;
-
-    /// Publishing the defaults and reading the table back must be the
-    /// identity. Covers what the color cases can't: the `char` glyphs, the
-    /// scope flags, and the preset vectors.
-    #[test]
-    fn the_default_config_survives_a_round_trip() {
-        let encoded = serde_json::to_string(&Config::default()).expect("serialize");
-        let decoded: Config = serde_json::from_str(&encoded).expect("deserialize");
-        assert_eq!(decoded, Config::default());
-    }
-}

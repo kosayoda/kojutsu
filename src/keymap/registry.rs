@@ -134,17 +134,13 @@ mod availability_tests {
         assert!(!blocks(&away_from_a_file, AppAction::FileUntrack));
         // Annotate really does read the cursor row, so it stays gated.
         assert!(blocks(&away_from_a_file, AppAction::FileAnnotate));
-    }
 
-    /// The submenu used to test only the kind that won the precedence, so a
-    /// mixed selection could offer an action the dispatcher would refuse.
-    #[test]
-    fn an_action_is_blocked_by_a_selection_it_cannot_take() {
-        let mixed = ctx(SelectionKindSet::FILE | SelectionKindSet::LINE, true);
-        // Fix takes commits and files, not lines.
-        assert!(blocks(&mixed, AppAction::Fix));
-        // Squash takes any selection.
-        assert!(!blocks(&mixed, AppAction::Squash));
+        // With nothing selected and the cursor on a file, only the context
+        // gates, and every file action passes it.
+        let on_a_file = ctx(SelectionKindSet::empty(), true);
+        assert!(!blocks(&on_a_file, AppAction::Absorb));
+        assert!(!blocks(&on_a_file, AppAction::FileAnnotate));
+        assert!(!blocks(&on_a_file, AppAction::FileUntrack));
     }
 
     /// An action is greyed out on a jj older than what it runs, and on
@@ -159,13 +155,5 @@ mod availability_tests {
         assert!(!blocks(&old, AppAction::Squash));
         let unknown = ctx(SelectionKindSet::empty(), false);
         assert!(!blocks(&unknown, AppAction::Converge));
-    }
-
-    #[test]
-    fn nothing_selected_blocks_on_context_alone() {
-        let empty = ctx(SelectionKindSet::empty(), true);
-        assert!(!blocks(&empty, AppAction::Absorb));
-        assert!(!blocks(&empty, AppAction::FileAnnotate));
-        assert!(!blocks(&empty, AppAction::FileUntrack));
     }
 }

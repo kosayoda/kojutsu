@@ -251,11 +251,19 @@ mod scope_tests {
         }
     }
 
+    /// A scope is toggled by typing its hint, so two scopes in one view
+    /// sharing a hint leaves one of them unreachable.
     #[test]
-    fn every_offered_scope_has_a_hint_and_a_label() {
+    fn every_offered_scope_has_its_own_hint_and_a_label() {
         for view in ActiveView::iter() {
+            let mut seen = std::collections::HashSet::new();
             for spec in scope_specs_for_view(view) {
                 assert!(!spec.hint.is_empty(), "{view}: {:?} has no hint", spec.flag);
+                assert!(
+                    seen.insert(spec.hint),
+                    "{view}: hint {:?} is used twice",
+                    spec.hint
+                );
                 assert!(
                     !spec.label.is_empty(),
                     "{view}: {:?} has no label",

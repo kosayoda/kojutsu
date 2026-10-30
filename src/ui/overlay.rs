@@ -857,17 +857,19 @@ mod revisions_label_tests {
         }
     }
 
+    /// With room, the prompt names both sides in full; when tight, it counts
+    /// what doesn't fit.
     #[test]
-    fn the_follow_up_prompt_names_both_sides() {
-        let picks = picks(&["tus", "qpv"], &["xzp", "sp"]);
+    fn the_follow_up_prompt_names_both_sides_and_counts_what_doesnt_fit() {
         assert_eq!(
-            super::picks_prompt("rebase revision", &picks, 80),
+            super::picks_prompt(
+                "rebase revision",
+                &picks(&["tus", "qpv"], &["xzp", "sp"]),
+                80
+            ),
             "rebase revision tus, qpv → xzp, sp:"
         );
-    }
 
-    #[test]
-    fn a_tight_follow_up_prompt_counts_what_doesnt_fit() {
         let picks = picks(&["tus", "qpv", "xyz"], &["xzp", "sp"]);
         assert_eq!(
             super::picks_prompt("rebase revision", &picks, 34),

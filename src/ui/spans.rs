@@ -195,15 +195,12 @@ pub(super) fn command_parts_to_spans(
 mod truncate_tests {
     use super::truncate_with_ellipsis;
 
-    #[test]
-    fn short_text_is_left_alone() {
-        assert_eq!(truncate_with_ellipsis("interdiff…", 10), "interdiff…");
-    }
-
     /// Widths are display columns: a 3-byte `…` and a 2-column CJK
-    /// character are cut around, never through.
+    /// character are cut around, never through, and text that fits in
+    /// columns is left alone even when it is longer in bytes.
     #[test]
     fn cuts_by_display_width() {
+        assert_eq!(truncate_with_ellipsis("interdiff…", 10), "interdiff…");
         assert_eq!(truncate_with_ellipsis("interdiff…", 9), "interdif…");
         assert_eq!(truncate_with_ellipsis("ファイル一覧", 5), "ファ…");
         assert_eq!(truncate_with_ellipsis("ファイル一覧", 6), "ファ…");

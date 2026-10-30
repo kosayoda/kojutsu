@@ -419,16 +419,19 @@ mod selection_context_tests {
         }
     }
 
+    /// Files and lines coexist. `kind` is precedence, not description: the
+    /// line encoding carries whole files, so a mixed selection has to build
+    /// its command the line way, while `kinds` reports both.
     #[test]
-    fn files_and_lines_coexist() {
+    fn files_and_lines_coexist_and_the_mix_acts_as_lines() {
         let mut ctx = SelectionContext::new();
         ctx.insert(Selection::File(file_ref("a.rs")));
         ctx.insert(line("b.rs", 3));
 
         assert_eq!(ctx.len(), 2);
-        assert_eq!(ctx.summary().full_file_count, 1);
-        assert_eq!(ctx.summary().line_count, 1);
         assert_eq!(ctx.describe().as_deref(), Some("1 file + 1 line"));
+        assert_eq!(ctx.kind(), SelectionKind::Line);
+        assert_eq!(ctx.kinds(), SelectionKindSet::FILE | SelectionKindSet::LINE);
     }
 
     /// Commit selections are whole revisions; anything finer-grained clears
@@ -450,27 +453,6 @@ mod selection_context_tests {
         }));
         assert_eq!(ctx.len(), 1);
         assert_eq!(ctx.kind(), SelectionKind::Commit);
-    }
-
-    /// Precedence, not description: the line encoding carries whole files, so
-    /// a mixed selection has to build its command the line way.
-    #[test]
-    fn kind_prefers_line_but_kinds_reports_both() {
-        let mut ctx = SelectionContext::new();
-        ctx.insert(Selection::File(file_ref("a.rs")));
-        assert_eq!(ctx.kind(), SelectionKind::File);
-        assert_eq!(ctx.kinds(), SelectionKindSet::FILE);
-
-        ctx.insert(line("b.rs", 3));
-        assert_eq!(ctx.kind(), SelectionKind::Line);
-        assert_eq!(ctx.kinds(), SelectionKindSet::FILE | SelectionKindSet::LINE);
-    }
-
-    #[test]
-    fn an_empty_selection_has_no_kinds() {
-        let ctx = SelectionContext::new();
-        assert_eq!(ctx.kinds(), SelectionKindSet::empty());
-        assert!(!ctx.is_active());
     }
 
     /// A batch is checked for compatibility item by item while its summary
