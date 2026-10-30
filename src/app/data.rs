@@ -665,15 +665,7 @@ impl App {
             }
             for rb in &node.commit.remote_bookmarks {
                 if seen.insert((rb.name.clone(), Some(rb.remote.clone()))) {
-                    let kind = if rb.is_tracked {
-                        BookmarkKind::TrackedRemote {
-                            remote: rb.remote.clone(),
-                        }
-                    } else {
-                        BookmarkKind::UntrackedRemote {
-                            remote: rb.remote.clone(),
-                        }
-                    };
+                    let kind = BookmarkKind::remote_only(rb.remote.clone(), rb.is_tracked);
                     entries.push(BookmarkViewEntry {
                         name: rb.name.clone(),
                         commit_id: Some(node.commit.graph_id.clone()),
@@ -690,15 +682,7 @@ impl App {
         // Remote bookmarks not attached to any visible DAG node.
         for rb in &self.views.remote_bookmarks {
             if seen.insert((rb.name.clone(), Some(rb.remote.clone()))) {
-                let kind = if rb.is_tracked {
-                    BookmarkKind::TrackedRemote {
-                        remote: rb.remote.clone(),
-                    }
-                } else {
-                    BookmarkKind::UntrackedRemote {
-                        remote: rb.remote.clone(),
-                    }
-                };
+                let kind = BookmarkKind::remote_only(rb.remote.clone(), rb.is_tracked);
                 entries.push(BookmarkViewEntry {
                     name: rb.name.clone(),
                     commit_id: rb.commit_id.clone(),
@@ -1287,8 +1271,18 @@ mod tag_tracking_tests {
 mod bookmark_entry_tests {
     use super::super::App;
     use super::super::test_support::{entry, load};
-    use crate::dag::{DagEntry, RemoteBookmarkInfo, RemoteBookmarkRef};
+    use crate::dag::{BookmarkInfo, DagEntry, RemoteBookmarkInfo, RemoteBookmarkRef};
     use crate::types::{BookmarkName, CommitId, RemoteName};
+
+    fn local(mut entry: DagEntry, name: &str, is_tracking: bool) -> DagEntry {
+        entry.commit.bookmarks.push(BookmarkInfo {
+            name: BookmarkName::new(name),
+            is_dirty: false,
+            is_tracking,
+            is_conflicted: false,
+        });
+        entry
+    }
 
     fn remote(mut entry: DagEntry, name: &str, remote: &str, is_tracked: bool) -> DagEntry {
         entry.commit.remote_bookmarks.push(RemoteBookmarkInfo {
@@ -1319,6 +1313,57 @@ mod bookmark_entry_tests {
                 None => e.name.to_string(),
             })
             .collect()
+    }
+
+    /// Local bookmarks first, then those tracking a remote, then remote
+    /// ones tracked and untracked; by name within each. A bookmark on two
+    /// commits (conflicted), or a remote one both on the DAG and off it,
+    /// is listed once, as first met: the DAG's comes with its commit.
+    #[test]
+    fn bookmarks_sort_by_kind_then_name_and_are_listed_once() {
+        let mut app = App::for_test();
+        let a = entry('a', "a1");
+        let a = local(local(a, "zeta", false), "main", true);
+        let a = remote(
+            remote(a, "feature", "origin", true),
+            "zeta",
+            "origin",
+            false,
+        );
+        let b = entry('b', "b1");
+        let b = local(local(b, "alpha", false), "main", true);
+        let b = remote(b, "feature", "origin", true);
+        load(&mut app, vec![a, b], true);
+        app.views.remote_bookmarks = vec![
+            off_dag("feature", "origin", true),
+            off_dag("old", "origin", true),
+            off_dag("beta", "origin", false),
+        ];
+
+        app.rebuild_bookmark_entries();
+
+        assert_eq!(
+            listed(&app),
+            [
+                "alpha",
+                "zeta",
+                "main",
+                "feature@origin",
+                "old@origin",
+                "beta@origin",
+                "zeta@origin",
+            ]
+        );
+        let entry = |name: &str| {
+            app.views
+                .bookmark_entries
+                .iter()
+                .find(|e| e.name.as_str() == name)
+                .unwrap()
+        };
+        assert_eq!(entry("main").commit_id, Some(CommitId::new("a1")));
+        assert_eq!(entry("feature").commit_id, Some(CommitId::new("a1")));
+        assert!(entry("feature").change_id.is_some());
     }
 
     /// One bookmark on several remotes lists them by remote, not in

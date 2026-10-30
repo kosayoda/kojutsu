@@ -70,32 +70,27 @@ impl SelectionSummary {
             return Some(format!("{} {}{suffix}", self.commit_count, noun));
         }
 
-        let file_noun = pluralize!(self.full_file_count, "file", "files");
-        let line_noun = pluralize!(self.line_count, "line", "lines");
-
         if self.file_count == 0 && self.line_count == 0 {
             return None;
         }
 
+        let files = |count: usize| format!("{count} {}", pluralize!(count, "file", "files"));
         if self.line_count == 0 {
-            return Some(format!("{} {}{suffix}", self.full_file_count, file_noun));
+            return Some(format!("{}{suffix}", files(self.full_file_count)));
         }
 
-        if !self.has_full_files && self.file_count == 1 {
-            return Some(format!("{} {}{suffix}", self.line_count, line_noun));
+        let lines = format!(
+            "{} {}",
+            self.line_count,
+            pluralize!(self.line_count, "line", "lines")
+        );
+        if self.has_full_files {
+            return Some(format!("{} + {lines}{suffix}", files(self.full_file_count)));
         }
-
-        if self.has_full_files && self.line_count > 0 {
-            return Some(format!(
-                "{} {} + {} {}{suffix}",
-                self.full_file_count, file_noun, self.line_count, line_noun
-            ));
+        if self.file_count == 1 {
+            return Some(format!("{lines}{suffix}"));
         }
-
-        Some(format!(
-            "{} {} in {} {}{suffix}",
-            self.line_count, line_noun, self.file_count, file_noun
-        ))
+        Some(format!("{lines} in {}{suffix}", files(self.file_count)))
     }
 }
 
@@ -432,6 +427,35 @@ mod selection_context_tests {
         assert_eq!(ctx.describe().as_deref(), Some("1 file + 1 line"));
         assert_eq!(ctx.kind(), SelectionKind::Line);
         assert_eq!(ctx.kinds(), SelectionKindSet::FILE | SelectionKindSet::LINE);
+    }
+
+    /// The summary the status bar shows, and refusals name: lines in one
+    /// file are just lines, lines across files say how many files, and
+    /// whole files are counted alongside any lines.
+    #[test]
+    fn the_summary_counts_lines_by_file() {
+        let file = |path| Selection::File(file_ref(path));
+        let cases = [
+            (vec![line("a.rs", 1)], "1 line"),
+            (vec![line("a.rs", 1), line("a.rs", 2)], "2 lines"),
+            (
+                vec![line("a.rs", 1), line("a.rs", 2), line("b.rs", 1)],
+                "3 lines in 2 files",
+            ),
+            (vec![file("a.rs"), file("b.rs")], "2 files"),
+            (
+                vec![file("a.rs"), file("b.rs"), line("c.rs", 1), line("c.rs", 2)],
+                "2 files + 2 lines",
+            ),
+        ];
+        for (selections, summary) in cases {
+            let mut ctx = SelectionContext::new();
+            ctx.extend(selections);
+            assert_eq!(ctx.describe().as_deref(), Some(summary));
+        }
+        let mut ctx = SelectionContext::new();
+        ctx.insert(line("a.rs", 1));
+        assert_eq!(ctx.display_text().as_deref(), Some("1 line selected"));
     }
 
     /// Commit selections are whole revisions; anything finer-grained clears

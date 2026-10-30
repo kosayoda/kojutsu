@@ -776,6 +776,15 @@ pub enum BookmarkKind {
 }
 
 impl BookmarkKind {
+    /// A remote-only bookmark on `remote`, tracked locally or not.
+    pub fn remote_only(remote: RemoteName, is_tracked: bool) -> Self {
+        if is_tracked {
+            Self::TrackedRemote { remote }
+        } else {
+            Self::UntrackedRemote { remote }
+        }
+    }
+
     /// The remote name, if this is a remote bookmark.
     pub fn remote(&self) -> Option<&RemoteName> {
         match self {

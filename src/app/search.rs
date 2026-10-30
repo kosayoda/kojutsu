@@ -560,6 +560,65 @@ mod shifting_rows_tests {
 }
 
 #[cfg(test)]
+mod match_order_tests {
+    use super::super::App;
+    use super::super::test_support::{entry, load};
+    use crate::idx::EntryIdx;
+    use crate::types::SearchScopes;
+
+    /// Commits `a` to `f`, of which "fix" matches `a`, `c` and `e`.
+    fn app() -> App {
+        let mut app = App::for_test();
+        let descriptions = ["fix", "feat", "fix", "doc", "fix", "doc"];
+        let entries = ['a', 'b', 'c', 'd', 'e', 'f']
+            .into_iter()
+            .zip(descriptions)
+            .map(|(tag, description)| {
+                let mut entry = entry(tag, &format!("{tag}1"));
+                entry.commit.description = Some(description.into());
+                entry
+            })
+            .collect();
+        load(&mut app, entries, true);
+        *app.search_scopes_mut() = SearchScopes::DESCRIPTION;
+        app
+    }
+
+    fn search_from(app: &mut App, start: usize, query: &str) {
+        app.cursor = app.row_of_commit(EntryIdx::new(start)).unwrap();
+        app.begin_search();
+        app.update_search_input(tui_input::Input::new(query.into()));
+    }
+
+    /// Typing a query moves to the first match at or after where the
+    /// search began, wrapping to the first one when none is after it.
+    #[test]
+    fn a_query_lands_on_the_first_match_from_where_the_search_began() {
+        for (start, lands_on) in [(0, 0), (1, 2), (3, 4), (5, 0)] {
+            let mut app = app();
+            search_from(&mut app, start, "fix");
+            assert_eq!(
+                app.selected_entry_idx(),
+                Some(EntryIdx::new(lands_on)),
+                "searching from {start}"
+            );
+        }
+    }
+
+    /// Past the last match is the first, and before the first the last.
+    #[test]
+    fn next_and_previous_wrap_around() {
+        let mut app = app();
+        search_from(&mut app, 4, "fix");
+
+        app.search_next();
+        assert_eq!(app.selected_entry_idx(), Some(EntryIdx::new(0)));
+        app.search_prev();
+        assert_eq!(app.selected_entry_idx(), Some(EntryIdx::new(4)));
+    }
+}
+
+#[cfg(test)]
 mod query_tests {
     use super::SearchQuery;
 

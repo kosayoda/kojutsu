@@ -861,7 +861,9 @@ mod tests {
     }
 
     const A: EntryIdx = EntryIdx::new(0);
+    const X: FileIdx = FileIdx::new(0);
     const Y: FileIdx = FileIdx::new(1);
+    const Z: FileIdx = FileIdx::new(2);
 
     /// The two formats number their lines differently; Space selects the
     /// lines the range covers in the one on screen. Here git's first line
@@ -902,5 +904,52 @@ mod tests {
         assert!(!app.is_line_selected(A, Y, DiffLineIdx::new(1)));
         assert!(app.is_line_selected(A, Y, DiffLineIdx::new(2)));
         assert!(app.file_selection_state(A, Y) == FileSelectionState::Partial);
+    }
+
+    /// Space selects the changed lines a range covers, passing over the
+    /// context between them, and on a range already all selected
+    /// deselects them.
+    #[test]
+    fn a_line_range_toggles_its_changed_lines() {
+        let mut app = app();
+        let lines = vec![
+            diff_line(DiffLineKind::Header, None, None),
+            diff_line(DiffLineKind::Removed, Some(1), None),
+            diff_line(DiffLineKind::Context, Some(2), Some(1)),
+            diff_line(DiffLineKind::Added, None, Some(2)),
+        ];
+        set_y_diff(&mut app, lines.clone(), lines);
+        app.cursor = line_row(&app, 1, 1);
+        app.enter_visual_mode();
+        app.visual_move(AppAction::MoveDown, 10);
+        assert_eq!(app.cursor, line_row(&app, 1, 3));
+
+        app.persist_visual_selection();
+        assert_eq!(app.selection_count(), 2);
+        assert!(app.is_line_selected(A, Y, DiffLineIdx::new(1)));
+        assert!(app.is_line_selected(A, Y, DiffLineIdx::new(3)));
+
+        assert!(app.cursor_in_persistent_visual_range());
+        app.toggle_persistent_visual_selection();
+        assert!(!app.selection_active());
+    }
+
+    /// A file range takes over the line selections in its files, as
+    /// selecting one file does; line selections in other files stay.
+    #[test]
+    fn a_file_range_replaces_the_line_selections_in_its_files() {
+        let mut app = app();
+        app.toggle_line_selection(A, X, DiffLineIdx::new(1));
+        app.toggle_line_selection(A, Z, DiffLineIdx::new(1));
+        app.cursor = file_row(&app, 0);
+        app.enter_visual_mode();
+        app.visual_move(AppAction::MoveDown, 10);
+
+        app.persist_visual_selection();
+
+        assert_eq!(app.selection_count(), 3);
+        assert!(app.file_selection_state(A, X) == FileSelectionState::Full);
+        assert!(app.file_selection_state(A, Y) == FileSelectionState::Full);
+        assert!(app.file_selection_state(A, Z) == FileSelectionState::Partial);
     }
 }

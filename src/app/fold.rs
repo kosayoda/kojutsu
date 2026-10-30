@@ -1259,6 +1259,7 @@ mod cursor_fallback_tests {
     use crate::types::{CommitId, RepoPath};
 
     const ENTRY: EntryIdx = EntryIdx::new(0);
+    const DIFFED: FileIdx = FileIdx::new(0);
     const CONFLICTED: FileIdx = FileIdx::new(1);
     const HUNK: ConflictHunkIdx = ConflictHunkIdx::new(1);
     /// Where the base lands among the conflict's terms, which are stored
@@ -1340,6 +1341,13 @@ mod cursor_fallback_tests {
         app
     }
 
+    fn file_row(file_idx: FileIdx) -> DisplayRow {
+        DisplayRow::FileChange {
+            owner: FileOwner::Dag(ENTRY),
+            file_idx,
+        }
+    }
+
     fn header_row() -> DisplayRow {
         DisplayRow::ConflictHeader {
             entry_idx: ENTRY,
@@ -1360,6 +1368,36 @@ mod cursor_fallback_tests {
 
     fn put_cursor_on(app: &mut App, row: DisplayRow) {
         app.cursor = app.position_of(row).expect("row is displayed");
+    }
+
+    /// Folding a file from one of its lines leaves the cursor on the file,
+    /// whether the lines were a diff or a conflict's.
+    #[test]
+    fn folding_a_file_from_inside_it_lands_on_the_file() {
+        let diff_line = DisplayRow::DiffLine {
+            owner: FileOwner::Dag(ENTRY),
+            file_idx: DIFFED,
+            line_idx: DiffLineIdx::new(2),
+        };
+        for (inside, file_idx) in [(diff_line, DIFFED), (term_row(OURS, 0), CONFLICTED)] {
+            let mut app = app();
+            put_cursor_on(&mut app, inside);
+
+            app.toggle_fold();
+
+            assert!(!app.is_file_unfolded(FileOwner::Dag(ENTRY), file_idx));
+            assert!(app.cursor_row() == Some(file_row(file_idx)));
+        }
+    }
+
+    #[test]
+    fn folding_the_commit_from_a_file_row_lands_on_the_commit() {
+        let mut app = app();
+        put_cursor_on(&mut app, file_row(CONFLICTED));
+
+        app.toggle_commit_fold(ENTRY);
+
+        assert!(app.cursor_row() == Some(DisplayRow::CommitNode { entry_idx: ENTRY }));
     }
 
     /// Picking a side rebuilds the rows without changing them; the cursor
@@ -1472,5 +1510,44 @@ mod op_log_row_tests {
         deliver(&mut app, ops(), false);
 
         assert_eq!(op_at_cursor(&app), Some("o2"));
+    }
+
+    /// The op log shows the operations of the workspaces filtered to, and
+    /// those of no workspace; with no filter, all of them.
+    #[test]
+    fn the_workspace_filter_shows_its_workspaces_and_those_of_none() {
+        let cases: [(&[&str], &[&str]); 2] =
+            [(&["default"], &["o0", "o2"]), (&[], &["o0", "o1", "o2"])];
+        for (filter, shown) in cases {
+            let mut app = App::for_test();
+            app.switch_view(ActiveView::Operations);
+            deliver(
+                &mut app,
+                vec![
+                    OpLogEntry::for_test("o0", &["o1"], Some("default")),
+                    OpLogEntry::for_test("o1", &["o2"], Some("other")),
+                    OpLogEntry::for_test("o2", &[], None),
+                ],
+                false,
+            );
+
+            app.op_log.workspace_filter = filter
+                .iter()
+                .map(|w| crate::types::WorkspaceName::new(*w))
+                .collect();
+            app.rebuild_rows();
+
+            let listed: Vec<&str> = app
+                .rows
+                .iter()
+                .filter_map(|row| match row {
+                    DisplayRow::OpLogItem { op_log_idx } => {
+                        Some(app.op_log.entries[op_log_idx.raw()].id.as_str())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(listed, shown, "filtered to {filter:?}");
+        }
     }
 }

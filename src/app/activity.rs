@@ -292,4 +292,56 @@ mod tests {
         assert_eq!(shown.glyph, None);
         assert!(shown.label.is_some());
     }
+
+    /// Commits `a` and `b`, loaded, those `listed` with their one file, a
+    /// conflicted one, listed.
+    fn commits_with_files(listed: [bool; 2]) -> App {
+        use super::super::test_support::{entry, load};
+        let mut app = App::for_test();
+        load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], true);
+        for (node, listed) in app.dag.nodes.iter_mut().zip(listed) {
+            let mut file = crate::dag::FileChange::for_test("f");
+            file.has_conflict = true;
+            if listed {
+                node.files.set_summary(Ok(crate::dag::DiffSummary {
+                    files: vec![file],
+                    stats: crate::dag::LineStats::default(),
+                }));
+            }
+        }
+        app
+    }
+
+    /// Of loads under way together, the status line names the one whose
+    /// answer the others wait on, wherever it is in the log: a file list
+    /// before a diff, a diff before conflicts.
+    #[test]
+    fn the_load_others_depend_on_is_the_one_named() {
+        use crate::idx::{EntryIdx, FileIdx};
+        let (a, b, f) = (EntryIdx::new(0), EntryIdx::new(1), FileIdx::new(0));
+
+        let mut app = commits_with_files([true, false]);
+        app.dag.nodes[a].files.request_diff(f);
+        app.dag.nodes[b].files.request_summary();
+        assert_eq!(app.activity(), Some(Activity::LoadingFiles));
+
+        let mut app = commits_with_files([true, true]);
+        app.dag.nodes[a].request_conflict_hunks(f);
+        app.dag.nodes[b].files.request_diff(f);
+        assert_eq!(app.activity(), Some(Activity::LoadingDiff));
+    }
+
+    /// While a load streams in, the count is of the commits arrived so
+    /// far, chunk by chunk.
+    #[test]
+    fn a_streaming_load_counts_the_commits_arrived() {
+        use super::super::test_support::{chunk, entry, load};
+        let mut app = App::for_test();
+        load(&mut app, vec![entry('a', "a1"), entry('b', "b1")], false);
+        assert_eq!(app.activity(), Some(Activity::StreamingCommits(2)));
+        chunk(&mut app, vec![entry('c', "c1")], false);
+        assert_eq!(app.activity(), Some(Activity::StreamingCommits(3)));
+        chunk(&mut app, Vec::new(), true);
+        assert_eq!(app.activity(), None);
+    }
 }

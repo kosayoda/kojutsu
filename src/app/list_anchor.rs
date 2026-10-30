@@ -135,8 +135,8 @@ impl App {
 mod tests {
     use super::super::App;
     use super::super::test_support::{entry, load};
-    use crate::dag::{BookmarkInfo, DagEntry};
-    use crate::types::{ActiveView, BookmarkName, DisplayRow, TagName};
+    use crate::dag::{BookmarkInfo, DagEntry, RemoteBookmarkInfo};
+    use crate::types::{ActiveView, BookmarkName, DisplayRow, RemoteName, TagName};
 
     fn bookmarked(mut entry: DagEntry, name: &str) -> DagEntry {
         entry.commit.bookmarks.push(BookmarkInfo {
@@ -246,6 +246,67 @@ mod tests {
             panic!("cursor not on a tag");
         };
         assert_eq!(app.views.tag_entries[tag_idx.raw()].name.as_str(), "v2");
+    }
+
+    /// A load that starts before the last one finished keeps the anchor
+    /// that one was waiting to settle, rather than taking a new one from
+    /// wherever the unfinished list left the cursor.
+    #[test]
+    fn an_anchor_outlasts_a_load_cut_short_by_another() {
+        let mut app = App::for_test();
+        load(&mut app, two_bookmarks(), true);
+        app.switch_view(ActiveView::Bookmarks);
+        put_cursor_on_bookmark(&mut app, "dev");
+
+        load(&mut app, vec![bookmarked(entry('a', "a1"), "main")], false);
+        assert_eq!(bookmark_at_cursor(&app), "main");
+        load(&mut app, with_a_new_bookmark_first(), true);
+
+        assert_eq!(bookmark_at_cursor(&app), "dev");
+    }
+
+    /// A bookmark's remote row is its own item: it comes back to that row,
+    /// not to the local bookmark of the same name.
+    #[test]
+    fn a_remote_bookmark_comes_back_to_its_own_row() {
+        let on_origin = |mut entry: DagEntry| {
+            entry.commit.remote_bookmarks.push(RemoteBookmarkInfo {
+                name: BookmarkName::new("main"),
+                remote: RemoteName::new("origin"),
+                synced: false,
+                is_tracked: false,
+            });
+            entry
+        };
+        let main = || bookmarked(entry('a', "a1"), "main");
+        let mut app = App::for_test();
+        load(&mut app, vec![main(), on_origin(entry('b', "b1"))], true);
+        app.switch_view(ActiveView::Bookmarks);
+        let remote_idx = app
+            .views
+            .bookmark_entries
+            .iter()
+            .position(|e| e.kind.remote().is_some())
+            .unwrap();
+        app.cursor = app
+            .position_of(DisplayRow::BookmarkItem {
+                bookmark_idx: crate::idx::BookmarkIdx::new(remote_idx),
+            })
+            .unwrap();
+
+        let alpha = bookmarked(entry('n', "n1"), "alpha");
+        load(
+            &mut app,
+            vec![alpha, main(), on_origin(entry('b', "b1"))],
+            true,
+        );
+
+        let Some(DisplayRow::BookmarkItem { bookmark_idx }) = app.cursor_row() else {
+            panic!("cursor not on a bookmark");
+        };
+        let entry = &app.views.bookmark_entries[bookmark_idx.raw()];
+        assert_eq!(entry.name.as_str(), "main");
+        assert_eq!(entry.kind.remote().map(RemoteName::as_str), Some("origin"));
     }
 
     /// Moving in the view lets the anchor go: a later rebuild mustn't pull

@@ -621,7 +621,7 @@ mod selected_revision_tests {
 }
 
 #[cfg(test)]
-mod submodule_line_selection_tests {
+mod line_selection_tests {
     use super::super::App;
     use crate::dag::{
         CommitInfo, DiffLine, DiffLineKind, DiffResult, DiffSummary, FileChange, FileStatus,
@@ -726,6 +726,24 @@ mod submodule_line_selection_tests {
         assert!(matches!(
             app.file_selection_state(entry, f),
             FileSelectionState::Full
+        ));
+    }
+
+    /// A selected file draws all its lines selected; toggling one of them
+    /// deselects that line alone, the file's other changes staying selected.
+    #[test]
+    fn toggling_a_line_of_a_selected_file_deselects_only_that_line() {
+        let mut app = app_with_files(&[("readme", false)]);
+        let (entry, f) = (EntryIdx::new(0), FileIdx::new(0));
+        app.toggle_file_selection(entry, f);
+
+        app.toggle_line_selection(entry, f, REMOVED);
+
+        assert!(!app.is_line_selected(entry, f, REMOVED));
+        assert!(app.is_line_selected(entry, f, DiffLineIdx::new(2)));
+        assert!(matches!(
+            app.file_selection_state(entry, f),
+            FileSelectionState::Partial
         ));
     }
 
