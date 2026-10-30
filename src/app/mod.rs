@@ -357,8 +357,10 @@ pub struct DagState {
 
 #[cfg(test)]
 mod reload_tests {
-    use super::{App, Rc, SearchScopes};
-    use crate::config::{Config, DefaultSearchScopes, Preset, RevsetsConfig};
+    use super::{App, Rc, RepoRequest, SearchScopes, draw_log};
+    use crate::config::{Config, DefaultSearchScopes, GlyphChars, Preset, RevsetsConfig};
+    use crate::history::{EvoLogEntry, OpLogEntry};
+    use crate::types::CommitId;
 
     fn with_presets(count: usize) -> Rc<Config> {
         Rc::new(Config {
@@ -402,6 +404,60 @@ mod reload_tests {
 
         app.apply_reloaded_config(with_presets(2));
         assert_eq!(app.revset.active_preset, None);
+    }
+
+    fn with_normal_glyph(normal: char) -> Rc<Config> {
+        Rc::new(Config {
+            glyphs: GlyphChars {
+                normal,
+                ..GlyphChars::default()
+            },
+            ..Config::default()
+        })
+    }
+
+    /// Glyphs are baked into a graph when it is drawn, so a reload that
+    /// changes them draws every graph again.
+    #[test]
+    fn a_reload_that_changes_the_glyphs_draws_the_graphs_again() {
+        let mut app = App::for_test();
+        app.op_log.entries = draw_log(
+            vec![OpLogEntry::for_test("op", &[], None)],
+            &app.config.glyphs,
+        );
+        app.evolog.entries = draw_log(
+            vec![EvoLogEntry::for_test(CommitId::new("a1"), Vec::new())],
+            &app.config.glyphs,
+        );
+        app.take_repo_requests();
+        let glyph = '+';
+        assert_ne!(app.config.glyphs.normal, glyph);
+
+        app.apply_reloaded_config(with_normal_glyph(glyph));
+
+        assert!(app.op_log.entries[0].graph.node.contains(glyph));
+        assert!(app.evolog.entries[0].graph.node.contains(glyph));
+        assert!(
+            app.take_repo_requests()
+                .iter()
+                .any(|request| matches!(request, RepoRequest::Revset { .. }))
+        );
+    }
+
+    /// A plugin writing any config value lands here too, so one that leaves
+    /// the glyphs alone must not cost a reload of the graph.
+    #[test]
+    fn a_reload_that_keeps_the_glyphs_leaves_the_graph_loaded() {
+        let mut app = App::for_test();
+        app.take_repo_requests();
+
+        app.apply_reloaded_config(Rc::new(Config::default()));
+
+        assert!(
+            !app.take_repo_requests()
+                .iter()
+                .any(|request| matches!(request, RepoRequest::Revset { .. }))
+        );
     }
 }
 
@@ -1887,11 +1943,27 @@ impl App {
             .push(RepoRequest::SetDiffSizeLimit {
                 bytes: config.diff.max_file_size_bytes(),
             });
+        let glyphs_changed = config.glyphs != self.config.glyphs;
         self.config = config;
         self.revset.active_preset = self
             .revset
             .active_preset
             .filter(|&i| i < self.config.revsets.presets.len());
+        if glyphs_changed {
+            self.redraw_graphs();
+        }
+    }
+
+    /// Draw every graph again with the configured glyphs, which are baked in
+    /// when one is drawn. The DAG's is drawn as it streams in, so the DAG is
+    /// loaded again.
+    fn redraw_graphs(&mut self) {
+        let glyphs = &self.config.glyphs;
+        let ops = std::mem::take(&mut self.op_log.entries);
+        self.op_log.entries = draw_log(ops.into_iter().map(|op| op.entry).collect(), glyphs);
+        let steps = std::mem::take(&mut self.evolog.entries);
+        self.evolog.entries = draw_log(steps.into_iter().map(|step| step.entry).collect(), glyphs);
+        self.refresh(RevsetLoadKind::NoSnapshot);
     }
 
     /// Adopt what probing the `jj` binary found, warning about it when that
