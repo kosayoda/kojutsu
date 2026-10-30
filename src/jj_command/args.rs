@@ -994,3 +994,460 @@ fn push_global_flags(args: &mut Vec<TaggedArg>, flags: CommandFlags) {
 fn toml_value(value: impl Into<ConfigValue>) -> String {
     value.into().to_string()
 }
+
+#[cfg(test)]
+mod fileset_tests {
+    use jj_lib::fileset::{FilesetAliasesMap, FilesetDiagnostics, FilesetParseContext};
+    use jj_lib::matchers::Matcher;
+    use jj_lib::repo_path::RepoPathBuf;
+    use jj_lib::ui_path::RepoPathUiConverter;
+
+    use super::*;
+    use crate::types::{MessageMode, RevisionArg};
+
+    /// The arguments that went to jj as filesets, as jj receives them.
+    fn filesets(cmd: &JJCommand) -> Vec<String> {
+        cmd.tagged_args()
+            .iter()
+            .zip(cmd.args())
+            .filter(|(tagged, _)| tagged.kind == CommandPartKind::Fileset)
+            .map(|(_, arg)| arg.to_string())
+            .collect()
+    }
+
+    /// The files `fileset` matches, as jj parses it from the workspace root.
+    fn matcher(fileset: &str) -> Box<dyn Matcher> {
+        let converter = RepoPathUiConverter::Fs {
+            cwd: "/repo".into(),
+            base: "/repo".into(),
+        };
+        let context = FilesetParseContext {
+            aliases_map: &FilesetAliasesMap::new(),
+            path_converter: &converter,
+        };
+        jj_lib::fileset::parse(&mut FilesetDiagnostics::new(), fileset, &context)
+            .unwrap_or_else(|e| panic!("jj rejects {fileset}: {e}"))
+            .to_matcher()
+    }
+
+    fn matches(matcher: &dyn Matcher, path: &str) -> bool {
+        matcher.matches(&RepoPathBuf::from_internal_string(path).expect("a repo path"))
+    }
+
+    /// Each selected path comes back as exactly that file: quotes and
+    /// backslashes are escaped, operators are inert, and glob characters,
+    /// which jj reads in a bare string literal, name themselves.
+    #[test]
+    fn a_selected_path_reaches_jj_as_exactly_that_file() {
+        let cases = [
+            ("src/lib.rs", None),
+            ("dir/a file.rs", Some("dir/a")),
+            ("say \"hi\".txt", None),
+            ("back\\slash.txt", Some("backslash.txt")),
+            ("a[1].rs", Some("a1.rs")),
+            ("*.rs", Some("lib.rs")),
+            ("a?c", Some("abc")),
+            ("~not|this&that", Some("not")),
+        ];
+        let paths = || cases.iter().map(|(path, _)| Str::from(*path));
+        let id = || RevisionArg::new("x");
+        let commands = [
+            JJCommandKind::Squash {
+                change_id: id(),
+                target: None,
+                message: MessageMode::Default,
+                selection: ChangeSelection::Files(paths().collect()),
+            },
+            JJCommandKind::FileUntrack {
+                paths: paths().collect(),
+            },
+            JJCommandKind::FileDelete {
+                change_id: id(),
+                paths: paths().collect(),
+            },
+        ]
+        .into_iter()
+        .map(|kind| JJCommand {
+            kind,
+            flags: CommandFlags::empty(),
+        });
+        for cmd in commands {
+            let filesets = filesets(&cmd);
+            assert_eq!(filesets.len(), cases.len(), "{:?}", cmd.args());
+            for ((path, decoy), fileset) in cases.iter().zip(&filesets) {
+                let matcher = matcher(fileset);
+                assert!(matches(&*matcher, path), "{fileset} misses {path:?}");
+                if let Some(decoy) = decoy {
+                    assert!(!matches(&*matcher, decoy), "{fileset} takes {decoy:?}");
+                }
+            }
+        }
+    }
+
+    /// Resolve names one file, whichever tool resolves it.
+    #[test]
+    fn a_resolved_path_reaches_jj_as_exactly_that_file() {
+        for tool in [
+            ResolveTool::Default,
+            ResolveTool::Ours,
+            ResolveTool::Content("/tmp/content".into()),
+        ] {
+            let cmd = JJCommand {
+                kind: JJCommandKind::Resolve {
+                    change_id: RevisionArg::new("x"),
+                    path: "conf[lict].rs".into(),
+                    tool,
+                },
+                flags: CommandFlags::empty(),
+            };
+            let [fileset] = filesets(&cmd).try_into().expect("one fileset");
+            let matcher = matcher(&fileset);
+            assert!(matches(&*matcher, "conf[lict].rs"), "{fileset}");
+            assert!(!matches(&*matcher, "confl.rs"), "{fileset}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tool_config_tests {
+    use std::path::{Path, PathBuf};
+
+    use jj_lib::config::{
+        ConfigLayer, ConfigNamePathBuf, ConfigSource, ConfigValue, StackedConfig,
+    };
+
+    use super::*;
+    use crate::types::{MessageMode, RevisionArg};
+
+    /// The tool `--tool` names, and the `--config` values as jj reads them:
+    /// each split at its first `=` and the value parsed as TOML. jj falls
+    /// back to a bare string for a value that isn't TOML, so a mis-quoted
+    /// path would be taken with its quotes; parsing strictly here catches it.
+    fn tool_config(cmd: &JJCommand) -> (String, StackedConfig) {
+        let args = cmd.args();
+        let mut tool = None;
+        let mut layer = ConfigLayer::empty(ConfigSource::CommandArg);
+        for pair in args.windows(2) {
+            match pair[0].as_str() {
+                "--tool" => tool = Some(pair[1].to_string()),
+                "--config" => {
+                    let (key, value) = pair[1].split_once('=').expect("a key=value");
+                    let key: ConfigNamePathBuf = key.parse().expect("a config key");
+                    let value: ConfigValue = value
+                        .parse()
+                        .unwrap_or_else(|e| panic!("not TOML: {value}: {e}"));
+                    layer.set_value(&key, value).expect("a settable key");
+                }
+                _ => {}
+            }
+        }
+        let mut config = StackedConfig::empty();
+        config.add_layer(layer);
+        (tool.expect("a --tool"), config)
+    }
+
+    fn exe() -> String {
+        std::env::current_exe()
+            .expect("the test binary")
+            .display()
+            .to_string()
+    }
+
+    const AWKWARD_PATHS: &[&str] = &[
+        "/tmp/plain.json",
+        "/tmp/with space/sel.json",
+        "/tmp/say \"hi\"/sel.json",
+        "/tmp/it's.json",
+        "C:\\Users\\me\\sel.json",
+        "/tmp/tab\there.json",
+        "/tmp/line\nbreak.json",
+    ];
+
+    fn squash_lines(path: &Path) -> JJCommand {
+        JJCommand {
+            kind: JJCommandKind::Squash {
+                change_id: RevisionArg::new("x"),
+                target: None,
+                message: MessageMode::Default,
+                selection: ChangeSelection::Lines(path.to_path_buf()),
+            },
+            flags: CommandFlags::empty(),
+        }
+    }
+
+    /// The diff tool jj is told to use is the one configured, invoking this
+    /// binary on the selection file, whatever characters either path holds.
+    #[test]
+    fn the_line_selection_tool_reads_back_as_this_binary_and_the_selection() {
+        for path in AWKWARD_PATHS {
+            let (tool, config) = tool_config(&squash_lines(&PathBuf::from(path)));
+            let program: String = config
+                .get(["merge-tools", &tool, "program"])
+                .unwrap_or_else(|e| panic!("{path:?}: {e}"));
+            assert_eq!(program, exe(), "{path:?}");
+            let edit_args: Vec<String> = config
+                .get(["merge-tools", &tool, "edit-args"])
+                .unwrap_or_else(|e| panic!("{path:?}: {e}"));
+            assert_eq!(
+                edit_args,
+                ["--apply-diff", path, "$left", "$right"],
+                "{path:?}"
+            );
+            let style: String = config
+                .get(["ui", "conflict-marker-style"])
+                .expect("a style");
+            assert_eq!(style, MARKER_STYLE_CONFIG);
+        }
+    }
+
+    /// The merge tool jj is told to use is the one configured, invoking this
+    /// binary on the picked content, and reading back the conflict markers
+    /// a partial pick leaves in the style they were written.
+    #[test]
+    fn the_resolution_tool_reads_back_as_this_binary_and_the_content() {
+        for path in AWKWARD_PATHS {
+            let cmd = JJCommand {
+                kind: JJCommandKind::Resolve {
+                    change_id: RevisionArg::new("x"),
+                    path: "src/lib.rs".into(),
+                    tool: ResolveTool::Content(PathBuf::from(path)),
+                },
+                flags: CommandFlags::empty(),
+            };
+            let (tool, config) = tool_config(&cmd);
+            let program: String = config
+                .get(["merge-tools", &tool, "program"])
+                .unwrap_or_else(|e| panic!("{path:?}: {e}"));
+            assert_eq!(program, exe(), "{path:?}");
+            let merge_args: Vec<String> = config
+                .get(["merge-tools", &tool, "merge-args"])
+                .unwrap_or_else(|e| panic!("{path:?}: {e}"));
+            assert_eq!(
+                merge_args,
+                ["--apply-resolution", path, "$output"],
+                "{path:?}"
+            );
+            let edits: bool = config
+                .get(["merge-tools", &tool, "merge-tool-edits-conflict-markers"])
+                .expect("a bool");
+            assert!(edits);
+            let style: String = config
+                .get(["merge-tools", &tool, "conflict-marker-style"])
+                .expect("a style");
+            assert_eq!(style, MARKER_STYLE_CONFIG);
+        }
+    }
+}
+
+#[cfg(test)]
+mod shape_tests {
+    use super::*;
+    use crate::types::{
+        BookmarkName, ChangeId, RebaseKind, RebaseSource, RebaseTarget, RemoteName, RevisionArg,
+        SmallVec,
+    };
+
+    fn cmd(kind: JJCommandKind, flags: CommandFlags) -> JJCommand {
+        JJCommand { kind, flags }
+    }
+
+    fn args(cmd: &JJCommand) -> Vec<String> {
+        cmd.args().iter().map(|a| a.to_string()).collect()
+    }
+
+    fn ids(ids: &[&str]) -> SmallVec<RevisionArg> {
+        ids.iter().map(|id| RevisionArg::new(*id)).collect()
+    }
+
+    /// A typed command line, word by word as the log colours it: `S`ubcommand,
+    /// `F`lag or `V`alue.
+    fn lexed(words: &[&str], flags: CommandFlags) -> Vec<(String, char)> {
+        let raw = cmd(
+            JJCommandKind::Raw {
+                args: words.iter().map(|w| Str::from(*w)).collect(),
+            },
+            flags,
+        );
+        raw.tagged_args()
+            .into_iter()
+            .map(|arg| {
+                let kind = match arg.kind {
+                    CommandPartKind::Subcommand => 'S',
+                    CommandPartKind::Flag => 'F',
+                    CommandPartKind::String => 'V',
+                    _ => '?',
+                };
+                (arg.text.to_string(), kind)
+            })
+            .collect()
+    }
+
+    /// Only a compound command's second word is a subcommand, and only when
+    /// it isn't a flag; past a bare `--` every word is the subprocess's, flag
+    /// spelling or not. A global toggle spliced in lands ahead of the `--`
+    /// without shifting what the words after it are taken for.
+    #[test]
+    fn a_typed_command_is_read_by_jjs_grammar() {
+        let cases: &[(&[&str], CommandFlags, &str)] = &[
+            (
+                &["git", "push", "--remote", "o"],
+                CommandFlags::empty(),
+                "SSFV",
+            ),
+            (&["git", "--help"], CommandFlags::empty(), "SF"),
+            (&["log", "git", "-r", "@"], CommandFlags::empty(), "SVFV"),
+            (&["run", "--", "-x", "--"], CommandFlags::empty(), "SFVV"),
+            (&["run", "--", "--debug"], CommandFlags::DEBUG, "SFFV"),
+            (&["bookmark", "list"], CommandFlags::DEBUG, "SSF"),
+        ];
+        for (words, flags, kinds) in cases {
+            let lexed = lexed(words, *flags);
+            let got: String = lexed.iter().map(|(_, kind)| kind).collect();
+            assert_eq!(got, *kinds, "{lexed:?}");
+        }
+        let texts: Vec<String> = lexed(&["run", "--", "--debug"], CommandFlags::DEBUG)
+            .into_iter()
+            .map(|(text, _)| text)
+            .collect();
+        assert_eq!(texts, ["run", "--debug", "--", "--debug"]);
+    }
+
+    /// jj takes one revision per occurrence of these flags; a second value
+    /// after one flag would be read as a positional argument.
+    #[test]
+    fn each_listed_revision_gets_its_own_flag() {
+        let two = || ids(&["a", "b"]);
+        let dest = || RebaseTarget {
+            targets: ids(&["c", "d"]),
+            kind: RebaseKind::After,
+        };
+        let commands = [
+            JJCommandKind::Rebase {
+                change_ids: two(),
+                source_mode: RebaseSource::Source,
+                dest: dest(),
+            },
+            JJCommandKind::Revert {
+                change_ids: two(),
+                dest: dest(),
+            },
+            JJCommandKind::SimplifyParents { change_ids: two() },
+            JJCommandKind::GitPushBookmark {
+                bookmarks: [BookmarkName::new("a"), BookmarkName::new("b")]
+                    .into_iter()
+                    .collect(),
+                remotes: SmallVec::new(),
+            },
+            JJCommandKind::Run {
+                change_ids: two(),
+                argv: vec!["make".into()],
+                jobs: None,
+            },
+            JJCommandKind::Converge {
+                changes: [ChangeId::new("a"), ChangeId::new("b")]
+                    .into_iter()
+                    .collect(),
+            },
+        ];
+        for kind in commands {
+            let cmd = cmd(kind, CommandFlags::empty());
+            let tagged = cmd.tagged_args();
+            let revisions = tagged
+                .iter()
+                .enumerate()
+                .filter(|(_, arg)| arg.kind == CommandPartKind::Revision)
+                .map(|(at, _)| at)
+                .collect::<Vec<_>>();
+            assert!(revisions.len() >= 2, "{:?}", cmd.args());
+            for at in revisions {
+                assert!(
+                    tagged[at - 1].kind == CommandPartKind::Flag,
+                    "{:?}",
+                    cmd.args()
+                );
+            }
+        }
+    }
+
+    /// Nothing chosen means jj's own default: its configured remotes, its
+    /// `converge` revset, its nearest bookmarks, its `run.jobs`.
+    #[test]
+    fn nothing_chosen_leaves_the_choice_to_jj() {
+        let cases = [
+            (
+                JJCommandKind::GitPush {
+                    all: false,
+                    remotes: SmallVec::new(),
+                },
+                &["git", "push"][..],
+            ),
+            (
+                JJCommandKind::GitFetch {
+                    all_remotes: false,
+                    remotes: SmallVec::new(),
+                },
+                &["git", "fetch"],
+            ),
+            (
+                JJCommandKind::Converge {
+                    changes: SmallVec::new(),
+                },
+                &["converge"],
+            ),
+            (
+                JJCommandKind::BookmarkAdvance { change_id: None },
+                &["bookmark", "advance"],
+            ),
+            (
+                JJCommandKind::Run {
+                    change_ids: ids(&["x"]),
+                    argv: vec!["make".into()],
+                    jobs: None,
+                },
+                &["run", "-r", "x", "--", "make"],
+            ),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(args(&cmd(kind, CommandFlags::empty())), expected);
+        }
+    }
+
+    /// A key's flags can reach a command of another kind (going to a commit
+    /// can set a bookmark), so any bit can arrive on any command; passing one
+    /// jj gives that command no option for would only get it refused.
+    #[test]
+    fn a_command_drops_the_toggles_it_has_no_option_for() {
+        let globals: Vec<&str> = GLOBAL_TOGGLES.iter().map(|t| t.cli_flag).collect();
+        let commands = [
+            JJCommandKind::Edit {
+                change_id: RevisionArg::new("x"),
+            },
+            JJCommandKind::Describe {
+                change_ids: ids(&["x"]),
+                message: "m".into(),
+            },
+            JJCommandKind::Rebase {
+                change_ids: ids(&["x"]),
+                source_mode: RebaseSource::Revision,
+                dest: RebaseTarget {
+                    targets: ids(&["y"]),
+                    kind: RebaseKind::Onto,
+                },
+            },
+            JJCommandKind::BookmarkCreate {
+                name: BookmarkName::new("b"),
+                change_id: RevisionArg::new("x"),
+            },
+            JJCommandKind::GitFetch {
+                all_remotes: false,
+                remotes: [RemoteName::new("origin")].into_iter().collect(),
+            },
+        ];
+        for kind in commands {
+            let bare = args(&cmd(kind.clone(), CommandFlags::empty()));
+            let mut toggled = args(&cmd(kind, CommandFlags::all()));
+            toggled.retain(|a| !globals.contains(&a.as_str()));
+            assert_eq!(toggled, bare);
+        }
+    }
+}
