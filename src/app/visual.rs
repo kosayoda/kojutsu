@@ -504,54 +504,32 @@ impl App {
         let Some(PersistentVisualRange::Lines(vr)) = &self.visual.persistent else {
             return;
         };
-        let vr = vr.clone();
-
-        let line_data: Vec<Selection> = self
-            .entry_by_commit_id(&vr.commit_id)
-            .and_then(|entry_idx| {
-                let files = &self.dag.nodes[entry_idx].files;
-                let diff_lines = files.diff_lines(files.file_idx(&vr.path)?, self.diff_format())?;
-                let lines = diff_lines
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, _)| {
-                        let idx = DiffLineIdx::new(*i);
-                        idx >= vr.start_line && idx <= vr.end_line
-                    })
-                    .filter(|(_, dl)| dl.is_selectable())
-                    .map(|(_, dl)| Selection::Line {
-                        file_ref: FileRef {
-                            commit_id: vr.commit_id.clone(),
-                            path: vr.path.clone(),
-                        },
-                        old_line: dl.old_line,
-                        new_line: dl.new_line,
-                    })
-                    .collect();
-                Some(lines)
-            })
-            .unwrap_or_default();
-
-        if line_data.is_empty() {
+        let Some(entry_idx) = self.entry_by_commit_id(&vr.commit_id) else {
             return;
-        }
-
-        let all_selected = line_data.iter().all(|s| self.selection.contains(s));
-
-        if all_selected {
-            for s in &line_data {
-                self.selection.remove(s);
-            }
-        } else {
-            if !self.begin_line_selection(&vr.commit_id) {
-                return;
-            }
-            for s in &line_data {
-                if let Selection::Line { file_ref, .. } = s {
-                    self.selection.remove(&Selection::File(file_ref.clone()));
-                }
-            }
-            self.selection.extend(line_data);
+        };
+        let Some(file_idx) = self.dag.nodes[entry_idx].files.file_idx(&vr.path) else {
+            return;
+        };
+        let Some(diff_lines) = self.diff_lines(FileOwner::Dag(entry_idx), file_idx) else {
+            return;
+        };
+        let file_ref = FileRef {
+            commit_id: vr.commit_id.clone(),
+            path: vr.path.clone(),
+        };
+        let lines: Vec<Selection> = diff_lines
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| (vr.start_line..=vr.end_line).contains(&DiffLineIdx::new(*i)))
+            .filter(|(_, dl)| dl.is_selectable())
+            .map(|(_, dl)| Selection::Line {
+                file_ref: file_ref.clone(),
+                old_line: dl.old_line,
+                new_line: dl.new_line,
+            })
+            .collect();
+        if !lines.is_empty() {
+            self.toggle_lines(entry_idx, file_idx, lines);
         }
     }
 
@@ -659,7 +637,7 @@ mod tests {
     };
     use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, RowIdx};
     use crate::keymap::AppAction;
-    use crate::types::{DisplayRow, FileOwner, RepoPath};
+    use crate::types::{DisplayRow, FileOwner, FileSelectionState, RepoPath};
 
     fn commit(tag: char) -> CommitInfo {
         CommitInfo::for_test(
@@ -908,5 +886,21 @@ mod tests {
 
         assert_eq!(app.selection_count(), 1);
         assert!(app.is_line_selected(A, Y, DiffLineIdx::new(1)));
+    }
+
+    /// A selected file draws all its lines selected, so Space on a range
+    /// inside it deselects those lines and leaves the rest of the file.
+    #[test]
+    fn a_line_range_inside_a_selected_file_deselects_only_its_lines() {
+        let mut app = app();
+        app.toggle_file_selection(A, Y);
+        app.cursor = line_row(&app, 1, 1);
+        app.enter_visual_mode();
+
+        app.persist_visual_selection();
+
+        assert!(!app.is_line_selected(A, Y, DiffLineIdx::new(1)));
+        assert!(app.is_line_selected(A, Y, DiffLineIdx::new(2)));
+        assert!(app.file_selection_state(A, Y) == FileSelectionState::Partial);
     }
 }

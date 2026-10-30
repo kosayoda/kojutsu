@@ -282,7 +282,6 @@ impl App {
             return;
         };
 
-        // Extract what we need from the diff line before mutating self.
         let Some(diff_lines) = self.diff_lines(FileOwner::Dag(entry_idx), file_idx) else {
             return;
         };
@@ -290,23 +289,15 @@ impl App {
         if !dl.is_selectable() {
             return;
         }
-        let old_line = dl.old_line;
-        let new_line = dl.new_line;
-
-        if !self.begin_line_selection(&commit_id) {
-            return;
-        }
-        self.expand_file_selection_to_lines(entry_idx, file_idx);
-
         let sel = Selection::Line {
             file_ref: FileRef {
                 commit_id,
                 path: file_path,
             },
-            old_line,
-            new_line,
+            old_line: dl.old_line,
+            new_line: dl.new_line,
         };
-        self.selection.toggle(sel);
+        self.toggle_lines(entry_idx, file_idx, vec![sel]);
     }
 
     /// Toggle all added/removed lines in a hunk (triggered by space on a header line).
@@ -343,19 +334,30 @@ impl App {
             }
         }
 
+        self.toggle_lines(entry_idx, file_idx, hunk_lines);
+    }
+
+    /// Toggle some of a file's lines together: deselect them if they are
+    /// all selected, else select them all. A whole-file selection is broken
+    /// into its lines first ([`Self::expand_file_selection_to_lines`]), so
+    /// lines inside it deselect without taking the rest of the file along.
+    pub(super) fn toggle_lines(
+        &mut self,
+        entry_idx: EntryIdx,
+        file_idx: FileIdx,
+        lines: Vec<Selection>,
+    ) {
+        let commit_id = self.commit_id(entry_idx).clone();
         if !self.begin_line_selection(&commit_id) {
             return;
         }
         self.expand_file_selection_to_lines(entry_idx, file_idx);
-
-        // If all hunk lines are already selected, deselect them. Otherwise select all.
-        let all_selected = hunk_lines.iter().all(|s| self.selection.contains(s));
-        if all_selected {
-            for s in &hunk_lines {
+        if lines.iter().all(|s| self.selection.contains(s)) {
+            for s in &lines {
                 self.selection.remove(s);
             }
         } else {
-            self.selection.extend(hunk_lines);
+            self.selection.extend(lines);
         }
     }
 
