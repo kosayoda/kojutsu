@@ -212,6 +212,7 @@ pub(super) fn draw_submenu(
 pub(super) fn submenu_lines(
     children: &[(keymap_parser::Node, TrieNode)],
     registry: &ActionRegistry,
+    presets: &[crate::config::Preset],
     availability: crate::keymap::Availability,
     width: usize,
     theme: &Theme,
@@ -225,10 +226,10 @@ pub(super) fn submenu_lines(
             TrieNode::Action {
                 id, description, ..
             } => (
-                description.as_str(),
+                keymap::action_description(*id, description, presets),
                 availability.blocks(registry.gate(*id)),
             ),
-            TrieNode::Prefix { label, .. } => (label.as_str(), false),
+            TrieNode::Prefix { label, .. } => (label.as_str().into(), false),
             TrieNode::Toggle { .. } => continue,
         };
         let key_str = keymap::display_key(key_node);
@@ -875,5 +876,70 @@ mod revisions_label_tests {
             super::picks_prompt("rebase revision", &picks, 34),
             "rebase revision tus +2 → xzp, sp:"
         );
+    }
+}
+
+#[cfg(test)]
+mod submenu_tests {
+    use super::submenu_lines;
+    use crate::config::Preset;
+    use crate::jj_version::InstalledJj;
+    use crate::keymap::{
+        ActionRegistry, Availability, Keymaps, SelectionKindSet, TrieNode, default_bindings,
+        try_parse_key,
+    };
+    use crate::theme::Theme;
+    use crate::types::ActiveView;
+
+    /// The `;` submenu's entries as `(key) description`, in order.
+    fn command_submenu(presets: &[Preset]) -> Vec<String> {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let semicolon = try_parse_key(";").expect("valid key");
+        let Some((_, TrieNode::Prefix { children, .. })) = keymaps
+            .for_view(ActiveView::Dag)
+            .root
+            .iter()
+            .find(|(node, _)| *node == semicolon)
+        else {
+            panic!("no `;` prefix");
+        };
+        let availability = Availability {
+            selection: SelectionKindSet::empty(),
+            on_file: false,
+            on_conflict: false,
+            jj: InstalledJj::default(),
+        };
+        let lines = submenu_lines(
+            children,
+            &keymaps.registry,
+            presets,
+            availability,
+            usize::MAX,
+            &Theme::default(),
+        );
+        let spans: Vec<String> = lines
+            .iter()
+            .flat_map(|line| &line.spans)
+            .map(|span| span.content.to_string())
+            .filter(|text| text != "  ")
+            .collect();
+        spans.chunks(2).map(|pair| pair.concat()).collect()
+    }
+
+    /// As in help: a slot with a preset configured names it, one without
+    /// keeps its plain description.
+    #[test]
+    fn preset_switches_in_the_submenu_name_their_presets() {
+        let presets = ["mine", "all"].map(|name| Preset {
+            name: name.into(),
+            revset: format!("{name}()"),
+        });
+        let entries = command_submenu(&presets);
+        for expected in ["(1) preset 1 (mine)", "(2) preset 2 (all)", "(3) preset 3"] {
+            assert!(
+                entries.iter().any(|e| e == expected),
+                "{expected} in {entries:?}"
+            );
+        }
     }
 }

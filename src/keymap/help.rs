@@ -71,6 +71,23 @@ fn prefix_gate(registry: &ActionRegistry, children: &[(Node, TrieNode)]) -> Gate
     }
 }
 
+/// How an action is described wherever its keys are listed: switching to a
+/// preset slot names the preset configured there.
+pub fn action_description<'a>(
+    id: ActionId,
+    description: &'a str,
+    presets: &[crate::config::Preset],
+) -> std::borrow::Cow<'a, str> {
+    let preset = match id {
+        ActionId::Builtin(action) => action.preset_slot().and_then(|slot| presets.get(slot)),
+        ActionId::Lua(_) => None,
+    };
+    match preset {
+        Some(preset) => format!("{description} ({})", preset.name).into(),
+        None => description.into(),
+    }
+}
+
 pub fn help_entries(
     keymap: &Keymap,
     registry: &ActionRegistry,
@@ -128,22 +145,11 @@ pub fn help_entries(
 
     let mut entries: Vec<HelpEntry> = action_keys
         .into_iter()
-        .map(|(id, keys, desc, group)| {
-            let preset_slot = match id {
-                ActionId::Builtin(action) => action.preset_slot(),
-                ActionId::Lua(_) => None,
-            };
-            let description = if let Some(preset) = preset_slot.and_then(|idx| presets.get(idx)) {
-                format!("{desc} ({name})", name = preset.name)
-            } else {
-                desc
-            };
-            HelpEntry {
-                keys: keys.join(" / "),
-                description,
-                group,
-                gate: registry.gate(id),
-            }
+        .map(|(id, keys, desc, group)| HelpEntry {
+            keys: keys.join(" / "),
+            description: action_description(id, &desc, presets).into_owned(),
+            group,
+            gate: registry.gate(id),
         })
         .collect();
     entries.extend(pick_entry);

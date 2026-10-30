@@ -70,6 +70,7 @@ pub fn draw(frame: &mut Frame, app: &mut App, keymaps: &Keymaps) {
             let lines = overlay::submenu_lines(
                 children,
                 &keymaps.registry,
+                &app.config.revsets.presets,
                 availability,
                 overlay_base.width as usize,
                 theme,
