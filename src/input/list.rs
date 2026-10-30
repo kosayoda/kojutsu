@@ -32,8 +32,11 @@ fn recompute_list_filter(items: &[String], filter: &str) -> (Vec<usize>, Vec<Vec
     (indices, positions)
 }
 
-/// Re-run the fuzzy filter over the list's items. The custom-entry row, if
-/// any, is pinned to the top regardless of how it scores against the filter.
+/// Re-run the fuzzy filter over the list's items and land on the best
+/// match. The custom-entry row, if any, is pinned to the top regardless of
+/// how it scores against the filter, and is landed on only when nothing
+/// else matches, where Enter then opens the free input prefilled with the
+/// filter text.
 fn refresh_list_filter(s: &mut crate::app::SelectFromListState) {
     let (mut indices, mut positions) = recompute_list_filter(&s.items, &s.filter);
     if s.custom_entry.is_some() {
@@ -46,6 +49,12 @@ fn refresh_list_filter(s: &mut crate::app::SelectFromListState) {
     }
     s.filtered_indices = indices;
     s.match_positions = positions;
+    s.cursor = if s.custom_entry.is_some() && s.filtered_indices.len() > 1 {
+        1
+    } else {
+        0
+    };
+    s.scroll_offset = 0;
 }
 
 /// Move the list cursor by `delta` rows (positive = down, negative = up).
@@ -107,24 +116,14 @@ pub(super) fn handle_select_from_list(
             if let AppMode::SelectFromList(s) = &mut app.mode {
                 s.filter.push(c);
                 refresh_list_filter(s);
-                // Land on the best match, not the pinned custom row, unless
-                // nothing matches, where Enter then opens the free input
-                // prefilled with the filter text.
-                s.cursor = if s.custom_entry.is_some() && s.filtered_indices.len() > 1 {
-                    1
-                } else {
-                    0
-                };
-                s.scroll_offset = 0;
             }
             return Action::None;
         }
         if key.code == ratatui::crossterm::event::KeyCode::Backspace {
-            if let AppMode::SelectFromList(s) = &mut app.mode {
-                s.filter.pop();
+            if let AppMode::SelectFromList(s) = &mut app.mode
+                && s.filter.pop().is_some()
+            {
                 refresh_list_filter(s);
-                s.cursor = s.cursor.min(s.filtered_indices.len().saturating_sub(1));
-                s.scroll_offset = 0;
             }
             return Action::None;
         }
@@ -452,6 +451,33 @@ mod list_navigation_tests {
         app
     }
 
+    /// A filtering list whose first row is the free-input entry.
+    fn app_with_custom_list(items: &[&str]) -> App {
+        let mut app = App::for_test();
+        app.mode = AppMode::select_from_list_with_custom(
+            "run",
+            "enter a command",
+            crate::app::CustomEntry {
+                prompt: "run: ".into(),
+                on_submit: crate::types::PromptStep::RawCommand.into(),
+            },
+            items.iter().map(|item| item.to_string()).collect(),
+            PendingSelection::PresetSelect,
+        );
+        if let AppMode::SelectFromList(s) = &mut app.mode {
+            s.filtering = true;
+        }
+        app
+    }
+
+    /// The item on the cursor's row.
+    fn cursor_item(app: &App) -> &str {
+        match &app.mode {
+            AppMode::SelectFromList(s) => &s.items[s.filtered_indices[s.cursor]],
+            _ => panic!("list dismissed"),
+        }
+    }
+
     fn cursor(app: &App) -> usize {
         match &app.mode {
             AppMode::SelectFromList(s) => s.cursor,
@@ -472,6 +498,7 @@ mod list_navigation_tests {
             match node.key {
                 keymap_parser::Key::Char(c) => ratatui::crossterm::event::KeyCode::Char(c),
                 keymap_parser::Key::Down => ratatui::crossterm::event::KeyCode::Down,
+                keymap_parser::Key::Backspace => ratatui::crossterm::event::KeyCode::Backspace,
                 _ => panic!("unhandled test key: {key}"),
             },
             if node.modifiers & keymap_parser::Modifier::Ctrl as u8 != 0 {
@@ -516,6 +543,19 @@ mod list_navigation_tests {
         assert_eq!(cursor(&app), 1);
         press(&mut app, &keymaps, "ctrl-p");
         assert_eq!(cursor(&app), 0);
+    }
+
+    /// Deleting filter text re-ranks the list, so the cursor lands afresh as
+    /// it does on typing, not on whatever now sits at its old row.
+    #[test]
+    fn deleting_filter_text_lands_on_the_best_match() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let mut app = app_with_custom_list(&["build", "lint"]);
+        press(&mut app, &keymaps, "l");
+        press(&mut app, &keymaps, "x");
+        assert_eq!(cursor_item(&app), "enter a command");
+        press(&mut app, &keymaps, "backspace");
+        assert_eq!(cursor_item(&app), "lint");
     }
 
     /// A movement key is filter text while filtering: text outranks the
