@@ -712,9 +712,14 @@ impl App {
         }
 
         // Sort: pure local → local tracking remote → tracked remote → untracked remote.
-        // Within each group, alphabetical by name.
-        entries
-            .sort_unstable_by(|a, b| a.kind.rank().cmp(&b.kind.rank()).then(a.name.cmp(&b.name)));
+        // Within each group, alphabetical by name, then by remote.
+        entries.sort_unstable_by(|a, b| {
+            a.kind
+                .rank()
+                .cmp(&b.kind.rank())
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.kind.remote().cmp(&b.kind.remote()))
+        });
 
         self.views.bookmark_entries = entries;
     }
@@ -1274,6 +1279,63 @@ mod tag_tracking_tests {
         assert_eq!(
             refs(&app.remote_tags_to_track(true)),
             ["v1@upstream", "v2@origin"]
+        );
+    }
+}
+
+#[cfg(test)]
+mod bookmark_entry_tests {
+    use super::super::App;
+    use super::super::test_support::{entry, load};
+    use crate::dag::{DagEntry, RemoteBookmarkInfo, RemoteBookmarkRef};
+    use crate::types::{BookmarkName, CommitId, RemoteName};
+
+    fn remote(mut entry: DagEntry, name: &str, remote: &str, is_tracked: bool) -> DagEntry {
+        entry.commit.remote_bookmarks.push(RemoteBookmarkInfo {
+            name: BookmarkName::new(name),
+            remote: RemoteName::new(remote),
+            synced: false,
+            is_tracked,
+        });
+        entry
+    }
+
+    fn off_dag(name: &str, remote: &str, is_tracked: bool) -> RemoteBookmarkRef {
+        RemoteBookmarkRef {
+            name: BookmarkName::new(name),
+            remote: RemoteName::new(remote),
+            commit_id: Some(CommitId::new("z1")),
+            is_tracked,
+        }
+    }
+
+    /// The bookmark list as `name` or `name@remote`, in order.
+    fn listed(app: &App) -> Vec<String> {
+        app.views
+            .bookmark_entries
+            .iter()
+            .map(|e| match e.kind.remote() {
+                Some(remote) => format!("{}@{remote}", e.name),
+                None => e.name.to_string(),
+            })
+            .collect()
+    }
+
+    /// One bookmark on several remotes lists them by remote, not in
+    /// whatever order the commits holding them came in.
+    #[test]
+    fn one_bookmark_on_several_remotes_sorts_by_remote() {
+        let mut app = App::for_test();
+        let a = remote(entry('a', "a1"), "main", "upstream", false);
+        let b = remote(entry('b', "b1"), "main", "origin", false);
+        load(&mut app, vec![a, b], true);
+        app.views.remote_bookmarks = vec![off_dag("main", "backup", false)];
+
+        app.rebuild_bookmark_entries();
+
+        assert_eq!(
+            listed(&app),
+            ["main@backup", "main@origin", "main@upstream"]
         );
     }
 }
