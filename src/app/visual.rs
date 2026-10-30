@@ -498,7 +498,8 @@ impl App {
         }
     }
 
-    /// Toggle all selectable lines in a persistent visual line range.
+    /// Toggle all selectable lines in a persistent visual line range, as
+    /// numbered by the diff format on screen.
     fn toggle_line_visual_selection(&mut self) {
         let Some(PersistentVisualRange::Lines(vr)) = &self.visual.persistent else {
             return;
@@ -509,8 +510,7 @@ impl App {
             .entry_by_commit_id(&vr.commit_id)
             .and_then(|entry_idx| {
                 let files = &self.dag.nodes[entry_idx].files;
-                let diff_lines =
-                    files.diff_lines(files.file_idx(&vr.path)?, crate::dag::DiffFormat::Git)?;
+                let diff_lines = files.diff_lines(files.file_idx(&vr.path)?, self.diff_format())?;
                 let lines = diff_lines
                     .iter()
                     .enumerate()
@@ -652,15 +652,14 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{App, DagNode, FileFoldKey, PersistentVisualRange};
+    use super::super::{App, FileFoldKey, PersistentVisualRange};
     use crate::dag::{
         CommitInfo, DiffLine, DiffLineKind, DiffResult, DiffSummary, FileChange, FileStatus,
         LineStats,
     };
-    use crate::graph::GraphLines;
-    use crate::idx::{EntryIdx, FileIdx, RowIdx};
+    use crate::idx::{DiffLineIdx, EntryIdx, FileIdx, RowIdx};
     use crate::keymap::AppAction;
-    use crate::types::{DisplayRow, FileOwner, RepoPath, SmallVec};
+    use crate::types::{DisplayRow, FileOwner, RepoPath};
 
     fn commit(tag: char) -> CommitInfo {
         CommitInfo::for_test(
@@ -707,11 +706,7 @@ mod tests {
     fn app() -> App {
         let mut app = App::for_test();
         for tag in ['a', 'b', 'c'] {
-            app.dag.nodes.push(DagNode::new(
-                commit(tag),
-                GraphLines::default(),
-                SmallVec::new(),
-            ));
+            app.push_test_commit(commit(tag));
         }
         let a = EntryIdx::new(0);
         let paths = ["x", "y", "z"];
@@ -866,5 +861,52 @@ mod tests {
         app.enter_visual_mode();
         app.toggle_diff_format();
         assert!(!app.in_visual_mode());
+    }
+
+    fn diff_line(kind: DiffLineKind, old_line: Option<u32>, new_line: Option<u32>) -> DiffLine {
+        DiffLine {
+            kind,
+            content: "x".into(),
+            tokens: vec![],
+            old_line,
+            new_line,
+            conflict_region: false,
+        }
+    }
+
+    /// Give `y` the diff `git`, shown in color-words as `color_words`.
+    fn set_y_diff(app: &mut App, git: Vec<DiffLine>, color_words: Vec<DiffLine>) {
+        app.dag.nodes[EntryIdx::new(0)]
+            .files
+            .set_diff(&RepoPath::new("y"), Ok(DiffResult { git, color_words }));
+        app.rebuild_rows();
+    }
+
+    const A: EntryIdx = EntryIdx::new(0);
+    const Y: FileIdx = FileIdx::new(1);
+
+    /// The two formats number their lines differently; Space selects the
+    /// lines the range covers in the one on screen. Here git's first line
+    /// is context where color-words has the removed line.
+    #[test]
+    fn a_line_range_selects_the_lines_numbered_as_shown() {
+        let mut app = app();
+        let removed = diff_line(DiffLineKind::Removed, Some(2), None);
+        let added = diff_line(DiffLineKind::Added, None, Some(2));
+        let header = diff_line(DiffLineKind::Header, None, None);
+        let context = diff_line(DiffLineKind::Context, Some(1), Some(1));
+        set_y_diff(
+            &mut app,
+            vec![header.clone(), context, removed.clone(), added.clone()],
+            vec![header, removed, added],
+        );
+        assert!(app.diff_format() == crate::dag::DiffFormat::ColorWords);
+        app.cursor = line_row(&app, 1, 1);
+        app.enter_visual_mode();
+
+        app.persist_visual_selection();
+
+        assert_eq!(app.selection_count(), 1);
+        assert!(app.is_line_selected(A, Y, DiffLineIdx::new(1)));
     }
 }
