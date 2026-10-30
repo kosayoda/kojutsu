@@ -1,7 +1,9 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use crate::app::{App, CommandLogKind};
 use crate::config::Config;
+use crate::jj_version::InstalledJj;
 use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
 
 use super::LuaEngine;
@@ -11,6 +13,7 @@ pub struct LuaRuntime {
     pub config: Rc<Config>,
     pub engine: LuaEngine,
     pub keymaps: Keymaps,
+    config_dir: PathBuf,
 }
 
 impl LuaRuntime {
@@ -44,7 +47,53 @@ impl LuaRuntime {
             config: Rc::new(config),
             engine,
             keymaps,
+            config_dir: config_dir.to_path_buf(),
         }
+    }
+
+    /// Rebuild from the same `init.lua` and swap the result in, then adopt
+    /// what `probe_jj` finds, since jj may have been upgraded meanwhile.
+    ///
+    /// All-or-nothing: the new runtime is built first and only installed if
+    /// its script ran clean, so a broken edit leaves the running one
+    /// untouched. The rebuild is wholesale rather than a re-run over the
+    /// live engine, because registering a command or binding appends: a
+    /// second pass would double every one of them, and a fresh Lua also
+    /// drops `package.loaded`, so `require`d modules are re-read instead of
+    /// served from cache.
+    pub fn reload(&mut self, app: &mut App, probe_jj: impl FnOnce() -> InstalledJj) {
+        // A parked thread belongs to the engine that created it, and the
+        // reload drops that engine along with the prompt it is waiting on.
+        if self.engine.has_suspended_thread() {
+            app.set_error("reload: a plugin prompt is still open");
+            return;
+        }
+
+        let reloaded = Self::load_from(&self.config_dir, &self.engine.repo_path);
+        if let Some(err) = reloaded.init_error() {
+            app.push_command_log(
+                CommandLogKind::Warning,
+                "reload failed - keeping the running config",
+                None,
+                err.as_bytes().to_vec(),
+                false,
+            );
+            app.set_error(format!("reload: {err}"));
+            return;
+        }
+
+        *self = reloaded;
+        app.apply_reloaded_config(self.config.clone());
+        app.push_command_log(
+            CommandLogKind::Background,
+            "reloaded init.lua",
+            None,
+            Vec::new(),
+            true,
+        );
+        app.set_status("reloaded init.lua");
+        self.report_init_warnings(app);
+        app.set_installed_jj(probe_jj());
     }
 
     /// The error that stopped `init.lua`, if it didn't run to completion.
@@ -55,6 +104,28 @@ impl LuaRuntime {
     /// Problems with what `init.lua` registered, as `file:line: message`.
     pub fn init_warnings(&self) -> &[String] {
         &self.engine.init_warnings
+    }
+
+    /// Show what `init.lua` registered wrongly: one command-log entry listing
+    /// every problem, and the count in the status line pointing at it.
+    pub fn report_init_warnings(&self, app: &mut App) {
+        let warnings = self.init_warnings();
+        if warnings.is_empty() {
+            return;
+        }
+        let count = warnings.len();
+        let summary = format!(
+            "init.lua: {count} {}",
+            crate::pluralize!(count, "problem", "problems")
+        );
+        app.push_command_log(
+            CommandLogKind::Warning,
+            summary.clone(),
+            None,
+            warnings.join("\n").into_bytes(),
+            false,
+        );
+        app.set_error(format!("{summary} (see the command log)"));
     }
 }
 

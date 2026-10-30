@@ -233,8 +233,7 @@ fn main() -> Result<()> {
         app.enter_annotate_view(commit_id, path);
     }
 
-    app.jj = kojutsu::jj_version::InstalledJj::probe();
-    report_jj_concerns(&mut app);
+    app.set_installed_jj(kojutsu::jj_version::InstalledJj::probe());
 
     if let Some(path) = kojutsu::config::superseded_toml_config() {
         let msg = format!(
@@ -254,7 +253,7 @@ fn main() -> Result<()> {
 
     // Warnings first: an error that stopped the script matters more, so its
     // status message is the one left showing.
-    report_init_warnings(&mut app, runtime.init_warnings());
+    runtime.report_init_warnings(&mut app);
     if let Some(err) = runtime.init_error() {
         app.push_command_log(
             kojutsu::app::CommandLogKind::Warning,
@@ -396,7 +395,7 @@ impl Session {
                 return Ok(());
             }
             self.runtime.engine.flush_logs(&mut self.app);
-            sync_plugin_config(&mut self.app, &mut self.runtime, &self.repo_requests);
+            sync_plugin_config(&mut self.app, &mut self.runtime);
             flush_repo_requests(&mut self.app, &self.repo_requests);
             self.app.show_pending_error();
             self.app.track_activity(Instant::now());
@@ -501,14 +500,9 @@ impl Session {
                 });
             }
             Action::Refresh => self.app.refresh(RevsetLoadKind::Snapshot),
-            Action::ReloadConfig => {
-                reload_config(
-                    &mut self.app,
-                    &mut self.runtime,
-                    &self.repo_path,
-                    &self.repo_requests,
-                );
-            }
+            Action::ReloadConfig => self
+                .runtime
+                .reload(&mut self.app, kojutsu::jj_version::InstalledJj::probe),
             Action::UpdateRevset(revset_str) => update_revset(&mut self.app, revset_str),
             Action::EditRevsetInEditor => {
                 self.app.revset.active_preset = None;
@@ -804,123 +798,16 @@ fn adopt_hook(app: &mut App, hook: Option<AppAction>) {
     }
 }
 
-/// Point everything that holds config-derived state at `config`. The repo
-/// service keeps its own copy of the diff limit, so it is told separately.
-fn install_config(
-    app: &mut App,
-    repo_requests: &RepoRequestHandle,
-    config: std::rc::Rc<kojutsu::config::Config>,
-) {
-    repo_requests.send(kojutsu::repo_service::RepoRequest::SetDiffSizeLimit {
-        bytes: config.diff.max_file_size_bytes(),
-    });
-    app.apply_reloaded_config(config);
-}
-
 /// Adopt whatever a plugin just did to `kojutsu.config`.
-fn sync_plugin_config(
-    app: &mut App,
-    runtime: &mut kojutsu::lua::LuaRuntime,
-    repo_requests: &RepoRequestHandle,
-) {
+fn sync_plugin_config(app: &mut App, runtime: &mut kojutsu::lua::LuaRuntime) {
     match runtime.engine.take_config_change(&runtime.config) {
         None => {}
         Some(Ok(config)) => {
             runtime.config = std::rc::Rc::new(config);
-            install_config(app, repo_requests, runtime.config.clone());
+            app.apply_reloaded_config(runtime.config.clone());
         }
         Some(Err(e)) => app.set_error(e),
     }
-}
-
-/// Rebuild the runtime from `init.lua` and swap it in.
-///
-/// All-or-nothing: the new runtime is built first and only installed if its
-/// script ran clean, so a broken edit leaves the running one untouched. The
-/// rebuild is wholesale rather than a re-run over the live engine, because
-/// registering a command or binding appends: a second pass would double
-/// every one of them, and a fresh Lua also drops `package.loaded`, so
-/// `require`d modules are re-read instead of served from cache.
-fn reload_config(
-    app: &mut App,
-    runtime: &mut kojutsu::lua::LuaRuntime,
-    repo_path: &std::path::Path,
-    repo_requests: &RepoRequestHandle,
-) {
-    // A parked thread belongs to the engine that created it, and the reload
-    // drops that engine along with the prompt it is waiting on.
-    if runtime.engine.has_suspended_thread() {
-        app.set_error("reload: a plugin prompt is still open");
-        return;
-    }
-
-    let reloaded = kojutsu::lua::LuaRuntime::load(repo_path);
-    if let Some(err) = reloaded.init_error() {
-        app.push_command_log(
-            kojutsu::app::CommandLogKind::Warning,
-            "reload failed - keeping the running config",
-            None,
-            err.as_bytes().to_vec(),
-            false,
-        );
-        app.set_error(format!("reload: {err}"));
-        return;
-    }
-
-    *runtime = reloaded;
-    install_config(app, repo_requests, runtime.config.clone());
-    app.push_command_log(
-        kojutsu::app::CommandLogKind::Background,
-        "reloaded init.lua",
-        None,
-        Vec::new(),
-        true,
-    );
-    app.set_status("reloaded init.lua");
-    report_init_warnings(app, runtime.init_warnings());
-
-    // jj may have been upgraded since startup.
-    let jj = kojutsu::jj_version::InstalledJj::probe();
-    if jj != app.jj {
-        app.jj = jj;
-        report_jj_concerns(app);
-    }
-}
-
-/// Warn about a `jj` binary kojutsu can't fully work with: one too old for
-/// it, or one newer than the jj-lib it reads the repo with.
-fn report_jj_concerns(app: &mut App) {
-    for concern in app.jj.concerns() {
-        app.push_command_log(
-            kojutsu::app::CommandLogKind::Warning,
-            concern.clone(),
-            None,
-            Vec::new(),
-            false,
-        );
-        app.set_error(concern);
-    }
-}
-
-/// Show what `init.lua` registered wrongly: one command-log entry listing
-/// every problem, and the count in the status line pointing at it.
-fn report_init_warnings(app: &mut App, warnings: &[String]) {
-    if warnings.is_empty() {
-        return;
-    }
-    let count = warnings.len();
-    let summary = format!(
-        "init.lua: {count} {}",
-        kojutsu::pluralize!(count, "problem", "problems")
-    );
-    app.push_command_log(
-        kojutsu::app::CommandLogKind::Warning,
-        summary.clone(),
-        None,
-        warnings.join("\n").into_bytes(),
-        false,
-    );
-    app.set_error(format!("{summary} (see the command log)"));
 }
 
 fn update_revset(app: &mut App, revset_str: String) {

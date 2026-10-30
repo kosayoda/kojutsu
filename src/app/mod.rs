@@ -1879,17 +1879,39 @@ impl App {
     ///
     /// Search scopes are deliberately not re-seeded: they start from
     /// `default_search_scopes` but the user toggles them at runtime. The
-    /// active preset is re-clamped, since the new list may be shorter.
-    ///
-    /// Does not carry `diff.max_file_size_mib`, which lives in the repo
-    /// service; send [`crate::repo_service::RepoRequest::SetDiffSizeLimit`]
-    /// alongside this.
+    /// active preset is re-clamped, since the new list may be shorter. The
+    /// repo service keeps its own copy of the diff limit, so it is queued a
+    /// request to replace it.
     pub fn apply_reloaded_config(&mut self, config: Rc<crate::config::Config>) {
+        self.pending_repo_requests
+            .push(RepoRequest::SetDiffSizeLimit {
+                bytes: config.diff.max_file_size_bytes(),
+            });
         self.config = config;
         self.revset.active_preset = self
             .revset
             .active_preset
             .filter(|&i| i < self.config.revsets.presets.len());
+    }
+
+    /// Adopt what probing the `jj` binary found, warning about it when that
+    /// differs from what was known: one kojutsu can't fully work with is
+    /// either too old for it, or newer than the jj-lib it reads the repo with.
+    pub fn set_installed_jj(&mut self, jj: crate::jj_version::InstalledJj) {
+        if jj == self.jj {
+            return;
+        }
+        self.jj = jj;
+        for concern in jj.concerns() {
+            self.push_command_log(
+                CommandLogKind::Warning,
+                concern.clone(),
+                None,
+                Vec::new(),
+                false,
+            );
+            self.set_error(concern);
+        }
     }
 
     /// Get the text to pre-fill the revset input with.
