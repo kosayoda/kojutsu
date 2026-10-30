@@ -105,6 +105,23 @@ fn bookmark_interdiff(app: &mut App) -> Action {
         return nothing_here(app, AppAction::Interdiff);
     };
     let name = entry.name.to_string();
+    // A remote-only row is the remote side itself, so it compares with the
+    // bookmark's local row, if it has one.
+    if let Some(remote) = entry.kind.remote() {
+        let remotes = entry
+            .commit_id
+            .clone()
+            .map(|commit| (remote.clone(), commit))
+            .into_iter()
+            .collect();
+        let local = app
+            .views
+            .bookmark_entries
+            .iter()
+            .find(|e| e.name == entry.name && e.kind.remote().is_none())
+            .and_then(|e| e.commit_id.clone());
+        return ref_interdiff(app, &name, local, remotes, Some(0));
+    }
     let local = entry.commit_id.clone();
     let remotes = app
         .views
@@ -1098,14 +1115,18 @@ mod remote_choice_tests {
 mod ref_interdiff_tests {
     use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use crate::app::{App, TagViewEntry};
+    use crate::app::{App, BookmarkKind, BookmarkViewEntry, TagViewEntry};
     use crate::dag::{
-        CommitSummary, ShortId, TagDetails, TagLocalTarget, TagPresence, TagRemoteTarget,
+        BookmarkDetails, BookmarkRemoteTarget, CommitSummary, ShortId, TagDetails, TagLocalTarget,
+        TagPresence, TagRemoteTarget,
     };
+    use crate::idx::BookmarkIdx;
     use crate::input::handle_key;
     use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
     use crate::lua::LuaEngine;
-    use crate::types::{ActiveView, CommitId, RemoteName, RevisionArg, TagName};
+    use crate::types::{
+        ActiveView, BookmarkName, CommitId, DisplayRow, RemoteName, RevisionArg, TagName,
+    };
 
     fn summary(commit: &str) -> CommitSummary {
         CommitSummary {
@@ -1147,6 +1168,86 @@ mod ref_interdiff_tests {
         app
     }
 
+    fn bookmark(name: &str, commit: &str, kind: BookmarkKind) -> BookmarkViewEntry {
+        BookmarkViewEntry {
+            name: BookmarkName::new(name),
+            commit_id: Some(CommitId::new(commit)),
+            change_id: None,
+            short_commit_id: None,
+            revision: Some(RevisionArg::new("qpv")),
+            description: None,
+            kind,
+        }
+    }
+
+    fn bookmark_remote(remote: &str, commit: &str) -> BookmarkRemoteTarget {
+        BookmarkRemoteTarget {
+            remote: RemoteName::new(remote),
+            summary: summary(commit),
+            is_tracked: true,
+            behind_count: None,
+            ahead_count: None,
+        }
+    }
+
+    /// The bookmark view showing `entries`, `main`'s remote rows from
+    /// `main_remotes`, with the cursor on `row`.
+    fn bookmarks_view(
+        entries: Vec<BookmarkViewEntry>,
+        main_remotes: Vec<BookmarkRemoteTarget>,
+        row: DisplayRow,
+    ) -> App {
+        let mut app = App::for_test();
+        app.views.bookmark_entries = entries;
+        app.views.bookmark_details.insert(
+            BookmarkName::new("main"),
+            BookmarkDetails {
+                conflict_targets: Vec::new(),
+                remote_targets: main_remotes,
+            },
+        );
+        app.switch_view(ActiveView::Bookmarks);
+        app.cursor = app.position_of(row).expect("row is shown");
+        app
+    }
+
+    fn tracking() -> BookmarkKind {
+        BookmarkKind::Tracking {
+            is_dirty: true,
+            is_conflicted: false,
+        }
+    }
+
+    fn origin() -> BookmarkKind {
+        BookmarkKind::remote_only(RemoteName::new("origin"), true)
+    }
+
+    /// The interdiff's labels and the commits it compares, from and to.
+    fn compared(app: &App) -> (String, String, String, String) {
+        assert_eq!(
+            app.active_view,
+            ActiveView::Interdiff,
+            "{:?}",
+            app.status_message
+        );
+        let interdiff = app.interdiff.as_ref().expect("an interdiff");
+        let crate::dag::DiffTarget::Interdiff { from, to } = interdiff.files.target() else {
+            panic!("expected an interdiff target");
+        };
+        (
+            interdiff.from_label.to_string(),
+            interdiff.to_label.to_string(),
+            from.to_string(),
+            to.to_string(),
+        )
+    }
+
+    fn status(app: &App) -> &str {
+        app.status_message
+            .as_ref()
+            .map_or("", |(msg, _)| msg.as_str())
+    }
+
     fn press_i(app: &mut App) {
         let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
         handle_key(
@@ -1176,9 +1277,46 @@ mod ref_interdiff_tests {
         let mut app = tags_view("aaaa1111", "aaaa1111");
         press_i(&mut app);
         assert_eq!(app.active_view, ActiveView::Tags);
-        assert!(matches!(
-            &app.status_message,
-            Some((msg, _)) if msg == "v1 is the same on its remotes"
-        ));
+        assert_eq!(status(&app), "v1 is the same on its remotes");
+    }
+
+    /// A remote bookmark listed on its own row is the remote side: it
+    /// compares with the local bookmark of the same name.
+    #[test]
+    fn a_remote_bookmark_row_compares_with_its_local_bookmark() {
+        let mut app = bookmarks_view(
+            vec![
+                bookmark("main", "aaaa1111", tracking()),
+                bookmark("main", "bbbb2222", origin()),
+            ],
+            vec![bookmark_remote("origin", "bbbb2222")],
+            DisplayRow::BookmarkItem {
+                bookmark_idx: BookmarkIdx::new(1),
+            },
+        );
+        press_i(&mut app);
+        assert_eq!(
+            compared(&app),
+            (
+                "main@origin".into(),
+                "main".into(),
+                "bbbb2222".into(),
+                "aaaa1111".into()
+            )
+        );
+    }
+
+    #[test]
+    fn a_bookmark_only_on_a_remote_has_no_local_side() {
+        let mut app = bookmarks_view(
+            vec![bookmark("main", "bbbb2222", origin())],
+            Vec::new(),
+            DisplayRow::BookmarkItem {
+                bookmark_idx: BookmarkIdx::new(0),
+            },
+        );
+        press_i(&mut app);
+        assert_eq!(app.active_view, ActiveView::Bookmarks);
+        assert_eq!(status(&app), "main has no local commit");
     }
 }
