@@ -545,72 +545,64 @@ impl App {
     }
 }
 
-/// Cursor fallback chain for row rebuilds: exact match, then the parent
-/// file, then the row the file hangs under.
-fn cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>; 3] {
-    match prev_cursor {
-        Some(
-            row @ DisplayRow::DiffLine {
-                owner, file_idx, ..
-            },
-        ) => [
-            Some(row),
-            Some(DisplayRow::FileChange { owner, file_idx }),
-            Some(owner_row(owner)),
-        ],
-        Some(row @ DisplayRow::FileChange { owner, .. })
-        | Some(row @ DisplayRow::Placeholder(ContentSlot::Files(owner))) => {
-            [Some(row), Some(owner_row(owner)), None]
+/// Cursor fallback chain for row rebuilds: the row itself, then what it
+/// folds into, nearest first.
+fn cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>; 4] {
+    let Some(row) = prev_cursor else {
+        return [None; 4];
+    };
+    let [a, b, c] = folds_into(row);
+    [Some(row), a, b, c]
+}
+
+/// Where a row goes when it is folded away, nearest first: a diff line
+/// into its file, a file into the row it hangs under, and a conflict's
+/// rows into its header.
+fn folds_into(row: DisplayRow) -> [Option<DisplayRow>; 3] {
+    match row {
+        DisplayRow::DiffLine {
+            owner, file_idx, ..
         }
-        Some(row @ DisplayRow::Placeholder(ContentSlot::Diff(owner, file_idx))) => [
-            Some(row),
+        | DisplayRow::Placeholder(ContentSlot::Diff(owner, file_idx)) => [
             Some(DisplayRow::FileChange { owner, file_idx }),
             Some(owner_row(owner)),
+            None,
         ],
-        Some(
-            DisplayRow::DescriptionLine { entry_idx, .. } | DisplayRow::GraphLink { entry_idx, .. },
-        ) => [Some(DisplayRow::CommitNode { entry_idx }), None, None],
-        Some(
-            DisplayRow::ConflictTerm {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-                ..
-            }
-            | DisplayRow::ConflictContext {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-                ..
-            }
-            | DisplayRow::ConflictGap {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-            }
-            | DisplayRow::ConflictEdited {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-                ..
-            },
-        ) => [
-            Some(DisplayRow::ConflictHeader {
-                entry_idx,
-                file_idx,
-                hunk_idx,
-            }),
-            Some(DisplayRow::FileChange {
-                owner: FileOwner::Dag(entry_idx),
-                file_idx,
-            }),
-            Some(DisplayRow::CommitNode { entry_idx }),
-        ],
-        Some(DisplayRow::ConflictHeader {
+        DisplayRow::FileChange { owner, .. }
+        | DisplayRow::Placeholder(ContentSlot::Files(owner)) => {
+            [Some(owner_row(owner)), None, None]
+        }
+        DisplayRow::DescriptionLine { entry_idx, .. } | DisplayRow::GraphLink { entry_idx, .. } => {
+            [Some(DisplayRow::CommitNode { entry_idx }), None, None]
+        }
+        DisplayRow::ConflictTerm {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+            ..
+        }
+        | DisplayRow::ConflictContext {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+            ..
+        }
+        | DisplayRow::ConflictGap {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+        }
+        | DisplayRow::ConflictEdited {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+            ..
+        } => hunk_folds_into(entry_idx, file_idx, hunk_idx),
+        DisplayRow::ConflictHeader {
             entry_idx,
             file_idx,
             ..
-        }) => [
+        } => [
             Some(DisplayRow::FileChange {
                 owner: FileOwner::Dag(entry_idx),
                 file_idx,
@@ -618,9 +610,29 @@ fn cursor_fallbacks(prev_cursor: Option<DisplayRow>) -> [Option<DisplayRow>; 3] 
             Some(DisplayRow::CommitNode { entry_idx }),
             None,
         ],
-        Some(key) => [Some(key), None, None],
-        None => [None, None, None],
+        _ => [None; 3],
     }
+}
+
+/// Where the rows of a conflict hunk go when folded away: its header, its
+/// file, its commit.
+fn hunk_folds_into(
+    entry_idx: EntryIdx,
+    file_idx: FileIdx,
+    hunk_idx: ConflictHunkIdx,
+) -> [Option<DisplayRow>; 3] {
+    [
+        Some(DisplayRow::ConflictHeader {
+            entry_idx,
+            file_idx,
+            hunk_idx,
+        }),
+        Some(DisplayRow::FileChange {
+            owner: FileOwner::Dag(entry_idx),
+            file_idx,
+        }),
+        Some(DisplayRow::CommitNode { entry_idx }),
+    ]
 }
 
 /// The row an owner's files hang under.
@@ -1193,5 +1205,138 @@ mod placeholder_tests {
             app.take_repo_requests().as_slice(),
             [RepoRequest::Operations { .. }]
         ));
+    }
+}
+
+#[cfg(test)]
+mod cursor_fallback_tests {
+    use super::super::FileFoldKey;
+    use super::super::test_support::{entry, load};
+    use super::*;
+    use crate::conflict::{ConflictHunkKind, ConflictTerm, ConflictTermKind, ConflictText};
+    use crate::dag::{DiffLine, DiffLineKind, DiffResult, DiffSummary, FileChange, LineStats};
+    use crate::types::{CommitId, RepoPath};
+
+    const ENTRY: EntryIdx = EntryIdx::new(0);
+    const CONFLICTED: FileIdx = FileIdx::new(1);
+    const HUNK: ConflictHunkIdx = ConflictHunkIdx::new(1);
+    const OURS: ConflictTermIdx = ConflictTermIdx::new(0);
+
+    fn term(kind: ConflictTermKind, text: &str) -> ConflictTerm {
+        ConflictTerm {
+            kind,
+            absent: false,
+            text: ConflictText::from_bytes(text.as_bytes()),
+            token_lines: Vec::new(),
+        }
+    }
+
+    /// A header, then one removed and one added line.
+    fn diff() -> DiffResult {
+        let line = |kind, old_line, new_line| DiffLine {
+            kind,
+            content: "x".into(),
+            tokens: vec![],
+            old_line,
+            new_line,
+            conflict_region: false,
+        };
+        let lines = vec![
+            line(DiffLineKind::Header, None, None),
+            line(DiffLineKind::Removed, Some(1), None),
+            line(DiffLineKind::Added, None, Some(1)),
+        ];
+        DiffResult {
+            git: lines.clone(),
+            color_words: lines,
+        }
+    }
+
+    /// Commit `a` unfolded to two unfolded files: `diffed`, with a two-line
+    /// diff, and `conflicted`, a conflict of one-line sides over a two-line
+    /// base between ten resolved lines either side, all but the three next
+    /// to the conflict behind a gap.
+    fn app() -> App {
+        let mut app = App::for_test();
+        load(&mut app, vec![entry('a', "a1")], true);
+        let mut conflicted = FileChange::for_test("conflicted");
+        conflicted.has_conflict = true;
+        let node = &mut app.dag.nodes[ENTRY];
+        node.files.set_summary(Ok(DiffSummary {
+            files: vec![FileChange::for_test("diffed"), conflicted],
+            stats: LineStats::default(),
+        }));
+        node.files.set_diff(&RepoPath::new("diffed"), Ok(diff()));
+        node.set_conflict_hunks(
+            CONFLICTED,
+            Loadable::Loaded(vec![
+                ConflictHunkKind::Resolved {
+                    text: ConflictText::from_bytes("x\n".repeat(10).as_bytes()),
+                },
+                ConflictHunkKind::Conflict {
+                    terms: vec![
+                        term(ConflictTermKind::Side(0), "ours\n"),
+                        term(ConflictTermKind::Base(0), "base 1\nbase 2\n"),
+                        term(ConflictTermKind::Side(1), "theirs\n"),
+                    ],
+                },
+                ConflictHunkKind::Resolved {
+                    text: ConflictText::from_bytes("x\n".repeat(10).as_bytes()),
+                },
+            ]),
+        );
+        app.dag.unfolded_commits.insert(CommitId::new("a1"));
+        for path in ["diffed", "conflicted"] {
+            app.dag.unfolded_files.insert(FileFoldKey {
+                commit_id: CommitId::new("a1"),
+                path: RepoPath::new(path),
+            });
+        }
+        app.rebuild_rows();
+        app
+    }
+
+    fn header_row() -> DisplayRow {
+        DisplayRow::ConflictHeader {
+            entry_idx: ENTRY,
+            file_idx: CONFLICTED,
+            hunk_idx: HUNK,
+        }
+    }
+
+    fn term_row(term_idx: ConflictTermIdx, line: usize) -> DisplayRow {
+        DisplayRow::ConflictTerm {
+            entry_idx: ENTRY,
+            file_idx: CONFLICTED,
+            hunk_idx: HUNK,
+            term_idx,
+            line_idx: ConflictLineIdx::new(line),
+        }
+    }
+
+    fn put_cursor_on(app: &mut App, row: DisplayRow) {
+        app.cursor = app.position_of(row).expect("row is displayed");
+    }
+
+    /// Picking a side rebuilds the rows without changing them; the cursor
+    /// stays on the row it picked from rather than climbing to its hunk or
+    /// file.
+    #[test]
+    fn picking_a_side_leaves_the_cursor_where_it_was() {
+        for row in [header_row(), term_row(OURS, 0)] {
+            let mut app = app();
+            put_cursor_on(&mut app, row);
+
+            app.pick_conflict_term(
+                crate::types::ConflictHunkRef {
+                    entry_idx: ENTRY,
+                    file_idx: CONFLICTED,
+                    hunk_idx: HUNK,
+                },
+                ConflictTermKind::Side(1),
+            );
+
+            assert!(app.cursor_row() == Some(row));
+        }
     }
 }
