@@ -115,11 +115,11 @@ pub fn apply(selection_path: &Path, left_dir: &Path, right_dir: &Path) -> Result
                 // Partial: reconstruct file with only selected changes.
                 let left_path = left_dir.join(rel_path);
                 let left_content = if left_path.exists() {
-                    fs::read_to_string(&left_path)?
+                    fs::read(&left_path)?
                 } else {
-                    String::new() // new file -- left doesn't exist
+                    Vec::new() // new file -- left doesn't exist
                 };
-                let right_content = fs::read_to_string(entry.path())?;
+                let right_content = fs::read(entry.path())?;
                 let output = apply_partial(&left_content, &right_content, selected);
                 fs::write(entry.path(), output)?;
             }
@@ -174,7 +174,7 @@ pub fn apply(selection_path: &Path, left_dir: &Path, right_dir: &Path) -> Result
 ///
 /// Starts from `left` (original), applies only the selected additions and
 /// removals from the diff between `left` and `right`.
-fn apply_partial(left: &str, right: &str, selected: &[SelectedLine]) -> String {
+fn apply_partial(left: &[u8], right: &[u8], selected: &[SelectedLine]) -> Vec<u8> {
     // Simple line-by-line diff approach:
     // We diff left vs right, then for each diff operation:
     // - Context line: always include
@@ -185,11 +185,11 @@ fn apply_partial(left: &str, right: &str, selected: &[SelectedLine]) -> String {
     use jj_lib::diff_presentation::unified::{self, DiffLineType};
     use jj_lib::merge::Diff;
 
-    let diff = Diff::new(left.as_bytes().into(), right.as_bytes().into());
+    let diff = Diff::new(left.into(), right.into());
     let hunks = unified::unified_diff_hunks(diff, 0, Default::default());
 
-    let left_lines: Vec<&str> = left.split_inclusive('\n').collect();
-    let mut output = String::new();
+    let left_lines: Vec<&[u8]> = left.split_inclusive(|&b| b == b'\n').collect();
+    let mut output = Vec::new();
     let mut left_cursor: usize = 0; // current position in left_lines (0-indexed)
 
     for hunk in &hunks {
@@ -197,7 +197,7 @@ fn apply_partial(left: &str, right: &str, selected: &[SelectedLine]) -> String {
         let hunk_start = hunk.left_line_range.start;
         for i in left_cursor..hunk_start {
             if let Some(line) = left_lines.get(i) {
-                output.push_str(line);
+                output.extend_from_slice(line);
             }
         }
 
@@ -206,20 +206,20 @@ fn apply_partial(left: &str, right: &str, selected: &[SelectedLine]) -> String {
         let mut new_line = hunk.right_line_range.start as u32 + 1;
 
         for (line_type, tokens) in &hunk.lines {
-            let text: String = tokens
+            let text: Vec<u8> = tokens
                 .iter()
-                .map(|(_, bytes)| String::from_utf8_lossy(bytes))
+                .flat_map(|(_, bytes)| bytes.iter().copied())
                 .collect();
 
             match line_type {
                 DiffLineType::Context => {
-                    output.push_str(&text);
+                    output.extend_from_slice(&text);
                     old_line += 1;
                     new_line += 1;
                 }
                 DiffLineType::Added => {
                     if selected.contains(&SelectedLine::Added { new_line }) {
-                        output.push_str(&text);
+                        output.extend_from_slice(&text);
                     }
                     // If not selected, omit the added line.
                     new_line += 1;
@@ -227,7 +227,7 @@ fn apply_partial(left: &str, right: &str, selected: &[SelectedLine]) -> String {
                 DiffLineType::Removed => {
                     if !selected.contains(&SelectedLine::Removed { old_line }) {
                         // Not selected for removal -- keep the line.
-                        output.push_str(&text);
+                        output.extend_from_slice(&text);
                     }
                     // If selected, the line is removed (omitted).
                     old_line += 1;
@@ -241,7 +241,7 @@ fn apply_partial(left: &str, right: &str, selected: &[SelectedLine]) -> String {
     // Copy remaining unchanged lines after the last hunk.
     for i in left_cursor..left_lines.len() {
         if let Some(line) = left_lines.get(i) {
-            output.push_str(line);
+            output.extend_from_slice(line);
         }
     }
 
@@ -252,7 +252,7 @@ fn apply_partial(left: &str, right: &str, selected: &[SelectedLine]) -> String {
 mod tests {
     use std::collections::HashMap;
 
-    use super::{FileSelection, SelectedLine, apply_partial, selection_map};
+    use super::{FileSelection, SelectedLine, apply, apply_partial, selection_map};
     use crate::types::{ChangeId, CommitId, CommitRef, FileRef, RepoPath, Selection};
 
     fn file_ref(path: &str) -> FileRef {
@@ -314,13 +314,89 @@ mod tests {
 
     #[test]
     fn only_the_selected_lines_are_applied() {
-        let left = "a\nb\nc\n";
-        let right = "a\nB\nc\nd\n";
+        let left = b"a\nb\nc\n";
+        let right = b"a\nB\nc\nd\n";
         let selected = [
             SelectedLine::Removed { old_line: 2 },
             SelectedLine::Added { new_line: 4 },
         ];
         // `b` goes and `d` arrives; `B` wasn't picked, so it stays out.
-        assert_eq!(apply_partial(left, right, &selected), "a\nc\nd\n");
+        assert_eq!(apply_partial(left, right, &selected), b"a\nc\nd\n");
+    }
+
+    /// What is at a path in a diff directory.
+    #[derive(Debug, PartialEq)]
+    enum Entry {
+        File(Vec<u8>),
+    }
+
+    fn file(content: &[u8]) -> Option<Entry> {
+        Some(Entry::File(content.to_vec()))
+    }
+
+    /// A path and what is at it before and after the change.
+    type Sides = (&'static str, Option<Entry>, Option<Entry>);
+
+    /// Run `apply` over diff directories holding `files`, and read back
+    /// what each path holds on the right.
+    fn apply_to(files: &[Sides], selection: &HashMap<&str, FileSelection>) -> Vec<Option<Entry>> {
+        let dir = tempfile::tempdir().unwrap();
+        let (left, right) = (dir.path().join("left"), dir.path().join("right"));
+        for (path, before, after) in files {
+            for (root, entry) in [(&left, before), (&right, after)] {
+                let at = root.join(path);
+                std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+                if let Some(Entry::File(content)) = entry {
+                    std::fs::write(at, content).unwrap();
+                }
+            }
+        }
+        let selection_path = dir.path().join("selection.json");
+        std::fs::write(&selection_path, serde_json::to_vec(selection).unwrap()).unwrap();
+        apply(&selection_path, &left, &right).unwrap();
+        files
+            .iter()
+            .map(|(path, _, _)| std::fs::read(right.join(path)).ok().map(Entry::File))
+            .collect()
+    }
+
+    fn lines(selected: impl IntoIterator<Item = SelectedLine>) -> Option<FileSelection> {
+        Some(FileSelection::Lines {
+            selected: selected.into_iter().collect(),
+        })
+    }
+
+    /// Run each case alone and check what its path holds afterwards.
+    fn check(cases: impl IntoIterator<Item = (Sides, Option<FileSelection>, Option<Entry>)>) {
+        for (sides, selection, expected) in cases {
+            let name = format!("{} with {selection:?}", sides.0);
+            let selection = selection
+                .map(|s| HashMap::from([(sides.0, s)]))
+                .unwrap_or_default();
+            assert_eq!(apply_to(&[sides], &selection), [expected], "{name}");
+        }
+    }
+
+    /// A new file holds only its selected lines, and a modified one only
+    /// its selected changes, with its bytes, line endings and encoding
+    /// included, passing through untouched.
+    #[test]
+    fn selected_lines_apply_byte_for_byte() {
+        check([
+            (
+                ("f", None, file(b"a\nb\n")),
+                lines([SelectedLine::Added { new_line: 2 }]),
+                file(b"b\n"),
+            ),
+            (
+                (
+                    "f",
+                    file(b"caf\xe9\r\nb\r\n"),
+                    file(b"caf\xe9\r\nB\r\nna\xefve\r\n"),
+                ),
+                lines([SelectedLine::Added { new_line: 3 }]),
+                file(b"caf\xe9\r\nb\r\nna\xefve\r\n"),
+            ),
+        ]);
     }
 }
