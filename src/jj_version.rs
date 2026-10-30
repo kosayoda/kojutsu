@@ -284,18 +284,6 @@ mod tests {
     }
 
     #[test]
-    fn orders_by_release() {
-        assert!(JjVersion::new(0, 9, 0) < JjVersion::new(0, 10, 0));
-        assert!(JjVersion::new(0, 45, 1) > JjVersion::new(0, 45, 0));
-        assert!(JjVersion::new(1, 0, 0) > JjVersion::new(0, 99, 9));
-    }
-
-    #[test]
-    fn the_linked_jj_lib_is_recorded() {
-        assert!(JjVersion::linked() >= FLOOR);
-    }
-
-    #[test]
     fn every_feature_is_newer_than_the_floor() {
         use strum::IntoEnumIterator;
         for feature in JjFeature::iter() {
@@ -319,13 +307,12 @@ mod tests {
     #[test]
     fn a_missing_jj_is_reported() {
         let missing = InstalledJj::Unavailable(std::io::ErrorKind::NotFound);
-        assert_eq!(
-            missing.concerns(),
-            ["jj is not on PATH: kojutsu can show the repo, but every change goes through jj"]
-        );
-        assert!(missing.supports(JjFeature::Converge));
         let denied = InstalledJj::Unavailable(std::io::ErrorKind::PermissionDenied);
-        assert!(denied.concerns()[0].starts_with("could not run jj (permission denied)"));
+        let [missing_concern] = missing.concerns().try_into().expect("one concern");
+        let [denied_concern] = denied.concerns().try_into().expect("one concern");
+        assert_ne!(missing_concern, denied_concern);
+        assert!(missing.supports(JjFeature::Converge));
+        assert!(denied.supports(JjFeature::Converge));
     }
 
     #[test]

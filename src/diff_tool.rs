@@ -37,7 +37,9 @@ enum SelectedLine {
 }
 
 /// The file and line selections, keyed by path, in the form `apply` reads.
-fn selection_map(selections: &HashSet<Selection>) -> HashMap<&str, FileSelection> {
+fn selection_map<'a>(
+    selections: impl IntoIterator<Item = &'a Selection>,
+) -> HashMap<&'a str, FileSelection> {
     let mut file_map: HashMap<&str, FileSelection> = HashMap::new();
     for sel in selections {
         match sel {
@@ -248,10 +250,10 @@ fn apply_partial(left: &str, right: &str, selected: &[SelectedLine]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashMap;
 
     use super::{FileSelection, SelectedLine, apply_partial, selection_map};
-    use crate::types::{CommitId, FileRef, RepoPath, Selection};
+    use crate::types::{ChangeId, CommitId, CommitRef, FileRef, RepoPath, Selection};
 
     fn file_ref(path: &str) -> FileRef {
         FileRef {
@@ -260,26 +262,53 @@ mod tests {
         }
     }
 
-    /// What the TUI writes is what the diff tool reads back.
-    #[test]
-    fn the_selection_survives_the_trip_through_json() {
-        let selections = HashSet::from([
-            Selection::File(file_ref("whole")),
-            Selection::Line {
-                file_ref: file_ref("part"),
-                old_line: Some(3),
-                new_line: None,
-            },
-        ]);
-        let json = serde_json::to_string(&selection_map(&selections)).unwrap();
-        let read: HashMap<String, FileSelection> = serde_json::from_str(&json).unwrap();
+    fn line(path: &str, old_line: Option<u32>, new_line: Option<u32>) -> Selection {
+        Selection::Line {
+            file_ref: file_ref(path),
+            old_line,
+            new_line,
+        }
+    }
 
-        assert_eq!(read["whole"], FileSelection::Full);
+    /// A whole-file selection covers any line picked in the same file, in
+    /// whichever order the two are met.
+    #[test]
+    fn a_file_selection_takes_in_its_own_lines() {
+        let file = Selection::File(file_ref("f"));
+        let removed = line("f", Some(3), None);
+        for order in [[&file, &removed], [&removed, &file]] {
+            assert_eq!(
+                selection_map(order),
+                HashMap::from([("f", FileSelection::Full)])
+            );
+        }
+    }
+
+    /// Only a line on one side is a change to keep: a context line, numbered
+    /// on both, is no change. A commit selection says nothing about lines.
+    #[test]
+    fn only_changed_lines_are_kept_and_commits_are_ignored() {
+        let commit = Selection::Commit(CommitRef {
+            commit_id: CommitId::new("7bbaa2cb"),
+            change_id: ChangeId::new("qpvuntsm"),
+        });
+        let selections = [
+            commit,
+            line("f", Some(2), None),
+            line("f", None, Some(4)),
+            line("f", Some(5), Some(6)),
+        ];
         assert_eq!(
-            read["part"],
-            FileSelection::Lines {
-                selected: vec![SelectedLine::Removed { old_line: 3 }]
-            }
+            selection_map(&selections),
+            HashMap::from([(
+                "f",
+                FileSelection::Lines {
+                    selected: vec![
+                        SelectedLine::Removed { old_line: 2 },
+                        SelectedLine::Added { new_line: 4 },
+                    ]
+                }
+            )])
         );
     }
 

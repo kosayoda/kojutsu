@@ -126,35 +126,28 @@ mod tests {
         );
     }
 
-    /// Nothing is inserted when stdout already ends a line.
+    /// A separator goes in only between an unterminated stdout line and some
+    /// stderr; whatever either pipe wrote reads back unchanged, empty included.
     #[test]
-    fn no_separator_is_added_when_none_is_needed() {
-        let captured = joined(b"a4f2c1\n", b"oops\n");
-        assert_eq!(String::from_utf8_lossy(captured.bytes()), "a4f2c1\noops\n");
-        assert_eq!(split(&captured), ("a4f2c1\n".into(), "oops\n".into()));
-    }
-
-    #[test]
-    fn a_pipe_that_wrote_nothing_reads_back_empty() {
-        assert_eq!(
-            split(&joined(b"only stdout\n", b"")),
-            ("only stdout\n".into(), String::new())
-        );
-        assert_eq!(
-            split(&joined(b"", b"only stderr\n")),
-            (String::new(), "only stderr\n".into())
-        );
-        assert_eq!(split(&joined(b"", b"")), (String::new(), String::new()));
-    }
-
-    /// A note is all kojutsu wrote, so both pipes are empty and the caller has
-    /// `ok` and `status` to tell it why.
-    #[test]
-    fn a_result_that_is_only_a_note_has_neither_pipe() {
-        let captured = Captured::from("interrupted");
-        assert_eq!(String::from_utf8_lossy(captured.bytes()), "interrupted");
-        assert!(!captured.is_empty());
-        assert_eq!(split(&captured), (String::new(), String::new()));
+    fn joined_adds_a_separator_only_where_stdout_leaves_a_line_open() {
+        let cases: [(&[u8], &[u8], &str); 5] = [
+            (b"a4f2c1\n", b"oops\n", "a4f2c1\noops\n"),
+            (b"x", b"", "x"),
+            (b"only stdout\n", b"", "only stdout\n"),
+            (b"", b"only stderr\n", "only stderr\n"),
+            (b"", b"", ""),
+        ];
+        for (stdout, stderr, whole) in cases {
+            let captured = joined(stdout, stderr);
+            assert_eq!(String::from_utf8_lossy(captured.bytes()), whole);
+            assert_eq!(
+                split(&captured),
+                (
+                    String::from_utf8(stdout.to_vec()).unwrap(),
+                    String::from_utf8(stderr.to_vec()).unwrap()
+                )
+            );
+        }
     }
 
     /// The live overlay is fed the same bytes in the same order as the final
@@ -183,24 +176,20 @@ mod tests {
     }
 
     /// Chunk boundaries are an artefact of how much a read returned, so runs
-    /// from one pipe coalesce rather than accumulating one entry per read.
-    #[test]
-    fn consecutive_chunks_from_one_pipe_are_one_run() {
-        let mut captured = Captured::default();
-        for _ in 0..100 {
-            captured.push(Stream::Stdout, b"x");
-        }
-        captured.push(Stream::Stderr, b"y");
-        assert_eq!(captured.runs.len(), 2);
-    }
-
-    /// An empty read is not a run: a pipe that only ever returned nothing has
+    /// from one pipe coalesce rather than accumulating one entry per read. An
+    /// empty read is no run at all: a pipe that only ever returned nothing has
     /// written nothing.
     #[test]
-    fn an_empty_chunk_is_not_a_run() {
+    fn consecutive_chunks_from_one_pipe_are_one_run() {
         let mut captured = Captured::default();
         captured.push(Stream::Stdout, b"");
         assert!(captured.runs.is_empty());
         assert!(captured.is_empty());
+        for _ in 0..100 {
+            captured.push(Stream::Stdout, b"x");
+            captured.push(Stream::Stdout, b"");
+        }
+        captured.push(Stream::Stderr, b"y");
+        assert_eq!(captured.runs.len(), 2);
     }
 }

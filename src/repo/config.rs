@@ -190,10 +190,11 @@ fn env_overrides_layer() -> ConfigLayer {
 mod tests {
     use super::*;
 
+    /// A trailing newline in the id file is not part of the id.
     #[test]
     fn a_repo_config_id_points_into_the_user_config_directory() {
         let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("config-id"), "0123456789abcdef0123").unwrap();
+        std::fs::write(dir.path().join("config-id"), "0123456789abcdef0123\n").unwrap();
 
         let path = repo_config_path(dir.path()).unwrap();
         assert!(
@@ -203,38 +204,36 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_trailing_newline_in_the_id_file_is_tolerated() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("config-id"), "0123456789abcdef0123\n").unwrap();
-
-        let path = repo_config_path(dir.path()).unwrap();
-        assert!(path.ends_with("0123456789abcdef0123/config.toml"));
-    }
-
+    /// Repos last touched by jj < 0.37 still keep their config inline; a
+    /// repo with neither file has no repo config at all.
     #[test]
     fn a_repo_without_an_id_file_falls_back_to_the_legacy_path() {
-        // Repos last touched by jj < 0.37 still keep their config inline.
         let dir = tempfile::tempdir().unwrap();
+        assert_eq!(repo_config_path(dir.path()), None);
+
         let legacy = dir.path().join("config.toml");
         std::fs::write(&legacy, "[revsets]\n").unwrap();
-
         assert_eq!(repo_config_path(dir.path()), Some(legacy));
     }
 
-    #[test]
-    fn a_repo_with_neither_has_no_config() {
-        let dir = tempfile::tempdir().unwrap();
-        assert_eq!(repo_config_path(dir.path()), None);
-    }
-
+    /// A malformed id names no directory of its own, so the repo reads as
+    /// if it had no id file: the legacy file if there is one, else nothing.
     #[test]
     fn a_malformed_id_file_does_not_resolve_to_a_stray_directory() {
         let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("config.toml");
         // Short, and `zz` is not hex: either would name the wrong directory.
         for id in ["0123", "0123456789abcdef01zz"] {
             std::fs::write(dir.path().join("config-id"), id).unwrap();
             assert_eq!(repo_config_path(dir.path()), None, "accepted id {id:?}");
+
+            std::fs::write(&legacy, "[revsets]\n").unwrap();
+            assert_eq!(
+                repo_config_path(dir.path()),
+                Some(legacy.clone()),
+                "accepted id {id:?}"
+            );
+            std::fs::remove_file(&legacy).unwrap();
         }
     }
 

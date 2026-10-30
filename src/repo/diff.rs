@@ -1184,42 +1184,50 @@ fn hunks_to_color_words_lines(hunks: &[unified::UnifiedDiffHunk<'_>], out: &mut 
 mod tests {
     use super::*;
 
-    /// `Merge::from_removes_adds` is jj's canonical constructor: adds are
-    /// the sides, removes are the bases. Pin that our tagging recovers
-    /// them correctly from the interleaved iteration order.
-    #[test]
-    fn conflict_terms_tags_sides_and_bases() {
-        let hunk = Merge::from_removes_adds(vec!["base\n"], vec!["ours\n", "theirs\n"]);
-        let terms = conflict_terms(&hunk, &[false; 3]);
-        let tagged: Vec<(ConflictTermKind, String)> = terms
+    /// Each term's kind, as a 0-based `side n` or `base n`, and its first
+    /// line, in the order `conflict_terms` returns them.
+    fn tagged(terms: &[ConflictTerm]) -> Vec<(String, String)> {
+        terms
             .iter()
-            .map(|t| (t.kind, t.text.display_line(0).unwrap()))
-            .collect();
-        assert!(tagged.contains(&(ConflictTermKind::Side(0), "ours".into())));
-        assert!(tagged.contains(&(ConflictTermKind::Side(1), "theirs".into())));
-        assert!(tagged.contains(&(ConflictTermKind::Base(0), "base".into())));
+            .map(|t| {
+                let kind = match t.kind {
+                    ConflictTermKind::Side(n) => format!("side {n}"),
+                    ConflictTermKind::Base(n) => format!("base {n}"),
+                };
+                (kind, t.text.display_line(0).unwrap())
+            })
+            .collect()
     }
 
+    /// `Merge::from_removes_adds` is jj's canonical constructor: adds are
+    /// the sides, removes are the bases. Pin that our tagging recovers
+    /// them from the interleaved iteration order, for two sides and more.
     #[test]
-    fn conflict_terms_tags_n_way_merges() {
-        let hunk = Merge::from_removes_adds(
+    fn conflict_terms_tags_sides_and_bases_in_merge_order() {
+        let two_way = Merge::from_removes_adds(vec!["base\n"], vec!["ours\n", "theirs\n"]);
+        assert_eq!(
+            tagged(&conflict_terms(&two_way, &[false; 3])),
+            [
+                ("side 0".to_string(), "ours".to_string()),
+                ("base 0".into(), "base".into()),
+                ("side 1".into(), "theirs".into()),
+            ]
+        );
+
+        let three_way = Merge::from_removes_adds(
             vec!["base1\n", "base2\n"],
             vec!["side1\n", "side2\n", "side3\n"],
         );
-        let terms = conflict_terms(&hunk, &[false; 5]);
-        assert_eq!(terms.len(), 5);
-        let sides: Vec<String> = terms
-            .iter()
-            .filter(|t| matches!(t.kind, ConflictTermKind::Side(_)))
-            .map(|t| t.text.display_line(0).unwrap())
-            .collect();
-        let bases: Vec<String> = terms
-            .iter()
-            .filter(|t| matches!(t.kind, ConflictTermKind::Base(_)))
-            .map(|t| t.text.display_line(0).unwrap())
-            .collect();
-        assert_eq!(sides, ["side1", "side2", "side3"]);
-        assert_eq!(bases, ["base1", "base2"]);
+        assert_eq!(
+            tagged(&conflict_terms(&three_way, &[false; 5])),
+            [
+                ("side 0".to_string(), "side1".to_string()),
+                ("base 0".into(), "base1".into()),
+                ("side 1".into(), "side2".into()),
+                ("base 1".into(), "base2".into()),
+                ("side 2".into(), "side3".into()),
+            ]
+        );
     }
 
     /// A modify/delete conflict: the deleting side materializes as empty
@@ -1234,6 +1242,7 @@ mod tests {
                 ConflictTermKind::Side(0) => {
                     assert!(t.absent);
                     assert_eq!(t.text.line_count(), 0);
+                    assert!(t.token_lines.is_empty());
                 }
                 _ => assert!(!t.absent),
             }

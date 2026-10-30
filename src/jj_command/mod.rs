@@ -741,15 +741,59 @@ mod is_interactive_tests {
         }
     }
 
+    /// `--interactive` is read off the args, so every way a squash acquires
+    /// it (the flag, a line selection) is covered by construction. Opening
+    /// `$EDITOR` isn't visible in the args, since it is the absence of `-m`,
+    /// so that case is listed.
     #[test]
-    fn a_captured_squash_needs_no_terminal() {
-        let cmd = squash(
-            MessageMode::Inline("m".into()),
+    fn a_squash_takes_the_terminal_only_for_a_diff_editor_or_message_editor() {
+        let inline = || MessageMode::Inline("m".into());
+        let lines = || ChangeSelection::Lines(std::path::PathBuf::from("/tmp/sel.json"));
+        let cases = [
+            (
+                "captured",
+                inline(),
+                ChangeSelection::All,
+                CommandFlags::empty(),
+                false,
+            ),
+            (
+                "by flag",
+                inline(),
+                ChangeSelection::All,
+                CommandFlags::INTERACTIVE,
+                true,
+            ),
+            (
+                "by selection",
+                inline(),
+                lines(),
+                CommandFlags::empty(),
+                true,
+            ),
+            (
+                "editor message",
+                MessageMode::Default,
+                ChangeSelection::All,
+                CommandFlags::empty(),
+                true,
+            ),
+        ];
+        for (case, message, selection, flags, interactive) in cases {
+            let cmd = squash(message, selection, flags);
+            assert_eq!(cmd.is_interactive(), interactive, "{case}");
+        }
+        let editor_only = squash(
+            MessageMode::Default,
             ChangeSelection::All,
             CommandFlags::empty(),
         );
-        assert!(!cmd.args().iter().any(|a| a.as_str() == "--interactive"));
-        assert!(!cmd.is_interactive());
+        assert!(
+            !editor_only
+                .args()
+                .iter()
+                .any(|a| a.as_str() == "--interactive")
+        );
     }
 
     /// Git talking to a remote runs captured but in the foreground, where an
@@ -765,6 +809,11 @@ mod is_interactive_tests {
             remotes: SmallVec::new(),
         });
         assert_eq!(push.terminal_use(), TerminalUse::Foreground);
+        let push_tag = cmd(JJCommandKind::GitPushTag {
+            tags: smallvec::smallvec![TagName::new("v1")],
+            remotes: smallvec::smallvec![RemoteName::new("origin")],
+        });
+        assert_eq!(push_tag.terminal_use(), TerminalUse::Foreground);
         assert_eq!(
             cmd(JJCommandKind::GitExport).terminal_use(),
             TerminalUse::Background
@@ -774,37 +823,6 @@ mod is_interactive_tests {
             selection: ChangeSelection::All,
         });
         assert_eq!(editor_commit.terminal_use(), TerminalUse::Interactive);
-    }
-
-    /// The reason to read the args rather than restate the rules: every way a
-    /// command can acquire --interactive is covered by construction.
-    #[test]
-    fn anything_passing_interactive_is_interactive() {
-        let by_flag = squash(
-            MessageMode::Inline("m".into()),
-            ChangeSelection::All,
-            CommandFlags::INTERACTIVE,
-        );
-        assert!(by_flag.is_interactive());
-
-        let by_selection = squash(
-            MessageMode::Inline("m".into()),
-            ChangeSelection::Lines(std::path::PathBuf::from("/tmp/sel.json")),
-            CommandFlags::empty(),
-        );
-        assert!(by_selection.is_interactive());
-    }
-
-    /// Opening $EDITOR isn't visible in the args: it's the absence of -m.
-    #[test]
-    fn an_editor_message_still_needs_the_terminal() {
-        let cmd = squash(
-            MessageMode::Default,
-            ChangeSelection::All,
-            CommandFlags::empty(),
-        );
-        assert!(!cmd.args().iter().any(|a| a.as_str() == "--interactive"));
-        assert!(cmd.is_interactive());
     }
 }
 
@@ -829,36 +847,88 @@ mod jump_target_tests {
         })
     }
 
-    #[test]
-    fn moving_at_takes_the_cursor_to_at() {
-        let edit = cmd(JJCommandKind::Edit {
-            change_id: RevisionArg::new("qpv"),
-        });
-        assert!(matches!(edit.jump_target(), Some(JumpTarget::WorkingCopy)));
+    /// What the cursor should follow, as text: `@`, `rev x` or `bookmark x`.
+    fn target(command: &JJCommand) -> Option<String> {
+        command.jump_target().map(|target| match target {
+            JumpTarget::WorkingCopy => "@".to_string(),
+            JumpTarget::Revision(rev) => format!("rev {}", rev.as_str()),
+            JumpTarget::Bookmark(name) => format!("bookmark {}", name.as_str()),
+        })
     }
 
-    /// The content lands in the named commit, so the cursor follows it.
+    /// Commands that move `@` take the cursor with them; squashing into a
+    /// named commit follows the content there; a bookmark command follows
+    /// the bookmark, under its new name once renamed. Other rewrites leave
+    /// the cursor to find the revision it was on.
     #[test]
-    fn squashing_into_a_commit_follows_the_content() {
-        let into = squash(Some(SquashTarget {
-            target: RevisionArg::new("zzz"),
-            kind: SquashKind::Into,
-        }));
-        assert!(matches!(into.jump_target(), Some(JumpTarget::Revision(r)) if r.as_str() == "zzz"));
-    }
-
-    /// Rewrites leave the cursor to find the revision it was on.
-    #[test]
-    fn other_rewrites_set_no_jump() {
-        let onto = squash(Some(SquashTarget {
-            target: RevisionArg::new("zzz"),
-            kind: SquashKind::Onto,
-        }));
-        let abandon = cmd(JJCommandKind::Abandon {
-            change_ids: SmallVec::from_elem(RevisionArg::new("qpv"), 1),
-        });
-        for command in [squash(None), onto, abandon] {
-            assert!(command.jump_target().is_none(), "{}", command.display());
+    fn the_cursor_follows_what_the_command_moved() {
+        let remote = |name: &str| BookmarkRef {
+            name: BookmarkName::new(name),
+            remote: RemoteName::new("origin"),
+        };
+        let cases = [
+            (
+                cmd(JJCommandKind::Edit {
+                    change_id: RevisionArg::new("qpv"),
+                }),
+                Some("@"),
+            ),
+            (
+                cmd(JJCommandKind::New {
+                    change_ids: SmallVec::new(),
+                    insert: None,
+                }),
+                Some("@"),
+            ),
+            (
+                cmd(JJCommandKind::Commit {
+                    message: Some("m".into()),
+                    selection: ChangeSelection::All,
+                }),
+                Some("@"),
+            ),
+            (
+                squash(Some(SquashTarget {
+                    target: RevisionArg::new("zzz"),
+                    kind: SquashKind::Into,
+                })),
+                Some("rev zzz"),
+            ),
+            (
+                cmd(JJCommandKind::BookmarkRename {
+                    old_name: BookmarkName::new("old"),
+                    new_name: BookmarkName::new("new"),
+                }),
+                Some("bookmark new"),
+            ),
+            (
+                cmd(JJCommandKind::BookmarkTrack {
+                    bookmarks: [remote("first"), remote("second")].into_iter().collect(),
+                }),
+                Some("bookmark first"),
+            ),
+            (squash(None), None),
+            (
+                squash(Some(SquashTarget {
+                    target: RevisionArg::new("zzz"),
+                    kind: SquashKind::Onto,
+                })),
+                None,
+            ),
+            (
+                cmd(JJCommandKind::Abandon {
+                    change_ids: SmallVec::from_elem(RevisionArg::new("qpv"), 1),
+                }),
+                None,
+            ),
+        ];
+        for (command, expected) in cases {
+            assert_eq!(
+                target(&command).as_deref(),
+                expected,
+                "{}",
+                command.display()
+            );
         }
     }
 }
@@ -868,10 +938,11 @@ mod remote_ref_args_tests {
     use super::*;
     use crate::types::BookmarkName;
 
-    /// Each remote bookmark goes to jj as one exact symbol. As separate names
-    /// and `--remote` values, jj would track every name on every remote.
+    /// Each remote bookmark or tag goes to jj as one exact symbol. As
+    /// separate names and `--remote` values, jj would track every name on
+    /// every remote.
     #[test]
-    fn tracking_names_each_remote_bookmark_exactly() {
+    fn tracking_names_each_remote_bookmark_and_tag_exactly() {
         let cmd = JJCommand {
             kind: JJCommandKind::BookmarkTrack {
                 bookmarks: [("main", "origin"), ("feat x", "upstream")]
@@ -889,21 +960,21 @@ mod remote_ref_args_tests {
             args,
             ["bookmark", "track", "main@origin", "\"feat x\"@upstream"]
         );
-    }
 
-    #[test]
-    fn tracking_a_tag_names_it_exactly_too() {
         let cmd = JJCommand {
             kind: JJCommandKind::TagTrack {
-                tags: smallvec::smallvec![TagRef {
-                    name: crate::types::TagName::new("v1.0"),
-                    remote: RemoteName::new("origin"),
-                }],
+                tags: [("v1.0", "origin"), ("rc 2", "upstream")]
+                    .into_iter()
+                    .map(|(name, remote)| TagRef {
+                        name: crate::types::TagName::new(name),
+                        remote: RemoteName::new(remote),
+                    })
+                    .collect(),
             },
             flags: CommandFlags::empty(),
         };
         let args: Vec<String> = cmd.args().iter().map(|a| a.to_string()).collect();
-        assert_eq!(args, ["tag", "track", "v1.0@origin"]);
+        assert_eq!(args, ["tag", "track", "v1.0@origin", "\"rc 2\"@upstream"]);
     }
 }
 
@@ -926,21 +997,22 @@ mod run_tests {
         cmd.args().iter().map(|a| a.to_string()).collect()
     }
 
-    /// The new options are jj's, so they go before the `--` that hands the
-    /// rest to the command being run.
+    /// Run's own options and jj's global toggles are jj's, so they go before
+    /// the `--` that hands the rest to the command being run.
     #[test]
     fn run_options_go_to_jj_not_to_the_command() {
         let cmd = run(
-            CommandFlags::IGNORE_CHANGES | CommandFlags::IGNORE_ERRORS,
+            CommandFlags::IGNORE_CHANGES
+                | CommandFlags::IGNORE_ERRORS
+                | CommandFlags::IGNORE_IMMUTABLE,
             None,
         );
         let args = args(&cmd);
         let dashes = args.iter().position(|a| a == "--").expect("a --");
-        for option in ["--ignore-changes", "--ignore-errors"] {
+        for option in ["--ignore-changes", "--ignore-errors", "--ignore-immutable"] {
             let at = args.iter().position(|a| a == option).expect(option);
             assert!(at < dashes, "{option} after --: {args:?}");
         }
-        assert_eq!(cmd.terminal_use(), TerminalUse::Background);
     }
 
     /// Passthrough output goes to the terminal, so the TUI steps aside for
@@ -1196,8 +1268,15 @@ mod global_flag_tests {
         cmd.args().iter().map(|a| a.to_string()).collect()
     }
 
-    fn fetches() -> [JJCommand; 4] {
+    fn fetches() -> [JJCommand; 5] {
         [
+            cmd(
+                JJCommandKind::GitFetchTag {
+                    tag: TagName::new("v1"),
+                    remotes: SmallVec::new(),
+                },
+                TOGGLES,
+            ),
             cmd(
                 JJCommandKind::GitFetch {
                     all_remotes: false,
@@ -1242,18 +1321,6 @@ mod global_flag_tests {
                     .is_empty()
             );
         }
-    }
-
-    #[test]
-    fn a_rewrite_keeps_the_toggle() {
-        let describe = cmd(
-            JJCommandKind::Describe {
-                change_ids: SmallVec::from_elem(RevisionArg::new("x"), 1),
-                message: "m".into(),
-            },
-            CommandFlags::IGNORE_IMMUTABLE,
-        );
-        assert!(args(&describe).contains(&"--ignore-immutable".into()));
     }
 
     /// The retry offered for a typed command has to change its command line,
@@ -1449,50 +1516,73 @@ mod jj_feature_tests {
         }
     }
 
-    /// Only a line selection goes through absorb's diff editor.
+    /// Commands one step short of a dated feature need nothing newer than
+    /// the floor: only a line selection goes through absorb's diff editor;
+    /// split has taken `--interactive` since 0.10; one remote is all a push
+    /// took before 0.46, and a fetch took several long before the floor; the
+    /// main workspace has taken `jj git colocation` since 0.35.
     #[test]
-    fn absorbing_files_needs_nothing_new() {
-        let files = absorb(ChangeSelection::Files(vec!["src/lib.rs".into()]));
-        assert_eq!(files.features().count(), 0);
-        // Elsewhere `--interactive` is old: split has taken it since 0.10.
-        let split = cmd(
-            JJCommandKind::Split {
-                change_id: RevisionArg::new("x"),
-                target: None,
-                selection: ChangeSelection::Lines("/tmp/sel.json".into()),
-            },
-            CommandFlags::empty(),
-        );
-        assert_eq!(split.features().count(), 0);
-    }
-
-    /// One remote is all a push took before 0.46; a fetch took several long
-    /// before the floor.
-    #[test]
-    fn only_a_second_push_remote_needs_anything_new() {
-        let one = cmd(
-            JJCommandKind::GitPush {
-                all: false,
-                remotes: smallvec::smallvec![RemoteName::new("origin")],
-            },
-            CommandFlags::empty(),
-        );
-        assert_eq!(one.features().count(), 0);
+    fn near_miss_commands_carry_no_feature() {
+        let origin = || RemoteName::new("origin");
         let fetch = cmd(
             JJCommandKind::GitFetch {
                 all_remotes: false,
-                remotes: smallvec::smallvec![
-                    RemoteName::new("origin"),
-                    RemoteName::new("upstream")
-                ],
+                remotes: smallvec::smallvec![origin(), RemoteName::new("upstream")],
             },
             CommandFlags::empty(),
         );
-        assert_eq!(fetch.features().count(), 0);
         assert_eq!(
             fetch.args(),
             ["git", "fetch", "--remote", "origin", "--remote", "upstream"]
         );
+        let mut near_misses = vec![
+            (
+                "absorb files",
+                absorb(ChangeSelection::Files(vec!["src/lib.rs".into()])),
+            ),
+            (
+                "split lines",
+                cmd(
+                    JJCommandKind::Split {
+                        change_id: RevisionArg::new("x"),
+                        target: None,
+                        selection: ChangeSelection::Lines("/tmp/sel.json".into()),
+                    },
+                    CommandFlags::empty(),
+                ),
+            ),
+            (
+                "push to one remote",
+                cmd(
+                    JJCommandKind::GitPush {
+                        all: false,
+                        remotes: smallvec::smallvec![origin()],
+                    },
+                    CommandFlags::empty(),
+                ),
+            ),
+            ("fetch from two remotes", fetch),
+        ];
+        for command in [Colocation::Status, Colocation::Enable, Colocation::Disable] {
+            near_misses.push((
+                "main-workspace colocation",
+                cmd(
+                    JJCommandKind::GitColocation {
+                        command,
+                        secondary_workspace: false,
+                    },
+                    CommandFlags::empty(),
+                ),
+            ));
+        }
+        for (case, command) in near_misses {
+            assert_eq!(
+                command.features().collect::<Vec<_>>(),
+                [],
+                "{case}: {:?}",
+                command.args()
+            );
+        }
     }
 
     /// `jj file edit` takes a path, not a fileset: quoted, it would edit a
@@ -1531,21 +1621,6 @@ mod jj_feature_tests {
         );
     }
 
-    /// The main workspace has taken `jj git colocation` since 0.35.
-    #[test]
-    fn colocation_in_the_main_workspace_needs_nothing_new() {
-        for command in [Colocation::Status, Colocation::Enable, Colocation::Disable] {
-            let main = cmd(
-                JJCommandKind::GitColocation {
-                    command,
-                    secondary_workspace: false,
-                },
-                CommandFlags::empty(),
-            );
-            assert_eq!(main.features().count(), 0);
-        }
-    }
-
     /// A command that needs several features is held to the newest.
     #[test]
     fn the_newest_missing_feature_is_the_one_named() {
@@ -1563,10 +1638,8 @@ mod jj_feature_tests {
         assert_eq!(refused.code, None);
         assert_eq!(refused.display, converge.display());
         let output = String::from_utf8_lossy(refused.output.bytes()).into_owned();
-        assert_eq!(
-            output,
-            "not run: jj converge needs jj 0.45.0 or newer; the installed jj is 0.44.0\n"
-        );
+        let reason = jj.refusal(JjFeature::Converge).expect("a reason");
+        assert_eq!(output, format!("not run: {reason}\n"));
 
         assert!(run(CommandFlags::PASSTHROUGH).refused_by(jj).is_none());
         assert!(converge.refused_by(InstalledJj::default()).is_none());
@@ -1626,10 +1699,8 @@ mod jj_feature_tests {
 
         // Nothing left: say why, rather than offer an empty choice.
         let refused = offerable(vec![option('c', example(JjFeature::Converge))], jj);
-        assert_eq!(
-            refused.err().as_deref(),
-            Some("jj converge needs jj 0.45.0 or newer; the installed jj is 0.44.0")
-        );
+        let reason = jj.refusal(JjFeature::Converge).expect("a reason");
+        assert_eq!(refused.err(), Some(reason));
         assert!(
             offerable(Vec::new(), jj)
                 .expect("nothing to drop")
@@ -1683,164 +1754,5 @@ mod cross_workspace_tests {
             flags: CommandFlags::empty(),
         };
         assert!(new.retry_options(REFUSED, jj).is_empty());
-    }
-}
-
-#[cfg(test)]
-mod metaedit_tests {
-    use super::*;
-
-    fn args(change: MetaeditChange) -> Vec<Str> {
-        JJCommand {
-            kind: JJCommandKind::Metaedit {
-                change_ids: smallvec::smallvec![RevisionArg::new("abc"), RevisionArg::new("def")],
-                change,
-            },
-            flags: CommandFlags::empty(),
-        }
-        .args()
-    }
-
-    #[test]
-    fn each_change_is_its_own_flag() {
-        assert_eq!(
-            args(MetaeditChange::NewChangeId),
-            ["metaedit", "--update-change-id", "abc", "def"]
-        );
-        assert_eq!(
-            args(MetaeditChange::ResetAuthor),
-            ["metaedit", "--update-author", "abc", "def"]
-        );
-        assert_eq!(
-            args(MetaeditChange::Author("Ann Lee <ann@example.com>".into())),
-            [
-                "metaedit",
-                "--author",
-                "Ann Lee <ann@example.com>",
-                "abc",
-                "def"
-            ]
-        );
-        assert_eq!(
-            args(MetaeditChange::AuthorTimestampNow),
-            ["metaedit", "--update-author-timestamp", "abc", "def"]
-        );
-        assert_eq!(
-            args(MetaeditChange::AuthorTimestamp(
-                "2026-01-02T03:04:05+00:00".into()
-            )),
-            [
-                "metaedit",
-                "--author-timestamp",
-                "2026-01-02T03:04:05+00:00",
-                "abc",
-                "def"
-            ]
-        );
-    }
-
-    /// It rewrites commits in place: no editor, nothing to wait on.
-    #[test]
-    fn it_runs_in_the_background() {
-        let cmd = JJCommand {
-            kind: JJCommandKind::Metaedit {
-                change_ids: smallvec::smallvec![RevisionArg::new("abc")],
-                change: MetaeditChange::NewChangeId,
-            },
-            flags: CommandFlags::empty(),
-        };
-        assert_eq!(cmd.terminal_use(), TerminalUse::Background);
-        assert_eq!(cmd.features().count(), 0);
-    }
-}
-
-#[cfg(test)]
-mod git_remote_tests {
-    use super::*;
-
-    fn args(kind: JJCommandKind) -> Vec<Str> {
-        JJCommand {
-            kind,
-            flags: CommandFlags::empty(),
-        }
-        .args()
-    }
-
-    #[test]
-    fn each_remote_change_is_its_subcommand() {
-        let origin = || RemoteName::new("origin");
-        assert_eq!(
-            args(JJCommandKind::GitRemoteAdd {
-                name: origin(),
-                url: "git@example.com:a/b".into()
-            }),
-            ["git", "remote", "add", "origin", "git@example.com:a/b"]
-        );
-        assert_eq!(
-            args(JJCommandKind::GitRemoteRename {
-                old: origin(),
-                new: RemoteName::new("upstream")
-            }),
-            ["git", "remote", "rename", "origin", "upstream"]
-        );
-        assert_eq!(
-            args(JJCommandKind::GitRemoteRemove { name: origin() }),
-            ["git", "remote", "remove", "origin"]
-        );
-        assert_eq!(
-            args(JJCommandKind::GitRemoteSetUrl {
-                name: origin(),
-                url: "u".into(),
-                push: false
-            }),
-            ["git", "remote", "set-url", "origin", "u"]
-        );
-        assert_eq!(
-            args(JJCommandKind::GitRemoteSetUrl {
-                name: origin(),
-                url: "u".into(),
-                push: true
-            }),
-            ["git", "remote", "set-url", "origin", "--push", "u"]
-        );
-    }
-}
-
-#[cfg(test)]
-mod tag_remote_tests {
-    use super::*;
-
-    #[test]
-    fn a_tag_is_pushed_and_fetched_by_name() {
-        let push = JJCommand {
-            kind: JJCommandKind::GitPushTag {
-                tags: smallvec::smallvec![TagName::new("v1")],
-                remotes: smallvec::smallvec![RemoteName::new("origin")],
-            },
-            flags: CommandFlags::DRY_RUN,
-        };
-        assert_eq!(
-            push.args(),
-            [
-                "git",
-                "push",
-                "--tag",
-                "v1",
-                "--remote",
-                "origin",
-                "--dry-run"
-            ]
-        );
-        assert_eq!(push.terminal_use(), TerminalUse::Foreground);
-        let fetch = JJCommand {
-            kind: JJCommandKind::GitFetchTag {
-                tag: TagName::new("v1"),
-                remotes: SmallVec::new(),
-            },
-            flags: CommandFlags::IGNORE_IMMUTABLE,
-        };
-        // A fetch never rewrites what it brings in, so it takes no
-        // --ignore-immutable.
-        assert_eq!(fetch.args(), ["git", "fetch", "--tag", "v1"]);
     }
 }
