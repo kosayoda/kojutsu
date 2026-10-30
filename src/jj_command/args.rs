@@ -1,4 +1,5 @@
 use compact_str::format_compact;
+use jj_lib::config::ConfigValue;
 
 use crate::conflict::MARKER_STYLE_CONFIG;
 use crate::jj_version::JjFeature;
@@ -785,8 +786,12 @@ impl JJCommand {
                         args.extend([
                             flag("--config"),
                             arg(format!(
-                                "merge-tools.kojutsu-apply.merge-args=[\"--apply-resolution\", {}, \"$output\"]",
-                                toml_string_escape(&content_path.display().to_string())
+                                "merge-tools.kojutsu-apply.merge-args={}",
+                                toml_value(ConfigValue::from_iter([
+                                    "--apply-resolution",
+                                    &content_path.display().to_string(),
+                                    "$output",
+                                ]))
                             )),
                             // Partially picked files keep conflict markers;
                             // jj parses them back into a conflicted state,
@@ -795,8 +800,8 @@ impl JJCommand {
                             arg("merge-tools.kojutsu-apply.merge-tool-edits-conflict-markers=true"),
                             flag("--config"),
                             arg(format!(
-                                "merge-tools.kojutsu-apply.conflict-marker-style=\"{}\"",
-                                MARKER_STYLE_CONFIG
+                                "merge-tools.kojutsu-apply.conflict-marker-style={}",
+                                toml_value(MARKER_STYLE_CONFIG)
                             )),
                         ]);
                     }
@@ -926,16 +931,21 @@ fn push_change_selection_through(
             args.extend([
                 flag("--config"),
                 arg(format!(
-                    "merge-tools.kojutsu-select.edit-args=[\"--apply-diff\", {}, \"$left\", \"$right\"]",
-                    toml_string_escape(&json_path.display().to_string())
+                    "merge-tools.kojutsu-select.edit-args={}",
+                    toml_value(ConfigValue::from_iter([
+                        "--apply-diff",
+                        &json_path.display().to_string(),
+                        "$left",
+                        "$right",
+                    ]))
                 )),
                 // Selections carry line numbers computed against kojutsu's
                 // materialization; pin jj's tool-side materialization to the
                 // same style so lines align in conflicted files.
                 flag("--config"),
                 arg(format!(
-                    "ui.conflict-marker-style=\"{}\"",
-                    MARKER_STYLE_CONFIG
+                    "ui.conflict-marker-style={}",
+                    toml_value(MARKER_STYLE_CONFIG)
                 )),
             ]);
         }
@@ -954,7 +964,7 @@ fn self_invoking_tool(name: &str) -> Vec<TaggedArg> {
         flag("--config"),
         arg(format!(
             "merge-tools.{name}.program={}",
-            toml_string_escape(&exe.display().to_string())
+            toml_value(exe.display().to_string())
         )),
     ]
 }
@@ -979,6 +989,8 @@ fn push_global_flags(args: &mut Vec<TaggedArg>, flags: CommandFlags) {
     }
 }
 
-fn toml_string_escape(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+/// `value` spelled as TOML, which is how jj reads a `--config` value, by
+/// jj's own encoder, so a path's control characters are escaped too.
+fn toml_value(value: impl Into<ConfigValue>) -> String {
+    value.into().to_string()
 }
