@@ -102,19 +102,17 @@ pub fn replace_current_token(input: &str, new_token: &str, add_space: bool) -> S
     result
 }
 
+/// The longest run of whole characters every completion starts with.
 pub fn common_prefix(completions: &[Completion]) -> &str {
-    if completions.is_empty() {
+    let Some((first, rest)) = completions.split_first() else {
         return "";
-    }
-    let first = &completions[0].value;
-    let mut len = first.len();
-    for c in &completions[1..] {
-        len = first
-            .bytes()
-            .zip(c.value.bytes())
-            .take(len)
-            .take_while(|(a, b)| a == b)
-            .count();
-    }
-    &first[..len]
+    };
+    rest.iter().fold(first.value.as_str(), |prefix, c| {
+        let end = prefix
+            .char_indices()
+            .zip(c.value.chars())
+            .find(|((_, a), b)| a != b)
+            .map_or(prefix.len().min(c.value.len()), |((i, _), _)| i);
+        &prefix[..end]
+    })
 }

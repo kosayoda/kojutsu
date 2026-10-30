@@ -796,6 +796,15 @@ mod completion_tests {
         assert_eq!(app.pending_completion, None);
     }
 
+    /// `é` and `è` share their first byte, which is no character to offer.
+    #[test]
+    fn candidates_extend_the_prompt_by_whole_characters_only() {
+        let mut app = prompt_reading("bookmark set ca");
+        let candidates = vec![completion("café"), completion("cafè")];
+        apply_completions(&mut app, "bookmark set ca", candidates);
+        assert_eq!(prompt_text(&app), "bookmark set caf");
+    }
+
     /// Typing on while jj works makes its answer stale.
     #[test]
     fn an_answer_to_older_text_is_dropped() {
