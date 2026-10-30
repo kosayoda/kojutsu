@@ -136,8 +136,7 @@ pub fn apply(selection_path: &Path, left_dir: &Path, right_dir: &Path) -> Result
         }
     }
 
-    // Handle files that exist in left but not in right (deleted files).
-    // If a deleted file's removal wasn't selected, restore it.
+    // Files in left_dir but not right_dir (deletions).
     for entry in WalkDir::new(left_dir) {
         let entry = entry?;
         if !entry.file_type().is_file() {
@@ -148,25 +147,35 @@ pub fn apply(selection_path: &Path, left_dir: &Path, right_dir: &Path) -> Result
             .strip_prefix(left_dir)
             .wrap_err("failed to strip left_dir prefix")?;
         let right_path = right_dir.join(rel_path);
-        if !right_path.exists() {
-            let rel_str = rel_path.to_string_lossy();
-            match file_map.get(rel_str.as_ref()) {
-                Some(FileSelection::Full) => {
-                    // Deletion was selected -- keep it deleted.
-                }
-                _ => {
-                    // Deletion not selected or only partial lines selected
-                    // (partial deletion of a deleted file doesn't make sense,
-                    // so treat it as "keep the file").
-                    if let Some(parent) = right_path.parent() {
-                        fs::create_dir_all(parent)?;
-                    }
-                    fs::copy(entry.path(), &right_path)?;
+        if right_path.exists() {
+            continue;
+        }
+        match file_map.get(rel_path.to_string_lossy().as_ref()) {
+            Some(FileSelection::Full) => {
+                // Deletion was selected -- keep it deleted.
+            }
+            Some(FileSelection::Lines { selected }) => {
+                // The file comes back without its selected lines; with every
+                // line selected, nothing of it is left and it stays deleted.
+                let kept = apply_partial(&fs::read(entry.path())?, &[], selected);
+                if !kept.is_empty() {
+                    restore(entry.path(), &right_path)?;
+                    fs::write(&right_path, kept)?;
                 }
             }
+            None => restore(entry.path(), &right_path)?,
         }
     }
 
+    Ok(())
+}
+
+/// Put `from` at `to`, creating the directory it goes in.
+fn restore(from: &Path, to: &Path) -> Result<()> {
+    if let Some(parent) = to.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(from, to)?;
     Ok(())
 }
 
@@ -397,6 +406,27 @@ mod tests {
                 lines([SelectedLine::Added { new_line: 3 }]),
                 file(b"caf\xe9\r\nb\r\nna\xefve\r\n"),
             ),
+        ]);
+    }
+
+    /// A deleted file with some of its lines selected comes back without
+    /// them; with every line selected it stays deleted.
+    #[test]
+    fn a_deleted_file_loses_only_its_selected_lines() {
+        let removed = |old_lines: &[u32]| {
+            lines(
+                old_lines
+                    .iter()
+                    .map(|&old_line| SelectedLine::Removed { old_line }),
+            )
+        };
+        check([
+            (
+                ("f", file(b"a\nb\nc\n"), None),
+                removed(&[2]),
+                file(b"a\nc\n"),
+            ),
+            (("f", file(b"a\nb\nc\n"), None), removed(&[1, 2, 3]), None),
         ]);
     }
 }
