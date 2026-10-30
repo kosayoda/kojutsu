@@ -108,8 +108,7 @@ impl JJCommand {
             .into_iter()
             .map(|TaggedArg { text, kind, .. }| {
                 if kind == CommandPartKind::Fileset {
-                    let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
-                    format_compact!("\"{escaped}\"")
+                    exact_file_fileset(&text)
                 } else {
                     text
                 }
@@ -962,6 +961,14 @@ fn self_invoking_tool(name: &str) -> Vec<TaggedArg> {
 
 fn fileset_arg(path: &str) -> TaggedArg {
     TaggedArg::new(path, CommandPartKind::Fileset)
+}
+
+/// A repo path as the fileset matching exactly that file. A bare string
+/// literal is a cwd-relative prefix glob to jj, so a path's `*`, `?` or `[`
+/// would match other files.
+fn exact_file_fileset(path: &str) -> Str {
+    let escaped = path.replace('\\', "\\\\").replace('"', "\\\"");
+    format_compact!("root-file:\"{escaped}\"")
 }
 
 fn push_global_flags(args: &mut Vec<TaggedArg>, flags: CommandFlags) {

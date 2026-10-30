@@ -1617,7 +1617,7 @@ mod jj_feature_tests {
         );
         assert_eq!(
             delete.args(),
-            ["file", "delete", "-r", "x", "\"dir/a file.rs\""]
+            ["file", "delete", "-r", "x", "root-file:\"dir/a file.rs\""]
         );
     }
 
