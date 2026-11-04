@@ -497,7 +497,13 @@ fn diff_path_parts<'a>(old: &'a str, new: &'a str) -> (&'a str, &'a str, &'a str
         .zip(new.bytes())
         .take_while(|(a, b)| a == b)
         .count();
-    let pre = old[..shared_pre].rfind('/').map(|i| i + 1).unwrap_or(0);
+    // The shared runs are counted in bytes and can end inside a multi-byte
+    // character, so the cut points are found as byte positions of `/`, which
+    // only ever occurs as a whole character.
+    let pre = old.as_bytes()[..shared_pre]
+        .iter()
+        .rposition(|&b| b == b'/')
+        .map_or(0, |i| i + 1);
 
     let old_rest = &old[pre..];
     let new_rest = &new[pre..];
@@ -507,8 +513,9 @@ fn diff_path_parts<'a>(old: &'a str, new: &'a str) -> (&'a str, &'a str, &'a str
         .zip(new_rest.bytes().rev())
         .take_while(|(a, b)| a == b)
         .count();
-    let suf = old_rest[old_rest.len() - shared_suf..]
-        .find('/')
+    let suf = old_rest.as_bytes()[old_rest.len() - shared_suf..]
+        .iter()
+        .position(|&b| b == b'/')
         .map(|i| old_rest.len() - shared_suf + i)
         .unwrap_or(old_rest.len());
 
@@ -727,4 +734,26 @@ pub(crate) fn render_conflict_edited(
         Span::raw(" "),
         Span::styled(text, style),
     ])]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::diff_path_parts;
+
+    #[test]
+    fn splits_a_rename_around_the_changed_component() {
+        assert_eq!(
+            diff_path_parts("src/old/mod.rs", "src/new/mod.rs"),
+            ("src/", "old", "new", "/mod.rs")
+        );
+    }
+
+    /// `🚀` and `🛸` share their first three bytes, so the shared runs end
+    /// inside a character.
+    #[test]
+    fn a_rename_between_similar_multi_byte_names_does_not_split_a_character() {
+        assert_eq!(diff_path_parts("a/🚀", "a/🛸"), ("a/", "🚀", "🛸", ""));
+        assert_eq!(diff_path_parts("🚀/a", "🛸/a"), ("", "🚀", "🛸", "/a"));
+        assert_eq!(diff_path_parts("é", "è"), ("", "é", "è", ""));
+    }
 }

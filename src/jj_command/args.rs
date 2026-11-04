@@ -85,6 +85,29 @@ fn remote_symbol(name: &str, remote: &crate::types::RemoteName) -> TaggedArg {
     rev(jj_lib::revset::format_remote_symbol(name, remote.as_str()))
 }
 
+/// A bookmark or tag name where jj takes exactly one name, quoted when it
+/// isn't a bare revset identifier (`"🚀-launch"`): jj rejects it otherwise.
+fn name_symbol(name: &str) -> TaggedArg {
+    rev(jj_lib::revset::format_symbol(name))
+}
+
+/// A bookmark or tag name where jj takes a string pattern.
+fn name_pattern(name: &str) -> TaggedArg {
+    rev(exact_pattern(name))
+}
+
+/// `name` as a string pattern that matches only itself. Patterns glob by
+/// default, so a name that needs quoting, or contains a `*` (which is legal
+/// in a bare identifier), is spelled `exact:`.
+fn exact_pattern(name: &str) -> Str {
+    let symbol = jj_lib::revset::format_symbol(name);
+    if symbol == name && !name.contains('*') {
+        symbol.into()
+    } else {
+        format_compact!("exact:{symbol}")
+    }
+}
+
 /// The options `jj file edit` and `jj file delete` both take.
 const FILE_REWRITE_FLAGS: &[FlagOption] = &[opt(
     CommandFlags::RESTORE_DESCENDANTS,
@@ -272,7 +295,7 @@ impl JJCommand {
                     sub("create"),
                     flag("-r"),
                     rev(change_id),
-                    rev(name.as_str()),
+                    name_symbol(name.as_str()),
                 ]
             }
             JJCommandKind::BookmarkSet {
@@ -286,17 +309,17 @@ impl JJCommand {
                 );
                 args.push(flag("-r"));
                 args.push(rev(change_id));
-                args.push(rev(name.as_str()));
+                args.push(name_symbol(name.as_str()));
                 args
             }
             JJCommandKind::BookmarkDelete { names, .. } => {
                 let mut args = vec![sub("bookmark"), sub("delete")];
-                args.extend(names.iter().map(|n| rev(n.as_str())));
+                args.extend(names.iter().map(|n| name_pattern(n.as_str())));
                 args
             }
             JJCommandKind::BookmarkForget { names, .. } => {
                 let mut args = vec![sub("bookmark"), sub("forget")];
-                args.extend(names.iter().map(|n| rev(n.as_str())));
+                args.extend(names.iter().map(|n| name_pattern(n.as_str())));
                 args
             }
             JJCommandKind::BookmarkMove { name, target, .. } => {
@@ -308,7 +331,7 @@ impl JJCommand {
                 );
                 args.push(flag("--to"));
                 args.push(rev(target));
-                args.push(rev(name.as_str()));
+                args.push(name_pattern(name.as_str()));
                 args
             }
             JJCommandKind::BookmarkRename {
@@ -317,8 +340,8 @@ impl JJCommand {
                 vec![
                     sub("bookmark"),
                     sub("rename"),
-                    rev(old_name.as_str()),
-                    rev(new_name.as_str()),
+                    name_symbol(old_name.as_str()),
+                    name_symbol(new_name.as_str()),
                 ]
             }
             JJCommandKind::BookmarkAdvance { change_id, .. } => {
@@ -397,7 +420,7 @@ impl JJCommand {
                 let mut args = vec![sub("git"), sub("push")];
                 for name in bookmarks {
                     args.push(flag("--bookmark"));
-                    args.push(rev(name.as_str()));
+                    args.push(name_pattern(name.as_str()));
                 }
                 push_remotes(&mut args, remotes, Some(JjFeature::PushToRemotes));
                 push_flags(&mut args, flags, PUSH_FLAGS);
@@ -410,16 +433,16 @@ impl JJCommand {
                     sub("git"),
                     sub("fetch"),
                     flag("-b"),
-                    rev(bookmark.as_str()),
+                    name_pattern(bookmark.as_str()),
                     flag("--remote"),
-                    arg(remote.as_str()),
+                    arg(exact_pattern(remote.as_str())),
                 ]
             }
             JJCommandKind::GitPushTag { tags, remotes } => {
                 let mut args = vec![sub("git"), sub("push")];
                 for name in tags {
                     args.push(flag("--tag").needs(JjFeature::TagPush));
-                    args.push(rev(name.as_str()));
+                    args.push(name_pattern(name.as_str()));
                 }
                 push_remotes(&mut args, remotes, Some(JjFeature::PushToRemotes));
                 push_flags(&mut args, flags, PUSH_FLAGS);
@@ -430,7 +453,7 @@ impl JJCommand {
                     sub("git"),
                     sub("fetch"),
                     flag("--tag").needs(JjFeature::TagFetch),
-                    rev(tag.as_str()),
+                    name_pattern(tag.as_str()),
                 ];
                 push_remotes(&mut args, remotes, None);
                 args
@@ -650,12 +673,12 @@ impl JJCommand {
                 );
                 args.push(flag("-r"));
                 args.push(rev(change_id));
-                args.push(rev(name.as_str()));
+                args.push(name_symbol(name.as_str()));
                 args
             }
             JJCommandKind::TagDelete { names, .. } => {
                 let mut args = vec![sub("tag"), sub("delete")];
-                args.extend(names.iter().map(|n| rev(n.as_str())));
+                args.extend(names.iter().map(|n| name_pattern(n.as_str())));
                 args
             }
             JJCommandKind::Converge { changes } => {
@@ -891,8 +914,9 @@ fn push_flags(args: &mut Vec<TaggedArg>, flags: CommandFlags, mapping: &[FlagOpt
     }
 }
 
-/// A `--remote` for each of `remotes`. A command that took only one until
-/// `several` came needs it from the second on.
+/// A `--remote` for each of `remotes`, spelled as an exact pattern since
+/// jj globs the value. A command that took only one until `several` came
+/// needs it from the second on.
 fn push_remotes(
     args: &mut Vec<TaggedArg>,
     remotes: &[crate::types::RemoteName],
@@ -904,7 +928,7 @@ fn push_remotes(
             Some(feature) if i > 0 => remote_flag.needs(feature),
             _ => remote_flag,
         });
-        args.push(arg(remote.as_str()));
+        args.push(arg(exact_pattern(remote.as_str())));
     }
 }
 
@@ -1449,5 +1473,76 @@ mod shape_tests {
             toggled.retain(|a| !globals.contains(&a.as_str()));
             assert_eq!(toggled, bare);
         }
+    }
+}
+
+#[cfg(test)]
+mod name_tests {
+    use super::*;
+    use crate::types::{BookmarkName, RemoteName, RevisionArg};
+
+    fn args(kind: JJCommandKind) -> Vec<String> {
+        let cmd = JJCommand {
+            kind,
+            flags: CommandFlags::empty(),
+        };
+        cmd.args().iter().map(|a| a.to_string()).collect()
+    }
+
+    fn create(name: &str) -> Vec<String> {
+        args(JJCommandKind::BookmarkCreate {
+            name: BookmarkName::new(name),
+            change_id: RevisionArg::new("x"),
+        })
+    }
+
+    fn delete(name: &str) -> Vec<String> {
+        args(JJCommandKind::BookmarkDelete {
+            names: [BookmarkName::new(name)].into_iter().collect(),
+        })
+    }
+
+    /// jj parses every name argument as a revset symbol, which a bare emoji
+    /// is not.
+    #[test]
+    fn a_name_that_is_not_an_identifier_is_quoted() {
+        for name in [
+            "main",
+            "feat/x",
+            "🚀-launch",
+            "feat/🦀crab",
+            "a b",
+            r#"q"uote"#,
+        ] {
+            let spelled = create(name).pop().unwrap();
+            assert_eq!(jj_lib::revset::parse_symbol(&spelled).unwrap(), name);
+        }
+        assert_eq!(create("main").last().unwrap(), "main");
+        assert_eq!(create("🚀-launch").last().unwrap(), r#""🚀-launch""#);
+    }
+
+    /// A name pattern globs unless told otherwise, so only a plain name
+    /// without `*` can go bare.
+    #[test]
+    fn a_name_pattern_matches_only_that_name() {
+        assert_eq!(delete("main"), ["bookmark", "delete", "main"]);
+        assert_eq!(
+            delete("🚀-launch"),
+            ["bookmark", "delete", r#"exact:"🚀-launch""#]
+        );
+        assert_eq!(delete("feat-*"), ["bookmark", "delete", "exact:feat-*"]);
+        assert_eq!(delete("a?b"), ["bookmark", "delete", r#"exact:"a?b""#]);
+    }
+
+    #[test]
+    fn a_remote_matches_only_that_remote() {
+        let fetch = |remote: &str| {
+            args(JJCommandKind::GitFetch {
+                all_remotes: false,
+                remotes: [RemoteName::new(remote)].into_iter().collect(),
+            })
+        };
+        assert_eq!(fetch("origin"), ["git", "fetch", "--remote", "origin"]);
+        assert_eq!(fetch("🛰"), ["git", "fetch", "--remote", r#"exact:"🛰""#]);
     }
 }
