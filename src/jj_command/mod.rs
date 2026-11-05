@@ -33,6 +33,11 @@ impl KillHandle {
         self.0.store(pgid, Ordering::Release);
     }
 
+    #[cfg(test)]
+    fn pgid(&self) -> i32 {
+        self.0.load(Ordering::Acquire)
+    }
+
     pub fn kill(&self) {
         let pgid = self.0.load(Ordering::Acquire);
         if pgid > 0 {

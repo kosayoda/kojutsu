@@ -178,7 +178,11 @@ impl JJCommand {
         let status = std::thread::scope(|scope| {
             scope.spawn(|| stream_pipe(child_stdout, Stream::Stdout, &sink));
             scope.spawn(|| stream_pipe(child_stderr, Stream::Stderr, &sink));
-            child.wait()
+            let status = child.wait();
+            // Reaped, so the pid is free for reuse: a cancel from here on
+            // must not name it.
+            kill.set_pgid(0);
+            status
         });
         let output = sink
             .into_inner()
@@ -284,4 +288,31 @@ fn with_sigint_suppressed<T>(body: impl FnOnce() -> T) -> (T, bool) {
         result,
         interrupted.load(std::sync::atomic::Ordering::Relaxed),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+    use crate::jj_command::JJCommandKind;
+    use crate::keymap::CommandFlags;
+
+    /// Once the child is reaped its pid can belong to anyone, so the
+    /// handle a cancel would signal through is cleared before the run
+    /// returns.
+    #[test]
+    fn a_finished_run_leaves_nothing_to_kill() {
+        let cmd = JJCommand {
+            kind: JJCommandKind::Exec {
+                program: "true".into(),
+                args: Vec::new(),
+            },
+            flags: CommandFlags::empty(),
+        };
+        let (kill_main, kill_bg) = KillHandle::pair();
+        let result = cmd.run_cancellable(Path::new("."), &kill_bg, |_| {});
+        assert!(result.success);
+        assert_eq!(kill_main.pgid(), 0);
+    }
 }
