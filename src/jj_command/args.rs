@@ -16,6 +16,11 @@ pub(super) struct TaggedArg {
     pub(super) text: Str,
     pub(super) kind: CommandPartKind,
     pub(super) needs: Option<JjFeature>,
+    /// A positional operand rather than an option or an option's value.
+    /// Names from the repository are operands, and one beginning with `-`
+    /// would read as an option, so `finish` ends jj's options before the
+    /// first operand when any looks like one.
+    pub(super) operand: bool,
 }
 
 impl TaggedArg {
@@ -24,7 +29,13 @@ impl TaggedArg {
             text: text.into(),
             kind,
             needs: None,
+            operand: false,
         }
+    }
+
+    fn operand(mut self) -> Self {
+        self.operand = true;
+        self
     }
 
     fn needs(mut self, feature: JjFeature) -> Self {
@@ -158,7 +169,7 @@ impl JJCommand {
                         opt(CommandFlags::RESTORE_DESCENDANTS, "--restore-descendants"),
                     ],
                 );
-                args.extend(change_ids.iter().map(rev));
+                args.extend(change_ids.iter().map(|id| rev(id).operand()));
                 args
             }
             JJCommandKind::Describe {
@@ -167,11 +178,11 @@ impl JJCommand {
                 ..
             } => {
                 let mut args = vec![sub("describe"), flag("-m"), arg(message.as_str())];
-                args.extend(change_ids.iter().map(rev));
+                args.extend(change_ids.iter().map(|id| rev(id).operand()));
                 args
             }
             JJCommandKind::DescribeInEditor { change_id, .. } => {
-                vec![sub("describe"), rev(change_id)]
+                vec![sub("describe"), rev(change_id).operand()]
             }
             JJCommandKind::Metaedit { change_ids, change } => {
                 let mut args = vec![sub("metaedit")];
@@ -190,7 +201,7 @@ impl JJCommand {
                         args.push(arg(timestamp.as_str()));
                     }
                 }
-                args.extend(change_ids.iter().map(rev));
+                args.extend(change_ids.iter().map(|id| rev(id).operand()));
                 args
             }
             JJCommandKind::Diffedit {
@@ -203,7 +214,7 @@ impl JJCommand {
                 args
             }
             JJCommandKind::Edit { change_id, .. } => {
-                vec![sub("edit"), rev(change_id)]
+                vec![sub("edit"), rev(change_id).operand()]
             }
             JJCommandKind::New {
                 change_ids, insert, ..
@@ -212,8 +223,8 @@ impl JJCommand {
                 if let Some(pos) = insert {
                     args.push(flag(pos.flag()));
                 }
-                args.extend(change_ids.iter().map(rev));
                 push_flags(&mut args, flags, &[opt(CommandFlags::NO_EDIT, "--no-edit")]);
+                args.extend(change_ids.iter().map(|id| rev(id).operand()));
                 args
             }
             JJCommandKind::Rebase {
@@ -299,7 +310,7 @@ impl JJCommand {
                     sub("create"),
                     flag("-r"),
                     rev(change_id),
-                    name_symbol(name.as_str()),
+                    name_symbol(name.as_str()).operand(),
                 ]
             }
             JJCommandKind::BookmarkSet {
@@ -313,17 +324,17 @@ impl JJCommand {
                 );
                 args.push(flag("-r"));
                 args.push(rev(change_id));
-                args.push(name_symbol(name.as_str()));
+                args.push(name_symbol(name.as_str()).operand());
                 args
             }
             JJCommandKind::BookmarkDelete { names, .. } => {
                 let mut args = vec![sub("bookmark"), sub("delete")];
-                args.extend(names.iter().map(|n| name_pattern(n.as_str())));
+                args.extend(names.iter().map(|n| name_pattern(n.as_str()).operand()));
                 args
             }
             JJCommandKind::BookmarkForget { names, .. } => {
                 let mut args = vec![sub("bookmark"), sub("forget")];
-                args.extend(names.iter().map(|n| name_pattern(n.as_str())));
+                args.extend(names.iter().map(|n| name_pattern(n.as_str()).operand()));
                 args
             }
             JJCommandKind::BookmarkMove { name, target, .. } => {
@@ -335,7 +346,7 @@ impl JJCommand {
                 );
                 args.push(flag("--to"));
                 args.push(rev(target));
-                args.push(name_pattern(name.as_str()));
+                args.push(name_pattern(name.as_str()).operand());
                 args
             }
             JJCommandKind::BookmarkRename {
@@ -344,8 +355,8 @@ impl JJCommand {
                 vec![
                     sub("bookmark"),
                     sub("rename"),
-                    name_symbol(old_name.as_str()),
-                    name_symbol(new_name.as_str()),
+                    name_symbol(old_name.as_str()).operand(),
+                    name_symbol(new_name.as_str()).operand(),
                 ]
             }
             JJCommandKind::BookmarkAdvance { change_id, .. } => {
@@ -366,7 +377,7 @@ impl JJCommand {
                 args.extend(
                     bookmarks
                         .iter()
-                        .map(|b| remote_symbol(b.name.as_str(), &b.remote)),
+                        .map(|b| remote_symbol(b.name.as_str(), &b.remote).operand()),
                 );
                 args
             }
@@ -375,7 +386,7 @@ impl JJCommand {
                 args.extend(
                     bookmarks
                         .iter()
-                        .map(|b| remote_symbol(b.name.as_str(), &b.remote)),
+                        .map(|b| remote_symbol(b.name.as_str(), &b.remote).operand()),
                 );
                 args
             }
@@ -468,32 +479,33 @@ impl JJCommand {
                 sub("git"),
                 sub("remote"),
                 sub("add"),
-                arg(name.as_str()),
-                url_arg(url.as_str()),
+                arg(name.as_str()).operand(),
+                url_arg(url.as_str()).operand(),
             ],
             JJCommandKind::GitRemoteRemove { name } => {
-                vec![sub("git"), sub("remote"), sub("remove"), arg(name.as_str())]
+                vec![
+                    sub("git"),
+                    sub("remote"),
+                    sub("remove"),
+                    arg(name.as_str()).operand(),
+                ]
             }
             JJCommandKind::GitRemoteRename { old, new } => vec![
                 sub("git"),
                 sub("remote"),
                 sub("rename"),
-                arg(old.as_str()),
-                arg(new.as_str()),
+                arg(old.as_str()).operand(),
+                arg(new.as_str()).operand(),
             ],
             JJCommandKind::GitRemoteSetUrl { name, url, push } => {
-                let mut args = vec![
-                    sub("git"),
-                    sub("remote"),
-                    sub("set-url"),
-                    arg(name.as_str()),
-                ];
+                let mut args = vec![sub("git"), sub("remote"), sub("set-url")];
                 // The bare URL sets where it fetches from, and, with no
                 // separate push URL, where it pushes to as well.
                 if *push {
                     args.push(flag("--push").needs(JjFeature::SeparatePushUrl));
                 }
-                args.push(url_arg(url.as_str()));
+                args.push(arg(name.as_str()).operand());
+                args.push(url_arg(url.as_str()).operand());
                 args
             }
             JJCommandKind::GitColocation {
@@ -544,7 +556,7 @@ impl JJCommand {
             }
             JJCommandKind::Parallelize { change_ids, .. } => {
                 let mut args = vec![sub("parallelize")];
-                args.extend(change_ids.iter().map(rev));
+                args.extend(change_ids.iter().map(|id| rev(id).operand()));
                 args
             }
             JJCommandKind::SimplifyParents { change_ids, .. } => {
@@ -573,11 +585,11 @@ impl JJCommand {
                 change_ids, onto, ..
             } => {
                 let mut args = vec![sub("duplicate")];
-                args.extend(change_ids.iter().map(rev));
                 if let Some(target) = onto {
                     args.push(flag("--onto"));
                     args.push(rev(target));
                 }
+                args.extend(change_ids.iter().map(|id| rev(id).operand()));
                 args
             }
             JJCommandKind::Squash {
@@ -644,12 +656,12 @@ impl JJCommand {
                 }
                 args.push(flag("-r"));
                 args.push(rev(revision));
-                args.push(arg(path.as_str()));
+                args.push(arg(path.as_str()).operand());
                 args
             }
             JJCommandKind::WorkspaceForget { names, .. } => {
                 let mut args = vec![sub("workspace"), sub("forget")];
-                args.extend(names.iter().map(|n| arg(n.as_str())));
+                args.extend(names.iter().map(|n| arg(n.as_str()).operand()));
                 args
             }
             JJCommandKind::WorkspaceRemove { names, .. } => {
@@ -657,14 +669,18 @@ impl JJCommand {
                     sub("workspace"),
                     sub("remove").needs(JjFeature::WorkspaceRemove),
                 ];
-                args.extend(names.iter().map(|n| arg(n.as_str())));
+                args.extend(names.iter().map(|n| arg(n.as_str()).operand()));
                 args
             }
             JJCommandKind::WorkspaceList => {
                 vec![sub("workspace"), sub("list")]
             }
             JJCommandKind::WorkspaceRename { new_name, .. } => {
-                vec![sub("workspace"), sub("rename"), arg(new_name.as_str())]
+                vec![
+                    sub("workspace"),
+                    sub("rename"),
+                    arg(new_name.as_str()).operand(),
+                ]
             }
             JJCommandKind::TagSet {
                 name, change_id, ..
@@ -677,12 +693,12 @@ impl JJCommand {
                 );
                 args.push(flag("-r"));
                 args.push(rev(change_id));
-                args.push(name_symbol(name.as_str()));
+                args.push(name_symbol(name.as_str()).operand());
                 args
             }
             JJCommandKind::TagDelete { names, .. } => {
                 let mut args = vec![sub("tag"), sub("delete")];
-                args.extend(names.iter().map(|n| name_pattern(n.as_str())));
+                args.extend(names.iter().map(|n| name_pattern(n.as_str()).operand()));
                 args
             }
             JJCommandKind::Converge { changes } => {
@@ -702,7 +718,7 @@ impl JJCommand {
                 let mut args = vec![sub("tag"), sub("track").needs(JjFeature::TagTracking)];
                 args.extend(
                     tags.iter()
-                        .map(|t| remote_symbol(t.name.as_str(), &t.remote)),
+                        .map(|t| remote_symbol(t.name.as_str(), &t.remote).operand()),
                 );
                 args
             }
@@ -710,18 +726,18 @@ impl JJCommand {
                 let mut args = vec![sub("tag"), sub("untrack").needs(JjFeature::TagTracking)];
                 args.extend(
                     tags.iter()
-                        .map(|t| remote_symbol(t.name.as_str(), &t.remote)),
+                        .map(|t| remote_symbol(t.name.as_str(), &t.remote).operand()),
                 );
                 args
             }
             JJCommandKind::OpRestore { op_id, .. } => {
-                vec![sub("op"), sub("restore"), rev(op_id.as_str())]
+                vec![sub("op"), sub("restore"), rev(op_id.as_str()).operand()]
             }
             JJCommandKind::OpRevert { op_id, .. } => {
-                vec![sub("op"), sub("revert"), rev(op_id.as_str())]
+                vec![sub("op"), sub("revert"), rev(op_id.as_str()).operand()]
             }
             JJCommandKind::OpAbandon { op_id, .. } => {
-                vec![sub("op"), sub("abandon"), rev(op_id.as_str())]
+                vec![sub("op"), sub("abandon"), rev(op_id.as_str()).operand()]
             }
             JJCommandKind::Fix {
                 change_ids,
@@ -761,12 +777,9 @@ impl JJCommand {
                             .needs(JjFeature::RunIgnoreErrors),
                     ],
                 );
-                // Global flags must precede `--`: everything after it is
-                // passed verbatim to the subprocess, not to jj.
-                push_global_flags(&mut args, globals);
                 args.push(flag("--"));
-                args.extend(argv.iter().cloned().map(arg));
-                return args;
+                args.extend(argv.iter().cloned().map(|a| arg(a).operand()));
+                args
             }
             JJCommandKind::FileUntrack { paths, .. } => {
                 let mut args = vec![sub("file"), sub("untrack")];
@@ -783,7 +796,7 @@ impl JJCommand {
                 push_flags(&mut args, flags, FILE_REWRITE_FLAGS);
                 // A path, not a fileset: jj would take the quotes as part of
                 // the name.
-                args.push(arg(path.clone()));
+                args.push(arg(path.clone()).operand());
                 args
             }
             JJCommandKind::FileDelete { change_id, paths } => {
@@ -836,17 +849,7 @@ impl JJCommand {
                 args.push(fileset_arg(path));
                 args
             }
-            JJCommandKind::Raw { args } => {
-                // Ahead of a bare `--`, past which jj passes words on
-                // verbatim. Lexing keeps one part per word, so the index is
-                // the same in both.
-                let mut parts = lex_raw_args(args);
-                let at = args.iter().position(|a| a == "--").unwrap_or(args.len());
-                let mut global = Vec::new();
-                push_global_flags(&mut global, globals);
-                parts.splice(at..at, global);
-                return parts;
-            }
+            JJCommandKind::Raw { args } => lex_raw_args(args),
             // Not a jj command line, so there is no grammar to lex: the
             // program names itself in the log and the rest are plain values.
             JJCommandKind::Exec { args, .. } => {
@@ -864,9 +867,39 @@ impl JJCommand {
             }
         };
 
-        push_global_flags(&mut args, globals);
+        finish(&mut args, globals);
         args
     }
+}
+
+/// Every jj command line passes through here last. jj reads a bare `--`
+/// as the end of its options, so an operand that begins with `-` gets one
+/// put before the first operand, and the global toggles go ahead of any
+/// `--`, since past it jj hands words on verbatim. Options must precede
+/// operands for the `--` to land right; the builders keep that order.
+fn finish(args: &mut Vec<TaggedArg>, globals: CommandFlags) {
+    let is_dashes = |a: &TaggedArg| a.kind == CommandPartKind::Flag && a.text == "--";
+    let options_end = args.iter().position(is_dashes).unwrap_or(args.len());
+    let operands = &args[..options_end];
+    if let Some(first) = operands.iter().position(|a| a.operand) {
+        debug_assert!(
+            operands[first..]
+                .iter()
+                .all(|a| a.kind != CommandPartKind::Flag),
+            "an option after an operand: {:?}",
+            operands.iter().map(|a| a.text.as_str()).collect::<Vec<_>>()
+        );
+        if operands[first..]
+            .iter()
+            .any(|a| a.operand && a.text.starts_with('-'))
+        {
+            args.insert(first, flag("--"));
+        }
+    }
+    let at = args.iter().position(is_dashes).unwrap_or(args.len());
+    let mut toggles = Vec::new();
+    push_global_flags(&mut toggles, globals);
+    args.splice(at..at, toggles);
 }
 
 /// Raw commands are user-typed, so argument kinds cannot be known at

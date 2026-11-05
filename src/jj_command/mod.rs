@@ -956,6 +956,166 @@ mod jump_target_tests {
 }
 
 #[cfg(test)]
+mod operand_tests {
+    use smallvec::smallvec;
+
+    use super::*;
+    use crate::types::{RemoteName, RevisionArg, WorkspaceName};
+
+    /// Every command that takes a name from the repository or the user as
+    /// a positional operand, with that name spelled `name`.
+    fn commands_naming(name: &str, flags: CommandFlags) -> Vec<JJCommand> {
+        let remote = || RemoteName::new(name);
+        let workspace = || WorkspaceName::new(name);
+        let rev = || RevisionArg::new("x");
+        [
+            JJCommandKind::FileEdit {
+                change_id: rev(),
+                path: name.into(),
+            },
+            JJCommandKind::WorkspaceAdd {
+                path: name.into(),
+                name: None,
+                revision: rev(),
+            },
+            JJCommandKind::WorkspaceForget {
+                names: smallvec![workspace()],
+            },
+            JJCommandKind::WorkspaceRemove {
+                names: smallvec![workspace()],
+            },
+            JJCommandKind::WorkspaceRename {
+                new_name: workspace(),
+            },
+            JJCommandKind::GitRemoteAdd {
+                name: remote(),
+                url: "https://host/r".into(),
+            },
+            JJCommandKind::GitRemoteRemove { name: remote() },
+            JJCommandKind::GitRemoteRename {
+                old: remote(),
+                new: remote(),
+            },
+            JJCommandKind::GitRemoteSetUrl {
+                name: remote(),
+                url: "https://host/r".into(),
+                push: true,
+            },
+        ]
+        .into_iter()
+        .map(|kind| JJCommand { kind, flags })
+        .collect()
+    }
+
+    /// A name jj would read as an option is kept an operand by a `--`
+    /// before it, with every option, the global toggles included, ahead
+    /// of that; a plain name needs none.
+    #[test]
+    fn a_name_that_looks_like_an_option_stays_an_operand() {
+        for name in ["--help", "-r", "-"] {
+            for cmd in commands_naming(name, CommandFlags::IGNORE_IMMUTABLE) {
+                let args = cmd.args();
+                let shown = args.join(" ");
+                let dashes = args.iter().position(|a| a == "--").expect(&shown);
+                assert_eq!(args.iter().filter(|a| *a == "--").count(), 1, "{shown}");
+                assert!(args[dashes + 1..].iter().any(|a| a == name), "{shown}");
+                let toggle = args
+                    .iter()
+                    .position(|a| a == "--ignore-immutable")
+                    .expect(&shown);
+                assert!(toggle < dashes, "{shown}");
+                // Past the `--` there are operands only, however spelled.
+                assert!(
+                    args[dashes + 1..]
+                        .iter()
+                        .all(|a| a == name || !a.starts_with('-')),
+                    "{shown}"
+                );
+            }
+        }
+        for cmd in commands_naming("main", CommandFlags::IGNORE_IMMUTABLE) {
+            let args = cmd.args();
+            assert!(!args.iter().any(|a| a == "--"), "{}", args.join(" "));
+        }
+    }
+
+    /// Options come before operands in every builder, so the `--` the
+    /// finishing pass may add lands after all of them. `run` and a typed
+    /// command bring their own `--`, which is never doubled.
+    #[test]
+    fn options_precede_operands_and_a_double_dash_is_never_doubled() {
+        let ids = || smallvec![RevisionArg::new("x"), RevisionArg::new("y")];
+        let cases = [
+            JJCommand {
+                kind: JJCommandKind::New {
+                    change_ids: ids(),
+                    insert: None,
+                },
+                flags: CommandFlags::NO_EDIT,
+            },
+            JJCommand {
+                kind: JJCommandKind::Duplicate {
+                    change_ids: ids(),
+                    onto: Some(RevisionArg::new("z")),
+                },
+                flags: CommandFlags::empty(),
+            },
+        ];
+        for cmd in cases
+            .iter()
+            .chain(commands_naming("-x", CommandFlags::DEBUG).iter())
+        {
+            let parts = cmd.tagged_args();
+            let shown: Vec<&str> = parts.iter().map(|p| p.text.as_str()).collect();
+            let first_operand = parts.iter().position(|p| p.operand).expect("an operand");
+            let dashes = parts
+                .iter()
+                .position(|p| p.kind == CommandPartKind::Flag && p.text == "--")
+                .unwrap_or(parts.len());
+            assert!(
+                parts[first_operand..dashes.max(first_operand)]
+                    .iter()
+                    .all(|p| p.kind != CommandPartKind::Flag),
+                "{shown:?}"
+            );
+            assert!(
+                parts[..first_operand]
+                    .iter()
+                    .filter(|p| p.kind == CommandPartKind::Flag && p.text == "--")
+                    .count()
+                    <= 1,
+                "{shown:?}"
+            );
+        }
+        let run = JJCommand {
+            kind: JJCommandKind::Run {
+                argv: vec!["-x".into()],
+                change_ids: smallvec![],
+                jobs: None,
+            },
+            flags: CommandFlags::IGNORE_IMMUTABLE,
+        };
+        let raw = JJCommand {
+            kind: JJCommandKind::Raw {
+                args: vec!["abandon".into(), "--".into(), "-x".into()],
+            },
+            flags: CommandFlags::IGNORE_IMMUTABLE,
+        };
+        for cmd in [run, raw] {
+            let args = cmd.args();
+            let shown = args.join(" ");
+            assert_eq!(args.iter().filter(|a| *a == "--").count(), 1, "{shown}");
+            let dashes = args.iter().position(|a| a == "--").unwrap();
+            assert!(
+                args[..dashes].iter().any(|a| a == "--ignore-immutable"),
+                "{shown}"
+            );
+            assert_eq!(args.last().map(|a| a.as_str()), Some("-x"), "{shown}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod remote_url_tests {
     use super::*;
     use crate::types::RemoteName;
