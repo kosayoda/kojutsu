@@ -13,23 +13,22 @@ pub struct LuaRuntime {
     pub config: Rc<Config>,
     pub engine: LuaEngine,
     pub keymaps: Keymaps,
-    config_dir: PathBuf,
+    /// Where `init.lua` lives; `None` on a platform with no config
+    /// directory, where nothing is loaded.
+    config_dir: Option<PathBuf>,
 }
 
 impl LuaRuntime {
     /// Load from the user's config directory, or built-in defaults when the
     /// platform has none.
     pub fn load(repo_path: &Path) -> Self {
-        match crate::config::kojutsu_config_dir() {
-            Some(dir) => Self::load_from(&dir, repo_path),
-            None => Self::load_from(Path::new(""), repo_path),
-        }
+        Self::load_from(crate::config::kojutsu_config_dir().as_deref(), repo_path)
     }
 
     /// Infallible: a broken `init.lua` yields a runtime carrying whatever it
     /// set and registered before the error, reported via
     /// [`Self::init_error`].
-    pub fn load_from(config_dir: &Path, repo_path: &Path) -> Self {
+    pub fn load_from(config_dir: Option<&Path>, repo_path: &Path) -> Self {
         let mut config = crate::config::Config::default();
         let mut registry = ActionRegistry::new();
         let default_specs = default_bindings();
@@ -47,7 +46,7 @@ impl LuaRuntime {
             config: Rc::new(config),
             engine,
             keymaps,
-            config_dir: config_dir.to_path_buf(),
+            config_dir: config_dir.map(Path::to_path_buf),
         }
     }
 
@@ -68,8 +67,12 @@ impl LuaRuntime {
             app.set_error("reload: a plugin prompt is still open");
             return;
         }
+        let Some(config_dir) = &self.config_dir else {
+            app.set_error("reload: no config directory on this platform");
+            return;
+        };
 
-        let reloaded = Self::load_from(&self.config_dir, &self.engine.repo_path);
+        let reloaded = Self::load_from(Some(config_dir), &self.engine.repo_path);
         if let Some(err) = reloaded.init_error() {
             app.push_command_log(
                 CommandLogKind::Warning,
@@ -166,16 +169,16 @@ mod tests {
             "#,
         );
         let repo = std::path::Path::new(".");
-        let runtime = LuaRuntime::load_from(dir.path(), repo);
+        let runtime = LuaRuntime::load_from(Some(dir.path()), repo);
         assert!(runtime.init_error().is_some_and(|e| e.contains("boom")));
         assert_eq!(runtime.config.tab_width, 2);
-        let clean = LuaRuntime::load_from(config_dir_with("").path(), repo);
+        let clean = LuaRuntime::load_from(Some(config_dir_with("").path()), repo);
         assert_eq!(binding_count(&runtime), binding_count(&clean) + 1);
     }
 
     fn warnings_for(init: &str) -> Vec<String> {
         let dir = config_dir_with(init);
-        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let runtime = LuaRuntime::load_from(Some(dir.path()), std::path::Path::new("."));
         assert_eq!(runtime.init_error(), None, "warnings never stop the script");
         runtime.init_warnings().to_vec()
     }
@@ -191,8 +194,8 @@ mod tests {
             "#,
         );
         let repo = std::path::Path::new(".");
-        let runtime = LuaRuntime::load_from(dir.path(), repo);
-        let clean = LuaRuntime::load_from(config_dir_with("").path(), repo);
+        let runtime = LuaRuntime::load_from(Some(dir.path()), repo);
+        let clean = LuaRuntime::load_from(Some(config_dir_with("").path()), repo);
 
         assert_eq!(runtime.init_warnings().len(), 1);
         let warning = &runtime.init_warnings()[0];
@@ -240,8 +243,8 @@ mod tests {
             r#"kojutsu.command("c", function() end, { group = "nope", key = "ctrl-l" })"#,
         );
         let repo = std::path::Path::new(".");
-        let runtime = LuaRuntime::load_from(dir.path(), repo);
-        let clean = LuaRuntime::load_from(config_dir_with("").path(), repo);
+        let runtime = LuaRuntime::load_from(Some(dir.path()), repo);
+        let clean = LuaRuntime::load_from(Some(config_dir_with("").path()), repo);
         let warnings = runtime.init_warnings();
         assert_eq!(warnings.len(), 1);
         assert!(warnings[0].contains("unknown group `nope`; listed under `commands`"));
@@ -259,7 +262,7 @@ mod tests {
 
     fn runtime_with(init: &str) -> LuaRuntime {
         let dir = config_dir_with(init);
-        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let runtime = LuaRuntime::load_from(Some(dir.path()), std::path::Path::new("."));
         assert_eq!(runtime.init_error(), None);
         assert!(
             runtime.init_warnings().is_empty(),
@@ -407,7 +410,7 @@ mod tests {
         let dir = config_dir_with(
             r#"kojutsu.command("dark", function() kojutsu.config.theme.accent = "red" end, {})"#,
         );
-        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let runtime = LuaRuntime::load_from(Some(dir.path()), std::path::Path::new("."));
         assert_eq!(runtime.init_error(), None);
         // Loading is not a plugin write; there is nothing to adopt yet.
         assert!(runtime.engine.take_config_change(&runtime.config).is_none());
@@ -423,7 +426,7 @@ mod tests {
         let dir = config_dir_with(
             r#"kojutsu.command("dark", function() kojutsu.config.theme.accent = "red" end, {})"#,
         );
-        let mut runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let mut runtime = LuaRuntime::load_from(Some(dir.path()), std::path::Path::new("."));
         let change = run_command(&runtime).expect("a change").expect("valid");
         runtime.config = std::rc::Rc::new(change);
         assert!(runtime.engine.take_config_change(&runtime.config).is_none());
@@ -432,7 +435,7 @@ mod tests {
     #[test]
     fn a_command_that_leaves_the_config_alone_reports_nothing() {
         let dir = config_dir_with(r#"kojutsu.command("noop", function() end, {})"#);
-        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let runtime = LuaRuntime::load_from(Some(dir.path()), std::path::Path::new("."));
         assert!(run_command(&runtime).is_none());
     }
 
@@ -441,7 +444,7 @@ mod tests {
         let dir = config_dir_with(
             r#"kojutsu.command("oops", function() kojutsu.config.theme.acccent = "red" end, {})"#,
         );
-        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let runtime = LuaRuntime::load_from(Some(dir.path()), std::path::Path::new("."));
         assert!(run_command(&runtime).expect("a change").is_err());
     }
 
@@ -451,7 +454,7 @@ mod tests {
 
     /// The runtime `dir` holds, and an app pointed at its config.
     fn running(dir: &tempfile::TempDir) -> (LuaRuntime, crate::app::App) {
-        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let runtime = LuaRuntime::load_from(Some(dir.path()), std::path::Path::new("."));
         assert_eq!(runtime.init_error(), None);
         let app = crate::app::App::new(String::new(), String::new(), runtime.config.clone());
         (runtime, app)
@@ -526,8 +529,31 @@ mod tests {
         assert_eq!(runtime.config.tab_width, 3);
         assert!(std::rc::Rc::ptr_eq(&app.config, &runtime.config));
         assert_eq!(command_names(&runtime), ["d"]);
-        let clean = LuaRuntime::load_from(config_dir_with("").path(), std::path::Path::new("."));
+        let clean =
+            LuaRuntime::load_from(Some(config_dir_with("").path()), std::path::Path::new("."));
         assert_eq!(binding_count(&runtime), binding_count(&clean) + 1);
+    }
+
+    /// With no config directory there is no script to run and no module
+    /// path to set, so nothing is ever read relative to the working
+    /// directory: the runtime is the built-in defaults, and a reload has
+    /// nothing to reload.
+    #[test]
+    fn without_a_config_directory_nothing_is_loaded() {
+        let repo = std::path::Path::new(".");
+        let mut runtime = LuaRuntime::load_from(None, repo);
+        let clean = LuaRuntime::load_from(Some(config_dir_with("").path()), repo);
+        assert_eq!(runtime.init_error(), None);
+        assert!(runtime.init_warnings().is_empty());
+        assert_eq!(*runtime.config, crate::config::Config::default());
+        assert_eq!(binding_count(&runtime), binding_count(&clean));
+        assert!(command_names(&runtime).is_empty());
+
+        let mut app = crate::app::App::new(String::new(), String::new(), runtime.config.clone());
+        reload(&mut runtime, &mut app);
+
+        assert!(error_status(&app).is_some_and(|msg| msg.contains("no config directory")));
+        assert!(app.take_repo_requests().is_empty());
     }
 
     /// `require` looks under the config directory only. Lua's own default
@@ -714,7 +740,7 @@ mod tests {
         let dir = config_dir_with(
             r#"kojutsu.hook("reload_config", "pre", function() kojutsu.log("saving state") end)"#,
         );
-        let mut runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let mut runtime = LuaRuntime::load_from(Some(dir.path()), std::path::Path::new("."));
         let mut app = crate::app::App::for_test();
         assert!(matches!(
             runtime.engine.run_pre_hooks(
@@ -739,7 +765,7 @@ mod tests {
     #[test]
     fn an_empty_config_directory_loads_clean() {
         let dir = tempfile::tempdir().unwrap();
-        let runtime = LuaRuntime::load_from(dir.path(), std::path::Path::new("."));
+        let runtime = LuaRuntime::load_from(Some(dir.path()), std::path::Path::new("."));
         assert_eq!(runtime.init_error(), None);
         assert_eq!(*runtime.config, crate::config::Config::default());
     }

@@ -331,10 +331,14 @@ impl LuaEngine {
         registry: &mut ActionRegistry,
         default_specs: &[BindingSpec],
         config: &mut crate::config::Config,
-        config_dir: &Path,
+        config_dir: Option<&Path>,
     ) -> Self {
         let mut engine = Self::without_config(repo_path);
-        if engine.init_error.is_none() {
+        // No config directory, no script: nothing is ever read relative to
+        // the working directory, which is usually a repository.
+        if let Some(config_dir) = config_dir
+            && engine.init_error.is_none()
+        {
             engine.load_init_script(registry, default_specs, config, config_dir);
         }
         engine
