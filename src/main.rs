@@ -127,8 +127,7 @@ fn main() -> Result<()> {
         let [content, output] = paths.as_slice() else {
             color_eyre::eyre::bail!("--apply-resolution requires CONTENT and OUTPUT paths");
         };
-        std::fs::copy(content, output)?;
-        let _ = std::fs::remove_file(content);
+        kojutsu::diff_tool::apply_resolution(content, output)?;
         return Ok(());
     }
 

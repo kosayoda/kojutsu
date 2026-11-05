@@ -100,7 +100,7 @@ pub(super) fn build_change_selection(app: &App) -> ChangeSelection {
                 return ChangeSelection::All;
             };
             match crate::diff_tool::write_selection(selections) {
-                Ok(path) => ChangeSelection::Lines(path),
+                Ok(file) => ChangeSelection::Lines(std::sync::Arc::new(file)),
                 Err(e) => {
                     tracing::warn!("failed to serialize line selections: {e}");
                     ChangeSelection::All

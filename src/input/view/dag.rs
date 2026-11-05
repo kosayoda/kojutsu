@@ -759,12 +759,12 @@ pub fn staged_resolution(
     content: &[u8],
     flags: CommandFlags,
 ) -> Option<JJCommand> {
-    match persist_resolved_content(content) {
-        Ok(content_path) => Some(JJCommand {
+    match crate::types::StagedFile::write(content) {
+        Ok(staged) => Some(JJCommand {
             kind: JJCommandKind::Resolve {
                 change_id,
                 path: Str::from(path.as_str()),
-                tool: crate::jj_command::ResolveTool::Content(content_path),
+                tool: crate::jj_command::ResolveTool::Content(std::sync::Arc::new(staged)),
             },
             flags,
         }),
@@ -793,17 +793,6 @@ fn apply_conflict_resolution(
         Some(cmd) => Action::run(cmd),
         None => Action::None,
     }
-}
-
-/// Persist resolved file content to a temp file for the
-/// `--apply-resolution` merge tool, which removes it after applying.
-fn persist_resolved_content(content: &[u8]) -> std::io::Result<std::path::PathBuf> {
-    use std::io::Write as _;
-    let mut tmp = tempfile::NamedTempFile::new()?;
-    tmp.write_all(content)?;
-    tmp.flush()?;
-    let (_, path) = tmp.keep().map_err(|e| e.error)?;
-    Ok(path)
 }
 
 #[cfg(test)]

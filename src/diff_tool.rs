@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use color_eyre::Result;
@@ -16,7 +15,7 @@ use color_eyre::eyre::Context;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
-use crate::types::{FileRef, Selection};
+use crate::types::{FileRef, Selection, StagedFile};
 
 /// What to keep of one file's changes.
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
@@ -71,14 +70,21 @@ fn selection_map<'a>(
     file_map
 }
 
-/// Write the selections to a temporary JSON file for the diff tool and
-/// return its path. The diff tool removes the file once it has read it.
-pub fn write_selection(selections: &HashSet<Selection>) -> Result<PathBuf> {
-    let mut tmp = tempfile::NamedTempFile::new()?;
-    serde_json::to_writer_pretty(&mut tmp, &selection_map(selections))?;
-    tmp.flush()?;
-    let (_, path) = tmp.keep()?;
-    Ok(path)
+/// Write the selections to a staged JSON file for the diff tool. The
+/// diff tool removes the file once it has read it; the command that
+/// names it removes it otherwise.
+pub fn write_selection(selections: &HashSet<Selection>) -> Result<StagedFile> {
+    let json = serde_json::to_vec_pretty(&selection_map(selections))?;
+    Ok(StagedFile::write(&json)?)
+}
+
+/// Merge tool mode: `content`, staged by the TUI, becomes the resolved
+/// file at `output`. `content` is removed whether or not that works, as
+/// it is read once.
+pub fn apply_resolution(content: &Path, output: &Path) -> std::io::Result<()> {
+    let copied = fs::copy(content, output);
+    let _ = fs::remove_file(content);
+    copied.map(|_| ())
 }
 
 /// Apply the selection to the diff directories.
@@ -621,6 +627,24 @@ mod tests {
             ),
             (("f", file(b"a\nb\nc\n"), None), removed(&[1, 2, 3]), None),
         ]);
+    }
+
+    /// The staged content is read once, so it is removed whether or not
+    /// it could be put in place.
+    #[test]
+    fn the_resolution_content_is_removed_even_when_it_cannot_be_applied() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = dir.path().join("content");
+        std::fs::write(&content, b"resolved\n").unwrap();
+        let unwritable = dir.path().join("missing").join("out");
+        assert!(super::apply_resolution(&content, &unwritable).is_err());
+        assert!(!content.exists());
+
+        std::fs::write(&content, b"resolved\n").unwrap();
+        let output = dir.path().join("out");
+        super::apply_resolution(&content, &output).unwrap();
+        assert_eq!(std::fs::read(output).unwrap(), b"resolved\n");
+        assert!(!content.exists());
     }
 
     /// A link on the left that leads out of its tree is never read

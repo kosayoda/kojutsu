@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use super::id::{RevisionArg, SmallVec, Str};
 
@@ -131,5 +132,47 @@ pub enum ChangeSelection {
     /// Include only these files (maps to `[FILESETS]` positional args).
     Files(Vec<Str>),
     /// Line-level selection (maps to --interactive --tool with selection JSON).
-    Lines(PathBuf),
+    Lines(Arc<StagedFile>),
+}
+
+/// A file written for jj's tool to read, owned by the command that names
+/// it: it lives as long as any clone of the command does and is removed
+/// with the last one, so a dismissed prompt, a refusal or a failed run
+/// leaves nothing behind. The tool removes it earlier when it runs.
+#[derive(Debug)]
+pub struct StagedFile(PathBuf);
+
+impl StagedFile {
+    /// A new private temp file holding `content`.
+    pub fn write(content: &[u8]) -> std::io::Result<Self> {
+        use std::io::Write as _;
+        let mut file = tempfile::NamedTempFile::new()?;
+        file.write_all(content)?;
+        file.flush()?;
+        let (_, path) = file.keep().map_err(|e| e.error)?;
+        Ok(Self(path))
+    }
+
+    /// Stand in for a file at `path` without writing one. Dropping it
+    /// still removes whatever is at `path`.
+    #[cfg(test)]
+    pub fn adopt(path: PathBuf) -> Self {
+        Self(path)
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+
+    /// A real, empty staged file, shared the way a command holds it.
+    #[cfg(test)]
+    pub fn empty() -> Arc<Self> {
+        Arc::new(Self::write(b"").expect("a temp file"))
+    }
+}
+
+impl Drop for StagedFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }

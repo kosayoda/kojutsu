@@ -356,7 +356,7 @@ pub enum ResolveTool {
     Default,
     /// Apply pre-resolved content from a file (written by the per-hunk
     /// picker) via a merge tool that invokes kojutsu itself.
-    Content(std::path::PathBuf),
+    Content(std::sync::Arc<crate::types::StagedFile>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -770,7 +770,7 @@ mod is_interactive_tests {
     #[test]
     fn a_squash_takes_the_terminal_only_for_a_diff_editor_or_message_editor() {
         let inline = || MessageMode::Inline("m".into());
-        let lines = || ChangeSelection::Lines(std::path::PathBuf::from("/tmp/sel.json"));
+        let lines = || ChangeSelection::Lines(crate::types::StagedFile::empty());
         let cases = [
             (
                 "captured",
@@ -1159,8 +1159,8 @@ mod self_tool_tests {
     #[test]
     fn a_self_invoking_tool_needs_the_executables_path() {
         let jj = InstalledJj::default();
-        let select = squash(ChangeSelection::Lines("/tmp/sel.json".into()));
-        let apply = resolve(ResolveTool::Content("/tmp/res".into()));
+        let select = squash(ChangeSelection::Lines(crate::types::StagedFile::empty()));
+        let apply = resolve(ResolveTool::Content(crate::types::StagedFile::empty()));
         for cmd in [&select, &apply] {
             let refused = cmd.refusal(jj, None).expect("refused");
             assert!(!refused.success);
@@ -1345,10 +1345,12 @@ mod absorb_tests {
     /// kojutsu's own diff tool, which keeps only the selected lines.
     #[test]
     fn absorbing_lines_goes_through_the_diff_tool() {
+        let staged = crate::types::StagedFile::empty();
+        let staged_path = staged.path().display().to_string();
         let cmd = JJCommand {
             kind: JJCommandKind::Absorb {
                 from: Some(RevisionArg::new("qpv")),
-                selection: ChangeSelection::Lines(std::path::PathBuf::from("/tmp/sel.json")),
+                selection: ChangeSelection::Lines(staged),
             },
             flags: CommandFlags::empty(),
         };
@@ -1358,7 +1360,37 @@ mod absorb_tests {
             args.windows(2).any(|w| w == ["--tool", "kojutsu-select"]),
             "{args:?}"
         );
-        assert!(args.iter().any(|a| a.contains("/tmp/sel.json")), "{args:?}");
+        assert!(args.iter().any(|a| a.contains(&staged_path)), "{args:?}");
+    }
+}
+
+#[cfg(test)]
+mod staged_file_tests {
+    use super::*;
+    use crate::types::{ChangeSelection, MessageMode, RevisionArg, StagedFile};
+
+    /// The file jj's tool reads lives exactly as long as some clone of the
+    /// command naming it: a retry still finds it, and the last clone going
+    /// takes it along.
+    #[test]
+    fn a_staged_file_goes_with_the_last_clone_of_its_command() {
+        let staged = StagedFile::empty();
+        let path = staged.path().to_path_buf();
+        let cmd = JJCommand {
+            kind: JJCommandKind::Squash {
+                change_id: RevisionArg::new("x"),
+                target: None,
+                message: MessageMode::Inline("m".into()),
+                selection: ChangeSelection::Lines(staged),
+            },
+            flags: CommandFlags::empty(),
+        };
+        let retry = cmd.clone();
+        assert!(path.exists());
+        drop(cmd);
+        assert!(path.exists());
+        drop(retry);
+        assert!(!path.exists());
     }
 }
 
@@ -1713,7 +1745,9 @@ mod jj_feature_tests {
             JjFeature::RunIgnoreChanges => run(CommandFlags::IGNORE_CHANGES),
             JjFeature::RunIgnoreErrors => run(CommandFlags::IGNORE_ERRORS),
             JjFeature::PushAllowConflicts => push(CommandFlags::ALLOW_CONFLICTS),
-            JjFeature::AbsorbLines => absorb(ChangeSelection::Lines("/tmp/sel.json".into())),
+            JjFeature::AbsorbLines => {
+                absorb(ChangeSelection::Lines(crate::types::StagedFile::empty()))
+            }
             JjFeature::TagTracking => cmd(
                 JJCommandKind::TagUntrack {
                     tags: smallvec::smallvec![TagRef {
@@ -1857,7 +1891,7 @@ mod jj_feature_tests {
                     JJCommandKind::Split {
                         change_id: RevisionArg::new("x"),
                         target: None,
-                        selection: ChangeSelection::Lines("/tmp/sel.json".into()),
+                        selection: ChangeSelection::Lines(crate::types::StagedFile::empty()),
                     },
                     CommandFlags::empty(),
                 ),

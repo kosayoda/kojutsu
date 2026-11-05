@@ -842,7 +842,7 @@ impl JJCommand {
                                 "merge-tools.kojutsu-apply.merge-args={}",
                                 toml_value(ConfigValue::from_iter([
                                     "--apply-resolution",
-                                    &content_path.display().to_string(),
+                                    &content_path.path().display().to_string(),
                                     "$output",
                                 ]))
                             )),
@@ -1013,7 +1013,7 @@ fn push_change_selection_through(
                     "merge-tools.kojutsu-select.edit-args={}",
                     toml_value(ConfigValue::from_iter([
                         "--apply-diff",
-                        &json_path.display().to_string(),
+                        &json_path.path().display().to_string(),
                         "$left",
                         "$right",
                     ]))
@@ -1183,7 +1183,7 @@ mod fileset_tests {
         for tool in [
             ResolveTool::Default,
             ResolveTool::Ours,
-            ResolveTool::Content("/tmp/content".into()),
+            ResolveTool::Content(crate::types::StagedFile::empty()),
         ] {
             let cmd = JJCommand {
                 kind: JJCommandKind::Resolve {
@@ -1262,7 +1262,9 @@ mod tool_config_tests {
                 change_id: RevisionArg::new("x"),
                 target: None,
                 message: MessageMode::Default,
-                selection: ChangeSelection::Lines(path.to_path_buf()),
+                selection: ChangeSelection::Lines(std::sync::Arc::new(
+                    crate::types::StagedFile::adopt(path.to_path_buf()),
+                )),
             },
             flags: CommandFlags::empty(),
         }
@@ -1303,7 +1305,9 @@ mod tool_config_tests {
                 kind: JJCommandKind::Resolve {
                     change_id: RevisionArg::new("x"),
                     path: "src/lib.rs".into(),
-                    tool: ResolveTool::Content(PathBuf::from(path)),
+                    tool: ResolveTool::Content(std::sync::Arc::new(
+                        crate::types::StagedFile::adopt(PathBuf::from(path)),
+                    )),
                 },
                 flags: CommandFlags::empty(),
             };

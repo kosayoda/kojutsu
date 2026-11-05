@@ -868,3 +868,55 @@ mod completion_tests {
         assert_eq!(app.pending_completion, None);
     }
 }
+
+#[cfg(test)]
+mod follow_up_tests {
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::app::{App, AppMode, FollowUpPrompt};
+    use crate::input::handle_key;
+    use crate::jj_command::{FollowUpAction, FollowUpOption, JJCommand, JJCommandKind};
+    use crate::keymap::{ActionRegistry, CommandFlags, Keymaps, default_bindings};
+    use crate::lua::LuaEngine;
+    use crate::types::{ChangeSelection, MessageMode, RevisionArg, StagedFile};
+
+    /// A command offered at a follow-up owns the selection file jj's tool
+    /// would read; declining the prompt drops the command, and the file
+    /// goes with it.
+    #[test]
+    fn declining_a_follow_up_leaves_no_staged_file_behind() {
+        let staged = StagedFile::empty();
+        let path = staged.path().to_path_buf();
+        let mut app = App::for_test();
+        app.mode = AppMode::FollowUp {
+            prompt: FollowUpPrompt::Text("squash the selected lines".into()),
+            options: vec![FollowUpOption {
+                key: 's',
+                label: "squash",
+                action: FollowUpAction::Execute(JJCommand {
+                    kind: JJCommandKind::Squash {
+                        change_id: RevisionArg::new("x"),
+                        target: None,
+                        message: MessageMode::Inline("m".into()),
+                        selection: ChangeSelection::Lines(staged),
+                    },
+                    flags: CommandFlags::empty(),
+                }),
+            }],
+            origin: None,
+        };
+        assert!(path.exists());
+
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let lua = LuaEngine::for_test();
+        handle_key(
+            &mut app,
+            &keymaps,
+            &lua,
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+        );
+
+        assert!(matches!(app.mode, AppMode::Normal));
+        assert!(!path.exists());
+    }
+}
