@@ -225,7 +225,7 @@ fn register_command(
                 HelpGroup::Commands
             }),
             keys: key_spec(&opts).map_err(with_name)?,
-            source: super::helpers::lua_source_info(lua, &func),
+            source: super::helpers::lua_source_info(&func),
             callback: lua.create_registry_value(func).map_err(|e| e.to_string())?,
             name: name.into(),
         })
@@ -278,7 +278,7 @@ fn register_hook(
             return Ok(());
         }
     };
-    let source = super::helpers::lua_source_info(lua, &func);
+    let source = super::helpers::lua_source_info(&func);
     for pattern in patterns {
         let actions = hook_action_set(lua, &pattern);
         let mut reg = shared.borrow_mut();
@@ -360,6 +360,11 @@ fn push_binding(shared: &Shared, at: &str, api: &str, parsed: Result<PendingBind
 }
 
 impl LuaEngine {
+    fn set_module_path(&self, path: &str) -> mlua::Result<()> {
+        let package: mlua::Table = self.lua.globals().get("package")?;
+        package.set("path", path)
+    }
+
     pub(super) fn load_init_script(
         &mut self,
         registry: &mut ActionRegistry,
@@ -367,18 +372,19 @@ impl LuaEngine {
         config: &mut crate::config::Config,
         config_dir: &std::path::Path,
     ) {
-        let init_path = config_dir.join("init.lua");
-        if !init_path.exists() {
+        // `require` finds modules under the config directory and nowhere
+        // else: Lua's default path ends in `./?.lua`, which is the launch
+        // directory, usually a repository, and `LUA_PATH` could add more.
+        let lua_dir = config_dir.join("lua").display().to_string();
+        let module_path = format!("{lua_dir}/?.lua;{lua_dir}/?/init.lua");
+        if let Err(e) = self.set_module_path(&module_path) {
+            self.init_error = Some(format!("failed to set the Lua module path: {e}"));
             return;
         }
 
-        let lua_dir = config_dir.join("lua");
-        if lua_dir.is_dir() {
-            let path_addition = format!("{}/?.lua", lua_dir.display());
-            let _ = self
-                .lua
-                .load(format!("package.path = package.path .. ';{path_addition}'"))
-                .exec();
+        let init_path = config_dir.join("init.lua");
+        if !init_path.exists() {
+            return;
         }
 
         let source = match std::fs::read_to_string(&init_path) {

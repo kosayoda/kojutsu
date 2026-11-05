@@ -371,16 +371,15 @@ pub(super) fn short_source(raw: &str) -> String {
         .unwrap_or_else(|| unwrapped.to_string())
 }
 
-pub(super) fn lua_source_info(lua: &mlua::Lua, func: &mlua::Function) -> String {
-    let result: mlua::Result<String> = (|| {
-        let debug: mlua::Table = lua.globals().get("debug")?;
-        let getinfo: mlua::Function = debug.get("getinfo")?;
-        let info: mlua::Table = getinfo.call::<mlua::Table>((func.clone(), "Sl"))?;
-        let raw: String = info.get("short_src").unwrap_or_else(|_| "?".into());
-        let line: i64 = info.get("linedefined").unwrap_or(0);
-        Ok(format!("{}:{line}", short_source(&raw)))
-    })();
-    result.unwrap_or_else(|_| "?".into())
+/// Where `func` was defined, as `file:line`; `[C]` for a function
+/// defined in Rust.
+pub(super) fn lua_source_info(func: &mlua::Function) -> String {
+    let info = func.info();
+    let source = short_source(info.short_src.as_deref().unwrap_or("?"));
+    match info.line_defined {
+        Some(line) => format!("{source}:{line}"),
+        None => source,
+    }
 }
 
 fn hook_matches(lua: &mlua::Lua, pattern: &str, action_name: &str) -> mlua::Result<bool> {

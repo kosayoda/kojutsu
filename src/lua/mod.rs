@@ -344,12 +344,11 @@ impl LuaEngine {
     /// this so they don't depend on whatever config the machine happens to
     /// have.
     fn without_config(repo_path: &Path) -> Self {
-        let lua = unsafe {
-            Lua::unsafe_new_with(
-                mlua::StdLib::ALL_SAFE | mlua::StdLib::DEBUG,
-                mlua::LuaOptions::default(),
-            )
-        };
+        // The safe set only: no `debug` to rewrite the API's upvalues, and
+        // mlua then keeps native modules out (`package.loadlib` and the C
+        // searchers fail), so a script is Lua and nothing more.
+        let lua = Lua::new_with(mlua::StdLib::ALL_SAFE, mlua::LuaOptions::default())
+            .expect("the safe standard libraries always load");
         lua.set_app_data(RefCell::new(LuaState::default()));
         let mut engine = LuaEngine {
             lua,

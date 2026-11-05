@@ -530,6 +530,31 @@ mod tests {
         assert_eq!(binding_count(&runtime), binding_count(&clean) + 1);
     }
 
+    /// `require` looks under the config directory only. Lua's own default
+    /// path ends in the current directory, usually a repository, where a
+    /// module of the right name would run as the user's config.
+    #[test]
+    fn modules_come_only_from_the_config_directory() {
+        let dir = config_dir_with("kojutsu.config.date_format = package.path");
+        let (runtime, _) = running(&dir);
+        let lua = dir.path().join("lua").display().to_string();
+        assert_eq!(
+            runtime.config.date_format,
+            format!("{lua}/?.lua;{lua}/?/init.lua")
+        );
+    }
+
+    /// A script gets no `debug` library, and native modules cannot be
+    /// loaded, so a config is Lua and nothing more.
+    #[test]
+    fn a_script_has_no_debug_library_and_loads_no_native_code() {
+        let dir = config_dir_with(
+            r#"kojutsu.config.date_format = tostring(debug) .. "|" .. tostring(pcall(package.loadlib, "/nonexistent.so", "luaopen_x"))"#,
+        );
+        let (runtime, _) = running(&dir);
+        assert_eq!(runtime.config.date_format, "nil|false");
+    }
+
     /// A fresh Lua has an empty `package.loaded`, so an edited module is
     /// read again rather than served from the cache.
     #[test]
