@@ -744,8 +744,11 @@ impl JJCommand {
                 selection,
                 ..
             } => {
-                let mut args = vec![sub("fix"), flag("-s")];
-                args.extend(change_ids.iter().map(rev));
+                let mut args = vec![sub("fix")];
+                for id in change_ids {
+                    args.push(flag("-s"));
+                    args.push(rev(id));
+                }
                 push_change_selection(&mut args, selection);
                 args
             }
@@ -1393,6 +1396,10 @@ mod shape_tests {
                 dest: dest(),
             },
             JJCommandKind::SimplifyParents { change_ids: two() },
+            JJCommandKind::Fix {
+                change_ids: two(),
+                selection: ChangeSelection::All,
+            },
             JJCommandKind::GitPushBookmark {
                 bookmarks: [BookmarkName::new("a"), BookmarkName::new("b")]
                     .into_iter()
