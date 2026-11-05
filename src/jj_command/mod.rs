@@ -1116,6 +1116,82 @@ mod operand_tests {
 }
 
 #[cfg(test)]
+mod self_tool_tests {
+    use std::path::Path;
+
+    use super::*;
+    use crate::jj_version::InstalledJj;
+    use crate::types::{ChangeSelection, MessageMode, RevisionArg};
+
+    fn squash(selection: ChangeSelection) -> JJCommand {
+        JJCommand {
+            kind: JJCommandKind::Squash {
+                change_id: RevisionArg::new("x"),
+                target: None,
+                message: MessageMode::Inline("m".into()),
+                selection,
+            },
+            flags: CommandFlags::empty(),
+        }
+    }
+
+    fn resolve(tool: ResolveTool) -> JJCommand {
+        JJCommand {
+            kind: JJCommandKind::Resolve {
+                change_id: RevisionArg::new("x"),
+                path: "f".into(),
+                tool,
+            },
+            flags: CommandFlags::empty(),
+        }
+    }
+
+    fn texts(cmd: &JJCommand, exe: Option<&Path>) -> Vec<String> {
+        cmd.tagged_args_with(exe)
+            .iter()
+            .map(|a| a.text.to_string())
+            .collect()
+    }
+
+    /// jj runs this binary as a tool by the path kojutsu hands it. With
+    /// the path unknown the tool is named but given no program, and the
+    /// command is refused, never left to jj's `PATH` lookup of the name.
+    #[test]
+    fn a_self_invoking_tool_needs_the_executables_path() {
+        let jj = InstalledJj::default();
+        let select = squash(ChangeSelection::Lines("/tmp/sel.json".into()));
+        let apply = resolve(ResolveTool::Content("/tmp/res".into()));
+        for cmd in [&select, &apply] {
+            let refused = cmd.refusal(jj, None).expect("refused");
+            assert!(!refused.success);
+            let output = String::from_utf8_lossy(refused.output.bytes()).into_owned();
+            assert!(output.contains("own executable"), "{output}");
+
+            let without = texts(cmd, None);
+            assert!(without.iter().any(|a| a == "--tool"), "{without:?}");
+            assert!(
+                !without.iter().any(|a| a.contains(".program=")),
+                "{without:?}"
+            );
+            let with = texts(cmd, Some(Path::new("/opt/kojutsu")));
+            assert!(
+                with.iter()
+                    .any(|a| a.contains(".program=") && a.contains("/opt/kojutsu")),
+                "{with:?}"
+            );
+            assert!(cmd.refusal(jj, Some(Path::new("/opt/kojutsu"))).is_none());
+        }
+        for cmd in [
+            squash(ChangeSelection::All),
+            resolve(ResolveTool::Default),
+            resolve(ResolveTool::Ours),
+        ] {
+            assert!(cmd.refusal(jj, None).is_none(), "{}", cmd.display());
+        }
+    }
+}
+
+#[cfg(test)]
 mod remote_url_tests {
     use super::*;
     use crate::types::RemoteName;

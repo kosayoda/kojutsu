@@ -103,11 +103,22 @@ impl JJCommand {
         }
     }
 
-    /// The result standing in for this command when `jj` is too old to take
-    /// it: reported, logged and handed on like any failure, without jj ever
-    /// being asked to parse a flag it would only reject.
+    /// The result standing in for this command when it cannot be run as
+    /// built: `jj` is too old to take it, or it names kojutsu as jj's tool
+    /// and kojutsu does not know where its own executable is. Reported,
+    /// logged and handed on like any failure, without jj ever being asked.
     pub fn refused_by(&self, jj: InstalledJj) -> Option<JJCommandResult> {
-        let reason = jj.refusal(self.unsupported_by(jj)?)?;
+        self.refusal(jj, super::args::self_exe())
+    }
+
+    pub(super) fn refusal(&self, jj: InstalledJj, exe: Option<&Path>) -> Option<JJCommandResult> {
+        let reason = match self.unsupported_by(jj) {
+            Some(feature) => jj.refusal(feature)?,
+            None if exe.is_none() && self.names_self_as_tool() => {
+                "kojutsu cannot find its own executable to run as jj's tool".to_string()
+            }
+            None => return None,
+        };
         Some(JJCommandResult {
             display: self.display(),
             display_parts: self.display_parts(),
@@ -115,6 +126,15 @@ impl JJCommand {
             success: false,
             cancelled: false,
             code: None,
+        })
+    }
+
+    /// Whether the command hands jj one of the tools that re-invoke this
+    /// binary, read off the built args like `--interactive` is.
+    fn names_self_as_tool(&self) -> bool {
+        self.args().windows(2).any(|pair| {
+            pair[0] == "--tool"
+                && (pair[1] == super::args::SELECT_TOOL || pair[1] == super::args::APPLY_TOOL)
         })
     }
 

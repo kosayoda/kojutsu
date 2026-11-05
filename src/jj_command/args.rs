@@ -1,3 +1,6 @@
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+
 use compact_str::format_compact;
 use jj_lib::config::ConfigValue;
 
@@ -156,6 +159,12 @@ impl JJCommand {
     }
 
     pub(super) fn tagged_args(&self) -> Vec<TaggedArg> {
+        self.tagged_args_with(self_exe())
+    }
+
+    /// The args with `exe` as the binary jj runs for the self-invoking
+    /// tools; `None` leaves those tools unconfigured.
+    pub(super) fn tagged_args_with(&self, exe: Option<&Path>) -> Vec<TaggedArg> {
         let flags = self.flags;
         let globals = flags & self.global_flags();
         let mut args = match &self.kind {
@@ -210,7 +219,7 @@ impl JJCommand {
                 ..
             } => {
                 let mut args = vec![sub("diffedit"), flag("-r"), rev(change_id)];
-                push_change_selection(&mut args, selection);
+                push_change_selection(&mut args, selection, exe);
                 args
             }
             JJCommandKind::Edit { change_id, .. } => {
@@ -277,7 +286,7 @@ impl JJCommand {
                     args.push(flag("--changes-in"));
                     args.push(rev(id));
                 }
-                push_change_selection(&mut args, selection);
+                push_change_selection(&mut args, selection, exe);
                 args
             }
             JJCommandKind::Split {
@@ -299,7 +308,7 @@ impl JJCommand {
                     args.push(flag(t.kind.flag()));
                     args.push(rev(&t.target));
                 }
-                push_change_selection(&mut args, selection);
+                push_change_selection(&mut args, selection, exe);
                 args
             }
             JJCommandKind::BookmarkCreate {
@@ -535,6 +544,7 @@ impl JJCommand {
                     &mut args,
                     selection,
                     flag("--interactive").needs(JjFeature::AbsorbLines),
+                    exe,
                 );
                 args
             }
@@ -551,7 +561,7 @@ impl JJCommand {
                     args.push(flag("-m"));
                     args.push(arg(msg.as_str()));
                 }
-                push_change_selection(&mut args, selection);
+                push_change_selection(&mut args, selection, exe);
                 args
             }
             JJCommandKind::Parallelize { change_ids, .. } => {
@@ -630,7 +640,7 @@ impl JJCommand {
                         args.push(rev(&t.target));
                     }
                 }
-                push_change_selection(&mut args, selection);
+                push_change_selection(&mut args, selection, exe);
                 args
             }
             JJCommandKind::WorkspaceAdd {
@@ -749,7 +759,7 @@ impl JJCommand {
                     args.push(flag("-s"));
                     args.push(rev(id));
                 }
-                push_change_selection(&mut args, selection);
+                push_change_selection(&mut args, selection, exe);
                 args
             }
             JJCommandKind::Run {
@@ -825,7 +835,7 @@ impl JJCommand {
                     ResolveTool::Theirs => args.push(flag("--tool=:theirs")),
                     ResolveTool::Default => {}
                     ResolveTool::Content(content_path) => {
-                        args.extend(self_invoking_tool("kojutsu-apply"));
+                        args.extend(self_invoking_tool(APPLY_TOOL, exe));
                         args.extend([
                             flag("--config"),
                             arg(format!(
@@ -972,8 +982,12 @@ fn push_remotes(
     }
 }
 
-fn push_change_selection(args: &mut Vec<TaggedArg>, selection: &ChangeSelection) {
-    push_change_selection_through(args, selection, flag("--interactive"));
+fn push_change_selection(
+    args: &mut Vec<TaggedArg>,
+    selection: &ChangeSelection,
+    exe: Option<&Path>,
+) {
+    push_change_selection_through(args, selection, flag("--interactive"), exe);
 }
 
 /// [`push_change_selection`], with the flag that opens the command's diff
@@ -983,6 +997,7 @@ fn push_change_selection_through(
     args: &mut Vec<TaggedArg>,
     selection: &ChangeSelection,
     interactive: TaggedArg,
+    exe: Option<&Path>,
 ) {
     match selection {
         ChangeSelection::All => {}
@@ -991,7 +1006,7 @@ fn push_change_selection_through(
         }
         ChangeSelection::Lines(json_path) => {
             args.push(interactive);
-            args.extend(self_invoking_tool("kojutsu-select"));
+            args.extend(self_invoking_tool(SELECT_TOOL, exe));
             args.extend([
                 flag("--config"),
                 arg(format!(
@@ -1016,21 +1031,35 @@ fn push_change_selection_through(
     }
 }
 
+/// The merge tools that re-invoke the running kojutsu binary.
+pub(super) const SELECT_TOOL: &str = "kojutsu-select";
+pub(super) const APPLY_TOOL: &str = "kojutsu-apply";
+
+/// Where this binary is, for jj to run it as a tool. Resolved once. `None`
+/// means the self-invoking tools cannot be configured; their commands are
+/// refused rather than left to jj's `PATH` lookup of a bare name.
+pub(super) fn self_exe() -> Option<&'static Path> {
+    static EXE: OnceLock<Option<PathBuf>> = OnceLock::new();
+    EXE.get_or_init(|| std::env::current_exe().ok()).as_deref()
+}
+
 /// Configure a merge tool that re-invokes the running kojutsu binary:
 /// `--tool <name> --config merge-tools.<name>.program=<exe>`. Callers
 /// append the tool-specific `*-args` and any extra configs. Single home
-/// for the injection-sensitive program-path construction.
-fn self_invoking_tool(name: &str) -> Vec<TaggedArg> {
-    let exe = std::env::current_exe().unwrap_or_else(|_| "kojutsu".into());
-    vec![
-        flag("--tool"),
-        arg(name.to_string()),
-        flag("--config"),
-        arg(format!(
-            "merge-tools.{name}.program={}",
-            toml_value(exe.display().to_string())
-        )),
-    ]
+/// for the injection-sensitive program-path construction. Without `exe`
+/// the tool is named but given no program, so jj can only refuse it.
+fn self_invoking_tool(name: &str, exe: Option<&Path>) -> Vec<TaggedArg> {
+    let mut args = vec![flag("--tool"), arg(name.to_string())];
+    if let Some(exe) = exe {
+        args.extend([
+            flag("--config"),
+            arg(format!(
+                "merge-tools.{name}.program={}",
+                toml_value(exe.display().to_string())
+            )),
+        ]);
+    }
+    args
 }
 
 fn fileset_arg(path: &str) -> TaggedArg {
