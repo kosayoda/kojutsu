@@ -85,6 +85,13 @@ pub fn write_selection(selections: &HashSet<Selection>) -> Result<PathBuf> {
 ///
 /// `left_dir` is the "before" state, `right_dir` is the "after" state.
 /// We modify `right_dir` in place: unselected changes are reverted to `left_dir`.
+///
+/// Both trees come from the repository, links included, so a path is only
+/// used under a tree when every directory above it is a real directory
+/// (see [`Tree::under`]). A link among the ancestors on the left means the
+/// left tree has no such file; on the right it means the user kept a link
+/// where an unselected change needs a directory, which cannot both hold,
+/// so the whole apply fails and jj applies nothing.
 pub fn apply(selection_path: &Path, left_dir: &Path, right_dir: &Path) -> Result<()> {
     let json = fs::read_to_string(selection_path).wrap_err_with(|| {
         format!(
@@ -95,77 +102,149 @@ pub fn apply(selection_path: &Path, left_dir: &Path, right_dir: &Path) -> Result
     let file_map: HashMap<String, FileSelection> =
         serde_json::from_str(&json).wrap_err("failed to parse selection JSON")?;
 
-    // Files and links in right_dir (the "after" state).
-    for entry in WalkDir::new(right_dir) {
-        let entry = entry?;
-        if entry.file_type().is_dir() {
-            continue;
-        }
-        let rel_path = entry
-            .path()
-            .strip_prefix(right_dir)
-            .wrap_err("failed to strip right_dir prefix")?;
-        let rel_str = rel_path.to_string_lossy();
-        let left_path = left_dir.join(rel_path);
+    let mut left = Tree::new(left_dir);
+    let mut right = Tree::new(right_dir);
 
-        match file_map.get(rel_str.as_ref()) {
-            Some(FileSelection::Full) => {
+    // Files and links in right_dir (the "after" state).
+    for rel_path in right.entries()? {
+        let right_path = right_dir.join(&rel_path);
+        let left_path = left.under(&rel_path).filter(|p| present(p));
+        let left_is_link = left_path.as_deref().is_some_and(is_link);
+
+        match (file_map.get(rel_path.to_string_lossy().as_ref()), left_path) {
+            (Some(FileSelection::Full), _) => {
                 // Keep right as-is (all changes included).
             }
             // A link's change is whole: selecting any of it selects all of it.
-            Some(FileSelection::Lines { .. })
-                if entry.file_type().is_symlink() || is_link(&left_path) => {}
-            Some(FileSelection::Lines { selected }) => {
+            (Some(FileSelection::Lines { .. }), _) if is_link(&right_path) || left_is_link => {}
+            (Some(FileSelection::Lines { selected }), left_path) => {
                 // Partial: reconstruct file with only selected changes.
-                let left_content = if present(&left_path) {
-                    fs::read(&left_path)?
-                } else {
-                    Vec::new() // new file -- left doesn't exist
+                let left_content = match left_path {
+                    Some(left_path) => fs::read(left_path)?,
+                    None => Vec::new(), // new file -- left doesn't exist
                 };
-                let right_content = fs::read(entry.path())?;
+                let right_content = fs::read(&right_path)?;
                 let output = apply_partial(&left_content, &right_content, selected);
-                fs::write(entry.path(), output)?;
+                fs::write(&right_path, output)?;
             }
             // Not selected: revert to left (no changes).
-            None if present(&left_path) => restore(&left_path, entry.path())?,
+            (None, Some(left_path)) => restore(&left_path, &right_path)?,
             // Added but not selected: delete from right.
-            None => fs::remove_file(entry.path())?,
+            (None, None) => fs::remove_file(&right_path)?,
         }
     }
 
     // Files and links in left_dir but not right_dir (deletions).
-    for entry in WalkDir::new(left_dir) {
-        let entry = entry?;
-        if entry.file_type().is_dir() {
+    for rel_path in left.entries()? {
+        let left_path = left_dir.join(&rel_path);
+        let selection = file_map.get(rel_path.to_string_lossy().as_ref());
+        let keep_deleted = match selection {
+            // Deletion was selected -- keep it deleted.
+            Some(FileSelection::Full) => true,
+            Some(FileSelection::Lines { .. }) => is_link(&left_path),
+            None => false,
+        };
+        if keep_deleted {
             continue;
         }
-        let rel_path = entry
-            .path()
-            .strip_prefix(left_dir)
-            .wrap_err("failed to strip left_dir prefix")?;
-        let right_path = right_dir.join(rel_path);
-        if present(&right_path) {
-            continue;
-        }
-        match file_map.get(rel_path.to_string_lossy().as_ref()) {
-            Some(FileSelection::Full) => {
-                // Deletion was selected -- keep it deleted.
+        let rel = rel_path.display();
+        let Some(right_path) = right.under(&rel_path) else {
+            color_eyre::eyre::bail!(
+                "`{rel}` cannot be put back: a link or file kept in the result stands where its directory would be"
+            );
+        };
+        match right_path.symlink_metadata() {
+            // Right has the path too; the first loop settled it.
+            Ok(meta) if !meta.is_dir() => continue,
+            // A directory took the path's place. Empty, it is only what
+            // reverting its files left behind; otherwise files were kept in
+            // it, and the left side's file or link cannot stand there too.
+            Ok(_) => {
+                fs::remove_dir(&right_path).wrap_err_with(|| {
+                    format!("`{rel}` cannot be put back: files kept in the result live under it")
+                })?;
+                right.forget(&rel_path);
             }
-            Some(FileSelection::Lines { .. }) if entry.file_type().is_symlink() => {}
+            Err(_) => {}
+        }
+        match selection {
             Some(FileSelection::Lines { selected }) => {
                 // The file comes back without its selected lines; with every
                 // line selected, nothing of it is left and it stays deleted.
-                let kept = apply_partial(&fs::read(entry.path())?, &[], selected);
+                let kept = apply_partial(&fs::read(&left_path)?, &[], selected);
                 if !kept.is_empty() {
-                    restore(entry.path(), &right_path)?;
+                    restore(&left_path, &right_path)?;
                     fs::write(&right_path, kept)?;
                 }
             }
-            None => restore(entry.path(), &right_path)?,
+            _ => restore(&left_path, &right_path)?,
         }
     }
 
     Ok(())
+}
+
+/// One of jj's diff directories. Paths are only built under it through
+/// real directories: a link among the ancestors would resolve to wherever
+/// the repository pointed it, which may be outside the tree.
+struct Tree<'a> {
+    root: &'a Path,
+    /// Directories already found to be real, relative to `root`.
+    real_dirs: HashSet<PathBuf>,
+}
+
+impl<'a> Tree<'a> {
+    fn new(root: &'a Path) -> Self {
+        Self {
+            root,
+            real_dirs: HashSet::new(),
+        }
+    }
+
+    /// Every file and link in the tree, relative to the root, collected
+    /// before anything is written so the walk never sees its own changes.
+    /// Links are not followed, so a link to a directory is a leaf.
+    fn entries(&self) -> Result<Vec<PathBuf>> {
+        let mut paths = Vec::new();
+        for entry in WalkDir::new(self.root) {
+            let entry = entry?;
+            if entry.file_type().is_dir() {
+                continue;
+            }
+            let rel = entry
+                .path()
+                .strip_prefix(self.root)
+                .wrap_err("walked outside the diff directory")?;
+            paths.push(rel.to_path_buf());
+        }
+        Ok(paths)
+    }
+
+    /// `rel` under this tree, provided everything between the root and
+    /// its last component is a real directory or does not exist yet.
+    /// `None` when a link or a file stands in the way.
+    fn under(&mut self, rel: &Path) -> Option<PathBuf> {
+        let mut dir = PathBuf::new();
+        for component in rel.parent()?.components() {
+            dir.push(component);
+            if self.real_dirs.contains(&dir) {
+                continue;
+            }
+            match self.root.join(&dir).symlink_metadata() {
+                Ok(meta) if meta.is_dir() => {
+                    self.real_dirs.insert(dir.clone());
+                }
+                Ok(_) => return None,
+                Err(_) => {}
+            }
+        }
+        Some(self.root.join(rel))
+    }
+
+    /// The directory at `rel` is gone.
+    fn forget(&mut self, rel: &Path) {
+        self.real_dirs.remove(rel);
+    }
 }
 
 /// Whether anything, a dangling link included, is at `path`.
@@ -178,18 +257,20 @@ fn is_link(path: &Path) -> bool {
         .is_ok_and(|m| m.file_type().is_symlink())
 }
 
-/// Put `from`, a file or a link, at `to` in place of whatever is there.
-/// What is there is removed first, so a link at `to` is replaced rather
-/// than written through.
+/// Put `from` at `to` in place of whatever is there. What is there is
+/// removed first, so a link at `to` is replaced rather than written
+/// through. A directory at `from` only clears `to`: its files come back
+/// one by one from the walk of the left tree.
 fn restore(from: &Path, to: &Path) -> Result<()> {
     if present(to) {
         fs::remove_file(to)?;
     } else if let Some(parent) = to.parent() {
         fs::create_dir_all(parent)?;
     }
-    if is_link(from) {
+    let from_type = from.symlink_metadata()?.file_type();
+    if from_type.is_symlink() {
         std::os::unix::fs::symlink(fs::read_link(from)?, to)?;
-    } else {
+    } else if !from_type.is_dir() {
         fs::copy(from, to)?;
     }
     Ok(())
@@ -276,7 +357,7 @@ fn apply_partial(left: &[u8], right: &[u8], selected: &[SelectedLine]) -> Vec<u8
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use super::{FileSelection, SelectedLine, apply, apply_partial, selection_map};
     use crate::types::{ChangeId, CommitId, CommitRef, FileRef, RepoPath, Selection};
@@ -368,36 +449,76 @@ mod tests {
     /// A path and what is at it before and after the change.
     type Sides = (&'static str, Option<Entry>, Option<Entry>);
 
+    /// Diff directories as jj lays them out, beside an `outside` directory
+    /// that no link from either tree should ever lead into.
+    struct Dirs {
+        _dir: tempfile::TempDir,
+        left: PathBuf,
+        right: PathBuf,
+        outside: PathBuf,
+    }
+
+    fn dirs() -> Dirs {
+        let dir = tempfile::tempdir().unwrap();
+        let dirs = Dirs {
+            left: dir.path().join("left"),
+            right: dir.path().join("right"),
+            outside: dir.path().join("outside"),
+            _dir: dir,
+        };
+        for d in [&dirs.left, &dirs.right, &dirs.outside] {
+            std::fs::create_dir(d).unwrap();
+        }
+        dirs
+    }
+
+    fn put(root: &Path, path: &str, entry: &Option<Entry>) {
+        let at = root.join(path);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        match entry {
+            Some(Entry::File(content)) => std::fs::write(at, content).unwrap(),
+            Some(Entry::Link(target)) => std::os::unix::fs::symlink(target, at).unwrap(),
+            None => {}
+        }
+    }
+
+    /// What `path` holds under `root`; a directory reads as a file holding
+    /// its entry names.
+    fn at(root: &Path, path: &str) -> Option<Entry> {
+        let at = root.join(path);
+        let meta = at.symlink_metadata().ok()?;
+        Some(if meta.file_type().is_symlink() {
+            Entry::Link(std::fs::read_link(at).unwrap())
+        } else if meta.is_dir() {
+            let mut names: Vec<String> = std::fs::read_dir(at)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            Entry::File(names.join(",").into_bytes())
+        } else {
+            Entry::File(std::fs::read(at).unwrap())
+        })
+    }
+
+    fn run(dirs: &Dirs, selection: &HashMap<&str, FileSelection>) -> color_eyre::Result<()> {
+        let selection_path = dirs._dir.path().join("selection.json");
+        std::fs::write(&selection_path, serde_json::to_vec(selection).unwrap()).unwrap();
+        apply(&selection_path, &dirs.left, &dirs.right)
+    }
+
     /// Run `apply` over diff directories holding `files`, and read back
     /// what each path holds on the right.
     fn apply_to(files: &[Sides], selection: &HashMap<&str, FileSelection>) -> Vec<Option<Entry>> {
-        let dir = tempfile::tempdir().unwrap();
-        let (left, right) = (dir.path().join("left"), dir.path().join("right"));
+        let dirs = dirs();
         for (path, before, after) in files {
-            for (root, entry) in [(&left, before), (&right, after)] {
-                let at = root.join(path);
-                std::fs::create_dir_all(at.parent().unwrap()).unwrap();
-                match entry {
-                    Some(Entry::File(content)) => std::fs::write(at, content).unwrap(),
-                    Some(Entry::Link(target)) => std::os::unix::fs::symlink(target, at).unwrap(),
-                    None => {}
-                }
-            }
+            put(&dirs.left, path, before);
+            put(&dirs.right, path, after);
         }
-        let selection_path = dir.path().join("selection.json");
-        std::fs::write(&selection_path, serde_json::to_vec(selection).unwrap()).unwrap();
-        apply(&selection_path, &left, &right).unwrap();
+        run(&dirs, selection).unwrap();
         files
             .iter()
-            .map(|(path, _, _)| {
-                let at = right.join(path);
-                let meta = at.symlink_metadata().ok()?;
-                Some(if meta.file_type().is_symlink() {
-                    Entry::Link(std::fs::read_link(at).unwrap())
-                } else {
-                    Entry::File(std::fs::read(at).unwrap())
-                })
-            })
+            .map(|(path, _, _)| at(&dirs.right, path))
             .collect()
     }
 
@@ -500,5 +621,91 @@ mod tests {
             ),
             (("f", file(b"a\nb\nc\n"), None), removed(&[1, 2, 3]), None),
         ]);
+    }
+
+    /// A link on the left that leads out of its tree is never read
+    /// through: the left tree simply has nothing under it. An unselected
+    /// file there is an addition to drop, and once the directory is empty
+    /// the link takes its place again. Files kept under it leave nowhere
+    /// for the link, so the apply fails rather than lose the kept files
+    /// or the link's deletion.
+    #[test]
+    fn a_link_on_the_left_is_never_read_through() {
+        let full = || Some(FileSelection::Full);
+        let a_line = || lines([SelectedLine::Added { new_line: 1 }]);
+        let cases = [
+            (None, None, Ok(link("../outside"))),
+            (None, a_line(), Err(())),
+            (None, full(), Err(())),
+            (full(), full(), Ok(Some(Entry::File(b"secret".to_vec())))),
+        ];
+        for (d, planted, expected) in cases {
+            let dirs = dirs();
+            std::fs::write(dirs.outside.join("secret"), b"REAL\n").unwrap();
+            put(&dirs.left, "d", &link("../outside"));
+            put(&dirs.right, "d/secret", &file(b"planted\n"));
+            let selection: HashMap<&str, FileSelection> = [("d", d), ("d/secret", planted)]
+                .into_iter()
+                .filter_map(|(k, v)| Some((k, v?)))
+                .collect();
+            let name = format!("{selection:?}");
+            let result = run(&dirs, &selection);
+            match expected {
+                Ok(entry) => {
+                    result.unwrap_or_else(|e| panic!("{name}: {e}"));
+                    assert_eq!(at(&dirs.right, "d"), entry, "{name}");
+                }
+                Err(()) => assert!(result.is_err(), "{name}"),
+            }
+            assert_eq!(at(&dirs.outside, "secret"), file(b"REAL\n"), "{name}");
+            // With the link back in place `d/secret` is `outside/secret`
+            // itself; while `d` is a directory the planted file must hold
+            // what was planted, never what the link leads to.
+            if !matches!(at(&dirs.right, "d"), Some(Entry::Link(_))) {
+                assert_eq!(at(&dirs.right, "d/secret"), file(b"planted\n"), "{name}");
+            }
+        }
+    }
+
+    /// A link kept on the right is never written through: an unselected
+    /// deletion under it cannot be put back, so the apply fails and the
+    /// link's target is untouched. With the link's own change unselected
+    /// the directory comes back, file by file.
+    #[test]
+    fn a_link_on_the_right_is_never_written_through() {
+        for (d, expected) in [(Some(FileSelection::Full), Err(())), (None, Ok(()))] {
+            let dirs = dirs();
+            put(&dirs.left, "d/f", &file(b"F\n"));
+            put(&dirs.right, "d", &link("../outside"));
+            let selection: HashMap<&str, FileSelection> = d.into_iter().map(|s| ("d", s)).collect();
+            let name = format!("{selection:?}");
+            let result = run(&dirs, &selection);
+            match expected {
+                Ok(()) => {
+                    result.unwrap_or_else(|e| panic!("{name}: {e}"));
+                    assert_eq!(
+                        at(&dirs.right, "d"),
+                        Some(Entry::File(b"f".to_vec())),
+                        "{name}"
+                    );
+                    assert_eq!(at(&dirs.right, "d/f"), file(b"F\n"), "{name}");
+                }
+                Err(()) => assert!(result.is_err(), "{name}"),
+            }
+            assert_eq!(at(&dirs.outside, "f"), None, "{name}");
+        }
+    }
+
+    /// A directory replaced by a file comes back with its files when the
+    /// change is unselected.
+    #[test]
+    fn an_unselected_directory_comes_back_file_by_file() {
+        let dirs = dirs();
+        put(&dirs.left, "d/f", &file(b"F\n"));
+        put(&dirs.left, "d/g", &file(b"G\n"));
+        put(&dirs.right, "d", &file(b"x\n"));
+        run(&dirs, &HashMap::new()).unwrap();
+        assert_eq!(at(&dirs.right, "d/f"), file(b"F\n"));
+        assert_eq!(at(&dirs.right, "d/g"), file(b"G\n"));
     }
 }
