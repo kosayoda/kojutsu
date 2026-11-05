@@ -193,6 +193,7 @@ impl App {
                     self.anchor_list_cursor();
                     self.clear_info_status();
                     self.run_jobs = data.run_jobs;
+                    self.editor = data.editor;
                     self.revset.current = data.revset.into();
                     self.revset.draft = None;
                     self.revset.pending = None;
@@ -1062,6 +1063,7 @@ mod repo_result_tests {
                 workspace_entries: Vec::new(),
                 warnings: warnings.iter().map(|w| (*w).to_string()).collect(),
                 run_jobs: None,
+                editor: Default::default(),
                 done: true,
             })),
         });

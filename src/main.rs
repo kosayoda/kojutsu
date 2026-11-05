@@ -14,6 +14,7 @@ use kojutsu::keymap::AppAction;
 use kojutsu::repo::JjRepo;
 use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind};
 use kojutsu::terminal::{TerminalEvents, spawn_terminal_events};
+use kojutsu::types::EditorCommand;
 use kojutsu::types::JumpTarget;
 use kojutsu::ui;
 
@@ -510,7 +511,9 @@ impl Session {
             }
             Action::EditWorkingCopyFile { path, line } => {
                 let path = self.repo_path.join(path);
-                self.screen.suspended(|| open_in_editor(&path, line));
+                let editor = self.app.editor.clone();
+                self.screen
+                    .suspended(|| open_in_editor(&editor, &path, line));
             }
             Action::EditConflictFile {
                 change_id,
@@ -518,9 +521,10 @@ impl Session {
                 content,
                 flags,
             } => {
+                let editor = self.app.editor.clone();
                 let edited = self
                     .screen
-                    .suspended(|| edit_in_editor(&content, path.as_str()));
+                    .suspended(|| edit_in_editor(&editor, &content, path.as_str()));
                 match edited {
                     EditOutcome::Edited(edited) => {
                         if let Some(cmd) = kojutsu::input::staged_resolution(
@@ -545,9 +549,10 @@ impl Session {
                 seed,
                 flags,
             } => {
+                let editor = self.app.editor.clone();
                 let edited = self
                     .screen
-                    .suspended(|| edit_in_editor(&seed, path.as_str()));
+                    .suspended(|| edit_in_editor(&editor, &seed, path.as_str()));
                 match edited {
                     EditOutcome::Edited(edited) => {
                         kojutsu::input::complete_hunk_edit(
@@ -577,11 +582,12 @@ impl Session {
                     flags: kojutsu::keymap::CommandFlags::empty(),
                 };
                 let path = self.repo_path.join(path);
+                let editor = self.app.editor.clone();
                 // One suspension for both, so the TUI doesn't flash between.
                 let result = self.screen.suspended(|| {
                     let result = run_in_foreground(&cmd, &self.repo_path);
                     if result.success {
-                        open_in_editor(&path, line);
+                        open_in_editor(&editor, &path, line);
                     }
                     result
                 });
@@ -659,9 +665,10 @@ impl Session {
     /// Open the revset in `$EDITOR` and load what comes back.
     fn edit_revset(&mut self) {
         let text = format!("{}\n", self.app.revset_input_text());
+        let editor = self.app.editor.clone();
         match self
             .screen
-            .suspended(|| edit_in_editor(text.as_bytes(), "revset"))
+            .suspended(|| edit_in_editor(&editor, text.as_bytes(), "revset"))
         {
             EditOutcome::Edited(edited) => {
                 let edited = String::from_utf8_lossy(&edited);
@@ -689,8 +696,9 @@ impl Session {
         let staged = temp_file_like(view.path.as_str(), &view.content);
         match staged {
             Ok(file) => {
+                let editor = self.app.editor.clone();
                 self.screen
-                    .suspended(|| open_in_editor(file.path(), view.line));
+                    .suspended(|| open_in_editor(&editor, file.path(), view.line));
             }
             Err(e) => self.app.set_error(format!("temp file: {e}")),
         }
@@ -816,16 +824,25 @@ fn update_revset(app: &mut App, revset_str: String) {
     app.request_revset_load(Some(revset_str), RevsetLoadKind::NoSnapshot);
 }
 
-/// Run `$EDITOR` with `args`. The caller hands it the terminal.
-fn run_editor(args: &[&std::ffi::OsStr]) -> std::io::Result<std::process::ExitStatus> {
-    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
-    std::process::Command::new(&editor).args(args).status()
+/// Run the editor with `args` after its own. The caller hands it the
+/// terminal.
+fn run_editor(
+    editor: &EditorCommand,
+    args: &[&std::ffi::OsStr],
+) -> std::io::Result<std::process::ExitStatus> {
+    std::process::Command::new(&editor.program)
+        .args(&editor.args)
+        .args(args)
+        .status()
 }
 
-/// Open `path` in `$EDITOR` at `line`.
-fn open_in_editor(path: &std::path::Path, line: usize) {
+/// Open `path` in the editor at `line`.
+fn open_in_editor(editor: &EditorCommand, path: &std::path::Path, line: usize) {
     let plus_line = format!("+{line}");
-    let _ = run_editor(&[std::ffi::OsStr::new(&plus_line), path.as_os_str()]);
+    let _ = run_editor(
+        editor,
+        &[std::ffi::OsStr::new(&plus_line), path.as_os_str()],
+    );
 }
 
 /// A temp file holding `content`, named after `path`'s file name and
@@ -866,12 +883,12 @@ enum EditOutcome {
 
 /// Open `content` in `$EDITOR` (in a temp file named like `path`) and
 /// report what happened. The caller hands it the terminal.
-fn edit_in_editor(content: &[u8], path: &str) -> EditOutcome {
+fn edit_in_editor(editor: &EditorCommand, content: &[u8], path: &str) -> EditOutcome {
     let file = match temp_file_like(path, content) {
         Ok(f) => f,
         Err(e) => return EditOutcome::Failed(format!("temp file: {e}")),
     };
-    match run_editor(&[file.path().as_os_str()]) {
+    match run_editor(editor, &[file.path().as_os_str()]) {
         Ok(s) if s.success() => match std::fs::read(file.path()) {
             Ok(edited) if edited != content => EditOutcome::Edited(edited),
             Ok(_) => EditOutcome::Unchanged,

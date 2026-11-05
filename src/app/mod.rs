@@ -287,6 +287,8 @@ pub struct App {
     pub run_history: Vec<String>,
     /// jj's `run.jobs` setting, as of the last repo load.
     pub run_jobs: Option<usize>,
+    /// The editor jj would open, from the last loaded repo config.
+    pub editor: crate::types::EditorCommand,
     pub repo_root: String,
     /// The `jj` commands run with, which decides what kojutsu may ask of it.
     pub jj: crate::jj_version::InstalledJj,
@@ -564,6 +566,7 @@ impl App {
             config,
             run_history: Vec::new(),
             run_jobs: None,
+            editor: Default::default(),
             repo_root,
             jj: crate::jj_version::InstalledJj::default(),
             activity_since: None,

@@ -159,6 +159,7 @@ pub struct RevsetData {
     pub warnings: Vec<String>,
     /// jj's `run.jobs` setting, the default offered for `jj run --jobs`.
     pub run_jobs: Option<usize>,
+    pub editor: crate::types::EditorCommand,
     /// Whether this is the complete revset. When `false`, the remaining
     /// entries follow as [`RepoResult::RevsetChunk`]s.
     pub done: bool,
@@ -754,6 +755,7 @@ fn stream_revset(
                 workspace_entries,
                 warnings: warnings.to_vec(),
                 run_jobs: repo.run_jobs(),
+                editor: repo.editor(),
                 done,
             })),
         })

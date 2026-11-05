@@ -279,6 +279,11 @@ impl JjRepo {
             .unwrap_or(DEFAULT)
     }
 
+    /// The editor to open files in, as jj would choose it.
+    pub fn editor(&self) -> crate::types::EditorCommand {
+        editor_command(self.settings.config(), |name| std::env::var(name).ok())
+    }
+
     /// jj's `run.jobs` setting, if set to a usable value.
     pub fn run_jobs(&self) -> Option<usize> {
         let jobs = self.settings.get::<i64>("run.jobs").ok()?;
@@ -406,6 +411,35 @@ where
 /// Mirrors jj-cli's `load_short_prefixes_expression`. Getting this wrong in
 /// either direction is user-visible: a wider set than jj's shows needlessly
 /// long IDs, a narrower one shows IDs that `jj` rejects as ambiguous.
+/// jj's editor resolution: `$JJ_EDITOR` overrides `ui.editor`, which the
+/// `$VISUAL` and `$EDITOR` of the environment only fill in when unset.
+/// jj's own fallback is `pico`; kojutsu's is `vi`, which is more often
+/// installed.
+fn editor_command(
+    config: &StackedConfig,
+    env: impl Fn(&str) -> Option<String>,
+) -> crate::types::EditorCommand {
+    use crate::types::EditorCommand;
+
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Setting {
+        Words(String),
+        Argv(Vec<String>),
+    }
+
+    let from_env = |name: &str| env(name).and_then(|s| EditorCommand::from_setting(&s));
+    let from_config = || match config.get::<Setting>("ui.editor").ok()? {
+        Setting::Words(words) => EditorCommand::from_setting(&words),
+        Setting::Argv(argv) => EditorCommand::from_words(argv),
+    };
+    from_env("JJ_EDITOR")
+        .or_else(from_config)
+        .or_else(|| from_env("VISUAL"))
+        .or_else(|| from_env("EDITOR"))
+        .unwrap_or_default()
+}
+
 fn short_prefixes_revset(config: &StackedConfig) -> Result<Option<String>> {
     let revset = match config
         .get::<String>("revsets.short-prefixes")
@@ -476,6 +510,52 @@ mod tests {
         let mut config = StackedConfig::empty();
         config.add_layer(ConfigLayer::parse(ConfigSource::User, toml).unwrap());
         config
+    }
+
+    fn env(vars: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let vars: Vec<(String, String)> = vars
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |name| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone())
+    }
+
+    fn editor(program: &str, args: &[&str]) -> crate::types::EditorCommand {
+        crate::types::EditorCommand {
+            program: program.into(),
+            args: args.iter().map(|a| a.to_string()).collect(),
+        }
+    }
+
+    /// `$JJ_EDITOR` beats `ui.editor`, which beats `$VISUAL`, which beats
+    /// `$EDITOR`; a string setting is split into words, an array taken as
+    /// given, and an empty one falls through.
+    #[test]
+    fn the_editor_is_chosen_as_jj_chooses_it() {
+        let set = config(r#"ui.editor = "code --wait""#);
+        let none = StackedConfig::empty();
+        let all = [("JJ_EDITOR", "jjed"), ("VISUAL", "v"), ("EDITOR", "e -x")];
+        assert_eq!(editor_command(&set, env(&all)), editor("jjed", &[]));
+        assert_eq!(
+            editor_command(&set, env(&all[1..])),
+            editor("code", &["--wait"])
+        );
+        assert_eq!(editor_command(&none, env(&all[1..])), editor("v", &[]));
+        assert_eq!(editor_command(&none, env(&all[2..])), editor("e", &["-x"]));
+        assert_eq!(editor_command(&none, env(&[])), editor("vi", &[]));
+
+        let array = config(r#"ui.editor = ["my editor", "--wait"]"#);
+        assert_eq!(
+            editor_command(&array, env(&[])),
+            editor("my editor", &["--wait"])
+        );
+        let quoted = config(r#"ui.editor = "'/opt/my editor/bin' -n""#);
+        assert_eq!(
+            editor_command(&quoted, env(&[])),
+            editor("/opt/my editor/bin", &["-n"])
+        );
+        let empty = config(r#"ui.editor = """#);
+        assert_eq!(editor_command(&empty, env(&all[2..])), editor("e", &["-x"]));
     }
 
     #[test]

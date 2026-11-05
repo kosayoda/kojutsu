@@ -34,6 +34,7 @@ pub(super) fn load(app: &mut App, entries: Vec<DagEntry>, done: bool) {
             workspace_entries: Vec::new(),
             warnings: Vec::new(),
             run_jobs: None,
+            editor: Default::default(),
             done,
         })),
     });

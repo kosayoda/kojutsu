@@ -463,3 +463,43 @@ pub enum ReadyCommand {
         selection: ChangeSelection,
     },
 }
+
+/// The editor kojutsu opens files in, resolved the way jj resolves its
+/// own: `$JJ_EDITOR`, then `ui.editor`, then `$VISUAL`, then `$EDITOR`.
+/// A string form is split into words; an array form is taken as given.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EditorCommand {
+    pub program: String,
+    pub args: Vec<String>,
+}
+
+impl EditorCommand {
+    /// What runs when nothing names an editor.
+    pub const FALLBACK: &str = "vi";
+
+    /// `words`, the first of which is the program; `None` when there are
+    /// none, so an empty or unparsable setting falls through.
+    pub fn from_words(words: Vec<String>) -> Option<Self> {
+        let mut words = words.into_iter();
+        let program = words.next().filter(|p| !p.is_empty())?;
+        Some(Self {
+            program,
+            args: words.collect(),
+        })
+    }
+
+    /// A setting as jj accepts it: one string to split into words, or an
+    /// array that already is the words.
+    pub fn from_setting(setting: &str) -> Option<Self> {
+        shlex::split(setting).and_then(Self::from_words)
+    }
+}
+
+impl Default for EditorCommand {
+    fn default() -> Self {
+        Self {
+            program: Self::FALLBACK.into(),
+            args: Vec::new(),
+        }
+    }
+}
