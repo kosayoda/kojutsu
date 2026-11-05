@@ -363,6 +363,19 @@ pub enum CommandPartKind {
     Revision,
     String,
     Fileset,
+    /// A git remote URL: shown with any password redacted.
+    Url,
+}
+
+/// `url` with its password, if it carries one, replaced the way gix
+/// displays it. Anything else, a local path included, is left as typed,
+/// since only the password is a secret and re-spelling could change it.
+fn redact_password(url: Str) -> Str {
+    gix::Url::from_bytes(url.as_bytes().into())
+        .ok()
+        .filter(|parsed| parsed.password().is_some())
+        .map(|parsed| Str::from(parsed.to_string()))
+        .unwrap_or(url)
 }
 
 #[derive(Clone)]
@@ -532,6 +545,10 @@ impl JJCommand {
         ];
         parts.extend(self.tagged_args().into_iter().map(
             |args::TaggedArg { text, kind, .. }| {
+                let text = match kind {
+                    CommandPartKind::Url => redact_password(text),
+                    _ => text,
+                };
                 // Quote whatever a shell would need quoted, whichever kind it is:
                 // the log line is there to be read and pasted, and an argument that
                 // arrived as one word has to leave as one word. jj's own flags and
@@ -929,6 +946,59 @@ mod jump_target_tests {
                 "{}",
                 command.display()
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod remote_url_tests {
+    use super::*;
+    use crate::types::RemoteName;
+
+    fn remote_cmd(kind: JJCommandKind) -> JJCommand {
+        JJCommand {
+            kind,
+            flags: CommandFlags::empty(),
+        }
+    }
+
+    fn set_url(url: &str) -> JJCommand {
+        remote_cmd(JJCommandKind::GitRemoteSetUrl {
+            name: RemoteName::new("origin"),
+            url: url.into(),
+            push: false,
+        })
+    }
+
+    fn add(url: &str) -> JJCommand {
+        remote_cmd(JJCommandKind::GitRemoteAdd {
+            name: RemoteName::new("origin"),
+            url: url.into(),
+        })
+    }
+
+    /// A password in a remote URL is a secret the command log must not
+    /// keep on screen, while jj still gets the URL whole. A URL without
+    /// one, a local path included, is shown exactly as typed.
+    #[test]
+    fn a_remote_urls_password_is_redacted_in_the_log_but_not_to_jj() {
+        let secret = "https://u:tok3n@host/r.git";
+        for cmd in [set_url(secret), add(secret)] {
+            let shown = cmd.display();
+            assert!(!shown.contains("tok3n"), "{shown}");
+            assert!(shown.ends_with(" https://u:redacted@host/r.git"), "{shown}");
+            assert!(cmd.args().iter().any(|a| a.as_str() == secret));
+        }
+        for url in [
+            "https://host/r.git",
+            "https://u@host/r.git",
+            "git@host:r.git",
+            "ssh://u@host/r",
+            "../elsewhere",
+            "/srv/repo",
+        ] {
+            let shown = set_url(url).display();
+            assert!(shown.ends_with(&format!(" {url}")), "{shown}");
         }
     }
 }

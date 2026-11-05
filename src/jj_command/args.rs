@@ -126,6 +126,10 @@ fn arg(text: impl Into<Str>) -> TaggedArg {
     TaggedArg::new(text, CommandPartKind::String)
 }
 
+fn url_arg(text: impl Into<Str>) -> TaggedArg {
+    TaggedArg::new(text, CommandPartKind::Url)
+}
+
 impl JJCommand {
     pub fn args(&self) -> Vec<Str> {
         self.tagged_args()
@@ -465,7 +469,7 @@ impl JJCommand {
                 sub("remote"),
                 sub("add"),
                 arg(name.as_str()),
-                arg(url.as_str()),
+                url_arg(url.as_str()),
             ],
             JJCommandKind::GitRemoteRemove { name } => {
                 vec![sub("git"), sub("remote"), sub("remove"), arg(name.as_str())]
@@ -489,7 +493,7 @@ impl JJCommand {
                 if *push {
                     args.push(flag("--push").needs(JjFeature::SeparatePushUrl));
                 }
-                args.push(arg(url.as_str()));
+                args.push(url_arg(url.as_str()));
                 args
             }
             JJCommandKind::GitColocation {
