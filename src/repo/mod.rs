@@ -594,6 +594,16 @@ mod tests {
         assert!(short_prefixes_revset(&config).is_err());
     }
 
+    /// The vendored jj-cli config has to be the one for the jj-lib built
+    /// against; build.rs only warns on a mismatch, so it fails here.
+    #[test]
+    fn the_vendored_jj_config_is_for_the_linked_jj_lib() {
+        assert_eq!(
+            env!("KOJUTSU_VENDORED_JJ_VERSION"),
+            env!("KOJUTSU_JJ_LIB_VERSION")
+        );
+    }
+
     #[test]
     fn the_vendored_jj_defaults_supply_the_fallback() {
         // The fallback above is only load-bearing while the vendored jj-cli

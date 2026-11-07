@@ -1,5 +1,6 @@
-/// Build script: record the jj-lib version Cargo.lock builds against, and
-/// warn if vendored jj-cli config files are stale relative to it.
+/// Build script: record the jj-lib version Cargo.lock builds against and
+/// the jj version the vendored jj-cli config files are for. A test holds
+/// the two equal; the warning here is only the early notice.
 fn main() {
     println!("cargo:rerun-if-changed=vendored/revsets.toml");
     println!("cargo:rerun-if-changed=Cargo.lock");
@@ -18,7 +19,13 @@ fn main() {
         println!("cargo:rustc-env=KOJUTSU_JJ_LIB_VERSION={version}");
     }
 
-    match (locked, extract_vendored_version(&revsets_toml)) {
+    let vendored = extract_vendored_version(&revsets_toml);
+    println!(
+        "cargo:rustc-env=KOJUTSU_VENDORED_JJ_VERSION={}",
+        vendored.as_deref().unwrap_or_default()
+    );
+
+    match (locked, vendored) {
         (Some(locked), Some(vendored)) if locked != vendored => {
             println!(
                 "cargo:warning=Vendored revsets.toml is for jj v{vendored}, \
