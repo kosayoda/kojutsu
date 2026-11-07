@@ -461,13 +461,15 @@ pub struct Invocation {
     pub toggles: Arc<[SubmenuToggle]>,
 }
 
-/// Parse ANSI-colored bytes into styled lines, falling back to plain text
-/// on malformed escape sequences.
+/// Parse ANSI-colored bytes into styled lines. Bytes that are not UTF-8
+/// show as U+FFFD rather than cutting the line short, and a malformed
+/// escape sequence falls back to plain text.
 pub fn parse_ansi_lines(output: &[u8]) -> Vec<ratatui::text::Line<'static>> {
     use ansi_to_tui::IntoText as _;
-    match output.into_text() {
-        Ok(text) => text.lines,
-        Err(_) => String::from_utf8_lossy(output)
+    let text = String::from_utf8_lossy(output);
+    match text.as_bytes().into_text() {
+        Ok(parsed) => parsed.lines,
+        Err(_) => text
             .lines()
             .map(|line| ratatui::text::Line::from(line.to_string()))
             .collect(),
@@ -1378,5 +1380,19 @@ mod initial_revset_tests {
     #[test]
     fn without_presets_jj_decides() {
         assert_eq!(initial_revset(&[], None, Some("mine")), (None, None));
+    }
+}
+
+#[cfg(test)]
+mod ansi_tests {
+    use super::parse_ansi_lines;
+
+    /// A line with a byte that is not UTF-8 keeps the rest of its text,
+    /// the byte shown as the replacement character.
+    #[test]
+    fn a_line_that_is_not_utf8_is_shown_rather_than_cut() {
+        let lines = parse_ansi_lines(b"first\nbad \xff byte\n");
+        let texts: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        assert_eq!(texts, ["first", "bad \u{fffd} byte"]);
     }
 }
