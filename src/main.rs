@@ -277,8 +277,11 @@ fn main() -> Result<()> {
         event_tx,
         screen,
     };
-    session.run(&event_rx)?;
-    session.close()
+    // Close whether or not the loop failed, so an error is printed to a
+    // restored terminal rather than into the alternate screen.
+    let outcome = session.run(&event_rx);
+    let closed = session.close();
+    outcome.and(closed)
 }
 
 /// The terminal and the thread reading its events. They are handed to a
