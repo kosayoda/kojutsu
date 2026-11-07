@@ -4,6 +4,19 @@ use std::borrow::Cow;
 
 use crate::types::Str;
 
+/// `timestamp` in its author's zone, spelled by a strftime `format`. An
+/// invalid format is an error rather than a panic, so a bad
+/// `date_format` is reported when read and can never fail a draw.
+pub fn format_at(
+    timestamp: jiff::Timestamp,
+    tz_offset_seconds: i32,
+    format: &str,
+) -> Result<String, jiff::Error> {
+    let tz = jiff::tz::Offset::from_seconds(tz_offset_seconds).unwrap_or(jiff::tz::Offset::UTC);
+    let zoned = timestamp.to_zoned(jiff::tz::TimeZone::fixed(tz));
+    jiff::fmt::strtime::BrokenDownTime::from(&zoned).to_string(format)
+}
+
 /// How long ago a millisecond Unix timestamp was, as jj phrases it
 /// ("5 hours ago").
 pub fn relative(millis: i64) -> Str {
@@ -68,5 +81,18 @@ fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> Cow<'static, str> 
         "1 year ago".into()
     } else {
         format!("{years} years ago").into()
+    }
+}
+
+#[cfg(test)]
+mod format_tests {
+    use super::format_at;
+
+    #[test]
+    fn a_format_is_applied_in_the_authors_zone_or_rejected() {
+        let noon_utc = jiff::Timestamp::from_second(12 * 3600).unwrap();
+        assert_eq!(format_at(noon_utc, 3600, "%H:%M").unwrap(), "13:00");
+        assert_eq!(format_at(noon_utc, 0, "%Y-%m-%d").unwrap(), "1970-01-01");
+        assert!(format_at(noon_utc, 0, "%").is_err());
     }
 }

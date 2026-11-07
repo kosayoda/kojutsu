@@ -23,7 +23,11 @@ pub(super) fn read(lua: &Lua) -> Result<Config, String> {
         let kojutsu: mlua::Table = lua.globals().get("kojutsu")?;
         lua.from_value(kojutsu.get("config")?)
     };
-    read().map_err(|e| format!("kojutsu.config: {e}"))
+    let config = read().map_err(|e| format!("kojutsu.config: {e}"))?;
+    config
+        .validate()
+        .map_err(|e| format!("kojutsu.config.{e}"))?;
+    Ok(config)
 }
 
 #[cfg(test)]
@@ -127,6 +131,16 @@ mod tests {
         .unwrap();
         assert_eq!(config.revsets.presets.len(), 1);
         assert_eq!(config.revsets.presets[0].name, "mine");
+    }
+
+    /// A `date_format` jiff cannot apply is refused when read, naming the
+    /// key, rather than failing every draw.
+    #[test]
+    fn a_date_format_that_cannot_be_applied_is_rejected() {
+        let err = resolve(Config::default(), r#"kojutsu.config.date_format = "%""#)
+            .expect_err("a lone % is no format");
+        assert!(err.contains("date_format"), "{err}");
+        assert!(resolve(Config::default(), r#"kojutsu.config.date_format = "%d %b""#).is_ok());
     }
 
     /// Every section is `deny_unknown_fields`, so a key nothing reads is an

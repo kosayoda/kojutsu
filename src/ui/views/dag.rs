@@ -113,14 +113,12 @@ pub(crate) fn render_commit_item(
     );
     line1.push(Span::raw(" "));
 
-    let tz =
-        jiff::tz::Offset::from_seconds(c.author.tz_offset_seconds).unwrap_or(jiff::tz::Offset::UTC);
-    let formatted = c
-        .author
-        .timestamp
-        .to_zoned(jiff::tz::TimeZone::fixed(tz))
-        .strftime(&config.date_format)
-        .to_string();
+    let formatted = crate::time::format_at(
+        c.author.timestamp,
+        c.author.tz_offset_seconds,
+        &config.date_format,
+    )
+    .unwrap_or_else(|_| c.author.timestamp.to_string());
     line1.push(Span::styled(formatted, Style::default().fg(theme.muted)));
 
     line1.push(Span::raw(" "));

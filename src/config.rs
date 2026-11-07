@@ -113,6 +113,16 @@ fn default_max_file_size_mib() -> u64 {
     64
 }
 
+impl Config {
+    /// Checks serde cannot make: a `date_format` strftime cannot be
+    /// applied must be refused here, where the error names it.
+    pub fn validate(&self) -> Result<(), String> {
+        crate::time::format_at(jiff::Timestamp::UNIX_EPOCH, 0, &self.date_format)
+            .map(drop)
+            .map_err(|e| format!("date_format: {e}"))
+    }
+}
+
 fn default_date_format() -> String {
     "%Y-%m-%d %H:%M:%S".to_string()
 }
