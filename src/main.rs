@@ -1,3 +1,5 @@
+#![deny(unsafe_code)]
+
 use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::sync::mpsc;
