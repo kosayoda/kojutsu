@@ -14,8 +14,8 @@ use kojutsu::keymap::AppAction;
 use kojutsu::repo::JjRepo;
 use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind};
 use kojutsu::terminal::{TerminalEvents, spawn_terminal_events};
-use kojutsu::types::EditorCommand;
 use kojutsu::types::JumpTarget;
+use kojutsu::types::{EditorCommand, escape_controls};
 use kojutsu::ui;
 
 enum AppEvent {
@@ -169,7 +169,7 @@ fn main() -> Result<()> {
                     "{} {} {}",
                     line.change_id.prefix(),
                     line.line_number,
-                    line.content
+                    escape_controls(&line.content)
                 );
             }
             return Ok(());
@@ -966,13 +966,17 @@ fn debug_print_graph(entries: &[kojutsu::dag::DagEntry]) {
         } else {
             format!(" [{}]", flags.join(", "))
         };
-        let bookmarks: Vec<&str> = c.bookmarks.iter().map(|b| b.name.as_str()).collect();
+        let bookmarks: Vec<String> = c
+            .bookmarks
+            .iter()
+            .map(|b| escape_controls(b.name.as_str()))
+            .collect();
         let bm_str = if bookmarks.is_empty() {
             String::new()
         } else {
             format!(" bookmarks={}", bookmarks.join(","))
         };
-        let desc = c.description.as_deref().unwrap_or("(no description)");
+        let desc = escape_controls(c.description.as_deref().unwrap_or("(no description)"));
         let suffix = c
             .change_id_suffix()
             .map(|n| format!("/{n}"))

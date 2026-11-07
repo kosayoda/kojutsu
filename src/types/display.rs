@@ -346,3 +346,31 @@ impl DisplayRow {
         }
     }
 }
+
+/// `text` with each control character spelled out, for printing repo
+/// data to a terminal that is not under ratatui, which would otherwise
+/// act on an escape sequence hidden in a description or a file.
+pub fn escape_controls(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            if c.is_control() {
+                c.escape_default().to_string()
+            } else {
+                c.to_string()
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod escape_tests {
+    use super::escape_controls;
+
+    #[test]
+    fn control_characters_are_spelled_out_and_the_rest_kept() {
+        assert_eq!(
+            escape_controls("title\x1b]0;x\x07 caf\u{e9}\tend"),
+            "title\\u{1b}]0;x\\u{7} caf\u{e9}\\tend"
+        );
+    }
+}
