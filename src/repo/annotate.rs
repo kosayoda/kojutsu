@@ -40,6 +40,7 @@ impl JjRepo {
         let repo_path = RepoPathBuf::from_internal_string(file_path.as_str())
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
 
+        self.ensure_within_limit(commit_id, file_path)?;
         let mut annotator = FileAnnotator::from_commit(&commit, &repo_path)
             .block_on()
             .wrap_err("failed to initialize annotator")?;

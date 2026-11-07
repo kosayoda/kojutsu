@@ -6,12 +6,11 @@ use color_eyre::Result;
 use color_eyre::eyre::Context;
 use futures::AsyncReadExt as _;
 use futures::StreamExt as _;
-use jj_lib::backend::TreeValue;
+use jj_lib::backend::{FileId, TreeValue};
 use jj_lib::backend::{MergedTreeValue, MergedTreeValueExt as _};
 use jj_lib::conflict_labels::ConflictLabels;
 use jj_lib::conflicts::{
     ConflictMaterializeOptions, MaterializedTreeValue, materialize_tree_value,
-    try_materialize_file_conflict_value,
 };
 use jj_lib::diff_presentation::DiffTokenType;
 use jj_lib::diff_presentation::unified::{self, DiffLineType};
@@ -73,6 +72,15 @@ fn materialize_diff_side(
     labels: &ConflictLabels,
     limit: usize,
 ) -> Result<DiffSideContent> {
+    if !value.is_resolved() {
+        match read_file_conflict(store, path, &value, labels, limit)? {
+            Some(FileConflict::Terms(terms)) => {
+                return Ok(materialize_conflict_with_regions(&terms.contents));
+            }
+            Some(FileConflict::TooLarge) => return Ok(DiffSideContent::TooLarge),
+            None => {}
+        }
+    }
     let materialized = materialize_tree_value(store, path, value, labels).block_on()?;
     match materialized {
         MaterializedTreeValue::File(mut file) => {
@@ -80,8 +88,8 @@ fn materialize_diff_side(
                 color_eyre::eyre::eyre!("failed to read `{}`: {e}", path.as_internal_file_string())
             })
         }
-        MaterializedTreeValue::FileConflict(conflict) => {
-            Ok(materialize_conflict_with_regions(&conflict.contents))
+        MaterializedTreeValue::FileConflict(_) => {
+            unreachable!("a conflict between files is read through the cap above")
         }
         MaterializedTreeValue::Absent => Ok(DiffSideContent::text("")),
         MaterializedTreeValue::Symlink { target, .. } => Ok(DiffSideContent::text(target)),
@@ -118,14 +126,101 @@ fn read_diff_file(
     if contents.contains(&0) {
         return Ok(DiffSideContent::Binary);
     }
+    Ok(match read_capped_into(reader, contents, limit)? {
+        Some(contents) => DiffSideContent::text(contents),
+        None => DiffSideContent::TooLarge,
+    })
+}
+
+/// The rest of `reader` appended to `contents`, reading one byte past
+/// `limit` at most; `None` when the whole is larger than `limit`.
+fn read_capped_into(
+    mut reader: impl futures::AsyncRead + Unpin,
+    mut contents: Vec<u8>,
+    limit: usize,
+) -> futures::io::Result<Option<Vec<u8>>> {
     (&mut reader)
         .take(limit.saturating_add(1).saturating_sub(contents.len()) as u64)
         .read_to_end(&mut contents)
         .block_on()?;
-    if contents.len() > limit {
-        return Ok(DiffSideContent::TooLarge);
+    Ok((contents.len() <= limit).then_some(contents))
+}
+
+/// A conflict between files, every term read through the size cap.
+struct FileConflictTerms {
+    /// Simplified file ids, in the terms' order; `None` where the file is
+    /// absent on that term.
+    ids: Merge<Option<FileId>>,
+    labels: ConflictLabels,
+    contents: Merge<bstr::BString>,
+}
+
+enum FileConflict {
+    Terms(FileConflictTerms),
+    /// Some term is larger than the limit; nothing was kept.
+    TooLarge,
+}
+
+/// The conflicted file `value` names at `path`, or `None` when the
+/// conflict is not between files (and absence). Each term is read on its
+/// own through the cap, so one oversized term stops the read without the
+/// others being loaded.
+fn read_file_conflict(
+    store: &Arc<Store>,
+    path: &JjRepoPath,
+    value: &MergedTreeValue,
+    labels: &ConflictLabels,
+    limit: usize,
+) -> Result<Option<FileConflict>> {
+    let Some(unsimplified) = value.to_file_merge() else {
+        return Ok(None);
+    };
+    let (labels, ids) = labels.simplify_with(&unsimplified);
+    let readers = ids.try_map(|id| {
+        id.as_ref()
+            .map(|id| store.read_file(path, id).block_on())
+            .transpose()
+    })?;
+    let contents = read_terms(readers, limit).map_err(|e| {
+        color_eyre::eyre::eyre!("failed to read `{}`: {e}", path.as_internal_file_string())
+    })?;
+    Ok(Some(match contents {
+        Some(contents) => FileConflict::Terms(FileConflictTerms {
+            ids,
+            labels,
+            contents,
+        }),
+        None => FileConflict::TooLarge,
+    }))
+}
+
+/// Every term's content, an absent term reading as empty; `None` as soon
+/// as a term is larger than `limit`. The limit is per term, not in sum.
+fn read_terms<R: futures::AsyncRead + Unpin>(
+    readers: Merge<Option<R>>,
+    limit: usize,
+) -> futures::io::Result<Option<Merge<bstr::BString>>> {
+    let mut contents = Vec::with_capacity(readers.iter().count());
+    for reader in readers.into_iter() {
+        let content = match reader {
+            Some(reader) => read_capped_into(reader, Vec::new(), limit)?,
+            None => Some(Vec::new()),
+        };
+        match content {
+            Some(bytes) => contents.push(bstr::BString::from(bytes)),
+            None => return Ok(None),
+        }
     }
-    Ok(DiffSideContent::text(contents))
+    Ok(Some(Merge::from_vec(contents)))
+}
+
+/// The error for a file the limit keeps kojutsu from loading.
+fn too_large_error(path: &JjRepoPath, limit: usize) -> color_eyre::Report {
+    color_eyre::eyre::eyre!(
+        "`{}` is larger than {} MiB (diff.max_file_size_mib)",
+        path.as_internal_file_string(),
+        limit / (1024 * 1024)
+    )
 }
 
 /// Materialize a conflicted file the same way jj does (per-hunk markers),
@@ -443,18 +538,24 @@ impl JjRepo {
         let tree_value = tree.path_value(&repo_path).block_on()?;
         let labels = ConflictLabels::unlabeled();
 
-        let Some(materialized) =
-            try_materialize_file_conflict_value(repo.store(), &repo_path, &tree_value, &labels)
-                .block_on()
-                .wrap_err("failed to materialize conflict")?
-        else {
-            return Ok(vec![]);
+        let terms = match read_file_conflict(
+            repo.store(),
+            &repo_path,
+            &tree_value,
+            &labels,
+            self.diff_size_limit,
+        )? {
+            Some(FileConflict::Terms(terms)) => terms,
+            Some(FileConflict::TooLarge) => {
+                return Err(too_large_error(&repo_path, self.diff_size_limit));
+            }
+            None => return Ok(vec![]),
         };
 
         // `ids` parallels `contents` term-for-term; a `None` id means the
         // file is absent on that term (materialized as empty content).
-        let absent: Vec<bool> = materialized.ids.iter().map(|id| id.is_none()).collect();
-        let merge_result = jj_lib::files::merge_hunks(&materialized.contents, &merge_options());
+        let absent: Vec<bool> = terms.ids.iter().map(|id| id.is_none()).collect();
+        let merge_result = jj_lib::files::merge_hunks(&terms.contents, &merge_options());
 
         let hunks = match merge_result {
             jj_lib::files::MergeResult::Resolved(content) => {
@@ -560,24 +661,43 @@ impl JjRepo {
             .map_err(|e| color_eyre::eyre::eyre!("invalid repo path: {e}"))?;
         let value = tree.path_value(&repo_path).block_on()?;
         let labels = ConflictLabels::unlabeled();
+        let limit = self.diff_size_limit;
+        if !value.is_resolved() {
+            return match read_file_conflict(repo.store(), &repo_path, &value, &labels, limit)? {
+                Some(FileConflict::Terms(terms)) => {
+                    let options = default_materialize_options();
+                    let result = jj_lib::conflicts::materialize_merge_result_to_bytes(
+                        &terms.contents,
+                        &terms.labels,
+                        &options,
+                    );
+                    Ok(result.into())
+                }
+                Some(FileConflict::TooLarge) => Err(too_large_error(&repo_path, limit)),
+                None => Err(color_eyre::eyre::eyre!("path is not a regular file")),
+            };
+        }
         let materialized =
             materialize_tree_value(repo.store(), &repo_path, value, &labels).block_on()?;
         match materialized {
-            jj_lib::conflicts::MaterializedTreeValue::File(mut file) => {
-                let buf = file.read_all(&repo_path).block_on()?;
-                Ok(buf)
-            }
-            jj_lib::conflicts::MaterializedTreeValue::FileConflict(conflict) => {
-                let options = default_materialize_options();
-                let result = jj_lib::conflicts::materialize_merge_result_to_bytes(
-                    &conflict.contents,
-                    &conflict.labels,
-                    &options,
-                );
-                Ok(result.into())
+            MaterializedTreeValue::File(mut file) => {
+                read_capped_into(&mut file.reader, Vec::new(), limit)?
+                    .ok_or_else(|| too_large_error(&repo_path, limit))
             }
             _ => Err(color_eyre::eyre::eyre!("path is not a regular file")),
         }
+    }
+
+    /// Refuse a file the limit keeps kojutsu from loading, before work that
+    /// would load it whole. jj-lib's annotate reads the file at every
+    /// ancestor with no cap of its own, so this bounds only the file as it
+    /// is at `commit_id`.
+    pub(super) fn ensure_within_limit(
+        &self,
+        commit_id: &UiCommitId,
+        file_path: &RepoPath,
+    ) -> Result<()> {
+        self.get_file_at_commit(commit_id, file_path).map(drop)
     }
 }
 
@@ -1587,6 +1707,22 @@ mod tests {
     }
 
     /// A file is binary when a null byte falls within the first
+    /// A conflict's terms are read one by one through the cap: an absent
+    /// term reads as empty, every term may be as large as the limit, and
+    /// one byte more in any term gives up on the whole file.
+    #[test]
+    fn conflict_terms_are_capped_one_by_one() {
+        let term = |bytes: &[u8]| Some(futures::io::Cursor::new(bytes.to_vec()));
+        let limit = 4;
+        let fits = Merge::from_vec(vec![term(b"abcd"), None, term(b"wxyz")]);
+        let contents = read_terms(fits, limit).unwrap().expect("within the limit");
+        let texts: Vec<&[u8]> = contents.iter().map(|c| c.as_ref()).collect();
+        assert_eq!(texts, [&b"abcd"[..], b"", b"wxyz"]);
+
+        let one_over = Merge::from_vec(vec![term(b"abcd"), term(b""), term(b"wxyz!")]);
+        assert!(read_terms(one_over, limit).unwrap().is_none());
+    }
+
     /// `BINARY_SNIFF_SIZE` bytes, however large it is, and too large when
     /// it holds even one byte past the limit.
     #[test]
