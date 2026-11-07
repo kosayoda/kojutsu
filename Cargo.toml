@@ -36,7 +36,9 @@ gix = { version = "0.88.0", default-features = false }
 # Lua scripting
 mlua = { version = "0.11", features = ["lua54", "vendored", "serialize"] }
 # Clipboard access (for Lua `kojutsu.copy()`)
-arboard = { version = "3", features = ["wayland-data-control"] }
+arboard = { version = "3", default-features = false, features = [
+  "wayland-data-control",
+] }
 base64 = "0.22"
 # Key string parser (e.g. "ctrl-a", "shift-j", "a b")
 keymap_parser = "1.0.0-rc.4"
