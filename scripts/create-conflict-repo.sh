@@ -1,9 +1,7 @@
 #!/bin/bash
 set -e
 
-DIR=/tmp/kj-conflict-test
-rm -rf "$DIR"
-mkdir -p "$DIR"
+DIR=$(mktemp -d -t kj-conflict.XXXXXX)
 cd "$DIR"
 
 jj git init
@@ -226,3 +224,5 @@ jj log -r 'all()'
 echo ""
 echo "=== Status ==="
 jj st
+
+echo "conflict repo at $DIR"
