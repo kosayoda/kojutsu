@@ -339,17 +339,8 @@ fn build_ansi_theme(
 
 /// Format a jj timestamp as an absolute date string (e.g. "2026-05-15 13:11:51 +02:00").
 fn format_absolute_time(ts: &jj_lib::backend::Timestamp) -> String {
-    let secs = ts.timestamp.0 / 1000;
-    let nanos = ((ts.timestamp.0 % 1000) * 1_000_000) as u32;
-    let offset_secs = ts.tz_offset * 60;
-    match chrono::DateTime::from_timestamp(secs, nanos) {
-        Some(utc) => {
-            let offset = chrono::FixedOffset::east_opt(offset_secs)
-                .unwrap_or(chrono::FixedOffset::east_opt(0).unwrap());
-            utc.with_timezone(&offset)
-                .format("%Y-%m-%d %H:%M:%S %:z")
-                .to_string()
-        }
-        None => "unknown".to_string(),
-    }
+    jiff::Timestamp::from_millisecond(ts.timestamp.0)
+        .ok()
+        .and_then(|t| crate::time::format_at(t, ts.tz_offset * 60, "%Y-%m-%d %H:%M:%S %:z").ok())
+        .unwrap_or_else(|| "unknown".to_string())
 }

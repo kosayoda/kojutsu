@@ -20,23 +20,19 @@ pub fn format_at(
 /// How long ago a millisecond Unix timestamp was, as jj phrases it
 /// ("5 hours ago").
 pub fn relative(millis: i64) -> Str {
-    let secs = millis / 1000;
-    let nanos = ((millis % 1000) * 1_000_000) as u32;
-    match chrono::DateTime::from_timestamp(secs, nanos) {
-        Some(dt) => format_relative_time(dt).into(),
-        None => "unknown".into(),
+    match jiff::Timestamp::from_millisecond(millis) {
+        Ok(then) => {
+            format_relative_time(jiff::Timestamp::now().duration_since(then).as_secs()).into()
+        }
+        Err(_) => "unknown".into(),
     }
 }
 
-fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> Cow<'static, str> {
-    let now = chrono::Utc::now();
-    let duration = now.signed_duration_since(dt);
-
-    if duration.num_seconds() < 0 {
+/// `secs` elapsed, in the largest whole unit that fits.
+fn format_relative_time(secs: i64) -> Cow<'static, str> {
+    if secs < 0 {
         return "just now".into();
     }
-
-    let secs = duration.num_seconds();
     if secs < 60 {
         return if secs == 1 {
             "1 second ago".into()
@@ -44,7 +40,7 @@ fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> Cow<'static, str> 
             format!("{secs} seconds ago").into()
         };
     }
-    let mins = duration.num_minutes();
+    let mins = secs / 60;
     if mins < 60 {
         return if mins == 1 {
             "1 minute ago".into()
@@ -52,7 +48,7 @@ fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> Cow<'static, str> 
             format!("{mins} minutes ago").into()
         };
     }
-    let hours = duration.num_hours();
+    let hours = secs / 3600;
     if hours < 24 {
         return if hours == 1 {
             "1 hour ago".into()
@@ -60,7 +56,7 @@ fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> Cow<'static, str> 
             format!("{hours} hours ago").into()
         };
     }
-    let days = duration.num_days();
+    let days = secs / 86_400;
     if days < 30 {
         return if days == 1 {
             "1 day ago".into()
@@ -86,7 +82,7 @@ fn format_relative_time(dt: chrono::DateTime<chrono::Utc>) -> Cow<'static, str> 
 
 #[cfg(test)]
 mod format_tests {
-    use super::format_at;
+    use super::{format_at, format_relative_time};
 
     #[test]
     fn a_format_is_applied_in_the_authors_zone_or_rejected() {
@@ -94,5 +90,17 @@ mod format_tests {
         assert_eq!(format_at(noon_utc, 3600, "%H:%M").unwrap(), "13:00");
         assert_eq!(format_at(noon_utc, 0, "%Y-%m-%d").unwrap(), "1970-01-01");
         assert!(format_at(noon_utc, 0, "%").is_err());
+    }
+
+    #[test]
+    fn elapsed_time_is_spelled_in_the_largest_whole_unit() {
+        assert_eq!(format_relative_time(-5), "just now");
+        assert_eq!(format_relative_time(1), "1 second ago");
+        assert_eq!(format_relative_time(59), "59 seconds ago");
+        assert_eq!(format_relative_time(60), "1 minute ago");
+        assert_eq!(format_relative_time(2 * 3600 + 59), "2 hours ago");
+        assert_eq!(format_relative_time(86_400), "1 day ago");
+        assert_eq!(format_relative_time(45 * 86_400), "1 month ago");
+        assert_eq!(format_relative_time(800 * 86_400), "2 years ago");
     }
 }
