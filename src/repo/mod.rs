@@ -225,24 +225,18 @@ impl JjRepo {
             return Vec::new();
         };
         let git_repo = jj_lib::git::get_git_repo(store).ok();
+        let config = git_repo.as_ref().map(|repo| repo.config_snapshot());
         names
             .iter()
             .map(|name| {
-                let remote = git_repo.as_ref().and_then(|repo| {
-                    jj_lib::git::try_find_active_remote(repo, name)
-                        .ok()
-                        .flatten()
-                });
-                let url = |direction| {
-                    remote
-                        .as_ref()
-                        .and_then(|remote| remote.url(direction))
-                        .map(|url| url.to_bstring().to_string())
-                };
-                crate::dag::GitRemote {
-                    name: RemoteName::new(name.as_str()),
-                    fetch_url: url(gix::remote::Direction::Fetch),
-                    push_url: url(gix::remote::Direction::Push),
+                let name = RemoteName::new(name.as_str());
+                match &config {
+                    Some(config) => git_remote(config.plumbing(), name),
+                    None => crate::dag::GitRemote {
+                        name,
+                        fetch_url: None,
+                        push_url: None,
+                    },
                 }
             })
             .collect()
@@ -488,6 +482,32 @@ fn default_ignored_remote(
         .then_some(jj_lib::git::REMOTE_NAME_FOR_LOCAL_GIT_REPO)
 }
 
+/// The remote `name` with its URLs as written in the git config: what
+/// `jj git remote set-url` edits, before any `url.<base>.insteadOf`
+/// rewrite. Git fetches from the first `url`. The push URL is the first
+/// `pushurl`, and None when there is none and pushes go to `url` too.
+/// Values from untrusted config sections are skipped, as gix does when it
+/// looks up a remote.
+fn git_remote(config: &gix::config::File, name: RemoteName) -> crate::dag::GitRemote {
+    let first = |key: &str| {
+        config
+            .strings_filter_by(
+                "remote",
+                Some(name.as_str().into()),
+                key,
+                gix::config::section::is_trusted,
+            )?
+            .into_iter()
+            .next()
+            .map(|url| url.to_string())
+    };
+    crate::dag::GitRemote {
+        fetch_url: first("url"),
+        push_url: first("pushurl"),
+        name,
+    }
+}
+
 /// Parse a commit description, returning `None` for empty/placeholder descriptions.
 pub(super) fn parse_first_line_description(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
@@ -556,6 +576,41 @@ mod tests {
         );
         let empty = config(r#"ui.editor = """#);
         assert_eq!(editor_command(&empty, env(&all[2..])), editor("e", &["-x"]));
+    }
+
+    fn remote(config: &str) -> crate::dag::GitRemote {
+        let config: gix::config::File = config.parse().unwrap();
+        git_remote(&config, RemoteName::new("origin"))
+    }
+
+    /// URLs are read as configured, before `insteadOf` rewrites them, and
+    /// a push URL is only one that is set. Git uses the first of several.
+    #[test]
+    fn remote_urls_are_read_as_configured() {
+        let plain = remote(
+            r#"
+            [url "https://example.com/"]
+                insteadOf = ex:
+            [remote "origin"]
+                url = ex:a/b
+                url = ex:c/d
+            "#,
+        );
+        assert_eq!(plain.fetch_url.as_deref(), Some("ex:a/b"));
+        assert_eq!(plain.push_url, None);
+
+        let separate = remote(
+            r#"
+            [remote "origin"]
+                url = https://example.com/a/b
+                pushurl = git@example.com:a/b
+            "#,
+        );
+        assert_eq!(
+            separate.fetch_url.as_deref(),
+            Some("https://example.com/a/b")
+        );
+        assert_eq!(separate.push_url.as_deref(), Some("git@example.com:a/b"));
     }
 
     #[test]

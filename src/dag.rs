@@ -503,8 +503,82 @@ pub struct AuthorInfo {
 pub struct GitRemote {
     pub name: RemoteName,
     pub fetch_url: Option<String>,
-    /// Where pushes go: the fetch URL, unless a separate push URL is set.
+    /// The separate push URL, if one is set. Without one, pushes go to the
+    /// fetch URL.
     pub push_url: Option<String>,
+}
+
+impl GitRemote {
+    /// Where pushes go: the push URL, or else the fetch URL.
+    pub fn effective_push_url(&self) -> Option<&str> {
+        self.push_url.as_deref().or(self.fetch_url.as_deref())
+    }
+}
+
+/// How many of one kind of ref a remote has, and how many of those are
+/// tracked here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RemoteRefCounts {
+    pub total: usize,
+    pub tracked: usize,
+}
+
+impl RemoteRefCounts {
+    fn count(&mut self, is_tracked: bool) {
+        self.total += 1;
+        self.tracked += usize::from(is_tracked);
+    }
+}
+
+/// A remote as the remotes view lists it: its URLs and what it holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteEntry {
+    pub remote: GitRemote,
+    /// Bookmarks the remote has, from the last fetch or push.
+    pub bookmarks: RemoteRefCounts,
+    /// Tags the remote has, from the last fetch or push.
+    pub tags: RemoteRefCounts,
+}
+
+impl RemoteEntry {
+    /// One entry per remote in `remotes`, counting its refs among
+    /// `bookmarks` and `tags`. A tracked bookmark the remote doesn't have
+    /// (never pushed, or deleted there) isn't counted.
+    pub fn collect(
+        remotes: Vec<GitRemote>,
+        bookmarks: &[RemoteBookmarkRef],
+        tags: &std::collections::HashMap<TagName, TagDetails>,
+    ) -> Vec<Self> {
+        let mut bookmark_counts: std::collections::HashMap<&RemoteName, RemoteRefCounts> =
+            std::collections::HashMap::new();
+        for bookmark in bookmarks {
+            if !matches!(bookmark.target, RefTarget::Absent) {
+                bookmark_counts
+                    .entry(&bookmark.remote)
+                    .or_default()
+                    .count(bookmark.is_tracked);
+            }
+        }
+        let mut tag_counts: std::collections::HashMap<&RemoteName, RemoteRefCounts> =
+            std::collections::HashMap::new();
+        for target in tags.values().flat_map(|details| &details.remote_targets) {
+            tag_counts
+                .entry(&target.remote)
+                .or_default()
+                .count(target.is_tracked);
+        }
+        remotes
+            .into_iter()
+            .map(|remote| Self {
+                bookmarks: bookmark_counts
+                    .get(&remote.name)
+                    .copied()
+                    .unwrap_or_default(),
+                tags: tag_counts.get(&remote.name).copied().unwrap_or_default(),
+                remote,
+            })
+            .collect()
+    }
 }
 
 /// A single entry in the DAG: a commit plus its edges to parents.
@@ -881,5 +955,100 @@ mod revision_tests {
         assert_eq!(hidden.revision().as_str(), "uu/3");
         assert!(hidden.is_hidden());
         assert_eq!(hidden.change_id_suffix(), Some(3));
+    }
+}
+
+#[cfg(test)]
+mod remote_entry_tests {
+    use super::*;
+
+    fn remote(name: &str) -> GitRemote {
+        GitRemote {
+            name: RemoteName::new(name),
+            fetch_url: None,
+            push_url: None,
+        }
+    }
+
+    fn bookmark(name: &str, remote: &str, present: bool, is_tracked: bool) -> RemoteBookmarkRef {
+        RemoteBookmarkRef {
+            name: BookmarkName::new(name),
+            remote: RemoteName::new(remote),
+            target: if present {
+                RefTarget::Commit(CommitId::new("ab"))
+            } else {
+                RefTarget::Absent
+            },
+            is_tracked,
+        }
+    }
+
+    fn tag(remotes: &[(&str, bool)]) -> TagDetails {
+        let summary = || CommitSummary {
+            commit_id: CommitId::new("ab"),
+            change_id: ShortId::new("uu"),
+            short_commit_id: ShortId::new("ab"),
+            description: None,
+            divergence: None,
+        };
+        TagDetails {
+            presence: TagPresence::Local,
+            local: RefTarget::Commit(summary()),
+            remote_targets: remotes
+                .iter()
+                .map(|&(remote, is_tracked)| TagRemoteTarget {
+                    remote: RemoteName::new(remote),
+                    summary: summary(),
+                    is_tracked,
+                })
+                .collect(),
+        }
+    }
+
+    /// Each remote counts only its own refs. A tracked bookmark the remote
+    /// doesn't have isn't one of them, and a remote with none counts zero.
+    #[test]
+    fn each_remote_counts_the_refs_it_has() {
+        let bookmarks = [
+            bookmark("main", "origin", true, true),
+            bookmark("feature", "origin", true, false),
+            bookmark("draft", "origin", false, true),
+            bookmark("main", "upstream", true, false),
+            bookmark("main", "git", true, true),
+        ];
+        let tags = HashMap::from([
+            (
+                TagName::new("v1"),
+                tag(&[("origin", true), ("upstream", false)]),
+            ),
+            (TagName::new("v2"), tag(&[("origin", false)])),
+        ]);
+        let entries = RemoteEntry::collect(
+            vec![remote("origin"), remote("upstream"), remote("empty")],
+            &bookmarks,
+            &tags,
+        );
+        let counts: Vec<_> = entries
+            .iter()
+            .map(|e| (e.remote.name.as_str(), e.bookmarks, e.tags))
+            .collect();
+        let n = |total, tracked| RemoteRefCounts { total, tracked };
+        assert_eq!(
+            counts,
+            [
+                ("origin", n(2, 1), n(2, 1)),
+                ("upstream", n(1, 0), n(1, 0)),
+                ("empty", n(0, 0), n(0, 0)),
+            ]
+        );
+    }
+
+    #[test]
+    fn pushes_go_to_the_fetch_url_without_a_push_url() {
+        let mut origin = remote("origin");
+        origin.fetch_url = Some("fetch".into());
+        assert_eq!(origin.effective_push_url(), Some("fetch"));
+        origin.push_url = Some("push".into());
+        assert_eq!(origin.effective_push_url(), Some("push"));
     }
 }

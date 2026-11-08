@@ -453,11 +453,11 @@ pub(super) fn edit_remote(app: &mut App, edit: RemoteEdit, flags: CommandFlags) 
             Action::None
         }
         [only] => {
-            let name = only.name.clone();
+            let name = only.remote.name.clone();
             edit_named_remote(app, name, edit, flags)
         }
         remotes => {
-            let items = remotes.iter().map(|r| r.name.to_string()).collect();
+            let items = remotes.iter().map(|r| r.remote.name.to_string()).collect();
             let title = match edit {
                 RemoteEdit::Rename => "rename remote",
                 RemoteEdit::SetUrl => "set url of remote",
@@ -484,9 +484,17 @@ pub(super) fn edit_named_remote(
     edit: RemoteEdit,
     flags: CommandFlags,
 ) -> Action {
-    let remote = app.views.remotes.iter().find(|r| r.name == name);
+    let remote = app
+        .views
+        .remotes
+        .iter()
+        .map(|r| &r.remote)
+        .find(|r| r.name == name);
     let fetch_url = remote.and_then(|r| r.fetch_url.clone()).unwrap_or_default();
-    let push_url = remote.and_then(|r| r.push_url.clone()).unwrap_or_default();
+    let push_url = remote
+        .and_then(|r| r.effective_push_url())
+        .unwrap_or_default()
+        .to_owned();
     app.mode = match edit {
         RemoteEdit::Rename => AppMode::text_input(
             format!("rename {name} to: "),
@@ -542,7 +550,7 @@ pub(super) fn with_remote(
             .views
             .remotes
             .iter()
-            .map(|r| r.name.to_string())
+            .map(|r| r.remote.name.to_string())
             .collect();
         let multi = command.takes_several(app.jj);
         app.mode = AppMode::select_from_list(
@@ -1011,13 +1019,7 @@ mod remote_choice_tests {
     fn chooses_several(command: RemoteCommand, minor: u32) -> bool {
         let mut app = App::for_test();
         app.jj = InstalledJj::known(JjVersion::new(0, minor, 0));
-        app.views.remotes = ["origin", "upstream"]
-            .map(|name| crate::dag::GitRemote {
-                name: RemoteName::new(name),
-                fetch_url: None,
-                push_url: None,
-            })
-            .into();
+        app.views.remotes = vec![remote("origin", "a"), remote("upstream", "b")];
         with_remote(&mut app, "remote", command, CommandFlags::empty());
         match &app.mode {
             AppMode::SelectFromList(state) => state.multi,
@@ -1042,11 +1044,15 @@ mod remote_choice_tests {
         ));
     }
 
-    fn remote(name: &str, url: &str) -> crate::dag::GitRemote {
-        crate::dag::GitRemote {
-            name: RemoteName::new(name),
-            fetch_url: Some(url.into()),
-            push_url: Some(url.into()),
+    fn remote(name: &str, url: &str) -> crate::dag::RemoteEntry {
+        crate::dag::RemoteEntry {
+            remote: crate::dag::GitRemote {
+                name: RemoteName::new(name),
+                fetch_url: Some(url.into()),
+                push_url: None,
+            },
+            bookmarks: Default::default(),
+            tags: Default::default(),
         }
     }
 
@@ -1084,6 +1090,27 @@ mod remote_choice_tests {
             CommandFlags::empty(),
         );
         assert!(matches!(app.mode, AppMode::SelectFromList(_)));
+    }
+
+    /// The push URL prompt starts from where pushes go now: the push URL,
+    /// or the fetch URL when there is none.
+    #[test]
+    fn the_push_url_prompt_starts_from_where_pushes_go() {
+        let mut app = App::for_test();
+        app.views.remotes = vec![remote("origin", "fetch")];
+        let set_push_url = |app: &mut App| {
+            super::edit_remote(
+                app,
+                crate::types::RemoteEdit::SetPushUrl,
+                CommandFlags::empty(),
+            );
+        };
+        set_push_url(&mut app);
+        assert_eq!(prompt(&app), ("origin push url: ", "fetch".into()));
+
+        app.views.remotes[0].remote.push_url = Some("push".into());
+        set_push_url(&mut app);
+        assert_eq!(prompt(&app), ("origin push url: ", "push".into()));
     }
 
     /// A fetch from the only remote has nothing to ask, and leaves the

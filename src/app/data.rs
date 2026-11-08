@@ -209,8 +209,12 @@ impl App {
                         });
                     }
                     self.repo_root = data.repo_root;
+                    self.views.remotes = crate::dag::RemoteEntry::collect(
+                        data.remotes,
+                        &data.remote_bookmarks,
+                        &data.tag_details,
+                    );
                     self.views.remote_bookmarks = data.remote_bookmarks;
-                    self.views.remotes = data.remotes;
                     self.views.all_tags = data.all_tags;
                     self.views.tag_details = data.tag_details;
                     self.views.bookmark_details = data.bookmark_details;

@@ -64,8 +64,8 @@ pub struct ViewData {
     pub workspace_entries: Vec<WorkspaceInfo>,
     /// All remote bookmarks (tracked and untracked, including off-DAG).
     pub remote_bookmarks: Vec<crate::dag::RemoteBookmarkRef>,
-    /// Available git remote names.
-    pub remotes: Vec<crate::dag::GitRemote>,
+    /// The git remotes, with what each holds.
+    pub remotes: Vec<crate::dag::RemoteEntry>,
     /// Whether to show separator lines between bookmark groups.
     pub show_bookmark_separators: bool,
 }
