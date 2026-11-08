@@ -646,9 +646,14 @@ pub struct PersistedState {
     pub ignore_immutable: bool,
     pub ignore_working_copy: bool,
     pub debug: bool,
-    /// Per-view search scope bitflags, indexed by `ActiveView::idx()`.
-    #[serde(default, alias = "search_scopes")]
-    pub view_search_scopes: [u8; <ActiveView as strum::EnumCount>::COUNT],
+    /// Per-view search scope bitflags, keyed by the view's name so that
+    /// adding or reordering views keeps each view's scopes.
+    #[serde(
+        default,
+        alias = "search_scopes",
+        deserialize_with = "deserialize_view_search_scopes"
+    )]
+    pub view_search_scopes: std::collections::BTreeMap<String, u8>,
     /// By name: an index would name another preset once the list is
     /// reordered.
     pub active_preset_name: Option<String>,
@@ -667,7 +672,7 @@ impl Default for PersistedState {
             ignore_immutable: false,
             ignore_working_copy: false,
             debug: false,
-            view_search_scopes: [0; <ActiveView as strum::EnumCount>::COUNT],
+            view_search_scopes: std::collections::BTreeMap::new(),
             active_preset_name: None,
             git_diff: false,
             annotate_separators: false,
@@ -676,6 +681,39 @@ impl Default for PersistedState {
             run_history: Vec::new(),
         }
     }
+}
+
+/// Search scopes as saved by view name, or as the array older versions
+/// saved, indexed by the views in the order they had then.
+fn deserialize_view_search_scopes<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<std::collections::BTreeMap<String, u8>, D::Error> {
+    const INDEXED_ORDER: [ActiveView; 9] = [
+        ActiveView::Dag,
+        ActiveView::Bookmarks,
+        ActiveView::Tags,
+        ActiveView::Operations,
+        ActiveView::Workspaces,
+        ActiveView::Evolog,
+        ActiveView::CommandLog,
+        ActiveView::Interdiff,
+        ActiveView::Annotate,
+    ];
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Saved {
+        ByView(std::collections::BTreeMap<String, u8>),
+        Indexed(Vec<u8>),
+    }
+    let saved = <Saved as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(match saved {
+        Saved::ByView(scopes) => scopes,
+        Saved::Indexed(bits) => INDEXED_ORDER
+            .iter()
+            .map(ActiveView::to_string)
+            .zip(bits)
+            .collect(),
+    })
 }
 
 /// The revset to open with, and the preset it came from: the command
@@ -1395,5 +1433,48 @@ mod ansi_tests {
         let lines = parse_ansi_lines(b"first\nbad \xff byte\n");
         let texts: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
         assert_eq!(texts, ["first", "bad \u{fffd} byte"]);
+    }
+}
+
+#[cfg(test)]
+mod persisted_state_tests {
+    use super::PersistedState;
+    use crate::app::App;
+    use crate::types::{ActiveView, SearchScopes};
+
+    /// The array older versions saved still lands on the views it was for,
+    /// along with everything else in the file.
+    #[test]
+    fn search_scopes_saved_as_an_array_are_read_by_their_old_order() {
+        let saved = r#"{
+            "ignore_immutable": true,
+            "view_search_scopes": [5, 12, 132, 4, 5, 5, 5, 5, 65]
+        }"#;
+        let state: PersistedState = serde_json::from_str(saved).unwrap();
+        assert!(state.ignore_immutable);
+        let mut app = App::for_test();
+        app.apply_persisted_state(&state);
+        let scopes = |view: ActiveView| app.view_states[view.idx()].search_scopes.bits();
+        assert_eq!(scopes(ActiveView::Bookmarks), 12);
+        assert_eq!(scopes(ActiveView::Tags), 132);
+        assert_eq!(scopes(ActiveView::Annotate), 65);
+    }
+
+    /// Scopes are saved by view name and read back the same; a name this
+    /// version doesn't know is skipped rather than losing the file.
+    #[test]
+    fn search_scopes_round_trip_by_view_name() {
+        let mut app = App::for_test();
+        app.view_states[ActiveView::Tags.idx()].search_scopes = SearchScopes::TAG;
+        let mut json = serde_json::to_value(app.to_persisted_state()).unwrap();
+        json["view_search_scopes"]["from_a_newer_version"] = 4.into();
+
+        let state: PersistedState = serde_json::from_value(json).unwrap();
+        let mut restored = App::for_test();
+        restored.apply_persisted_state(&state);
+        assert_eq!(
+            restored.view_states[ActiveView::Tags.idx()].search_scopes,
+            SearchScopes::TAG
+        );
     }
 }

@@ -1939,10 +1939,12 @@ impl App {
     }
 
     pub fn to_persisted_state(&self) -> PersistedState {
-        let mut view_search_scopes = [0u8; <ActiveView as strum::EnumCount>::COUNT];
-        for (i, vs) in self.view_states.iter().enumerate() {
-            view_search_scopes[i] = vs.search_scopes.bits();
-        }
+        let view_search_scopes = <ActiveView as strum::IntoEnumIterator>::iter()
+            .map(|view| {
+                let scopes = self.view_states[view.idx()].search_scopes;
+                (view.to_string(), scopes.bits())
+            })
+            .collect();
         PersistedState {
             show_line_numbers: self.show_line_numbers,
             ignore_immutable: self.toggles.contains(CommandFlags::IGNORE_IMMUTABLE),
@@ -1974,11 +1976,13 @@ impl App {
         self.views.show_bookmark_separators = state.bookmark_separators;
         self.diff_underline = state.diff_underline;
         self.run_history = state.run_history.clone();
-        for (i, &bits) in state.view_search_scopes.iter().enumerate() {
-            if let Some(scopes) = SearchScopes::from_bits(bits)
+        // A view this version doesn't have (saved by a newer one) is skipped.
+        for (name, &bits) in &state.view_search_scopes {
+            if let Ok(view) = name.parse::<ActiveView>()
+                && let Some(scopes) = SearchScopes::from_bits(bits)
                 && !scopes.is_empty()
             {
-                self.view_states[i].search_scopes = scopes;
+                self.view_states[view.idx()].search_scopes = scopes;
             }
         }
     }
