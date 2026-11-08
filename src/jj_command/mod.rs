@@ -372,17 +372,6 @@ pub enum CommandPartKind {
     Url,
 }
 
-/// `url` with its password, if it carries one, replaced the way gix
-/// displays it. Anything else, a local path included, is left as typed,
-/// since only the password is a secret and re-spelling could change it.
-fn redact_password(url: Str) -> Str {
-    gix::Url::from_bytes(url.as_bytes().into())
-        .ok()
-        .filter(|parsed| parsed.password().is_some())
-        .map(|parsed| Str::from(parsed.to_string()))
-        .unwrap_or(url)
-}
-
 #[derive(Clone)]
 pub struct CommandPart {
     pub text: String,
@@ -551,7 +540,10 @@ impl JJCommand {
         parts.extend(self.tagged_args().into_iter().map(
             |args::TaggedArg { text, kind, .. }| {
                 let text = match kind {
-                    CommandPartKind::Url => redact_password(text),
+                    CommandPartKind::Url => match crate::types::redact_password(&text) {
+                        std::borrow::Cow::Borrowed(_) => text,
+                        std::borrow::Cow::Owned(redacted) => redacted.into(),
+                    },
                     _ => text,
                 };
                 // Quote whatever a shell would need quoted, whichever kind it is:

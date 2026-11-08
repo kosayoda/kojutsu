@@ -1,5 +1,5 @@
-//! Keeping the bookmark, tag and workspace lists on the same item across a
-//! reload.
+//! Keeping the bookmark, tag, workspace and remote lists on the same item
+//! across a reload.
 //!
 //! Their rows point into lists that every load rebuilds, often in another
 //! order: a fetch brings new remote bookmarks, a push changes how one sorts.
@@ -19,6 +19,7 @@ pub(crate) enum ListAnchor {
     },
     Tag(TagName),
     Workspace(WorkspaceName),
+    Remote(RemoteName),
 }
 
 impl App {
@@ -89,12 +90,16 @@ impl App {
                 let entry = self.views.workspace_entries.get(workspace_idx.raw())?;
                 Some(ListAnchor::Workspace(entry.name.clone()))
             }
+            DisplayRow::RemoteItem { remote_idx } | DisplayRow::RemotePushUrl { remote_idx } => {
+                let entry = self.views.remotes.get(remote_idx.raw())?;
+                Some(ListAnchor::Remote(entry.remote.name.clone()))
+            }
             _ => None,
         }
     }
 
     fn row_of_anchor(&self, anchor: &ListAnchor) -> Option<crate::idx::RowIdx> {
-        use crate::idx::{BookmarkIdx, TagIdx, WorkspaceIdx};
+        use crate::idx::{BookmarkIdx, RemoteIdx, TagIdx, WorkspaceIdx};
         let row = match anchor {
             ListAnchor::Bookmark { name, remote } => {
                 let idx = self
@@ -126,6 +131,16 @@ impl App {
                     workspace_idx: WorkspaceIdx::new(idx),
                 }
             }
+            ListAnchor::Remote(name) => {
+                let idx = self
+                    .views
+                    .remotes
+                    .iter()
+                    .position(|e| e.remote.name == *name)?;
+                DisplayRow::RemoteItem {
+                    remote_idx: RemoteIdx::new(idx),
+                }
+            }
         };
         self.position_of(row)
     }
@@ -134,7 +149,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::super::App;
-    use super::super::test_support::{entry, load};
+    use super::super::test_support::{entry, load, load_data, revset_data};
     use crate::dag::{BookmarkInfo, DagEntry, RemoteBookmarkInfo};
     use crate::types::{ActiveView, BookmarkName, DisplayRow, RemoteName, TagName};
 
@@ -186,6 +201,37 @@ mod tests {
         let mut entries = vec![bookmarked(entry('n', "n1"), "alpha")];
         entries.extend(two_bookmarks());
         entries
+    }
+
+    fn load_remotes(app: &mut App, names: &[&str]) {
+        let mut data = revset_data(Vec::new(), true);
+        data.remotes = names
+            .iter()
+            .map(|&name| crate::dag::GitRemote {
+                name: RemoteName::new(name),
+                fetch_url: Some(format!("https://example.com/{name}")),
+                push_url: None,
+            })
+            .collect();
+        load_data(app, data);
+    }
+
+    /// A remote added above the cursor's keeps the cursor on its remote.
+    #[test]
+    fn the_remotes_view_keeps_its_remote_across_a_reload() {
+        let mut app = App::for_test();
+        load_remotes(&mut app, &["origin", "upstream"]);
+        app.switch_view(ActiveView::Remotes);
+        app.cursor = app
+            .position_of(DisplayRow::RemoteItem {
+                remote_idx: crate::idx::RemoteIdx::new(1),
+            })
+            .unwrap();
+
+        load_remotes(&mut app, &["fork", "origin", "upstream"]);
+
+        let remote = app.selected_remote_entry().map(|e| e.remote.name.as_str());
+        assert_eq!(remote, Some("upstream"));
     }
 
     /// A reload that lists a new bookmark above the cursor's keeps the

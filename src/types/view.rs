@@ -25,6 +25,7 @@ pub enum ActiveView {
     Tags,
     Operations,
     Workspaces,
+    Remotes,
     Evolog,
     CommandLog,
     Interdiff,
@@ -56,6 +57,7 @@ impl ActiveView {
             Self::Tags => SearchScopes::DEFAULT_TAG,
             Self::Operations => SearchScopes::DEFAULT_OP_LOG,
             Self::Annotate => SearchScopes::DEFAULT_ANNOTATE,
+            Self::Remotes => SearchScopes::DEFAULT_REMOTE,
             Self::Dag | Self::Workspaces | Self::Evolog | Self::CommandLog | Self::Interdiff => {
                 configured
             }

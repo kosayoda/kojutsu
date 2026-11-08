@@ -1,7 +1,7 @@
 use crate::idx::{
     AnnotateDetailIdx, AnnotateLineIdx, BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx,
     CommandLogIdx, ConflictHunkIdx, ConflictLineIdx, ConflictTermIdx, DescriptionLineIdx,
-    DiffLineIdx, EntryIdx, EvoLogIdx, FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx,
+    DiffLineIdx, EntryIdx, EvoLogIdx, FileIdx, GraphLineIdx, OpLogDetailIdx, OpLogIdx, RemoteIdx,
     TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 
@@ -108,6 +108,10 @@ pub enum DisplayRow {
     },
     /// A workspace row in the workspace view.
     WorkspaceItem { workspace_idx: WorkspaceIdx },
+    /// A remote row in the remotes view.
+    RemoteItem { remote_idx: RemoteIdx },
+    /// The separate push URL under a remote.
+    RemotePushUrl { remote_idx: RemoteIdx },
     /// A command log entry row.
     CommandLogItem { log_idx: CommandLogIdx },
     /// A detail line under an unfolded command log entry.
@@ -332,6 +336,16 @@ impl DisplayRow {
     pub fn workspace_idx(self) -> Option<WorkspaceIdx> {
         match self {
             Self::WorkspaceItem { workspace_idx } => Some(workspace_idx),
+            _ => None,
+        }
+    }
+
+    /// The remote index, if this row belongs to the remotes view.
+    pub fn remote_idx(self) -> Option<RemoteIdx> {
+        match self {
+            Self::RemoteItem { remote_idx } | Self::RemotePushUrl { remote_idx } => {
+                Some(remote_idx)
+            }
             _ => None,
         }
     }

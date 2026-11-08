@@ -290,6 +290,9 @@ pub(super) fn draw_status_bar(frame: &mut Frame, area: Rect, app: &App, theme: &
         crate::types::ActiveView::Operations => " Operations ".into(),
         crate::types::ActiveView::Evolog => " Evolog ".into(),
         crate::types::ActiveView::Workspaces => " Workspaces ".into(),
+        crate::types::ActiveView::Remotes => {
+            format!(" Remotes ({}) ", app.views.remotes.len()).into()
+        }
         crate::types::ActiveView::CommandLog => " Command Log ".into(),
         crate::types::ActiveView::Interdiff => " Interdiff ".into(),
         crate::types::ActiveView::Annotate => " Annotate ".into(),

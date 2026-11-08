@@ -173,6 +173,7 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("5", SwitchToOpLogView, "operations view", G, all()),
         bind("6", SwitchToEvoLogView, "evolog view", G, all()),
         bind("7", SwitchToCommandLogView, "command log", G, all()),
+        bind("8", SwitchToRemoteView, "remotes view", G, all()),
         bind("'", Jump, "jump", N, all()),
         bind("tab", ToggleFold, "toggle fold", N, all()),
         bind("space", ToggleSelect, "toggle select", N, all()),

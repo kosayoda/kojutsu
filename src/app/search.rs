@@ -355,6 +355,29 @@ impl App {
                         &contains,
                     )
             }
+            DisplayRow::RemoteItem { remote_idx } => {
+                let Some(entry) = self.views.remotes.get(remote_idx.raw()) else {
+                    return false;
+                };
+                // URLs are matched as shown, so a password can't be found
+                // by searching for it.
+                (scopes.contains(SearchScopes::DESCRIPTION) && contains(entry.remote.name.as_str()))
+                    || (scopes.contains(SearchScopes::PATH_COMMAND)
+                        && entry
+                            .remote
+                            .fetch_url
+                            .as_deref()
+                            .is_some_and(|url| contains(&crate::types::redact_password(url))))
+            }
+            DisplayRow::RemotePushUrl { remote_idx } => {
+                scopes.contains(SearchScopes::PATH_COMMAND)
+                    && self
+                        .views
+                        .remotes
+                        .get(remote_idx.raw())
+                        .and_then(|entry| entry.remote.push_url.as_deref())
+                        .is_some_and(|url| contains(&crate::types::redact_password(url)))
+            }
             DisplayRow::CommandLogItem { log_idx } => {
                 let Some(entry) = self.command_log.get(*log_idx) else {
                     return false;

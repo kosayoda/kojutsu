@@ -446,6 +446,20 @@ fn render_row(
                 None => vec![Line::raw("")],
             }
         }
+        DisplayRow::RemoteItem { remote_idx } => match app.views.remotes.get(remote_idx.raw()) {
+            Some(entry) => {
+                let name_width = remote_name_width(&app.views.remotes);
+                render_remote_item(entry, name_width, search, theme)
+            }
+            None => vec![Line::raw("")],
+        },
+        DisplayRow::RemotePushUrl { remote_idx } => match app.views.remotes.get(remote_idx.raw()) {
+            Some(entry) => {
+                let name_width = remote_name_width(&app.views.remotes);
+                render_remote_push_url(entry, name_width, search, theme)
+            }
+            None => vec![Line::raw("")],
+        },
         DisplayRow::CommandLogItem { log_idx } => match app.command_log.get(log_idx) {
             Some(entry) => render_command_log_item(entry, search, theme),
             None => vec![Line::raw("")],

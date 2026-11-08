@@ -20,23 +20,34 @@ pub(super) fn entry(tag: char, commit: &str) -> DagEntry {
 
 /// A revset result starting a load of `entries`, the whole of it if `done`.
 pub(super) fn load(app: &mut App, entries: Vec<DagEntry>, done: bool) {
-    app.handle_repo_result(RepoResult::Revset {
+    load_data(app, revset_data(entries, done));
+}
+
+/// What a load of `entries` delivers, with nothing else in the repo, for a
+/// test to add to before handing it to [`load_data`].
+pub(super) fn revset_data(entries: Vec<DagEntry>, done: bool) -> RevsetData {
+    RevsetData {
         revset: "all()".into(),
-        result: Ok(Box::new(RevsetData {
-            revset: "all()".into(),
-            repo_root: String::new(),
-            entries,
-            remote_bookmarks: Vec::new(),
-            remotes: Vec::new(),
-            all_tags: Vec::new(),
-            tag_details: Default::default(),
-            bookmark_details: Default::default(),
-            workspace_entries: Vec::new(),
-            warnings: Vec::new(),
-            run_jobs: None,
-            editor: Default::default(),
-            done,
-        })),
+        repo_root: String::new(),
+        entries,
+        remote_bookmarks: Vec::new(),
+        remotes: Vec::new(),
+        all_tags: Vec::new(),
+        tag_details: Default::default(),
+        bookmark_details: Default::default(),
+        workspace_entries: Vec::new(),
+        warnings: Vec::new(),
+        run_jobs: None,
+        editor: Default::default(),
+        done,
+    }
+}
+
+/// A revset result starting a load that delivers `data`.
+pub(super) fn load_data(app: &mut App, data: RevsetData) {
+    app.handle_repo_result(RepoResult::Revset {
+        revset: data.revset.clone(),
+        result: Ok(Box::new(data)),
     });
 }
 

@@ -5,6 +5,7 @@ mod dag;
 mod evolog;
 mod interdiff;
 mod oplog;
+mod remote;
 mod tag;
 mod workspace;
 
@@ -15,6 +16,7 @@ pub(super) use dag::*;
 pub(super) use evolog::*;
 pub(super) use interdiff::*;
 pub(super) use oplog::*;
+pub(super) use remote::*;
 pub(super) use tag::*;
 pub(super) use workspace::*;
 

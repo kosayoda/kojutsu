@@ -823,6 +823,7 @@ impl App {
             | ActiveView::Bookmarks
             | ActiveView::Tags
             | ActiveView::Workspaces
+            | ActiveView::Remotes
             | ActiveView::CommandLog
             | ActiveView::Interdiff
             | ActiveView::Annotate => {}
@@ -1015,7 +1016,10 @@ impl App {
             ActiveView::Annotate => {
                 Some(commit_revision(&self.selected_annotate_line()?.commit_id))
             }
-            ActiveView::Operations | ActiveView::CommandLog | ActiveView::Interdiff => None,
+            ActiveView::Operations
+            | ActiveView::Remotes
+            | ActiveView::CommandLog
+            | ActiveView::Interdiff => None,
         }
     }
 
@@ -1058,6 +1062,7 @@ impl App {
             }
             ActiveView::Dag
             | ActiveView::Operations
+            | ActiveView::Remotes
             | ActiveView::CommandLog
             | ActiveView::Interdiff => None,
         }
@@ -1590,6 +1595,12 @@ impl App {
         self.views.workspace_entries.get(workspace_idx.raw())
     }
 
+    /// The remote the cursor is on: its own row or its push URL's.
+    pub fn selected_remote_entry(&self) -> Option<&crate::dag::RemoteEntry> {
+        let remote_idx = self.rows.get(self.cursor.raw())?.remote_idx()?;
+        self.views.remotes.get(remote_idx.raw())
+    }
+
     /// Get the entry idx the cursor is on.
     pub fn selected_entry_idx(&self) -> Option<EntryIdx> {
         self.rows.get(self.cursor.raw())?.entry_idx()
@@ -1857,6 +1868,7 @@ impl App {
                     | DisplayRow::OpLogItem { .. }
                     | DisplayRow::EvoLogItem { .. }
                     | DisplayRow::WorkspaceItem { .. }
+                    | DisplayRow::RemoteItem { .. }
                     | DisplayRow::CommandLogItem { .. }
                     | DisplayRow::FileChange { .. }
                     | DisplayRow::AnnotateLine { .. }

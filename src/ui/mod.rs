@@ -306,3 +306,118 @@ mod narrow_terminal_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod remotes_view_tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use crate::app::App;
+    use crate::dag::{GitRemote, RemoteEntry, RemoteRefCounts};
+    use crate::input::handle_key;
+    use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+    use crate::lua::LuaEngine;
+    use crate::types::{ActiveView, RemoteName};
+
+    fn remote(
+        name: &str,
+        fetch: &str,
+        push: Option<&str>,
+        bookmarks: (usize, usize),
+    ) -> RemoteEntry {
+        RemoteEntry {
+            remote: GitRemote {
+                name: RemoteName::new(name),
+                fetch_url: Some(fetch.into()),
+                push_url: push.map(Into::into),
+            },
+            bookmarks: RemoteRefCounts {
+                total: bookmarks.0,
+                tracked: bookmarks.1,
+            },
+            tags: RemoteRefCounts::default(),
+        }
+    }
+
+    /// `8` shows each remote's fetch URL in one column with what it has,
+    /// and a separate push URL on its own row beneath, in the same column.
+    #[test]
+    fn remotes_are_listed_with_their_urls_aligned() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        app.views.remotes = vec![
+            remote(
+                "origin",
+                "git@example.com:a/b",
+                Some("git@push.example.com:a/b"),
+                (2, 1),
+            ),
+            remote("upstream-mirror", "https://example.com/u", None, (1, 0)),
+        ];
+        let lua = LuaEngine::for_test();
+        handle_key(
+            &mut app,
+            &keymaps,
+            &lua,
+            KeyEvent::new(KeyCode::Char('8'), KeyModifiers::NONE),
+        );
+        assert_eq!(app.active_view, ActiveView::Remotes);
+
+        let (width, height) = (100, 10);
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+        terminal
+            .draw(|frame| super::draw(frame, &mut app, &keymaps))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let screen: Vec<String> = (0..height)
+            .map(|y| (0..width).map(|x| buffer[(x, y)].symbol()).collect())
+            .collect();
+        let row = |text: &str| {
+            screen
+                .iter()
+                .find(|line| line.contains(text))
+                .unwrap_or_else(|| panic!("no row with {text:?} in\n{}", screen.join("\n")))
+        };
+        let column = |line: &str, text: &str| line.find(text).expect("text on its row");
+
+        let origin = row("origin");
+        assert!(origin.contains("git@example.com:a/b · 2 bookmarks, 1 tracked"));
+        let push = row("push  git@push.example.com:a/b");
+        let upstream = row("upstream-mirror");
+        assert!(upstream.contains("https://example.com/u · 1 bookmark"));
+        assert!(!upstream.contains("tracked"));
+        let url_column = column(upstream, "https://");
+        assert_eq!(column(origin, "git@example"), url_column);
+        assert_eq!(column(push, "git@push"), url_column);
+        assert!(screen.iter().any(|line| line.contains("Remotes (2)")));
+    }
+
+    /// A password in a remote's URL is never drawn.
+    #[test]
+    fn a_password_in_a_remote_url_is_redacted() {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        app.views.remotes = vec![remote(
+            "origin",
+            "https://me:s3cret@example.com/a/b",
+            Some("https://me:s3cret@push.example.com/a/b"),
+            (0, 0),
+        )];
+        app.switch_view(ActiveView::Remotes);
+
+        let (width, height) = (100, 6);
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+        terminal
+            .draw(|frame| super::draw(frame, &mut app, &keymaps))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        let screen: String = (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .map(|(x, y)| buffer[(x, y)].symbol())
+            .collect();
+        assert!(!screen.contains("s3cret"));
+        assert!(screen.contains("example.com/a/b"));
+        assert!(screen.contains("push.example.com/a/b"));
+    }
+}

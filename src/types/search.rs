@@ -23,6 +23,7 @@ impl SearchScopes {
     pub const DEFAULT_TAG: Self = Self::TAG.union(Self::DESCRIPTION);
     pub const DEFAULT_OP_LOG: Self = Self::DESCRIPTION;
     pub const DEFAULT_ANNOTATE: Self = Self::CHANGE_ID.union(Self::LINE);
+    pub const DEFAULT_REMOTE: Self = Self::DESCRIPTION.union(Self::PATH_COMMAND);
 
     pub const fn spec(self) -> SearchScopeSpec {
         SearchScopeSpec {
@@ -120,6 +121,21 @@ pub fn scope_specs_for_view(view: ActiveView) -> &'static [SearchScopeSpec] {
         }
         ActiveView::Workspaces => {
             const V: &[SearchScopeSpec] = &[S::DESCRIPTION.spec(), S::CHANGE_ID.spec()];
+            V
+        }
+        ActiveView::Remotes => {
+            const V: &[SearchScopeSpec] = &[
+                SearchScopeSpec {
+                    flag: S::DESCRIPTION,
+                    hint: "n",
+                    label: "name",
+                },
+                SearchScopeSpec {
+                    flag: S::PATH_COMMAND,
+                    hint: "u",
+                    label: "url",
+                },
+            ];
             V
         }
         ActiveView::Evolog => {

@@ -904,6 +904,10 @@ fn perform(
             app.switch_view(crate::types::ActiveView::Workspaces);
             Action::None
         }
+        AppAction::SwitchToRemoteView => {
+            app.switch_view(crate::types::ActiveView::Remotes);
+            Action::None
+        }
         AppAction::SwitchToEvoLogView => {
             app.switch_view(crate::types::ActiveView::Evolog);
             Action::None

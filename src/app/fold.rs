@@ -4,7 +4,7 @@ use crate::dag::DiffTarget;
 use crate::idx::{
     BookmarkDetailIdx, BookmarkIdx, CommandLogDetailIdx, ConflictHunkIdx, ConflictLineIdx,
     ConflictTermIdx, DescriptionLineIdx, DiffLineIdx, EntryIdx, EvoLogIdx, FileIdx, GraphLineIdx,
-    OpLogDetailIdx, OpLogIdx, RowIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
+    OpLogDetailIdx, OpLogIdx, RemoteIdx, RowIdx, TagDetailIdx, TagIdx, WorkspaceIdx,
 };
 use crate::repo_service::RepoRequest;
 use crate::types::ActiveView;
@@ -52,6 +52,7 @@ impl App {
             ActiveView::Operations => self.rebuild_op_log_rows(),
             ActiveView::Evolog => self.rebuild_evolog_rows(),
             ActiveView::Workspaces => self.rebuild_workspace_rows(),
+            ActiveView::Remotes => self.rebuild_remote_rows(),
             ActiveView::CommandLog => self.rebuild_command_log_rows(),
             ActiveView::Interdiff => self.rebuild_interdiff_rows(),
             ActiveView::Annotate => self.rebuild_annotate_rows(),
@@ -142,6 +143,19 @@ impl App {
             self.rows.push(DisplayRow::WorkspaceItem {
                 workspace_idx: WorkspaceIdx::new(idx),
             });
+        }
+        self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
+    }
+
+    fn rebuild_remote_rows(&mut self) {
+        let prev_cursor = self.rows.get(self.cursor.raw()).copied();
+        self.rows.clear();
+        for (idx, entry) in self.views.remotes.iter().enumerate() {
+            let remote_idx = RemoteIdx::new(idx);
+            self.rows.push(DisplayRow::RemoteItem { remote_idx });
+            if entry.remote.push_url.is_some() {
+                self.rows.push(DisplayRow::RemotePushUrl { remote_idx });
+            }
         }
         self.cursor = restore_cursor(&self.rows, self.cursor, &[prev_cursor]);
     }

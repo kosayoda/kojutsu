@@ -325,6 +325,7 @@ impl App {
             crate::types::ActiveView::Tags => matches!(row, DisplayRow::TagItem { .. }),
             crate::types::ActiveView::Operations => matches!(row, DisplayRow::OpLogItem { .. }),
             crate::types::ActiveView::Workspaces => matches!(row, DisplayRow::WorkspaceItem { .. }),
+            crate::types::ActiveView::Remotes => matches!(row, DisplayRow::RemoteItem { .. }),
             crate::types::ActiveView::Evolog => {
                 matches!(
                     row,

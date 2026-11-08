@@ -85,6 +85,10 @@ define_idx!(
     pub WorkspaceIdx
 );
 define_idx!(
+    /// Index into `ViewData::remotes`.
+    pub RemoteIdx
+);
+define_idx!(
     /// Index into `EvoLogState::entries`.
     pub EvoLogIdx
 );
