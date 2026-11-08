@@ -304,7 +304,7 @@ impl JjRepo {
 
         let desc = commit.map(|c| {
             let is_empty = c
-                .is_empty(self.repo.as_ref())
+                .is_empty(self.repo.index())
                 .block_on()
                 .inspect_err(|e| tracing::warn!("is_empty check failed: {e}"))
                 .unwrap_or(false);

@@ -10,6 +10,7 @@ use crate::types::{BookmarkName, CommitId as UiCommitId, TagName};
 use color_eyre::Result;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::commit::Commit;
+use jj_lib::index::ResolvedChangeTargets;
 use jj_lib::object_id::ObjectId;
 use jj_lib::ref_name::RefName;
 use jj_lib::repo::{ReadonlyRepo, Repo};
@@ -116,8 +117,8 @@ impl JjRepo {
 
         // Divergence, hidden status, and change ID disambiguation are
         // deferred to a background thread (see compute_divergence_info)
-        // because resolve_change_id() and is_hidden() are expensive
-        // per-commit index lookups.
+        // because resolve_change_id() is an expensive per-commit index
+        // lookup.
         // Full commit ID hex for graph rendering (stable key).
         let graph_id = UiCommitId::new(commit.id().hex());
 
@@ -207,7 +208,7 @@ impl JjRepo {
                 continue;
             };
             if commit
-                .is_empty(repo.as_ref())
+                .is_empty(repo.index())
                 .block_on()
                 .inspect_err(|e| tracing::warn!("is_empty check failed: {e}"))
                 .unwrap_or(false)
@@ -235,19 +236,10 @@ impl JjRepo {
             let Ok(commit) = repo.store().get_commit(&commit_id) else {
                 continue;
             };
-            let resolved = repo
-                .resolve_change_id(commit.change_id())
-                .block_on()
-                .ok()
-                .flatten();
+            let (resolved, is_hidden) = change_targets(repo.as_ref(), &commit);
             let is_divergent = resolved
                 .as_ref()
                 .is_some_and(|targets| targets.is_divergent());
-            let is_hidden = commit
-                .is_hidden(repo.as_ref())
-                .block_on()
-                .inspect_err(|e| tracing::warn!("is_hidden check failed: {e}"))
-                .unwrap_or(false);
             if !is_divergent && !is_hidden {
                 continue;
             }
@@ -302,17 +294,7 @@ impl JjRepo {
     ) -> Option<CommitDetailInfo> {
         let repo = self.repo.as_ref();
         let commit = repo.store().get_commit(commit_id).ok()?;
-        let is_hidden = commit
-            .is_hidden(repo)
-            .block_on()
-            .inspect_err(|e| tracing::warn!("is_hidden check failed: {e}"))
-            .unwrap_or(false);
-
-        let resolved = repo
-            .resolve_change_id(commit.change_id())
-            .block_on()
-            .ok()
-            .flatten();
+        let (resolved, is_hidden) = change_targets(repo, &commit);
         let is_divergent = resolved
             .as_ref()
             .is_some_and(|targets| targets.is_divergent());
@@ -343,5 +325,23 @@ impl JjRepo {
             description,
             divergence,
         })
+    }
+}
+
+/// The visible commits of `commit`'s change, and whether `commit` itself is
+/// hidden: no longer among them, as jj decides it. A failed index lookup
+/// reports neither, so the commit is drawn as a plain one.
+fn change_targets(repo: &dyn Repo, commit: &Commit) -> (Option<ResolvedChangeTargets>, bool) {
+    match repo.resolve_change_id(commit.change_id()).block_on() {
+        Ok(targets) => {
+            let is_hidden = targets
+                .as_ref()
+                .is_none_or(|targets| !targets.has_visible(commit.id()));
+            (targets, is_hidden)
+        }
+        Err(e) => {
+            tracing::warn!("change id lookup failed: {e}");
+            (None, false)
+        }
     }
 }

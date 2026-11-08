@@ -13,7 +13,7 @@ use color_eyre::Result;
 use color_eyre::eyre::Context;
 use jj_lib::config::{ConfigGetResultExt as _, StackedConfig};
 use jj_lib::default_backend_factories::{
-    default_backend_factories, default_working_copy_factories,
+    default_backend_factories, default_working_copy_factories, default_workspace_loader_factory,
 };
 use jj_lib::dsl_util::{AliasDeclarationParser, AliasesMap};
 use jj_lib::fileset::FilesetAliasesMap;
@@ -26,9 +26,7 @@ use jj_lib::revset::{
     RevsetWorkspaceContext,
 };
 use jj_lib::settings::UserSettings;
-use jj_lib::time_util::DatePatternContext;
 use jj_lib::ui_path::RepoPathUiConverter;
-use jj_lib::workspace::Workspace;
 
 pub use diff::{assemble_resolution, has_conflict_markers, hunk_markers};
 
@@ -130,18 +128,20 @@ impl JjRepo {
             .wrap_err("failed to create jj settings from config")?;
         let aliases_map = load_aliases(&settings, "revset-aliases");
         let fileset_aliases_map = load_aliases(&settings, "fileset-aliases");
-        let workspace = Workspace::load(
-            &settings,
-            path,
-            &default_backend_factories(),
-            &default_working_copy_factories(),
-        )
-        .wrap_err_with(|| format!("failed to load jj workspace at {}", path.display()))?;
+        let workspace = default_workspace_loader_factory()
+            .create(path)
+            .and_then(|loader| {
+                loader.load(
+                    &settings,
+                    &default_backend_factories(),
+                    &default_working_copy_factories(),
+                )
+            })
+            .wrap_err_with(|| format!("failed to load jj workspace at {}", path.display()))?;
 
         let workspace_name = workspace.workspace_name().to_owned();
         let workspace_root = workspace.workspace_root().to_owned();
         let repo = workspace
-            .repo_loader()
             .load_at_head()
             .block_on()
             .wrap_err("failed to load repo at HEAD")?;
@@ -300,7 +300,7 @@ impl JjRepo {
             aliases_map: &self.aliases_map,
             local_variables: Default::default(),
             user_email: self.settings.user_email(),
-            date_pattern_context: DatePatternContext::from(chrono::Local::now()),
+            current_time: jiff::Zoned::now(),
             default_ignored_remote: self.default_ignored_remote,
             fileset_aliases_map: &self.fileset_aliases_map,
             extensions: &self.extensions,

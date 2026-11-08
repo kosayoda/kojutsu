@@ -29,10 +29,10 @@ jiff = "0.2"
 # Byte strings (jj-lib's diff APIs speak BStr/BString)
 bstr = "1"
 # Jujutsu version control library
-jj-lib = { version = "0.46", features = ["git"] }
+jj-lib = { version = "0.47", features = ["git"] }
 # For the gix types jj-lib's git API hands back (remote URLs). Kept at the
 # version jj-lib uses: a mismatch fails to build rather than linking two.
-gix = { version = "0.88.0", default-features = false }
+gix = { version = "0.90.0", default-features = false }
 # Lua scripting
 mlua = { version = "0.11", features = ["lua54", "vendored", "serialize"] }
 # Clipboard access (for Lua `kojutsu.copy()`)

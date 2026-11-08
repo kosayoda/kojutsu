@@ -322,7 +322,7 @@ impl JjRepo {
             DiffTarget::Commit(commit_id) => {
                 let commit = self.load_commit(commit_id)?;
                 let before = commit
-                    .parent_tree(repo)
+                    .parent_tree(repo.index())
                     .block_on()
                     .wrap_err("failed to get parent tree")?;
                 Ok(TreePair {
@@ -347,7 +347,7 @@ impl JjRepo {
             .map(|id| self.load_commit(id))
             .collect::<Result<Vec<_>>>()?;
         let destination = self.load_commit(destination)?;
-        let before = rebase_to_dest_parent(self.repo.as_ref(), &sources, &destination)
+        let before = rebase_to_dest_parent(self.repo.index(), &sources, &destination)
             .block_on()
             .wrap_err("failed to rebase onto the destination's parents")?;
         Ok(TreePair {
@@ -396,7 +396,7 @@ impl JjRepo {
         if matches!(target, DiffTarget::Commit(_)) && after.has_conflict() {
             let existing: HashSet<RepoPath> =
                 summary.files.iter().map(|c| c.path.clone()).collect();
-            for (path, value) in after.conflicts() {
+            for (path, value) in after.conflicts().collect::<Vec<_>>().block_on() {
                 let repo_path = RepoPath::new(path.as_internal_file_string());
                 if !existing.contains(&repo_path) {
                     summary.files.push(FileChange {
@@ -428,7 +428,7 @@ impl JjRepo {
         let mut stats = LineStats::default();
 
         let mut diff_stream =
-            before_tree.diff_stream_with_copies(after_tree, &EverythingMatcher, copy_records);
+            before_tree.diff_with_copies(after_tree, &EverythingMatcher, copy_records);
         while let Some(entry) = diff_stream.next().block_on() {
             let after_path = entry.path.target();
             let path = RepoPath::new(after_path.as_internal_file_string());
@@ -793,8 +793,8 @@ fn side_token_lines(base: &[u8], side: &[u8]) -> Vec<Vec<DiffToken>> {
 /// Line-level hunk splitting with same-change acceptance. Must be the same
 /// options everywhere so the picker's hunk boundaries, the diff view's
 /// conflict regions, and re-materialized markers all agree.
-fn merge_options() -> jj_lib::tree_merge::MergeOptions {
-    jj_lib::tree_merge::MergeOptions {
+fn merge_options() -> jj_lib::files::MergeOptions {
+    jj_lib::files::MergeOptions {
         hunk_level: jj_lib::files::FileMergeHunkLevel::Line,
         same_change: jj_lib::merge::SameChange::Accept,
     }

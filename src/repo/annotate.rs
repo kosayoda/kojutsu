@@ -2,10 +2,10 @@ use std::collections::HashMap;
 
 use color_eyre::Result;
 use color_eyre::eyre::Context;
+use futures::StreamExt as _;
 use jj_lib::backend::CommitId as BackendCommitId;
 use jj_lib::commit::Commit;
 use jj_lib::object_id::ObjectId;
-use jj_lib::repo::Repo;
 use pollster::FutureExt as _;
 
 use super::JjRepo;
@@ -17,11 +17,11 @@ impl JjRepo {
     pub fn list_files(&self, commit_id: &UiCommitId) -> Result<Vec<RepoPath>> {
         let commit = self.load_commit(commit_id)?;
         let tree = commit.tree();
-        let mut paths = Vec::new();
-        for (path, _value) in tree.entries() {
-            paths.push(RepoPath::new(path.as_internal_file_string()));
-        }
-        Ok(paths)
+        let entries = tree.entries().collect::<Vec<_>>().block_on();
+        Ok(entries
+            .into_iter()
+            .map(|(path, _value)| RepoPath::new(path.as_internal_file_string()))
+            .collect())
     }
 
     pub fn file_annotate(
@@ -83,11 +83,11 @@ impl JjRepo {
                 Err(o) => (o, true),
             };
 
-            if !commit_cache.contains_key(&origin.commit_id) {
-                let c = repo.store().get_commit(&origin.commit_id)?;
-                let change_id = Self::short_change_id(&prefix_index, repo, &c);
-                let short_commit_id = Self::short_commit_id(&prefix_index, repo, &origin.commit_id);
-                let commit_id_hex = origin.commit_id.hex();
+            if !commit_cache.contains_key(origin.commit.id()) {
+                let c = &origin.commit;
+                let change_id = Self::short_change_id(&prefix_index, repo, c);
+                let short_commit_id = Self::short_commit_id(&prefix_index, repo, c.id());
+                let commit_id_hex = c.id().hex();
 
                 let author_sig = c.author();
                 let author_display = if author_sig.name.is_empty() {
@@ -101,11 +101,11 @@ impl JjRepo {
 
                 commit_info.insert(
                     ui_cid.clone(),
-                    build_annotate_commit_info(&c, short_commit_id, change_id.clone()),
+                    build_annotate_commit_info(c, short_commit_id, change_id.clone()),
                 );
 
                 commit_cache.insert(
-                    origin.commit_id.clone(),
+                    c.id().clone(),
                     CachedMeta {
                         ui_commit_id: ui_cid,
                         change_id,
@@ -114,7 +114,7 @@ impl JjRepo {
                     },
                 );
             }
-            let meta = &commit_cache[&origin.commit_id];
+            let meta = &commit_cache[origin.commit.id()];
 
             let content_str = String::from_utf8_lossy(content)
                 .trim_end_matches('\n')
