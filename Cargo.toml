@@ -63,7 +63,8 @@ syntect = { version = "5", default-features = false, features = [
 two-face = { version = "0.4", default-features = false, features = [
   "syntect-onig",
 ] }
-fuzzy-matcher = "0.3"
+# Fuzzy filtering for the select-from-list overlay
+nucleo-matcher = "0.3"
 # Shell argument quoting for display strings
 shlex = "1.3"
 # Enum utilities
@@ -80,6 +81,8 @@ thiserror = "2.0.11"
 tui-input = "0.15"
 # Unicode display width calculation (for horizontal scroll trimming)
 unicode-width = "0.2"
+# Grapheme boundaries (mapping fuzzy match indices back to byte offsets)
+unicode-segmentation = "1.13"
 # Logging utilities
 time = { version = "0.3.37", features = ["formatting"] }
 tracing = "0.1.41"

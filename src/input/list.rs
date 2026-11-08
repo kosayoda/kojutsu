@@ -1,6 +1,7 @@
-use fuzzy_matcher::FuzzyMatcher;
-use fuzzy_matcher::skim::SkimMatcherV2;
+use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern};
+use nucleo_matcher::{Config, Matcher, Utf32Str};
 use ratatui::crossterm::event::KeyEvent;
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::{App, AppMode};
 use crate::jj_command::{JJCommand, JJCommandKind};
@@ -12,24 +13,54 @@ use crate::types::{
 
 use super::{Action, PAGE_SIZE};
 
+/// Rank `items` against `filter`, best first, with the byte offsets of the
+/// matched characters in each. The filter takes fzf syntax: words match
+/// independently, and `^`, `$`, `!` and `'` change how a word matches.
 fn recompute_list_filter(items: &[String], filter: &str) -> (Vec<usize>, Vec<Vec<usize>>) {
     if filter.is_empty() {
         return ((0..items.len()).collect(), vec![vec![]; items.len()]);
     }
-    let matcher = SkimMatcherV2::default().ignore_case();
-    let mut scored: Vec<(usize, i64, Vec<usize>)> = items
+    let pattern = Pattern::parse(filter, CaseMatching::Smart, Normalization::Smart);
+    let mut matcher = Matcher::new(Config::DEFAULT);
+    let mut buf = Vec::new();
+    let mut matched = Vec::new();
+    let mut scored: Vec<(usize, u32, Vec<usize>)> = items
         .iter()
         .enumerate()
         .filter_map(|(i, item)| {
-            matcher
-                .fuzzy_indices(item, filter)
-                .map(|(score, indices)| (i, score, indices))
+            matched.clear();
+            let haystack = Utf32Str::new(item, &mut buf);
+            let score = pattern.indices(haystack, &mut matcher, &mut matched)?;
+            matched.sort_unstable();
+            matched.dedup();
+            Some((i, score, match_byte_offsets(item, haystack, &matched)))
         })
         .collect();
-    scored.sort_unstable_by_key(|&(_, score, _)| std::cmp::Reverse(score));
+    scored.sort_by_key(|&(_, score, _)| std::cmp::Reverse(score));
     let indices = scored.iter().map(|(i, _, _)| *i).collect();
     let positions = scored.into_iter().map(|(_, _, pos)| pos).collect();
     (indices, positions)
+}
+
+/// Translate the matcher's indices into byte offsets of `item`. An ASCII
+/// haystack is the item's own bytes, so its indices already are offsets
+/// (nucleo also takes this path for non-ASCII text whose graphemes all
+/// start with an ASCII char). A Unicode haystack holds one char per
+/// grapheme, so each matched grapheme yields the offsets of all its chars.
+fn match_byte_offsets(item: &str, haystack: Utf32Str<'_>, matched: &[u32]) -> Vec<usize> {
+    match haystack {
+        Utf32Str::Ascii(_) => matched.iter().map(|&i| i as usize).collect(),
+        Utf32Str::Unicode(_) => item
+            .grapheme_indices(true)
+            .enumerate()
+            .filter(|&(g, _)| matched.binary_search(&(g as u32)).is_ok())
+            .flat_map(|(_, (start, grapheme))| {
+                grapheme
+                    .char_indices()
+                    .map(move |(offset, _)| start + offset)
+            })
+            .collect(),
+    }
 }
 
 /// Re-run the fuzzy filter over the list's items and land on the best
@@ -427,6 +458,46 @@ mod lua_selection_tests {
             lua_selection_value(false, names(&[])),
             ResumeValue::None
         ));
+    }
+}
+
+#[cfg(test)]
+mod list_filter_tests {
+    use super::recompute_list_filter;
+
+    fn filter(items: &[&str], filter: &str) -> (Vec<usize>, Vec<Vec<usize>>) {
+        let items: Vec<String> = items.iter().map(|s| s.to_string()).collect();
+        recompute_list_filter(&items, filter)
+    }
+
+    /// The overlay highlights by byte offset, so a match after a multi-byte
+    /// char must land past all of its bytes.
+    #[test]
+    fn match_positions_are_byte_offsets() {
+        let (indices, positions) = filter(&["naïve"], "ïv");
+        assert_eq!(indices, [0]);
+        assert_eq!(positions, [vec![2, 4]]);
+    }
+
+    /// Every grapheme here starts with an ASCII char, so nucleo matches the
+    /// raw bytes rather than one char per grapheme.
+    #[test]
+    fn match_positions_survive_combining_marks() {
+        let (_, positions) = filter(&["e\u{301}xit"], "x");
+        assert_eq!(positions, [vec![3]]);
+    }
+
+    #[test]
+    fn an_uppercase_letter_makes_the_filter_case_sensitive() {
+        assert_eq!(filter(&["main", "Main"], "m").0.len(), 2);
+        assert_eq!(filter(&["main", "Main"], "M").0, [1]);
+    }
+
+    #[test]
+    fn words_match_in_any_order() {
+        let (indices, positions) = filter(&["push bookmark", "push tag"], "book push");
+        assert_eq!(indices, [0]);
+        assert_eq!(positions, [vec![0, 1, 2, 3, 5, 6, 7, 8]]);
     }
 }
 

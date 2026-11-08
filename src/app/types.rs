@@ -976,7 +976,8 @@ pub struct SelectFromListState {
     pub title: String,
     pub items: Vec<String>,
     pub filtered_indices: Vec<usize>,
-    /// Matched character positions for each entry in `filtered_indices`.
+    /// Byte offsets of the matched characters for each entry in
+    /// `filtered_indices`.
     pub match_positions: Vec<Vec<usize>>,
     pub cursor: usize,
     pub scroll_offset: usize,
