@@ -285,6 +285,7 @@ impl AppAction {
             SwitchToOpLogView => ui(ALL),
             SwitchToWorkspaceView => ui(ALL),
             SwitchToRemoteView => ui(ALL),
+            SearchRemoteBookmarks => ui(ALL),
             SwitchToEvoLogView => ui(ALL),
             SwitchToCommandLogView => ui(ALL),
             Jump => nav(),

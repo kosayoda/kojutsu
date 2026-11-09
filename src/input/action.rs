@@ -918,6 +918,13 @@ fn perform(
             app.switch_view(crate::types::ActiveView::Remotes);
             Action::None
         }
+        AppAction::SearchRemoteBookmarks => {
+            if let Some(entry) = app.selected_remote_entry() {
+                let remote = entry.remote.name.clone();
+                app.search_bookmarks_on(&remote);
+            }
+            Action::None
+        }
         AppAction::SwitchToEvoLogView => {
             app.switch_view(crate::types::ActiveView::Evolog);
             Action::None

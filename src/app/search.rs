@@ -2,7 +2,7 @@ use tui_input::Input;
 
 use super::{App, AppMode};
 use crate::idx::RowIdx;
-use crate::types::{DisplayRow, SearchFocus, SearchScopes, SearchState};
+use crate::types::{ActiveView, DisplayRow, SearchFocus, SearchScopes, SearchState};
 
 /// Match the description and change_id fields shared by bookmark, tag, and
 /// workspace entries.
@@ -124,6 +124,17 @@ impl App {
         }
         self.recompute_search_matches();
         self.enter_overlay(AppMode::SearchInput);
+    }
+
+    /// Show what is on `remote`: the bookmark view, searching for the
+    /// bookmarks on that remote and no other. The search is left open, to
+    /// step through them or go back with Esc; the remote scope is turned
+    /// on if it was off, since the search is for nothing else.
+    pub fn search_bookmarks_on(&mut self, remote: &crate::types::RemoteName) {
+        self.switch_view(ActiveView::Bookmarks);
+        self.search_scopes_mut().insert(SearchScopes::REMOTE);
+        self.begin_search();
+        self.update_search_input(Input::new(format!("@{remote}")));
     }
 
     /// End the search and put the cursor back where it started.
@@ -932,6 +943,45 @@ mod remote_scope_tests {
             })
             .collect();
         assert_eq!(found, ["v1@origin", "v2@origin"]);
+    }
+
+    /// Enter on a remote in the remotes view opens the bookmark view
+    /// searching for it, the remote scope turned back on, and the cursor
+    /// on its first bookmark.
+    #[test]
+    fn enter_on_a_remote_searches_its_bookmarks() {
+        use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut app = bookmarks_view();
+        *app.search_scopes_mut() = SearchScopes::BOOKMARK;
+        app.views.remotes = ["origin", "origin2"]
+            .map(|name| crate::dag::RemoteEntry {
+                remote: crate::dag::GitRemote {
+                    name: RemoteName::new(name),
+                    fetch_url: None,
+                    push_url: None,
+                },
+                bookmarks: Default::default(),
+                tags: Default::default(),
+            })
+            .into();
+        app.switch_view(ActiveView::Remotes);
+
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let lua = crate::lua::LuaEngine::for_test();
+        let enter = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        crate::input::handle_key(&mut app, &keymaps, &lua, enter);
+
+        assert_eq!(app.active_view, ActiveView::Bookmarks);
+        assert!(matches!(app.mode, crate::app::AppMode::SearchInput));
+        assert_eq!(app.search.as_ref().map(|s| s.query()), Some("@origin"));
+        assert!(app.search_scopes().contains(SearchScopes::REMOTE));
+        assert_eq!(app.search.as_ref().map(|s| s.matches.len()), Some(2));
+        assert!(matches!(
+            app.cursor_row(),
+            Some(DisplayRow::BookmarkRemoteTarget { .. })
+        ));
     }
 
     /// Without the remote scope, remotes aren't searched at all.

@@ -257,6 +257,7 @@ pub enum AppAction {
     SwitchToOpLogView,
     SwitchToWorkspaceView,
     SwitchToRemoteView,
+    SearchRemoteBookmarks,
     #[strum(serialize = "switch_to_evolog_view")]
     SwitchToEvoLogView,
     SwitchToCommandLogView,
