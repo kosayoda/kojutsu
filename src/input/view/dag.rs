@@ -418,18 +418,6 @@ pub(in crate::input) fn dispatch(app: &mut App, action: AppAction, flags: Comman
             flags,
         }),
 
-        AppAction::GitPush => with_remote(
-            app,
-            "push to remote",
-            RemoteCommand::Push { all: false },
-            flags,
-        ),
-        AppAction::GitPushAll => with_remote(
-            app,
-            "push all to remote",
-            RemoteCommand::Push { all: true },
-            flags,
-        ),
         AppAction::GitPushChange => {
             let Some(change_id) = app.selected_change_id() else {
                 return Action::None;

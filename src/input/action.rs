@@ -826,8 +826,6 @@ fn perform(
         | AppAction::BookmarkAdvance
         | AppAction::Undo
         | AppAction::Redo
-        | AppAction::GitPush
-        | AppAction::GitPushAll
         | AppAction::GitPushChange
         | AppAction::GitExport
         | AppAction::GitImport
@@ -867,6 +865,18 @@ fn perform(
             app,
             "fetch from remote",
             RemoteCommand::Fetch { all_remotes: false },
+            flags,
+        ),
+        AppAction::GitPush => super::target::with_remote(
+            app,
+            "push to remote",
+            RemoteCommand::Push { all: false },
+            flags,
+        ),
+        AppAction::GitPushAll => super::target::with_remote(
+            app,
+            "push all to remote",
+            RemoteCommand::Push { all: true },
             flags,
         ),
         AppAction::GitFetchAllRemotes => Action::run(JJCommand {

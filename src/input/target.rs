@@ -437,7 +437,8 @@ pub(super) fn git_fetch_tag(app: &mut App, flags: CommandFlags) -> Action {
     )
 }
 
-/// Change a remote: the only one there is, or the one picked.
+/// Change a remote: the one under the cursor in the remotes view, else the
+/// only one there is, or the one picked.
 pub(super) fn edit_remote(app: &mut App, edit: RemoteEdit, flags: CommandFlags) -> Action {
     if edit == RemoteEdit::SetPushUrl
         && let Some(reason) = app
@@ -446,6 +447,10 @@ pub(super) fn edit_remote(app: &mut App, edit: RemoteEdit, flags: CommandFlags) 
     {
         app.set_error(reason);
         return Action::None;
+    }
+    if let Some(entry) = app.selected_remote_entry() {
+        let name = entry.remote.name.clone();
+        return edit_named_remote(app, name, edit, flags);
     }
     match app.views.remotes.as_slice() {
         [] => {
@@ -537,14 +542,22 @@ pub(super) fn edit_named_remote(
     Action::None
 }
 
-/// Run a git command against the only remote, or ask which first: several
-/// at once where jj takes them.
+/// Run a git command against the remote under the cursor in the remotes
+/// view, else the only remote, or ask which first: several at once where
+/// jj takes them.
 pub(super) fn with_remote(
     app: &mut App,
     prompt: &str,
     command: RemoteCommand,
     flags: CommandFlags,
 ) -> Action {
+    if let Some(entry) = app.selected_remote_entry() {
+        let remotes = [entry.remote.name.clone()].into_iter().collect();
+        return Action::run(JJCommand {
+            kind: command.to_kind(remotes),
+            flags,
+        });
+    }
     if app.views.remotes.len() > 1 {
         let items = app
             .views
@@ -1111,6 +1124,105 @@ mod remote_choice_tests {
         app.views.remotes[0].remote.push_url = Some("push".into());
         set_push_url(&mut app);
         assert_eq!(prompt(&app), ("origin push url: ", "push".into()));
+    }
+
+    /// The remotes view with the cursor on `upstream`, of two remotes, and
+    /// `upstream` with a separate push URL.
+    fn on_upstream_in_the_remotes_view() -> App {
+        let mut app = App::for_test();
+        app.views.remotes = vec![remote("origin", "a"), remote("upstream", "b")];
+        app.views.remotes[1].remote.push_url = Some("push".into());
+        app.switch_view(crate::types::ActiveView::Remotes);
+        app.cursor = app
+            .position_of(crate::types::DisplayRow::RemoteItem {
+                remote_idx: crate::idx::RemoteIdx::new(1),
+            })
+            .unwrap();
+        app
+    }
+
+    /// Type `key`, an uppercase letter being the shifted key.
+    fn press(app: &mut App, key: char) -> crate::input::Action {
+        use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let lua = crate::lua::LuaEngine::for_test();
+        let event = KeyEvent::new(KeyCode::Char(key), KeyModifiers::NONE);
+        crate::input::handle_key(app, &keymaps, &lua, event)
+    }
+
+    fn remotes_of(action: &crate::input::Action) -> Vec<&str> {
+        use crate::jj_command::JJCommandKind;
+        let crate::input::Action::RunJj { cmd, .. } = action else {
+            panic!("expected a jj command");
+        };
+        match &cmd.kind {
+            JJCommandKind::GitFetch { remotes, .. } | JJCommandKind::GitPush { remotes, .. } => {
+                remotes.iter().map(|r| r.as_str()).collect()
+            }
+            _ => panic!("expected a fetch or push"),
+        }
+    }
+
+    /// In the remotes view, fetch and push go to the remote under the
+    /// cursor without asking which, from its push URL row too.
+    #[test]
+    fn the_remotes_view_fetches_and_pushes_the_remote_under_the_cursor() {
+        let mut app = on_upstream_in_the_remotes_view();
+        assert_eq!(remotes_of(&press(&mut app, 'f')), ["upstream"]);
+        assert_eq!(remotes_of(&press(&mut app, 'p')), ["upstream"]);
+        assert_eq!(remotes_of(&press(&mut app, 'P')), ["upstream"]);
+
+        app.cursor = app
+            .position_of(crate::types::DisplayRow::RemotePushUrl {
+                remote_idx: crate::idx::RemoteIdx::new(1),
+            })
+            .unwrap();
+        assert_eq!(remotes_of(&press(&mut app, 'f')), ["upstream"]);
+        assert!(matches!(app.mode, AppMode::Normal));
+    }
+
+    /// Fetching from every remote names none, as in the DAG view.
+    #[test]
+    fn the_remotes_view_fetches_from_every_remote_too() {
+        let mut app = on_upstream_in_the_remotes_view();
+        let action = press(&mut app, 'F');
+        assert!(matches!(
+            action,
+            crate::input::Action::RunJj { cmd, .. } if matches!(
+                cmd.kind,
+                crate::jj_command::JJCommandKind::GitFetch { all_remotes: true, .. }
+            )
+        ));
+    }
+
+    /// In the remotes view, the edits act on the remote under the cursor
+    /// rather than asking which.
+    #[test]
+    fn the_remotes_view_edits_the_remote_under_the_cursor() {
+        let mut app = on_upstream_in_the_remotes_view();
+        press(&mut app, 'r');
+        assert_eq!(prompt(&app), ("rename upstream to: ", "upstream".into()));
+
+        let mut app = on_upstream_in_the_remotes_view();
+        press(&mut app, 's');
+        assert_eq!(prompt(&app), ("upstream url: ", "b".into()));
+
+        let mut app = on_upstream_in_the_remotes_view();
+        press(&mut app, 'S');
+        assert_eq!(prompt(&app), ("upstream push url: ", "push".into()));
+
+        let mut app = on_upstream_in_the_remotes_view();
+        press(&mut app, 'x');
+        assert!(matches!(
+            &app.mode,
+            AppMode::FollowUp { prompt: crate::app::FollowUpPrompt::Text(text), .. }
+                if text == "remove remote upstream and forget its bookmarks?"
+        ));
+
+        let mut app = on_upstream_in_the_remotes_view();
+        press(&mut app, 'a');
+        assert_eq!(prompt(&app), ("remote name: ", String::new()));
     }
 
     /// A fetch from the only remote has nothing to ask, and leaves the

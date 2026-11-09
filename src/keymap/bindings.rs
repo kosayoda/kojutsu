@@ -571,6 +571,32 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         bind("enter", JumpToCommit, "jump to commit", C, workspace()),
     ]);
 
+    // Remotes view
+    let remote = || views(&[Remotes]);
+    specs.extend([
+        bind("a", GitRemoteAdd, "add\u{2026}", C, remote()),
+        bind("r", GitRemoteRename, "rename\u{2026}", C, remote()),
+        bind("s", GitRemoteSetUrl, "set url\u{2026}", C, remote()),
+        bind(
+            "shift-s",
+            GitRemoteSetPushUrl,
+            "set push url\u{2026}",
+            C,
+            remote(),
+        ),
+        bind("x", GitRemoteRemove, "remove", C, remote()),
+        bind("f", GitFetch, "fetch", C, remote()),
+        bind(
+            "shift-f",
+            GitFetchAllRemotes,
+            "fetch all remotes",
+            C,
+            remote(),
+        ),
+        bind("p", GitPush, "push", C, remote()),
+        bind("shift-p", GitPushAll, "push all bookmarks", C, remote()),
+    ]);
+
     // Evolog view
     let evo = || views(&[Evolog]);
     specs.extend([
