@@ -335,4 +335,48 @@ mod tests {
         assert!(result.success);
         assert_eq!(kill_main.pgid(), 0);
     }
+
+    /// A command stopped by a signal, as one reading the terminal from the
+    /// background is, still dies when cancelled.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stopped_command_can_be_cancelled() {
+        let cmd = JJCommand {
+            kind: JJCommandKind::Exec {
+                program: "sh".into(),
+                args: vec!["-c".into(), "kill -STOP $$; sleep 10".into()],
+            },
+            flags: CommandFlags::empty(),
+        };
+        let (kill_main, kill_bg) = KillHandle::pair();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done_tx.send(cmd.run_cancellable(Path::new("."), &kill_bg, |_| {}));
+        });
+        wait_until_stopped(&kill_main);
+        kill_main.kill();
+        let result = done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the cancel reached the stopped command");
+        assert!(result.cancelled);
+    }
+
+    /// Poll `/proc` until the command's process reports itself stopped.
+    #[cfg(target_os = "linux")]
+    fn wait_until_stopped(kill: &KillHandle) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let pid = kill.pgid();
+            if pid > 0
+                && let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                && stat
+                    .rsplit_once(')')
+                    .is_some_and(|(_, rest)| rest.trim_start().starts_with('T'))
+            {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("the command never stopped");
+    }
 }

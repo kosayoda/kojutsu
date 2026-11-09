@@ -41,10 +41,11 @@ impl KillHandle {
     pub fn kill(&self) {
         let pgid = self.0.load(Ordering::Acquire);
         if pgid > 0 {
-            let _ = nix::sys::signal::killpg(
-                nix::unistd::Pid::from_raw(pgid),
-                nix::sys::signal::Signal::SIGTERM,
-            );
+            let pgid = nix::unistd::Pid::from_raw(pgid);
+            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
+            // A stopped process holds the SIGTERM until it is continued, and
+            // one that stopped to prompt on the terminal would never be.
+            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGCONT);
         }
     }
 }
