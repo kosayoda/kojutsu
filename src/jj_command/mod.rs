@@ -366,11 +366,9 @@ pub struct JJCommandResult {
 /// How a command uses the terminal while it runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TerminalUse {
-    /// Output captured on a background thread while the TUI stays up.
+    /// Output captured on a background thread while the TUI stays up. If it
+    /// stops to prompt, it is handed the terminal until it exits.
     Background,
-    /// Output captured, but the TUI steps aside so the child has the real
-    /// stdin.
-    Foreground,
     /// The child takes the whole terminal: an editor or a diff editor.
     Interactive,
     /// The child writes straight to the terminal, as for `Interactive`, and
@@ -563,18 +561,7 @@ impl JJCommand {
         if self.is_interactive() {
             return TerminalUse::Interactive;
         }
-        match &self.kind {
-            // Talking to a remote may prompt for an SSH passphrase or
-            // credentials on stdin.
-            JJCommandKind::GitFetch { .. }
-            | JJCommandKind::GitFetchBookmark { .. }
-            | JJCommandKind::GitFetchTag { .. }
-            | JJCommandKind::GitPush { .. }
-            | JJCommandKind::GitPushChange { .. }
-            | JJCommandKind::GitPushBookmark { .. }
-            | JJCommandKind::GitPushTag { .. } => TerminalUse::Foreground,
-            _ => TerminalUse::Background,
-        }
+        TerminalUse::Background
     }
 
     /// Whether the command needs the terminal handed to it, rather than being
@@ -784,10 +771,11 @@ mod is_interactive_tests {
         );
     }
 
-    /// Git talking to a remote runs captured but in the foreground, where an
-    /// SSH passphrase prompt can reach the user; local git plumbing doesn't.
+    /// Git talking to a remote runs in the background like local plumbing:
+    /// a passphrase or credential prompt gets the terminal when it stops for
+    /// one, so the TUI only steps aside when something actually asks.
     #[test]
-    fn remote_git_commands_take_the_foreground() {
+    fn remote_git_commands_run_in_the_background() {
         let cmd = |kind| JJCommand {
             kind,
             flags: CommandFlags::empty(),
@@ -796,12 +784,12 @@ mod is_interactive_tests {
             all: false,
             remotes: SmallVec::new(),
         });
-        assert_eq!(push.terminal_use(), TerminalUse::Foreground);
+        assert_eq!(push.terminal_use(), TerminalUse::Background);
         let push_tag = cmd(JJCommandKind::GitPushTag {
             tags: smallvec::smallvec![TagName::new("v1")],
             remotes: smallvec::smallvec![RemoteName::new("origin")],
         });
-        assert_eq!(push_tag.terminal_use(), TerminalUse::Foreground);
+        assert_eq!(push_tag.terminal_use(), TerminalUse::Background);
         assert_eq!(
             cmd(JJCommandKind::GitExport).terminal_use(),
             TerminalUse::Background

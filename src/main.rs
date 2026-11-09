@@ -742,8 +742,9 @@ fn flush_repo_requests(app: &mut App, service: &RepoRequestHandle) {
     }
 }
 
-/// Run a jj command on the real terminal. Interactive commands need full
-/// terminal access; captured ones still need stdin for SSH password prompts.
+/// Run a jj command with the TUI put away. Interactive commands take the
+/// whole terminal; any other is captured and shown as it runs, for a caller
+/// that puts the TUI away for more than the command.
 fn run_in_foreground(cmd: &JJCommand, repo_path: &std::path::Path) -> JJCommandResult {
     match cmd.terminal_use() {
         TerminalUse::Interactive => cmd.run_interactive(repo_path),
@@ -752,7 +753,7 @@ fn run_in_foreground(cmd: &JJCommand, repo_path: &std::path::Path) -> JJCommandR
             kojutsu::terminal::wait_for_enter("press Enter to return to kojutsu");
             result
         }
-        TerminalUse::Foreground | TerminalUse::Background => cmd.run_suspend_captured(repo_path),
+        TerminalUse::Background => cmd.run_suspend_captured(repo_path),
     }
 }
 
