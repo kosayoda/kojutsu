@@ -14,13 +14,14 @@ bitflags::bitflags! {
         const PATH_COMMAND = 1 << 5;
         const LINE        = 1 << 6;
         const TAG         = 1 << 7;
+        const REMOTE      = 1 << 8;
     }
 }
 
 impl SearchScopes {
     pub const DEFAULT: Self = Self::CHANGE_ID.union(Self::DESCRIPTION);
-    pub const DEFAULT_BOOKMARK: Self = Self::BOOKMARK.union(Self::DESCRIPTION);
-    pub const DEFAULT_TAG: Self = Self::TAG.union(Self::DESCRIPTION);
+    pub const DEFAULT_BOOKMARK: Self = Self::BOOKMARK.union(Self::DESCRIPTION).union(Self::REMOTE);
+    pub const DEFAULT_TAG: Self = Self::TAG.union(Self::DESCRIPTION).union(Self::REMOTE);
     pub const DEFAULT_OP_LOG: Self = Self::DESCRIPTION;
     pub const DEFAULT_ANNOTATE: Self = Self::CHANGE_ID.union(Self::LINE);
     pub const DEFAULT_REMOTE: Self = Self::DESCRIPTION.union(Self::PATH_COMMAND);
@@ -43,6 +44,7 @@ impl SearchScopes {
             Self::PATH_COMMAND => "p",
             Self::LINE => "l",
             Self::TAG => "t",
+            Self::REMOTE => "r",
             _ => "",
         }
     }
@@ -57,6 +59,7 @@ impl SearchScopes {
             Self::PATH_COMMAND => "path",
             Self::LINE => "line",
             Self::TAG => "tag",
+            Self::REMOTE => "remote",
             _ => "",
         }
     }
@@ -98,14 +101,19 @@ pub fn scope_specs_for_view(view: ActiveView) -> &'static [SearchScopeSpec] {
         ActiveView::Bookmarks => {
             const V: &[SearchScopeSpec] = &[
                 S::BOOKMARK.spec(),
+                S::REMOTE.spec(),
                 S::DESCRIPTION.spec(),
                 S::CHANGE_ID.spec(),
             ];
             V
         }
         ActiveView::Tags => {
-            const V: &[SearchScopeSpec] =
-                &[S::TAG.spec(), S::DESCRIPTION.spec(), S::CHANGE_ID.spec()];
+            const V: &[SearchScopeSpec] = &[
+                S::TAG.spec(),
+                S::REMOTE.spec(),
+                S::DESCRIPTION.spec(),
+                S::CHANGE_ID.spec(),
+            ];
             V
         }
         ActiveView::Operations => {

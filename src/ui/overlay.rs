@@ -366,6 +366,15 @@ pub(super) fn draw_search_input(frame: &mut Frame, area: Rect, app: &App, theme:
 
     if matches!(search.focus, SearchFocus::Query) {
         render_scrollable_input(frame, inner, 0, &search.input, theme);
+        // The exact remote form isn't on any toggle, so it is offered
+        // while there is nothing typed yet.
+        let remotes_searchable = scope_specs_for_view(app.active_view)
+            .iter()
+            .any(|spec| spec.flag == crate::types::SearchScopes::REMOTE);
+        if search.query().is_empty() && remotes_searchable {
+            let hint = Span::styled("@name for one remote", Style::default().fg(theme.muted));
+            frame.render_widget(Paragraph::new(Line::from(hint)), inner);
+        }
     } else {
         let line = Line::from(Span::styled(
             search.query(),

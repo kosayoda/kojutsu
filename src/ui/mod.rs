@@ -421,3 +421,44 @@ mod remotes_view_tests {
         assert!(screen.contains("push.example.com/a/b"));
     }
 }
+
+#[cfg(test)]
+mod search_hint_tests {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    use crate::app::App;
+    use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+    use crate::types::ActiveView;
+
+    fn screen(app: &mut App) -> String {
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let (width, height) = (100, 8);
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("terminal");
+        terminal
+            .draw(|frame| super::draw(frame, app, &keymaps))
+            .expect("draw");
+        let buffer = terminal.backend().buffer();
+        (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .map(|(x, y)| buffer[(x, y)].symbol())
+            .collect()
+    }
+
+    /// A view that searches remotes offers the `@name` form until
+    /// something is typed; the others never mention it.
+    #[test]
+    fn the_exact_remote_form_is_offered_where_remotes_are_searched() {
+        let hint = "@name for one remote";
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        app.switch_view(ActiveView::Bookmarks);
+        app.begin_search();
+        assert!(screen(&mut app).contains(hint));
+        app.update_search_input(tui_input::Input::new("ma".into()));
+        assert!(!screen(&mut app).contains(hint));
+
+        let mut app = App::with_test_commit("qpvuntsm", "7bbaa2cb");
+        app.begin_search();
+        assert!(!screen(&mut app).contains(hint));
+    }
+}

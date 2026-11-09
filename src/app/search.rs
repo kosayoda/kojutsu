@@ -75,6 +75,21 @@ impl SearchQuery {
             .find_map(|(start, _)| Some(start..self.folded_match_end(&haystack[start..])? + start))
     }
 
+    /// Where the query matches the remote `name`: the whole of it for a
+    /// query of the form `@name`, which names one remote exactly, and
+    /// wherever it occurs in the name otherwise.
+    pub fn find_remote(&self, name: &str) -> Option<std::ops::Range<usize>> {
+        let Some(exact) = self.text.strip_prefix('@') else {
+            return self.find(name);
+        };
+        let equal = if self.case_sensitive {
+            name == exact
+        } else {
+            name.to_lowercase() == exact
+        };
+        equal.then_some(0..name.len())
+    }
+
     /// Where a match starting at the beginning of `text` ends, comparing
     /// each character's lowercase form, which can be more than one character
     /// long, against the lowercased query. A match ends on a character
@@ -241,6 +256,7 @@ impl App {
 
     fn row_matches(&self, row_idx: usize, query: &SearchQuery, scopes: SearchScopes) -> bool {
         let contains = |haystack: &str| query.matches(haystack);
+        let on_remote = |name: &str| query.find_remote(name).is_some();
 
         match &self.rows[row_idx] {
             DisplayRow::CommitNode { entry_idx } => {
@@ -289,9 +305,9 @@ impl App {
                 let Some(entry) = self.views.bookmark_entries.get(bookmark_idx.raw()) else {
                     return false;
                 };
-                (scopes.contains(SearchScopes::BOOKMARK)
-                    && (contains(entry.name.as_str())
-                        || entry.kind.remote().is_some_and(|r| contains(r.as_str()))))
+                (scopes.contains(SearchScopes::BOOKMARK) && contains(entry.name.as_str()))
+                    || (scopes.contains(SearchScopes::REMOTE)
+                        && entry.kind.remote().is_some_and(|r| on_remote(r.as_str())))
                     || ref_entry_matches(
                         entry.description.as_deref(),
                         entry.change_id.as_ref(),
@@ -299,9 +315,20 @@ impl App {
                         &contains,
                     )
             }
-            DisplayRow::BookmarkSeparator
-            | DisplayRow::BookmarkConflictTarget { .. }
-            | DisplayRow::BookmarkRemoteTarget { .. } => false,
+            DisplayRow::BookmarkRemoteTarget {
+                bookmark_idx,
+                target_idx,
+            } => {
+                scopes.contains(SearchScopes::REMOTE)
+                    && self
+                        .views
+                        .bookmark_entries
+                        .get(bookmark_idx.raw())
+                        .and_then(|entry| self.views.bookmark_details.get(&entry.name))
+                        .and_then(|details| details.remote_targets.get(target_idx.raw()))
+                        .is_some_and(|target| on_remote(target.remote.as_str()))
+            }
+            DisplayRow::BookmarkSeparator | DisplayRow::BookmarkConflictTarget { .. } => false,
             DisplayRow::TagItem { tag_idx } => {
                 let Some(entry) = self.views.tag_entries.get(tag_idx.raw()) else {
                     return false;
@@ -322,8 +349,20 @@ impl App {
                     || (scopes.contains(SearchScopes::PATH_COMMAND)
                         && entry.args.as_deref().is_some_and(contains))
             }
+            DisplayRow::TagRemoteTarget {
+                tag_idx,
+                target_idx,
+            } => {
+                scopes.contains(SearchScopes::REMOTE)
+                    && self
+                        .views
+                        .tag_entries
+                        .get(tag_idx.raw())
+                        .and_then(|entry| self.views.tag_details.get(&entry.name))
+                        .and_then(|details| details.remote_targets.get(target_idx.raw()))
+                        .is_some_and(|target| on_remote(target.remote.as_str()))
+            }
             DisplayRow::DescriptionLine { .. }
-            | DisplayRow::TagRemoteTarget { .. }
             | DisplayRow::OpLogDetailLine { .. }
             | DisplayRow::OpLogGraphLink { .. }
             | DisplayRow::OpLogLoadMore
@@ -672,9 +711,234 @@ mod query_tests {
         assert_eq!(find("i\u{307}x", "İx"), Some(0..3));
     }
 
+    fn find_remote(query: &str, name: &str) -> Option<std::ops::Range<usize>> {
+        SearchQuery::new(query).find_remote(name)
+    }
+
+    /// `@name` is that remote and no other; without the `@` a remote
+    /// matches wherever the query is in its name.
+    #[test]
+    fn an_at_query_names_one_remote_exactly() {
+        assert_eq!(find_remote("@origin", "origin"), Some(0..6));
+        assert_eq!(find_remote("@origin", "origin2"), None);
+        assert_eq!(find_remote("@orig", "origin"), None);
+        assert_eq!(find_remote("origin", "origin2"), Some(0..6));
+        assert_eq!(find_remote("rig", "origin"), Some(1..4));
+    }
+
+    /// The exact form follows the same case rule as any query.
+    #[test]
+    fn an_at_query_matches_case_as_other_queries_do() {
+        assert_eq!(find_remote("@origin", "Origin"), Some(0..6));
+        assert_eq!(find_remote("@Origin", "origin"), None);
+        assert_eq!(find_remote("@Origin", "Origin"), Some(0..6));
+    }
+
     #[test]
     fn an_empty_query_is_in_everything() {
         assert!(SearchQuery::new("").matches("anything"));
         assert_eq!(find("", "abc"), Some(0..0));
+    }
+}
+
+#[cfg(test)]
+mod remote_scope_tests {
+    use super::super::{App, BookmarkKind, BookmarkViewEntry};
+    use crate::dag::{BookmarkDetails, BookmarkRemoteTarget, CommitSummary, RefTarget, ShortId};
+    use crate::types::{ActiveView, BookmarkName, CommitId, DisplayRow, RemoteName, SearchScopes};
+
+    fn summary() -> CommitSummary {
+        CommitSummary {
+            commit_id: CommitId::new("a1"),
+            change_id: ShortId::new("aa"),
+            short_commit_id: ShortId::new("a1"),
+            description: None,
+            divergence: None,
+        }
+    }
+
+    fn bookmark(name: &str, kind: BookmarkKind) -> BookmarkViewEntry {
+        BookmarkViewEntry {
+            name: BookmarkName::new(name),
+            commit_id: Some(CommitId::new("a1")),
+            change_id: None,
+            short_commit_id: None,
+            revision: None,
+            description: None,
+            kind,
+        }
+    }
+
+    /// `main` tracking origin and origin2, `feature` only on each of them,
+    /// and a local bookmark whose name has "origin" in it.
+    fn bookmarks_view() -> App {
+        let mut app = App::for_test();
+        let local = |is_tracking| {
+            let (is_dirty, is_conflicted) = (false, false);
+            if is_tracking {
+                BookmarkKind::Tracking {
+                    is_dirty,
+                    is_conflicted,
+                }
+            } else {
+                BookmarkKind::Local {
+                    is_dirty,
+                    is_conflicted,
+                }
+            }
+        };
+        let remote_only = |remote: &str| BookmarkKind::UntrackedRemote {
+            remote: RemoteName::new(remote),
+        };
+        app.views.bookmark_entries = vec![
+            bookmark("main", local(true)),
+            bookmark("origin-docs", local(false)),
+            bookmark("feature", remote_only("origin")),
+            bookmark("feature", remote_only("origin2")),
+        ];
+        let target = |remote: &str| BookmarkRemoteTarget {
+            remote: RemoteName::new(remote),
+            summary: summary(),
+            is_tracked: true,
+            behind_count: Some(0),
+            ahead_count: Some(1),
+        };
+        app.views.bookmark_details.insert(
+            BookmarkName::new("main"),
+            BookmarkDetails {
+                local: RefTarget::Commit(CommitId::new("a1")),
+                conflict_targets: Vec::new(),
+                remote_targets: vec![target("origin"), target("origin2")],
+            },
+        );
+        app.switch_view(ActiveView::Bookmarks);
+        *app.search_scopes_mut() = SearchScopes::REMOTE;
+        app
+    }
+
+    /// The rows a search finds, as `name` or `name@remote`, a tracked
+    /// remote's row under its bookmark as `  @remote`.
+    fn found(app: &mut App, query: &str) -> Vec<String> {
+        app.begin_search();
+        app.update_search_input(tui_input::Input::new(query.into()));
+        let matches = app
+            .search
+            .as_ref()
+            .map(|s| s.matches.clone())
+            .unwrap_or_default();
+        matches
+            .into_iter()
+            .map(|row| match app.rows[row.raw()] {
+                DisplayRow::BookmarkItem { bookmark_idx } => {
+                    let entry = &app.views.bookmark_entries[bookmark_idx.raw()];
+                    match entry.kind.remote() {
+                        Some(remote) => format!("{}@{remote}", entry.name),
+                        None => entry.name.to_string(),
+                    }
+                }
+                DisplayRow::BookmarkRemoteTarget {
+                    bookmark_idx,
+                    target_idx,
+                } => {
+                    let entry = &app.views.bookmark_entries[bookmark_idx.raw()];
+                    let details = &app.views.bookmark_details[&entry.name];
+                    format!("  @{}", details.remote_targets[target_idx.raw()].remote)
+                }
+                _ => panic!("a match on a row that is neither a bookmark nor its remote"),
+            })
+            .collect()
+    }
+
+    /// `@origin` finds every bookmark on origin, tracked or not, and none
+    /// on origin2 or merely named after it.
+    #[test]
+    fn an_at_query_finds_what_is_on_that_remote() {
+        let mut app = bookmarks_view();
+        assert_eq!(found(&mut app, "@origin"), ["  @origin", "feature@origin"]);
+    }
+
+    /// A plain query finds every remote with it in its name.
+    #[test]
+    fn a_plain_query_finds_remotes_by_part_of_their_name() {
+        let mut app = bookmarks_view();
+        assert_eq!(
+            found(&mut app, "origin"),
+            [
+                "  @origin",
+                "  @origin2",
+                "feature@origin",
+                "feature@origin2"
+            ]
+        );
+    }
+
+    /// In the tag view, `@origin` finds each tag's row for origin: `v1`
+    /// tracked there, `v2` only there, and not `v1` on upstream.
+    #[test]
+    fn an_at_query_finds_tags_on_that_remote() {
+        use crate::dag::{TagDetails, TagPresence, TagRemoteTarget};
+        use crate::types::TagName;
+
+        let mut app = App::for_test();
+        let on = |remote: &str, commit: &str| TagRemoteTarget {
+            remote: RemoteName::new(remote),
+            summary: CommitSummary {
+                commit_id: CommitId::new(commit),
+                ..summary()
+            },
+            is_tracked: false,
+        };
+        app.views.all_tags.push(TagName::new("v1"));
+        app.views.tag_details.insert(
+            TagName::new("v1"),
+            TagDetails {
+                presence: TagPresence::Local,
+                local: RefTarget::Commit(summary()),
+                remote_targets: vec![on("origin", "o1"), on("upstream", "u1")],
+            },
+        );
+        app.views.tag_details.insert(
+            TagName::new("v2"),
+            TagDetails {
+                presence: TagPresence::RemoteOnly,
+                local: RefTarget::Absent,
+                remote_targets: vec![on("origin", "o2")],
+            },
+        );
+        app.rebuild_tag_entries();
+        app.switch_view(ActiveView::Tags);
+        *app.search_scopes_mut() = SearchScopes::REMOTE;
+
+        app.begin_search();
+        app.update_search_input(tui_input::Input::new("@origin".into()));
+        let matches = app
+            .search
+            .as_ref()
+            .map(|s| s.matches.clone())
+            .unwrap_or_default();
+        let found: Vec<String> = matches
+            .into_iter()
+            .map(|row| match app.rows[row.raw()] {
+                DisplayRow::TagRemoteTarget {
+                    tag_idx,
+                    target_idx,
+                } => {
+                    let name = &app.views.tag_entries[tag_idx.raw()].name;
+                    let remote =
+                        &app.views.tag_details[name].remote_targets[target_idx.raw()].remote;
+                    format!("{name}@{remote}")
+                }
+                _ => panic!("a match on a row that is not a tag's remote"),
+            })
+            .collect();
+        assert_eq!(found, ["v1@origin", "v2@origin"]);
+    }
+
+    /// Without the remote scope, remotes aren't searched at all.
+    #[test]
+    fn without_the_remote_scope_remotes_are_not_searched() {
+        let mut app = bookmarks_view();
+        *app.search_scopes_mut() = SearchScopes::BOOKMARK;
+        assert_eq!(found(&mut app, "origin"), ["origin-docs"]);
     }
 }

@@ -5,7 +5,7 @@ use crate::app::BookmarkViewEntry;
 use crate::theme::Theme;
 use crate::types::SearchScopes;
 
-use crate::ui::search::{SearchRender, gutter_span, push_searchable};
+use crate::ui::search::{SearchRender, gutter_span, push_remote_searchable, push_searchable};
 use crate::ui::spans::push_short_id;
 
 pub(crate) fn render_bookmark_item(
@@ -29,10 +29,9 @@ pub(crate) fn render_bookmark_item(
             name_style,
             search,
         );
-        spans.push(Span::styled(
-            format!("@{remote}"),
-            Style::default().fg(theme.muted),
-        ));
+        let remote_style = Style::default().fg(theme.muted);
+        spans.push(Span::styled("@", remote_style));
+        push_remote_searchable(&mut spans, remote.as_str(), remote_style, search);
     } else if entry.kind.is_dirty() {
         let name_display = format!("{}*", entry.name);
         let style = Style::default()
@@ -138,17 +137,17 @@ pub(crate) fn render_bookmark_conflict_target(
 
 pub(crate) fn render_bookmark_remote_target(
     target: Option<&crate::dag::BookmarkRemoteTarget>,
+    search: Option<&SearchRender<'_>>,
     theme: &Theme,
 ) -> Vec<Line<'static>> {
     let Some(target) = target else {
         return vec![Line::raw("")];
     };
-    let mut spans: Vec<Span<'static>> = Vec::new();
-
-    spans.push(Span::styled(
-        format!("      @{}", target.remote),
-        Style::default().fg(theme.remote),
-    ));
+    // The gutter takes the first two columns of the indent.
+    let mut spans = vec![gutter_span(search, theme)];
+    let remote_style = Style::default().fg(theme.remote);
+    spans.push(Span::styled("    @", remote_style));
+    push_remote_searchable(&mut spans, target.remote.as_str(), remote_style, search);
 
     let mut parts: Vec<String> = Vec::new();
     if !target.is_tracked {

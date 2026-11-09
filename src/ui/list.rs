@@ -371,7 +371,7 @@ fn render_row(
                 .bookmark_details
                 .get(&entry.name)
                 .and_then(|d| d.remote_targets.get(target_idx.raw()));
-            render_bookmark_remote_target(target, theme)
+            render_bookmark_remote_target(target, search, theme)
         }
         DisplayRow::BookmarkSeparator => vec![Line::from(Span::styled(
             "─".repeat(ctx.width),
@@ -391,7 +391,7 @@ fn render_row(
                 .get(tag_idx.raw())
                 .and_then(|entry| app.views.tag_details.get(&entry.name))
                 .and_then(|d| d.remote_targets.get(target_idx.raw()));
-            render_tag_remote_target(target, theme)
+            render_tag_remote_target(target, search, theme)
         }
         DisplayRow::OpLogItem { op_log_idx } => match app.op_log.entries.get(op_log_idx.raw()) {
             Some(entry) => render_op_log_item(entry, search, theme),

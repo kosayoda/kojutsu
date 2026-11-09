@@ -74,6 +74,24 @@ pub(super) fn push_searchable(
     out.push(Span::styled(text.to_string(), style));
 }
 
+/// Push the remote `name`, highlighted where the query matches it as a
+/// remote: see [`SearchQuery::find_remote`].
+pub(super) fn push_remote_searchable(
+    out: &mut Vec<Span<'static>>,
+    name: &str,
+    style: Style,
+    search: Option<&SearchRender<'_>>,
+) {
+    if let Some(s) = search
+        && s.scopes.contains(SearchScopes::REMOTE)
+        && let Some(highlight) = s.query.find_remote(name)
+    {
+        push_span_with_highlight(out, name.to_string(), style, &highlight, 0);
+        return;
+    }
+    out.push(Span::styled(name.to_string(), style));
+}
+
 /// Push `text`, with where `query` matches in it highlighted.
 pub(super) fn push_highlighted(
     out: &mut Vec<Span<'static>>,
