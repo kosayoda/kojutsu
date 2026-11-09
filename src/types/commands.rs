@@ -233,9 +233,11 @@ pub enum CommandPrompt {
     TagSetByName { name: TagName, flags: CommandFlags },
     /// Text is the current workspace's new name.
     WorkspaceRename { flags: CommandFlags },
-    /// Text is the URL of a remote being added as `name`.
+    /// Text is the push URL of a remote being added as `name` (empty for
+    /// none: it pushes to `url`).
     GitRemoteAdd {
         name: RemoteName,
+        url: String,
         flags: CommandFlags,
     },
     /// Text is the remote's new name.
@@ -333,9 +335,14 @@ impl CommandPrompt {
                 },
                 flags,
             ),
-            Self::GitRemoteAdd { name, flags } => {
-                (JJCommandKind::GitRemoteAdd { name, url: text }, flags)
-            }
+            Self::GitRemoteAdd { name, url, flags } => (
+                JJCommandKind::GitRemoteAdd {
+                    name,
+                    url,
+                    push_url: (!text.trim().is_empty()).then_some(text),
+                },
+                flags,
+            ),
             Self::GitRemoteRename { old, flags } => (
                 JJCommandKind::GitRemoteRename {
                     old,
@@ -368,6 +375,12 @@ pub enum PromptStep {
     WorkspaceAddName { path: String, flags: CommandFlags },
     /// Remote add, step 1: text is the remote's name.
     GitRemoteAddName { flags: CommandFlags },
+    /// Remote add, step 2: text is its URL. Step 3, where jj can keep a
+    /// separate push URL, is [`CommandPrompt::GitRemoteAdd`].
+    GitRemoteAddUrl {
+        name: RemoteName,
+        flags: CommandFlags,
+    },
     /// Run, step 1: text is the command line to run over the revisions.
     RunCommand {
         change_ids: SmallVec<RevisionArg>,

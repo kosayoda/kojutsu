@@ -484,13 +484,20 @@ impl JJCommand {
             }
             JJCommandKind::GitExport => vec![sub("git"), sub("export")],
             JJCommandKind::GitImport => vec![sub("git"), sub("import")],
-            JJCommandKind::GitRemoteAdd { name, url } => vec![
-                sub("git"),
-                sub("remote"),
-                sub("add"),
-                arg(name.as_str()).operand(),
-                url_arg(url.as_str()).operand(),
-            ],
+            JJCommandKind::GitRemoteAdd {
+                name,
+                url,
+                push_url,
+            } => {
+                let mut args = vec![sub("git"), sub("remote"), sub("add")];
+                if let Some(push_url) = push_url {
+                    args.push(flag("--push-url").needs(JjFeature::SeparatePushUrl));
+                    args.push(url_arg(push_url.as_str()));
+                }
+                args.push(arg(name.as_str()).operand());
+                args.push(url_arg(url.as_str()).operand());
+                args
+            }
             JJCommandKind::GitRemoteRemove { name } => {
                 vec![
                     sub("git"),

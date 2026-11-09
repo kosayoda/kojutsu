@@ -57,12 +57,43 @@ fn submit_step(
             app.mode = AppMode::text_input(
                 format!("URL for {text}: "),
                 "",
-                crate::types::CommandPrompt::GitRemoteAdd {
+                PromptStep::GitRemoteAddUrl {
                     name: crate::types::RemoteName::new(text),
                     flags,
                 },
             );
             Action::None
+        }
+        PromptStep::GitRemoteAddUrl { name, flags } => {
+            if text.trim().is_empty() {
+                app.set_error("a remote needs a URL");
+                return Action::None;
+            }
+            // Asked only where jj can keep the two apart; otherwise it
+            // pushes to the URL just given.
+            if app
+                .jj
+                .supports(crate::jj_version::JjFeature::SeparatePushUrl)
+            {
+                app.mode = AppMode::text_input(
+                    format!("push URL for {name} (enter for the same): "),
+                    "",
+                    crate::types::CommandPrompt::GitRemoteAdd {
+                        name,
+                        url: text,
+                        flags,
+                    },
+                );
+                return Action::None;
+            }
+            Action::run(JJCommand {
+                kind: JJCommandKind::GitRemoteAdd {
+                    name,
+                    url: text,
+                    push_url: None,
+                },
+                flags,
+            })
         }
         PromptStep::RunCommand { change_ids, flags } => {
             submit_run_command(app, change_ids, flags, text)

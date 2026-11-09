@@ -187,6 +187,8 @@ pub enum JJCommandKind {
     GitRemoteAdd {
         name: RemoteName,
         url: String,
+        /// Where it pushes to, when not to `url`.
+        push_url: Option<String>,
     },
     /// Remove a remote, and forget its bookmarks.
     GitRemoteRemove {
@@ -982,6 +984,7 @@ mod operand_tests {
             JJCommandKind::GitRemoteAdd {
                 name: remote(),
                 url: "https://host/r".into(),
+                push_url: Some("https://host/push".into()),
             },
             JJCommandKind::GitRemoteRemove { name: remote() },
             JJCommandKind::GitRemoteRename {
@@ -1207,6 +1210,15 @@ mod remote_url_tests {
         remote_cmd(JJCommandKind::GitRemoteAdd {
             name: RemoteName::new("origin"),
             url: url.into(),
+            push_url: None,
+        })
+    }
+
+    fn add_with_push_url(url: &str) -> JJCommand {
+        remote_cmd(JJCommandKind::GitRemoteAdd {
+            name: RemoteName::new("origin"),
+            url: "https://host/r.git".into(),
+            push_url: Some(url.into()),
         })
     }
 
@@ -1222,6 +1234,14 @@ mod remote_url_tests {
             assert!(shown.ends_with(" https://u:redacted@host/r.git"), "{shown}");
             assert!(cmd.args().iter().any(|a| a.as_str() == secret));
         }
+        let cmd = add_with_push_url(secret);
+        let shown = cmd.display();
+        assert!(!shown.contains("tok3n"), "{shown}");
+        assert!(
+            shown.contains(" --push-url https://u:redacted@host/r.git "),
+            "{shown}"
+        );
+        assert!(cmd.args().iter().any(|a| a.as_str() == secret));
         for url in [
             "https://host/r.git",
             "https://u@host/r.git",

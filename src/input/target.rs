@@ -1225,6 +1225,79 @@ mod remote_choice_tests {
         assert_eq!(prompt(&app), ("remote name: ", String::new()));
     }
 
+    /// Type `text` into the prompt and submit it.
+    fn answer(app: &mut App, text: &str) -> crate::input::Action {
+        use crate::keymap::{ActionRegistry, Keymaps, default_bindings};
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+        let keymaps = Keymaps::build(default_bindings(), ActionRegistry::new());
+        let lua = crate::lua::LuaEngine::for_test();
+        let mut key = |code| {
+            crate::input::handle_key(app, &keymaps, &lua, KeyEvent::new(code, KeyModifiers::NONE))
+        };
+        for c in text.chars() {
+            key(KeyCode::Char(c));
+        }
+        key(KeyCode::Enter)
+    }
+
+    fn added(action: &crate::input::Action) -> (&str, &str, Option<&str>) {
+        use crate::jj_command::JJCommandKind;
+        match action {
+            crate::input::Action::RunJj { cmd, .. } => match &cmd.kind {
+                JJCommandKind::GitRemoteAdd {
+                    name,
+                    url,
+                    push_url,
+                } => (name.as_str(), url.as_str(), push_url.as_deref()),
+                _ => panic!("expected a remote add"),
+            },
+            _ => panic!("expected a jj command"),
+        }
+    }
+
+    /// Adding asks for a name, a URL, and then a push URL, which can be
+    /// left empty to push to the URL.
+    #[test]
+    fn adding_a_remote_asks_for_a_push_url_too() {
+        let mut app = on_upstream_in_the_remotes_view();
+        press(&mut app, 'a');
+        answer(&mut app, "fork");
+        answer(&mut app, "https://example.com/f");
+        assert_eq!(
+            prompt(&app),
+            ("push URL for fork (enter for the same): ", String::new())
+        );
+        let action = answer(&mut app, "");
+        assert_eq!(added(&action), ("fork", "https://example.com/f", None));
+
+        press(&mut app, 'a');
+        answer(&mut app, "fork");
+        answer(&mut app, "https://example.com/f");
+        let action = answer(&mut app, "git@example.com:f");
+        assert_eq!(
+            added(&action),
+            ("fork", "https://example.com/f", Some("git@example.com:f"))
+        );
+    }
+
+    /// A jj that can't keep a separate push URL isn't asked for one, and an
+    /// empty URL isn't run at all.
+    #[test]
+    fn adding_a_remote_on_an_older_jj_stops_at_the_url() {
+        let mut app = on_upstream_in_the_remotes_view();
+        app.jj = InstalledJj::known(JjVersion::new(0, 36, 0));
+        press(&mut app, 'a');
+        answer(&mut app, "fork");
+        let action = answer(&mut app, "https://example.com/f");
+        assert_eq!(added(&action), ("fork", "https://example.com/f", None));
+
+        press(&mut app, 'a');
+        answer(&mut app, "fork");
+        let action = answer(&mut app, "");
+        assert!(matches!(action, crate::input::Action::None));
+        assert!(matches!(app.mode, AppMode::Normal));
+    }
+
     /// A fetch from the only remote has nothing to ask, and leaves the
     /// remote to jj's default.
     #[test]
