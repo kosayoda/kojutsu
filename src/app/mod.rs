@@ -2241,11 +2241,10 @@ mod pending_error_tests {
     #[test]
     fn a_failure_waits_for_a_running_command() {
         let mut app = App::for_test();
-        let (kill, _) = crate::jj_command::KillHandle::pair();
         app.mode = AppMode::CommandRunning(CommandRunningState::new(
             "jj git fetch".into(),
             Vec::new(),
-            kill,
+            crate::jj_command::JobHandle::new(),
         ));
         app.report_error("load files for x", failure("boom"));
         app.show_pending_error();

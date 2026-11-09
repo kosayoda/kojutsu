@@ -1,10 +1,18 @@
 use std::path::Path;
 use std::process::Output;
+use std::sync::Mutex;
+
+use nix::errno::Errno;
+use nix::sys::signal::{Signal, killpg};
+use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+use nix::unistd::Pid;
 
 use crate::jj_version::InstalledJj;
+use crate::terminal;
 
 use super::capture::joined;
-use super::{Captured, CommandPart, JJCommand, JJCommandResult, KillHandle, Stream};
+use super::job::Phase;
+use super::{Captured, CommandPart, JJCommand, JJCommandResult, JobHandle, Stream};
 
 impl JJCommand {
     pub fn run_interactive(&self, repo_path: &Path) -> JJCommandResult {
@@ -164,8 +172,8 @@ impl JJCommand {
     pub fn run_cancellable(
         &self,
         repo_path: &Path,
-        kill: &KillHandle,
-        on_chunk: impl FnMut(&[u8]) + Send,
+        job: &JobHandle,
+        on_event: impl FnMut(RunEvent<'_>) + Send,
     ) -> JJCommandResult {
         use std::os::unix::process::CommandExt as _;
 
@@ -188,59 +196,133 @@ impl JJCommand {
             Err(e) => return jj_error(cmd_str, display_parts, e),
         };
 
-        kill.set_pgid(child.id() as i32);
+        let pid = Pid::from_raw(child.id() as i32);
+        job.start(pid);
 
         let child_stdout = child.stdout.take().unwrap();
         let child_stderr = child.stderr.take().unwrap();
-        // Both pipes accumulate under one lock, so the callback observes
-        // exactly the byte order the finished capture has.
-        let sink = std::sync::Mutex::new((Captured::default(), on_chunk));
-        let status = std::thread::scope(|scope| {
-            scope.spawn(|| stream_pipe(child_stdout, Stream::Stdout, &sink));
-            scope.spawn(|| stream_pipe(child_stderr, Stream::Stderr, &sink));
-            let status = child.wait();
+        let on_event = Mutex::new(on_event);
+        let exit = std::thread::scope(|scope| {
+            scope.spawn(|| stream_pipe(child_stdout, Stream::Stdout, job, &on_event));
+            scope.spawn(|| stream_pipe(child_stderr, Stream::Stderr, job, &on_event));
+            let exit = wait_for_exit(pid, job, &on_event);
             // Reaped, so the pid is free for reuse: a cancel from here on
             // must not name it.
-            kill.set_pgid(0);
-            status
+            job.reaped();
+            exit
         });
-        let output = sink
-            .into_inner()
-            .map(|(captured, _)| captured)
-            .unwrap_or_default();
+        let output = job.finish();
 
-        let status = match status {
-            Ok(s) => s,
-            Err(e) => return jj_error(cmd_str, display_parts, e),
+        let code = match exit {
+            Exit::Code(code) => code,
+            Exit::Signalled => {
+                return JJCommandResult {
+                    display: cmd_str,
+                    display_parts,
+                    output: Captured::from("interrupted"),
+                    success: false,
+                    cancelled: true,
+                    code: None,
+                };
+            }
+            Exit::Refused => {
+                return JJCommandResult {
+                    display: cmd_str,
+                    display_parts,
+                    output,
+                    success: false,
+                    cancelled: false,
+                    code: None,
+                };
+            }
+            Exit::Failed(e) => return jj_error(cmd_str, display_parts, e),
         };
 
-        let success = status.code().is_some() && status.success();
         tracing::info!(
             elapsed_ms = start.elapsed().as_millis() as u64,
-            success,
+            success = code == 0,
             "jj command finished",
         );
-
-        if status.code().is_none() {
-            return JJCommandResult {
-                display: cmd_str,
-                display_parts,
-                output: Captured::from("interrupted"),
-                success: false,
-                cancelled: true,
-                code: None,
-            };
-        }
 
         JJCommandResult {
             display: cmd_str,
             display_parts,
             output,
-            success: status.success(),
+            success: code == 0,
             cancelled: false,
-            code: status.code(),
+            code: Some(code),
         }
     }
+}
+
+/// What a background command reports while it runs.
+pub enum RunEvent<'a> {
+    Output(&'a [u8]),
+    /// It stopped for touching the terminal, and waits for
+    /// `JobHandle::hand_over_terminal`.
+    Stopped,
+}
+
+/// How a background command ended.
+enum Exit {
+    Code(i32),
+    /// Killed by a signal: a cancel, or something outside kojutsu.
+    Signalled,
+    /// Ended because it stopped to use a terminal kojutsu could not give it.
+    Refused,
+    Failed(std::io::Error),
+}
+
+/// Wait for the command to exit, dealing with each stop on the way. A stop
+/// means some process in its group touched the terminal: the kernel stops
+/// the whole group, so it shows up here even when the process that wants
+/// the terminal is a grandchild, such as ssh under git under jj.
+fn wait_for_exit<F: FnMut(RunEvent<'_>)>(pid: Pid, job: &JobHandle, on_event: &Mutex<F>) -> Exit {
+    let mut refused = false;
+    loop {
+        match waitpid(pid, Some(WaitPidFlag::WUNTRACED)) {
+            Ok(WaitStatus::Exited(_, _) | WaitStatus::Signaled(..)) if refused => {
+                return Exit::Refused;
+            }
+            Ok(WaitStatus::Exited(_, code)) => return Exit::Code(code),
+            Ok(WaitStatus::Signaled(..)) => return Exit::Signalled,
+            Ok(WaitStatus::Stopped(..)) => match job.phase() {
+                Phase::Running if terminal::owns_terminal() => {
+                    job.set_phase(Phase::WaitingForTerminal);
+                    lock(on_event)(RunEvent::Stopped);
+                }
+                Phase::Running => {
+                    tracing::warn!(
+                        pid = pid.as_raw(),
+                        "a command stopped to use the terminal, which kojutsu does not control",
+                    );
+                    job.note(
+                        "\nkojutsu: the command stopped to use the terminal, and kojutsu cannot \
+                         hand it over because kojutsu is not in the terminal's foreground\n",
+                    );
+                    refused = true;
+                    job.kill();
+                }
+                // Ctrl-Z at the command's prompt. kojutsu cannot be suspended
+                // from inside a handoff, so the command carries on.
+                Phase::HandedOver => {
+                    let _ = killpg(pid, Signal::SIGCONT);
+                }
+                // Stopped already, so it cannot stop again; and `Finished`
+                // is only set once this returns.
+                Phase::WaitingForTerminal | Phase::Finished => {}
+            },
+            Ok(_) => {}
+            Err(Errno::EINTR) => {}
+            Err(e) => return Exit::Failed(e.into()),
+        }
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Read a pipe to EOF in small chunks, invoking `on_chunk` for each.
@@ -256,17 +338,21 @@ fn read_chunks(mut pipe: impl std::io::Read, mut on_chunk: impl FnMut(&[u8])) {
     }
 }
 
-fn stream_pipe<F: FnMut(&[u8])>(
+/// Read one of the command's pipes into the job. SIGTTOU is blocked because
+/// the job copies output to the terminal while kojutsu is in the background,
+/// and on a terminal set to stop background writes that would stop kojutsu.
+fn stream_pipe<F: FnMut(RunEvent<'_>)>(
     pipe: impl std::io::Read,
     source: Stream,
-    sink: &std::sync::Mutex<(Captured, F)>,
+    job: &JobHandle,
+    on_event: &Mutex<F>,
 ) {
-    read_chunks(pipe, |chunk| {
-        if let Ok(mut guard) = sink.lock() {
-            let (captured, on_chunk) = &mut *guard;
-            captured.push(source, chunk);
-            on_chunk(chunk);
-        }
+    terminal::with_sigttou_blocked(|| {
+        read_chunks(pipe, |chunk| {
+            job.record(source, chunk, |chunk| {
+                lock(on_event)(RunEvent::Output(chunk))
+            });
+        });
     });
 }
 
@@ -318,65 +404,85 @@ mod tests {
     use crate::jj_command::JJCommandKind;
     use crate::keymap::CommandFlags;
 
+    fn sh(script: &str) -> JJCommand {
+        JJCommand {
+            kind: JJCommandKind::Exec {
+                program: "sh".into(),
+                args: vec!["-c".into(), script.into()],
+            },
+            flags: CommandFlags::empty(),
+        }
+    }
+
     /// Once the child is reaped its pid can belong to anyone, so the
     /// handle a cancel would signal through is cleared before the run
     /// returns.
     #[test]
     fn a_finished_run_leaves_nothing_to_kill() {
-        let cmd = JJCommand {
-            kind: JJCommandKind::Exec {
-                program: "true".into(),
-                args: Vec::new(),
-            },
-            flags: CommandFlags::empty(),
-        };
-        let (kill_main, kill_bg) = KillHandle::pair();
-        let result = cmd.run_cancellable(Path::new("."), &kill_bg, |_| {});
+        let job = JobHandle::new();
+        let result = sh("true").run_cancellable(Path::new("."), &job, |_| {});
         assert!(result.success);
-        assert_eq!(kill_main.pgid(), 0);
+        assert_eq!(job.pgid(), None);
     }
 
-    /// A command stopped by a signal, as one reading the terminal from the
-    /// background is, still dies when cancelled.
-    #[cfg(target_os = "linux")]
+    /// The exit code and both pipes come through `waitpid` as they did
+    /// through `Child::wait`.
     #[test]
-    fn a_stopped_command_can_be_cancelled() {
-        let cmd = JJCommand {
-            kind: JJCommandKind::Exec {
-                program: "sh".into(),
-                args: vec!["-c".into(), "kill -STOP $$; sleep 10".into()],
-            },
-            flags: CommandFlags::empty(),
-        };
-        let (kill_main, kill_bg) = KillHandle::pair();
+    fn a_failing_run_keeps_its_code_and_output() {
+        let job = JobHandle::new();
+        let result =
+            sh("echo out; echo err >&2; exit 3").run_cancellable(Path::new("."), &job, |_| {});
+        assert!(!result.success);
+        assert!(!result.cancelled);
+        assert_eq!(result.code, Some(3));
+        assert_eq!(result.output.stream(Stream::Stdout), b"out\n");
+        assert_eq!(result.output.stream(Stream::Stderr), b"err\n");
+    }
+
+    /// A stopped command never leaves the run hanging. Under a terminal
+    /// kojutsu owns, the stop is reported, and a cancel then ends it even
+    /// though it is stopped. Without one, there is nobody to hand the
+    /// terminal to, so the run ends it and says why.
+    #[test]
+    fn a_stopped_command_ends_either_way() {
+        let job = JobHandle::new();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let (stops_tx, stops_rx) = std::sync::mpsc::channel();
+        let runner = job.clone();
         std::thread::spawn(move || {
-            let _ = done_tx.send(cmd.run_cancellable(Path::new("."), &kill_bg, |_| {}));
+            let on_event = {
+                let job = runner.clone();
+                move |event: RunEvent<'_>| match event {
+                    RunEvent::Output(_) => {}
+                    RunEvent::Stopped => {
+                        let _ = stops_tx.send(());
+                        job.kill();
+                    }
+                }
+            };
+            let result = sh("kill -STOP $$; echo resumed").run_cancellable(
+                Path::new("."),
+                &runner,
+                on_event,
+            );
+            let _ = done_tx.send(result);
         });
-        wait_until_stopped(&kill_main);
-        kill_main.kill();
         let result = done_rx
             .recv_timeout(std::time::Duration::from_secs(5))
-            .expect("the cancel reached the stopped command");
-        assert!(result.cancelled);
-    }
-
-    /// Poll `/proc` until the command's process reports itself stopped.
-    #[cfg(target_os = "linux")]
-    fn wait_until_stopped(kill: &KillHandle) {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
-            let pid = kill.pgid();
-            if pid > 0
-                && let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat"))
-                && stat
-                    .rsplit_once(')')
-                    .is_some_and(|(_, rest)| rest.trim_start().starts_with('T'))
-            {
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            .expect("the stopped command ended");
+        assert!(!result.success);
+        assert!(!String::from_utf8_lossy(result.output.bytes()).contains("resumed"));
+        if terminal::owns_terminal() {
+            assert_eq!(stops_rx.try_iter().count(), 1);
+            assert!(result.cancelled);
+        } else {
+            assert_eq!(stops_rx.try_iter().count(), 0);
+            assert!(!result.cancelled);
+            let output = String::from_utf8_lossy(result.output.bytes()).into_owned();
+            assert!(
+                output.contains("not in the terminal's foreground"),
+                "{output}"
+            );
         }
-        panic!("the command never stopped");
     }
 }

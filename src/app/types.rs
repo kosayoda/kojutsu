@@ -608,7 +608,7 @@ impl CommandOutputState {
 pub struct CommandRunningState {
     pub command: String,
     pub command_parts: Vec<crate::jj_command::CommandPart>,
-    pub kill: crate::jj_command::KillHandle,
+    pub job: crate::jj_command::JobHandle,
     /// Raw stdout+stderr bytes accumulated so far (chronologically interleaved).
     pub output: Vec<u8>,
     /// ANSI-parsed complete lines, cached to avoid re-parsing every frame.
@@ -625,12 +625,12 @@ impl CommandRunningState {
     pub fn new(
         command: String,
         command_parts: Vec<crate::jj_command::CommandPart>,
-        kill: crate::jj_command::KillHandle,
+        job: crate::jj_command::JobHandle,
     ) -> Self {
         Self {
             command,
             command_parts,
-            kill,
+            job,
             output: Vec::new(),
             parsed_lines: Vec::new(),
             parsed_upto: 0,

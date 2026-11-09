@@ -250,8 +250,8 @@ fn handle_key_in_mode(
                 return Action::None;
             }
             match node.key {
-                Key::Esc => state.kill.kill(),
-                Key::Char('c') if ctrl => state.kill.kill(),
+                Key::Esc => state.job.kill(),
+                Key::Char('c') if ctrl => state.job.kill(),
                 // Jump back to the live tail (G is delivered as shift+g).
                 Key::Char('g') if shift => state.scroll_from_bottom = 0,
                 Key::Char('$') => state.scroll_from_bottom = 0,

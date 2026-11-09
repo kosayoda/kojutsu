@@ -11,7 +11,7 @@ use crossterm::event::{Event, KeyEventKind, MouseEventKind};
 
 use kojutsu::app::{App, AppMode, DeferredWork};
 use kojutsu::input::{self, Action, Completion};
-use kojutsu::jj_command::{JJCommand, JJCommandResult, TerminalUse};
+use kojutsu::jj_command::{JJCommand, JJCommandResult, JobHandle, RunEvent, TerminalUse};
 use kojutsu::keymap::AppAction;
 use kojutsu::repo::JjRepo;
 use kojutsu::repo_service::{RepoRequestHandle, RepoResult, RepoService, RevsetLoadKind};
@@ -28,6 +28,8 @@ enum AppEvent {
     JjOutput {
         chunk: Vec<u8>,
     },
+    /// The running background command stopped to use the terminal.
+    JjStopped,
     JjDone {
         result: Box<JJCommandResult>,
         cmd: Box<JJCommand>,
@@ -427,6 +429,16 @@ impl Session {
                 self.app.append_running_output(&chunk);
                 Action::None
             }
+            AppEvent::JjStopped => {
+                // A cancel or an exit may have overtaken the stop.
+                if let AppMode::CommandRunning(state) = &self.app.mode
+                    && state.job.wants_terminal()
+                {
+                    let job = state.job.clone();
+                    self.screen.suspended(|| job.hand_over_terminal());
+                }
+                Action::None
+            }
             AppEvent::JjDone {
                 result,
                 cmd,
@@ -620,19 +632,22 @@ impl Session {
     /// progress, then sends `AppEvent::JjDone` when the child exits (or is
     /// cancelled via Esc, which kills the child process group).
     fn run_jj(&mut self, cmd: JJCommand, completion: Completion) {
-        let (kill_main, kill_bg) = kojutsu::jj_command::KillHandle::pair();
+        let job = JobHandle::new();
         self.app.mode = AppMode::CommandRunning(kojutsu::app::CommandRunningState::new(
             cmd.display(),
             cmd.display_parts(),
-            kill_main,
+            job.clone(),
         ));
 
         let repo_path = self.repo_path.clone();
         let event_tx = self.event_tx.clone();
         std::thread::spawn(move || {
-            let result = cmd.run_cancellable(&repo_path, &kill_bg, |chunk| {
-                let _ = event_tx.send(AppEvent::JjOutput {
-                    chunk: chunk.to_vec(),
+            let result = cmd.run_cancellable(&repo_path, &job, |event| {
+                let _ = event_tx.send(match event {
+                    RunEvent::Output(chunk) => AppEvent::JjOutput {
+                        chunk: chunk.to_vec(),
+                    },
+                    RunEvent::Stopped => AppEvent::JjStopped,
                 });
             });
             let _ = event_tx.send(AppEvent::JjDone {

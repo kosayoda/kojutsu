@@ -1,10 +1,14 @@
-use std::io::{self, Stdout, stdout};
+use std::io::{self, IsTerminal as _, Stdout, stdout};
+use std::os::fd::AsFd as _;
 use std::os::unix::io::AsRawFd;
 use std::panic;
 use std::sync::{Arc, mpsc};
 use std::thread;
 
 use crossterm::event::{self, Event};
+use nix::sys::signal::{SigSet, SigmaskHow, Signal, pthread_sigmask};
+use nix::sys::termios::{LocalFlags, SetArg, tcgetattr, tcsetattr};
+use nix::unistd::{Pid, getpgrp, tcgetpgrp, tcsetpgrp};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use ratatui::crossterm::cursor::{Hide, Show};
@@ -35,8 +39,56 @@ impl crossterm::Command for EnableClickCapture {
 pub fn init() -> io::Result<Term> {
     install_panic_hook();
     enable_raw_mode()?;
+    if io::stdin().is_terminal() {
+        stop_background_writes()?;
+    }
     execute!(stdout(), EnterAlternateScreen, EnableClickCapture, Hide)?;
     Terminal::new(CrosstermBackend::new(stdout()))
+}
+
+/// Have a background process group that writes to the terminal stopped, as
+/// one that reads from it already is, so a command about to prompt stops
+/// before drawing over the TUI rather than after. Raw mode saved the
+/// terminal's settings from before this, so `restore` turns it off again.
+fn stop_background_writes() -> io::Result<()> {
+    let stdin = io::stdin();
+    let mut attrs = tcgetattr(stdin.as_fd())?;
+    attrs.local_flags.insert(LocalFlags::TOSTOP);
+    tcsetattr(stdin.as_fd(), SetArg::TCSANOW, &attrs)?;
+    Ok(())
+}
+
+/// Whether kojutsu's process group is the terminal's foreground, the only
+/// place it can hand the terminal to another group from.
+pub fn owns_terminal() -> bool {
+    tcgetpgrp(io::stdin().as_fd()).is_ok_and(|pgid| pgid == getpgrp())
+}
+
+/// Make `pgid` the terminal's foreground process group.
+pub fn give_terminal_to(pgid: Pid) -> nix::Result<()> {
+    tcsetpgrp(io::stdin().as_fd(), pgid)
+}
+
+/// Make kojutsu's process group the terminal's foreground again. kojutsu is
+/// in the background at this point, where changing the foreground raises
+/// SIGTTOU, and an unblocked SIGTTOU would stop kojutsu itself.
+pub fn take_terminal_back() -> nix::Result<()> {
+    with_sigttou_blocked(|| tcsetpgrp(io::stdin().as_fd(), getpgrp()))
+}
+
+/// Run `f` with SIGTTOU blocked on this thread, so that writing to or
+/// configuring the terminal while kojutsu is in the background goes through
+/// instead of stopping kojutsu.
+pub fn with_sigttou_blocked<T>(f: impl FnOnce() -> T) -> T {
+    let mut sigttou = SigSet::empty();
+    sigttou.add(Signal::SIGTTOU);
+    let mut previous = SigSet::empty();
+    let blocked = pthread_sigmask(SigmaskHow::SIG_BLOCK, Some(&sigttou), Some(&mut previous));
+    let out = f();
+    if blocked.is_ok() {
+        let _ = pthread_sigmask(SigmaskHow::SIG_SETMASK, Some(&previous), None);
+    }
+    out
 }
 
 /// Leave the alternate screen, disable raw mode and mouse capture.

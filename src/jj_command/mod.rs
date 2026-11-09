@@ -2,14 +2,15 @@ mod args;
 mod capture;
 pub mod completion;
 mod follow_up;
+mod job;
 mod run;
 
 pub use capture::{Captured, Stream};
 pub use completion::Completion;
 pub use completion::{common_prefix, complete, replace_current_token, split_for_completion};
 pub use follow_up::{FollowUpAction, FollowUpOption, offerable};
-
-use std::sync::{Arc, atomic::AtomicI32, atomic::Ordering};
+pub use job::JobHandle;
+pub use run::RunEvent;
 
 use crate::dag::{BookmarkRef, TagRef};
 use crate::jj_version::{InstalledJj, JjFeature};
@@ -19,36 +20,6 @@ use crate::types::{
     RebaseTarget, RemoteName, RevisionArg, SmallVec, SplitTarget, SquashKind, SquashTarget, Str,
     TagName, WorkspaceName,
 };
-
-#[derive(Clone)]
-pub struct KillHandle(Arc<AtomicI32>);
-
-impl KillHandle {
-    pub fn pair() -> (Self, Self) {
-        let arc = Arc::new(AtomicI32::new(0));
-        (Self(Arc::clone(&arc)), Self(arc))
-    }
-
-    pub(crate) fn set_pgid(&self, pgid: i32) {
-        self.0.store(pgid, Ordering::Release);
-    }
-
-    #[cfg(test)]
-    fn pgid(&self) -> i32 {
-        self.0.load(Ordering::Acquire)
-    }
-
-    pub fn kill(&self) {
-        let pgid = self.0.load(Ordering::Acquire);
-        if pgid > 0 {
-            let pgid = nix::unistd::Pid::from_raw(pgid);
-            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGTERM);
-            // A stopped process holds the SIGTERM until it is continued, and
-            // one that stopped to prompt on the terminal would never be.
-            let _ = nix::sys::signal::killpg(pgid, nix::sys::signal::Signal::SIGCONT);
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub enum InsertPosition {
