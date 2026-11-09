@@ -1,6 +1,7 @@
 use super::SearchScopes;
 
-/// The views kojutsu switches between.
+/// The views kojutsu switches between, those on the number keys in the
+/// order of their keys.
 #[derive(
     Debug,
     Clone,
@@ -22,10 +23,10 @@ pub enum ActiveView {
     #[default]
     Dag,
     Bookmarks,
-    Tags,
-    Operations,
-    Workspaces,
     Remotes,
+    Tags,
+    Workspaces,
+    Operations,
     Evolog,
     CommandLog,
     Interdiff,

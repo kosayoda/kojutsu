@@ -340,7 +340,7 @@ mod remotes_view_tests {
         }
     }
 
-    /// `8` shows each remote's fetch URL in one column with what it has,
+    /// `3` shows each remote's fetch URL in one column with what it has,
     /// and a separate push URL on its own row beneath, in the same column.
     #[test]
     fn remotes_are_listed_with_their_urls_aligned() {
@@ -360,7 +360,7 @@ mod remotes_view_tests {
             &mut app,
             &keymaps,
             &lua,
-            KeyEvent::new(KeyCode::Char('8'), KeyModifiers::NONE),
+            KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE),
         );
         assert_eq!(app.active_view, ActiveView::Remotes);
 
