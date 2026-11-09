@@ -595,7 +595,13 @@ pub fn default_bindings() -> Vec<BindingSpec> {
         ),
         bind("p", GitPush, "push", C, remote()),
         bind("shift-p", GitPushAll, "push all bookmarks", C, remote()),
-        bind("enter", SearchRemoteBookmarks, "search bookmarks", C, remote()),
+        bind(
+            "enter",
+            SearchRemoteBookmarks,
+            "search bookmarks",
+            C,
+            remote(),
+        ),
     ]);
 
     // Evolog view
