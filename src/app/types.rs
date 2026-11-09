@@ -653,7 +653,7 @@ pub struct PersistedState {
         alias = "search_scopes",
         deserialize_with = "deserialize_view_search_scopes"
     )]
-    pub view_search_scopes: std::collections::BTreeMap<String, u8>,
+    pub view_search_scopes: std::collections::BTreeMap<String, u16>,
     /// By name: an index would name another preset once the list is
     /// reordered.
     pub active_preset_name: Option<String>,
@@ -687,7 +687,7 @@ impl Default for PersistedState {
 /// saved, indexed by the views in the order they had then.
 fn deserialize_view_search_scopes<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
-) -> Result<std::collections::BTreeMap<String, u8>, D::Error> {
+) -> Result<std::collections::BTreeMap<String, u16>, D::Error> {
     const INDEXED_ORDER: [ActiveView; 9] = [
         ActiveView::Dag,
         ActiveView::Bookmarks,
@@ -702,8 +702,8 @@ fn deserialize_view_search_scopes<'de, D: serde::Deserializer<'de>>(
     #[derive(serde::Deserialize)]
     #[serde(untagged)]
     enum Saved {
-        ByView(std::collections::BTreeMap<String, u8>),
-        Indexed(Vec<u8>),
+        ByView(std::collections::BTreeMap<String, u16>),
+        Indexed(Vec<u16>),
     }
     let saved = <Saved as serde::Deserialize>::deserialize(deserializer)?;
     Ok(match saved {

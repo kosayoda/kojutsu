@@ -5,7 +5,7 @@ use crate::idx::RowIdx;
 
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct SearchScopes: u8 {
+    pub struct SearchScopes: u16 {
         const CHANGE_ID   = 1 << 0;
         const COMMIT_ID   = 1 << 1;
         const DESCRIPTION = 1 << 2;
